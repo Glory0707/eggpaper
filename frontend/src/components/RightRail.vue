@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api, store, jumpTo, KIND_ZH, ROLE_ZH } from '../store'
+import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH } from '../store'
 
 const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
@@ -127,6 +127,41 @@ onUnmounted(() => window.removeEventListener('eggpaper:terms-prefill', onPrefill
 watch(tab, t => { if (t === 'ask') loadSuggest() })
 watch(() => store.analysis.status, s => { if (s === 'done') loadSuggest() })
 
+// ---------- 方法卡 / 缩写 / mini-map ----------
+const methodCard = ref(null)
+const mcBusy = ref(false)
+async function genMethodCard() {
+  mcBusy.value = true
+  try { methodCard.value = await api.methodCard(store.currentId) }
+  catch (e) { toast('生成失败：' + e.message) }
+  mcBusy.value = false
+}
+const abbrList = computed(() => {
+  try {
+    const abbrs = JSON.parse(store.paper?.abbrs || '{}')
+    const saved = new Set(terms.value.map(t => t.term_en.toLowerCase()))
+    return Object.entries(abbrs).map(([en, zh]) => ({ en, zh, saved: saved.has(en.toLowerCase()) }))
+  } catch { return [] }
+})
+async function saveAbbr(a) {
+  await api.glossaryAdd({ term_en: a.en, term_zh: a.zh, source: 'abbr' })
+  a.saved = true
+  loadTerms()
+  toast(`「${a.en}」已收进术语表`)
+}
+const currentClaim = computed(() => {
+  const cur = store.readingPara
+  if (cur == null) return null
+  let best = null, bestD = 1e9
+  for (const c of store.analysis.claims) {
+    for (const a of c.anchors) {
+      const d = cur - a
+      if (d >= 0 && d < bestD) { bestD = d; best = c.id }
+    }
+  }
+  return best
+})
+
 const termsFiltered = computed(() => {
   const f = termFilter.value.trim().toLowerCase()
   const list = [...terms.value].sort((a, b) => a.term_en.localeCompare(b.term_en))
@@ -181,7 +216,8 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           </div>
 
           <div class="mono-label" style="margin:14px 0 8px">CLAIMS → EVIDENCE · 论证链</div>
-          <div class="claim-block" v-for="c in store.analysis.claims" :key="c.id">
+          <div class="claim-block" v-for="c in store.analysis.claims" :key="c.id"
+               :class="{ now: currentClaim === c.id }">
             <div class="c-head">
               <span class="c-id">{{ c.id }}</span>
               <span class="c-txt">{{ c.text }}</span>
@@ -224,6 +260,47 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <div class="ce-row"><span class="ce-k">发现</span><span class="ce-v">{{ store.summary.findings }}</span></div>
           <div class="ce-kw"><span class="chip" v-for="k in store.summary.keywords" :key="k">{{ k }}</span></div>
         </div>
+
+        <!-- 方法卡 -->
+        <div style="margin-top:16px">
+          <div class="mono-label" style="margin-bottom:8px;display:flex;justify-content:space-between">
+            <span>方法卡 · PROTOCOL</span>
+          </div>
+          <div v-if="!methodCard">
+            <button style="width:100%" @click="genMethodCard" :disabled="mcBusy">
+              {{ mcBusy ? '整理中…' : '把方法整理成可复现的 protocol' }}
+            </button>
+          </div>
+          <div class="card-eye" v-else>
+            <div class="ce-row"><span class="ce-k">目标</span><span class="ce-v">{{ methodCard.goal }}</span></div>
+            <div class="ce-row"><span class="ce-k">体系</span><span class="ce-v">{{ methodCard.system }}</span></div>
+            <div class="ce-row"><span class="ce-k">条件</span><span class="ce-v">{{ methodCard.conditions }}</span></div>
+            <div class="ce-row"><span class="ce-k">步骤</span>
+              <span class="ce-v">
+                <div class="mc-step" v-for="(s, i) in methodCard.steps" :key="i">{{ i + 1 }}. {{ s }}</div>
+              </span>
+            </div>
+            <div class="ce-row" v-if="methodCard.notes"><span class="ce-k">注意</span><span class="ce-v">{{ methodCard.notes }}</span></div>
+          </div>
+        </div>
+
+        <!-- 本文缩写 -->
+        <div style="margin-top:16px" v-if="abbrList.length">
+          <div class="mono-label" style="margin-bottom:8px">本文缩写 · {{ abbrList.length }}</div>
+          <div class="term-row" v-for="a in abbrList" :key="a.en">
+            <span class="t-en" :title="a.en">{{ a.en }}</span>
+            <span class="t-arrow">→</span>
+            <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
+            <button v-if="!a.saved" class="t-del" style="font-size:11px" title="收进术语表"
+                    @click="saveAbbr(a)">＋</button>
+            <span v-else class="mono-label" style="font-size:8px">已收</span>
+          </div>
+        </div>
+
+        <!-- 导出 -->
+        <div style="margin-top:16px;display:flex;gap:8px">
+          <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>导出笔记 .md</a>
+        </div>
       </template>
 
       <!-- ============ 提问 ============ -->
@@ -263,6 +340,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <button @click="addTerm">＋</button>
         </div>
         <input type="text" v-model="termFilter" placeholder="筛选…" style="width:100%; margin-bottom:8px; font-size:12px" />
+        <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl" download>导出 CSV</a></div>
         <div v-for="t in termsFiltered" :key="t.id" class="term-row">
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>

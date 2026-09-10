@@ -4,7 +4,7 @@ import os
 import threading
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -154,7 +154,7 @@ def paragraphs(pid: str):
 def _run_analysis(pid: str, paras: list):
     try:
         title = db.get_paper(pid)["title"]
-        use = [p for p in paras if not p["in_refs"]]
+        use = [p for p in paras if not p.get("in_refs")]
         if config.load()["mock"]:
             data = llm.mock_analyze(paras)
         else:
@@ -166,6 +166,7 @@ def _run_analysis(pid: str, paras: list):
                 data["purposes"][str(p["idx"])] = "参考文献"
         db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
                                               for k, v in data["roles"].items()})
+        db.update_paper(pid, abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False))
     except Exception as e:
         db.set_analysis(pid, [], {}, status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
 
@@ -264,8 +265,14 @@ def pin_lookup(pid: str, body: dict):
     note = (body.get("note") or "").strip()
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
-    mid = db.marginalia_add(pid, int(body.get("para_idx") or 0), int(body.get("page") or 0),
-                            quote[:200], note[:600], kind="lookup")
+    para_idx = int(body.get("para_idx") or 0)
+    # 同段重钉 = 更新而非新增
+    dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
+               (pid, para_idx))
+    if dup:
+        db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
+        return {"id": dup[0]["id"]}
+    mid = db.marginalia_add(pid, para_idx, int(body.get("page") or 0), quote[:200], note[:600], kind="lookup")
     return {"id": mid}
 
 
@@ -307,6 +314,77 @@ def suggest(pid: str):
         data = llm.suggest_questions(p["title"], claims, annos)
     db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
     return data
+
+
+KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别扭", "redundant": "多余重复",
+           "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑", "lookup": "查译"}
+
+
+@app.get("/api/papers/{pid}/method-card")
+def method_card(pid: str):
+    p = _paper_or_404(pid)
+    if p["method_card"]:
+        return JSONResponse(json.loads(p["method_card"]))
+    if config.load()["mock"]:
+        data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
+                "steps": ["步骤一", "步骤二"], "notes": ""}
+    else:
+        data = llm.method_card(p["title"], db.get_paragraphs(pid))
+    db.update_paper(pid, method_card=json.dumps(data, ensure_ascii=False))
+    return data
+
+
+@app.get("/api/papers/{pid}/export.md")
+def export_md(pid: str):
+    p = _paper_or_404(pid)
+    paras = {x["idx"]: x for x in db.get_paragraphs(pid)}
+    lines = [f"# {p['title'] or p['filename']}", ""]
+    if p["summary"]:
+        s = json.loads(p["summary"])
+        lines += [f"**{s.get('one_line', '')}**", "",
+                  f"- 贡献：{s.get('contributions', '')}",
+                  f"- 方法：{s.get('methods', '')}",
+                  f"- 发现：{s.get('findings', '')}", ""]
+    status, claims, annos = db.get_analysis(pid)
+    if claims:
+        lines += ["## 论证骨架", ""]
+        for c in claims:
+            lines.append(f"- **{c['id']} {c['text']}**")
+            for a in c["anchors"]:
+                anno = annos.get(str(a))
+                if anno:
+                    lines.append(f"  - ¶{a} {llm.ROLE_ZH.get(anno['role'], '')}：{anno['purpose']}")
+            lines.append("")
+        by_role = {}
+        for k, v in annos.items():
+            by_role.setdefault(v["role"], []).append(int(k))
+        lines += ["## 段落角色", ""]
+        for role, idxs in sorted(by_role.items(), key=lambda x: -len(x[1])):
+            lines.append(f"- **{llm.ROLE_ZH.get(role, role)}（{len(idxs)}）**：¶" + "、¶".join(str(i) for i in sorted(idxs)))
+        lines.append("")
+    notes = db.get_marginalia(pid)
+    if notes:
+        lines += ["## 眉批与查译", ""]
+        for n in notes:
+            who = "你" if n["kind"] == "lookup" else KIND_ZH.get(n["kind"], n["kind"])
+            lines.append(f"- **[{who}] {n['note']}** — “{n['quote'][:48]}”")
+        lines.append("")
+    md = "\n".join(lines)
+    return Response(content=md, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename=eggpaper-{pid}.md"})
+
+
+@app.get("/api/glossary/export.csv")
+def glossary_export():
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["term_en", "term_zh", "domain", "note", "source"])
+    for r in db.glossary_list():
+        w.writerow([r["term_en"], r["term_zh"], r["domain"], r["note"], r["source"]])
+    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=eggpaper-glossary.csv"})
 
 
 # ---------------- 问答 ----------------

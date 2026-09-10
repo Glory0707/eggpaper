@@ -64,6 +64,8 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE papers ADD COLUMN mono_path TEXT",
         "ALTER TABLE annotations ADD COLUMN inferred_role TEXT",
         "ALTER TABLE papers ADD COLUMN suggest TEXT",
+        "ALTER TABLE papers ADD COLUMN method_card TEXT",
+        "ALTER TABLE papers ADD COLUMN abbrs TEXT",
     ):
         try:
             c.execute(stmt)

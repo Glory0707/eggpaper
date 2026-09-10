@@ -19,6 +19,9 @@ const fitScale = ref(1)
 const sheets = ref([])
 const hoverPara = ref(null)      // 段落 hover：驱动把手
 const hoverTab = ref(null)       // 标签 hover：驱动角色卡
+const stickyTab = ref(null)      // 点击标签：粘性角色卡
+const expandedNote = ref(null)   // 展开的批注卡
+const pendingPara = ref(null)    // 段译进行中
 const handleHold = ref(false)
 const freshNotes = ref(false)
 const backChip = ref(false)
@@ -187,19 +190,30 @@ function tabsOnPage(pno) {
   return out
 }
 
+function noteHeight(n) {
+  const noteLines = Math.max(1, Math.ceil((n.note || '').length / 10))
+  const quoteLines = Math.ceil(Math.min(n.quote.length, 42) / 16)
+  return 40 + Math.min(noteLines, 3) * 18 + quoteLines * 13 + 8
+}
+
 function notesOnPage(pno) {
+  const cands = notesShown.value
+    .filter(n => n.page === pno)
+    .map(n => ({ n, anchor: (n.rect ? n.rect.y0 : paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value }))
+  // 段译进行中的占位卡
+  if (pendingPara.value != null) {
+    const p = paraByIdx.value[pendingPara.value]
+    if (p && p.page === pno)
+      cands.push({ n: { id: 'pending', kind: 'lookup', page: pno, quote: (p.text || '').slice(0, 60), note: '翻译中…' }, anchor: p.bbox.y0 * scale.value, pending: true })
+  }
+  cands.sort((a, b) => a.anchor - b.anchor)
   const out = []
   let prevBottom = -1
-  for (const n of notesShown.value) {
-    if (n.page !== pno) continue
-    const anchor = n.rect ? n.rect.y0 : paraByIdx.value[n.para_idx]?.bbox.y0 || 0
-    let top = anchor * scale.value
-    if (top < prevBottom + 6) top = prevBottom + 6
-    // 估算卡高：类型章 + 批注行数 + 引文行数，宁多勿叠
-    const noteLines = Math.ceil((n.note || '').length / 9)
-    const quoteLines = Math.ceil(Math.min(n.quote.length, 42) / 15)
-    prevBottom = top + 46 + noteLines * 19 + quoteLines * 14
-    out.push({ n, top })
+  for (const c of cands) {
+    let top = c.anchor
+    if (top < prevBottom + 8) top = prevBottom + 8
+    prevBottom = top + noteHeight(c.n) + (expandedNote.value === c.n.id ? 46 : 0)
+    out.push({ n: c.n, top, pending: !!c.pending })
   }
   return out
 }
@@ -220,6 +234,8 @@ function onPageMove(e, it) {
 }
 
 async function translateParaAndPin(idx) {
+  if (pendingPara.value != null) return
+  pendingPara.value = idx
   try {
     const r = await api.translatePara(store.currentId, idx)
     if (!r.zh || !r.zh.trim()) { toast('模型没返回内容，再试一次'); return }
@@ -228,6 +244,7 @@ async function translateParaAndPin(idx) {
     await refreshM()
     toast('译文已钉在页边')
   } catch (e) { toast('翻译失败：' + e.message) }
+  finally { pendingPara.value = null }
 }
 
 function askPara(idx) { store.askPrefill = { paraIdx: idx } }
@@ -237,6 +254,7 @@ function askPara(idx) { store.askPrefill = { paraIdx: idx } }
 const sel = reactive({ visible: false, x: 0, y: 0, text: '', context: '', paraIdx: 0, page: 0, zh: '', hits: [], busy: false, err: '' })
 
 function onMouseUp(e) {
+  if (e.target && !e.target.closest?.('.role-card') && !e.target.closest?.('.role-tab')) stickyTab.value = null
   const s = window.getSelection()
   if (!s || s.isCollapsed || !s.rangeCount) return
   const text = s.toString().trim()
@@ -476,7 +494,9 @@ watch(() => store.marginalia.notes, (n, o) => {
             <div class="para-handle" v-if="hoverPara != null && it.text"
                  :style="{ top: (paraByIdx[hoverPara]?.bbox.y0 ?? 0) * scale + 'px' }"
                  @mouseenter="handleHold = true" @mouseleave="() => { handleHold = false; hoverPara = null }">
-              <button @click="translateParaAndPin(hoverPara)">译</button>
+              <button :class="{ busy: pendingPara === hoverPara }" @click="translateParaAndPin(hoverPara)">
+                {{ pendingPara === hoverPara ? '…' : '译' }}
+              </button>
               <button @click="askPara(hoverPara)">问</button>
             </div>
           </div>
@@ -486,9 +506,11 @@ watch(() => store.marginalia.notes, (n, o) => {
                :style="{ height: it.h * scale + 'px', background: 'var(--paper-deep)', borderLeft: '1px solid var(--hairline-soft)', marginLeft: '10px', paddingLeft: '6px', marginRight: '-6px' }">
             <div v-for="{ p, role, anno, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx" class="role-tab"
                  :style="{ top: top + 'px', background: ROLE_COLOR[role] }"
-                 @mouseenter="hoverTab = p.idx" @mouseleave="hoverTab = null">
+                 @mouseenter="hoverTab = p.idx" @mouseleave="() => { if (stickyTab !== p.idx) hoverTab = null }"
+                 @click.stop="() => { stickyTab = stickyTab === p.idx ? null : p.idx; hoverTab = stickyTab }">
               <span class="pn">{{ p.idx }}</span>
-              <div class="role-card" v-if="hoverTab === p.idx" @mouseenter="hoverTab = p.idx" @mouseleave="hoverTab = null">
+              <div class="role-card" v-if="hoverTab === p.idx || stickyTab === p.idx"
+                   @mouseenter="hoverTab = p.idx" @mouseleave="() => { if (stickyTab !== p.idx) hoverTab = null }">
                 <div class="rc-role" :style="{ color: ROLE_COLOR[role] }">
                   {{ ROLE_ZH[role] }}
                   <span v-if="anno.user_override" class="rc-flag">已改</span>
@@ -501,13 +523,19 @@ watch(() => store.marginalia.notes, (n, o) => {
                 </select>
               </div>
             </div>
-            <div v-for="{ n, top } in notesOnPage(it.origPage)" :key="'mg' + n.id"
-                 class="mg-note" :class="{ fresh: freshNotes }" :style="{ top: top + 'px' }">
-              <span class="mg-kind" :style="{ background: KIND_COLOR[n.kind] }">
-                {{ n.kind === 'lookup' ? '你 · 查译' : KIND_ZH[n.kind] }}
-              </span>
-              <button v-if="n.kind === 'lookup'" class="mg-del" title="移除" @click="unpin(n.id)">×</button>
-              <div>{{ n.note }}</div>
+            <div v-for="{ n, top, pending } in notesOnPage(it.origPage)" :key="'mg' + n.id"
+                 class="mg-note" :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
+                                           clamped: (n.note || '').length > 26 }"
+                 :style="{ top: top + 'px' }"
+                 @click="n.note.length > 26 && (expandedNote = expandedNote === n.id ? null : n.id)">
+              <div class="mg-head">
+                <span class="mg-kind" :style="{ background: KIND_COLOR[n.kind] }">
+                  {{ n.kind === 'lookup' ? '你 · 查译' : KIND_ZH[n.kind] }}
+                </span>
+                <button v-if="n.kind === 'lookup' && !pending" class="mg-del" title="移除"
+                        @click.stop="unpin(n.id)">×</button>
+              </div>
+              <div class="mg-body">{{ n.note }}</div>
               <span class="mg-quote">“{{ n.quote.slice(0, 42) }}{{ n.quote.length > 42 ? '…' : '' }}”</span>
             </div>
           </div>

@@ -77,6 +77,7 @@ export async function refreshAnalysis() {
   if (!store.currentId) return
   const a = await api.analysis(store.currentId)
   Object.assign(store.analysis, a)
+  store.paper = await api.paper(store.currentId)   // 同步 abbrs 等字段
   refreshPapers()
 }
 

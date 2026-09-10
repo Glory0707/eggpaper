@@ -84,7 +84,8 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 1. claims 取 2~5 条，按论文叙事顺序；anchors 只能填 evidence 或 control 角色、且真实支撑该主张的段落编号
 2. 每一个给出的段落都必须有 role 和 purpose，role 不得虚构枚举之外的值
 3. purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照样品的必要性""交代测试条件，可跳过"
-4. 不要虚构不存在的段落编号；参考文献部分（若有）一律标 boilerplate"""
+4. 不要虚构不存在的段落编号；参考文献部分（若有）一律标 boilerplate
+5. 顺便抽取本文的缩写表 abbrs：{"abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}，没有就给空对象"""
 
 PURPOSE_FALLBACK = {
     "background": "领域铺垫，可跳过", "gap": "作者真正的出发点", "claim": "论文要证明的核心",
@@ -156,9 +157,12 @@ def analyze_skeleton(title: str, paras: list) -> dict:
     for num, role in roles.items():
         purposes.setdefault(num, PURPOSE_FALLBACK.get(role, ""))
 
+    abbrs_raw = data.get("abbrs") or {}
+    abbrs = {str(k)[:24]: str(v)[:80] for k, v in abbrs_raw.items() if isinstance(v, str) and v.strip()}         if isinstance(abbrs_raw, dict) else {}
+
     if not roles:
         raise ValueError(f"骨架解析失败（roles 为空），原始输出: {out[:160]}")
-    return {"claims": claims, "roles": roles, "purposes": purposes}
+    return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs}
 
 
 # ---------------- 论文专属推荐问题 ----------------
@@ -353,3 +357,21 @@ def mock_analyze(paras: list) -> dict:
     if not claims:
         claims = [{"id": "C1", "text": "（演示模式：未识别到明确主张）", "anchors": []}]
     return {"claims": claims, "roles": roles, "purposes": purposes}
+
+
+# ---------------- 方法卡（可复现 protocol） ----------------
+
+def method_card(title: str, paras: list) -> dict:
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
+    out = chat([
+        {"role": "system", "content":
+            "你是实验室方法专家。把论文的方法部分整理成可复现的 protocol 卡，只输出 JSON："
+            '{"goal":"<这套方法要达成什么，≤40字>",'
+            '"system":"<材料体系/研究对象，≤60字>",'
+            '"conditions":"<关键条件与参数：仪器、软件、参数值，≤120字>",'
+            '"steps":["<步骤1，≤40字>", "<步骤2>", "..."],'
+            '"notes":"<复现时要注意的坑，≤60字>"}'
+            "步骤要具体可执行，保留关键数字。不要 markdown 代码块，不要解释。"},
+        {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
+    ], max_tokens=6000, temperature=0.3)
+    return parse_json(out)
