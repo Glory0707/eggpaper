@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Node / frontend
+node_modules/
+dist-ssr/
+
+# Local config & secrets — never commit
+config*.yaml
+config*.toml
+.env
+*.key
+
+# User data — never commit
+data/
+library/
+*.pdf
