@@ -25,6 +25,8 @@ export const api = {
   overrideRole: (pid, paraIdx, role) => req('POST', `/api/papers/${pid}/override-role`, { para_idx: paraIdx, role }),
   marginaliaStart: (pid) => req('POST', `/api/papers/${pid}/marginalia`),
   marginalia: (pid) => req('GET', `/api/papers/${pid}/marginalia`),
+  pin: (pid, body) => req('POST', `/api/papers/${pid}/pin`, body),
+  unpin: (pid, mid) => req('DELETE', `/api/papers/${pid}/marginalia/${mid}`),
   summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
   ask: (pid, question) => req('POST', `/api/papers/${pid}/ask`, { question }),
   qaHistory: (pid) => req('GET', `/api/papers/${pid}/qa-history`),
@@ -46,6 +48,14 @@ export const ROLE_ZH = {
 }
 export const KIND_ZH = {
   hedge: '妥协让步', padding: '凑字数', stiff: '生硬别扭', redundant: '多余重复',
-  hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑',
+  hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑', lookup: '查译',
+}
+export const KIND_COLOR = {
+  insight: '#b0740d', padding: '#a89c85', hedge: '#637a8e', redundant: '#8d8066',
+  hype: '#b8462e', ai: '#7b6e96', warning: '#99505f', stiff: '#a89c85', lookup: '#57503f',
+}
+export const ROLE_COLOR = {
+  background: '#a89c85', gap: '#b8462e', claim: '#b0740d', evidence: '#55704d',
+  control: '#637a8e', boilerplate: '#ab9166', extension: '#7b6e96', limitation: '#99505f',
 }
 export const CORE_ROLES = ['gap', 'claim', 'evidence', 'limitation']

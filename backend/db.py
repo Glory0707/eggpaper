@@ -53,8 +53,21 @@ def _get() -> sqlite3.Connection:
         _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
+        _migrate(_conn)
         _conn.commit()
     return _conn
+
+
+def _migrate(c: sqlite3.Connection):
+    """惰性迁移：旧库补列。"""
+    for stmt in (
+        "ALTER TABLE papers ADD COLUMN mono_path TEXT",
+        "ALTER TABLE annotations ADD COLUMN inferred_role TEXT",
+    ):
+        try:
+            c.execute(stmt)
+        except sqlite3.OperationalError:
+            pass
 
 
 def q(sql: str, params=(), commit: bool = False):
@@ -118,8 +131,8 @@ def set_analysis(pid: str, claims: list, annos: list, status: str = "done", erro
         c.execute("DELETE FROM claims WHERE paper_id=?", (pid,))
         c.executemany("INSERT INTO claims(paper_id, cid, text, anchors) VALUES(?,?,?,?)",
                       [(pid, c_["id"], c_["text"], json.dumps(c_.get("anchors", []))) for c_ in claims])
-        c.executemany("INSERT OR REPLACE INTO annotations(paper_id, para_idx, role, purpose, user_override) VALUES(?,?,?,?,0)",
-                      [(pid, int(k), v["role"], v.get("purpose", "")) for k, v in annos.items()])
+        c.executemany("INSERT OR REPLACE INTO annotations(paper_id, para_idx, role, inferred_role, purpose, user_override) VALUES(?,?,?,?,?,0)",
+                      [(pid, int(k), v["role"], v["role"], v.get("purpose", "")) for k, v in annos.items()])
         c.execute("UPDATE papers SET analysis_status=?, analysis_error=? WHERE id=?", (status, error, pid))
         c.commit()
 
@@ -128,13 +141,17 @@ def get_analysis(pid: str):
     paper = get_paper(pid)
     claims = [{"id": r["cid"], "text": r["text"], "anchors": json.loads(r["anchors"])}
               for r in q("SELECT cid, text, anchors FROM claims WHERE paper_id=? ORDER BY cid", (pid,))]
-    annos = {str(r["para_idx"]): {"role": r["role"], "purpose": r["purpose"], "user_override": bool(r["user_override"])}
+    annos = {str(r["para_idx"]): {"role": r["role"], "inferred_role": r["inferred_role"] or r["role"],
+                                  "purpose": r["purpose"], "user_override": bool(r["user_override"])}
              for r in q("SELECT * FROM annotations WHERE paper_id=?", (pid,))}
     return paper["analysis_status"], claims, annos
 
 
 def override_annotation(pid: str, para_idx: int, role: str):
-    q("UPDATE annotations SET role=?, user_override=1 WHERE paper_id=? AND para_idx=?", (role, pid, para_idx), commit=True)
+    if role:
+        q("UPDATE annotations SET role=?, user_override=1 WHERE paper_id=? AND para_idx=?", (role, pid, para_idx), commit=True)
+    else:   # 回到推断
+        q("UPDATE annotations SET role=inferred_role, user_override=0 WHERE paper_id=? AND para_idx=?", (pid, para_idx), commit=True)
 
 
 # ---------- glossary ----------
@@ -213,3 +230,13 @@ def get_marginalia(pid: str):
 
 def marginalia_set_rect(mid: int, rect: dict):
     q("UPDATE marginalia SET rect=? WHERE id=?", (json.dumps(rect), mid), commit=True)
+
+
+def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, kind: str = "lookup") -> int:
+    q("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note) VALUES(?,?,?,?,?,?)",
+      (pid, para_idx, page, quote, kind, note), commit=True)
+    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+
+
+def marginalia_delete(mid: int):
+    q("DELETE FROM marginalia WHERE id=?", (mid,), commit=True)

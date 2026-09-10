@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { api, store, toast, refreshPapers } from '../store'
 
-const emit = defineEmits(['pick', 'import'])
+const emit = defineEmits(['pick', 'import', 'close'])
 const fileInput = ref(null)
 const over = ref(false)
 
@@ -32,10 +32,11 @@ async function del(pid, name) {
 </script>
 
 <template>
-  <aside class="rail-left">
+  <div class="lib-mask" @click="emit('close')"></div>
+  <div class="lib-panel" @keydown.esc="emit('close')">
     <div class="rail-head">
-      <span class="mono-label">文库 · Library</span>
-      <span class="mono-label" style="letter-spacing:.06em">{{ store.papers.length }} 篇</span>
+      <span class="mono-label">文库 · {{ store.papers.length }} 篇</span>
+      <button class="ghost" style="padding:2px 8px" @click="emit('close')">esc</button>
     </div>
     <div class="paper-list">
       <div v-for="p in store.papers" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId }"
@@ -54,12 +55,8 @@ async function del(pid, name) {
     </div>
     <div class="drop-hint" :class="{ over }" @click="fileInput.click()"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
-      拖入 PDF · 或点击导入<br />
-      <span style="font-size:10.5px">解析在本地完成</span>
-    </div>
-    <div class="rail-foot mono-label" style="line-height:1.7">
-      文献 · 术语 · 批注<br />全部留在本机
+      拖入 PDF · 或点击导入
     </div>
     <input ref="fileInput" type="file" accept="application/pdf" hidden @change="onFile" />
-  </aside>
+  </div>
 </template>

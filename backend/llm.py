@@ -25,15 +25,22 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2) -> st
     cfg = config.load()
     if cfg["mock"] or not cfg["provider"]["api_key"]:
         raise RuntimeError("MOCK")
-    r = httpx.post(
-        f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
-        json={"model": cfg["provider"]["model"], "messages": messages,
-              "max_tokens": max_tokens, "temperature": temperature},
-        timeout=600,
-    )
-    r.raise_for_status()
-    return (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
+    budget = max_tokens
+    out = ""
+    for _ in range(2):                      # 推理模型可能耗尽 token 空想，空结果加倍重试
+        r = httpx.post(
+            f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
+            json={"model": cfg["provider"]["model"], "messages": messages,
+                  "max_tokens": budget, "temperature": temperature},
+            timeout=600,
+        )
+        r.raise_for_status()
+        out = (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
+        if out.strip():
+            return out
+        budget = int(budget * 1.6)
+    return out
 
 
 def parse_json(text: str) -> dict:
@@ -156,10 +163,16 @@ def analyze_skeleton(title: str, paras: list) -> dict:
 
 # ---------------- 一眼卡 ----------------
 
-def summarize(title: str, paras: list) -> dict:
+def _gloss_block(hits) -> str:
+    if not hits:
+        return ""
+    return "术语表（以下术语必须使用锁定译法）：\n" + "\n".join(f"- {h['en']} → {h['zh']}" for h in hits) + "\n\n"
+
+
+def summarize(title: str, paras: list, hits=None) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:800]}" for p in paras if not p.get("in_refs"))[:60000]
     out = chat([
-        {"role": "system", "content":
+        {"role": "system", "content": _gloss_block(hits) +
             "你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
             '{"one_line":"<一句话说清这篇论文做了什么、核心结果是什么，≤60字>",'
             '"contributions":"<贡献：解决了什么问题、为什么重要，≤80字>",'
@@ -182,9 +195,9 @@ QA_SYSTEM = """你是论文精读助手，基于给定的论文全文回答研�
 4. 回答用中文，术语首次出现给出英文"""
 
 
-def ask(title: str, paras: list, history: list, question: str) -> dict:
+def ask(title: str, paras: list, history: list, question: str, hits=None) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))[:80000]
-    msgs = [{"role": "system", "content": QA_SYSTEM + f"\n\n论文标题：{title or ''}\n\n{body}"}]
+    msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n论文标题：{title or ''}\n\n{body}"}]
     for h in history[-6:]:
         msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": question})

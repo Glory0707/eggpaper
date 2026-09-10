@@ -10,6 +10,7 @@ const f = reactive({
   api_key: store.settings.provider.key_masked || '',
   mock: store.settings.mock,
   service: store.settings.pdf2zh.service,
+  layers: { ...store.viewer.layers },
 })
 const testing = ref(false)
 const reply = ref('')
@@ -26,6 +27,7 @@ async function test() {
 }
 
 function save() {
+  Object.assign(store.viewer.layers, f.layers)
   emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key }, mock: f.mock, pdf2zh: { service: f.service } })
 }
 </script>
@@ -50,6 +52,13 @@ function save() {
         <input type="checkbox" v-model="f.mock" />
         演示模式（不调用 API，用假数据走通界面）
       </label>
+      <div class="f-row">
+        <label class="mono-label">图层（页边显示）</label>
+        <div class="mock-row" style="margin:0">
+          <input type="checkbox" id="ly-skel" v-model="f.layers.skeleton" /><label for="ly-skel" style="margin:0">骨架标签</label>
+          <input type="checkbox" id="ly-mg" v-model="f.layers.marginalia" /><label for="ly-mg" style="margin:0">眉批</label>
+        </div>
+      </div>
       <div class="f-row">
         <label class="mono-label">整本翻译服务（pdf2zh）</label>
         <select v-model="f.service">

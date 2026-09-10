@@ -130,6 +130,13 @@ def paper_pdf(pid: str, variant: str = "original"):
         if p["translate_status"] != "done" or not p["dual_path"] or not os.path.exists(p["dual_path"]):
             raise HTTPException(404, "双语版尚未生成")
         return FileResponse(p["dual_path"], media_type="application/pdf")
+    if variant == "mono":
+        mono = p.get("mono_path")
+        if not mono and p["dual_path"]:
+            mono = p["dual_path"].replace("-dual.pdf", "-mono.pdf")
+        if not mono or not os.path.exists(mono):
+            raise HTTPException(404, "译文版尚未生成")
+        return FileResponse(mono, media_type="application/pdf")
     return FileResponse(p["path"], media_type="application/pdf")
 
 
@@ -246,6 +253,26 @@ def marginalia_get(pid: str):
             "notes": [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None) for n in db.get_marginalia(pid)]}
 
 
+@app.post("/api/papers/{pid}/pin")
+def pin_lookup(pid: str, body: dict):
+    """把查译/段译钉到页边（用户资产，持久化）。"""
+    p = _paper_or_404(pid)
+    quote = (body.get("quote") or "").strip()
+    note = (body.get("note") or "").strip()
+    if not quote or not note:
+        raise HTTPException(400, "quote 与 note 不能为空")
+    mid = db.marginalia_add(pid, int(body.get("para_idx") or 0), int(body.get("page") or 0),
+                            quote[:200], note[:600], kind="lookup")
+    return {"id": mid}
+
+
+@app.delete("/api/papers/{pid}/marginalia/{mid}")
+def marginalia_remove(pid: str, mid: int):
+    _paper_or_404(pid)
+    db.marginalia_delete(mid)
+    return {"ok": True}
+
+
 # ---------------- 一眼卡 ----------------
 
 @app.get("/api/papers/{pid}/summary")
@@ -257,7 +284,8 @@ def summary(pid: str):
         data = {"one_line": "〔演示模式〕这是一篇测试论文的一眼卡摘要。", "contributions": "演示贡献", "methods": "演示方法",
                 "findings": "演示发现", "keywords": ["演示"]}
     else:
-        data = llm.summarize(p["title"], db.get_paragraphs(pid))
+        hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+        data = llm.summarize(p["title"], db.get_paragraphs(pid), hits)
     db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
     return data
 
@@ -274,7 +302,8 @@ def ask(pid: str, body: dict):
     if config.load()["mock"]:
         ans, cites = "〔演示模式〕这是模拟回答。[¶1]", [1]
     else:
-        r = llm.ask(p["title"], db.get_paragraphs(pid), db.qa_history(pid), question)
+        hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+        r = llm.ask(p["title"], db.get_paragraphs(pid), db.qa_history(pid), question, hits)
         ans, cites = r["answer"], r["citations"]
     db.qa_add(pid, "assistant", ans, cites)
     return {"answer": ans, "citations": cites}
@@ -323,6 +352,8 @@ def translate_para(pid: str, body: dict):
     else:
         ctx = paras.get(idx - 1, {}).get("text", "")
         zh = llm.translate(para["text"], ctx, hits)
+    if not zh.strip():
+        raise HTTPException(503, "模型这次没返回内容，请重试一次")
     return {"zh": zh, "hits": hits}
 
 
@@ -339,9 +370,10 @@ def translate_full_status(pid: str):
     _paper_or_404(pid)
     j = translate_full.job(pid)
     if j["status"] == "done":
-        dual = j["dual"]
-        if dual != _paper_or_404(pid)["dual_path"]:
-            db.update_paper(pid, dual_path=dual, translate_status="done")
+        p = _paper_or_404(pid)
+        mono = j["dual"].replace("-dual.pdf", "-mono.pdf") if os.path.exists(j["dual"].replace("-dual.pdf", "-mono.pdf")) else ""
+        if j["dual"] != p["dual_path"] or mono != (p["mono_path"] or ""):
+            db.update_paper(pid, dual_path=j["dual"], mono_path=mono, translate_status="done")
     return j
 
 

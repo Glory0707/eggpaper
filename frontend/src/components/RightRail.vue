@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, store, jumpTo, KIND_ZH, ROLE_ZH } from '../store'
 
 const emit = defineEmits(['analyze', 'marginalia'])
@@ -20,6 +20,7 @@ const roleCounts = computed(() => {
   for (const v of Object.values(store.analysis.annotations)) c[v.role] = (c[v.role] || 0) + 1
   return c
 })
+const legendRoles = computed(() => Object.keys(ROLE_ZH).filter(k => roleCounts.value[k]))
 
 function anchorsOf(claim) {
   return claim.anchors
@@ -28,9 +29,20 @@ function anchorsOf(claim) {
 }
 
 // ---------- 提问 ----------
+// 提问框：预填与聚焦
 const question = ref('')
 const asking = ref(false)
 const QUICK = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？', '作者承认了哪些局限？']
+const qaInput = ref(null)
+
+watch(() => store.askPrefill, pf => {
+  if (!pf) return
+  tab.value = 'ask'
+  question.value = pf.paraIdx ? `¶${pf.paraIdx} 这段在说什么？` : `这段在说什么：「${pf.text}」？`
+  store.askPrefill = null
+  nextTick(() => qaInput.value?.focus())
+})
+watch(() => store.askFocusTick, () => { tab.value = 'ask'; nextTick(() => qaInput.value?.focus()) })
 
 async function ask(q) {
   if (!q?.trim() || asking.value) return
@@ -141,10 +153,10 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
 
         <template v-else>
           <div class="role-legend">
-            <span v-for="(zh, k) in ROLE_ZH" :key="k" class="rl" :title="zh"
+            <span v-for="k in legendRoles" :key="k" class="rl" :title="ROLE_ZH[k]"
                   @click="jumpPara(parseInt(Object.keys(store.analysis.annotations).find(x => store.analysis.annotations[x].role === k)))">
-              <i :style="{ background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }"></i>{{ zh }}
-              <b v-if="roleCounts[k]">{{ roleCounts[k] }}</b>
+              <i :style="{ background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }"></i>{{ ROLE_ZH[k] }}
+              <b>{{ roleCounts[k] }}</b>
             </span>
           </div>
 
@@ -173,10 +185,10 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             <div v-if="!anchorsOf(c).length" style="font-size:11.5px;color:var(--ink-3);margin-top:6px">未找到直接证据段</div>
           </div>
 
-          <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.length"
+          <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.some(n => n.kind !== 'lookup')"
                style="margin-top:16px">
-            <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ store.marginalia.notes.length }} 条</div>
-            <div v-for="n in store.marginalia.notes.slice(0, 8)" :key="n.id" class="ev-row" @click="n.rect && jumpTo(n.page, n.rect.y0, n.rect.y1)">
+            <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ store.marginalia.notes.filter(n => n.kind !== 'lookup').length }} 条</div>
+            <div v-for="n in store.marginalia.notes.filter(n => n.kind !== 'lookup').slice(0, 8)" :key="n.id" class="ev-row" @click="n.rect && jumpTo(n.page, n.rect.y0, n.rect.y1)">
               <span class="e-dot"></span>
               <span class="e-bar" :style="{ background: `var(--k-${n.kind})` }"></span>
               <span class="e-note"><span class="mono-label" style="font-size:9px">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}</span>
@@ -225,10 +237,10 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <div class="q-body" v-else>{{ m.content }}</div>
         </div>
         <div ref="qaEnd"></div>
-        <div class="qa-input">
-          <input type="text" v-model="question" placeholder="基于这篇论文提问…" @keydown.enter="ask(question)" />
-          <button class="primary" @click="ask(question)" :disabled="asking">{{ asking ? '…' : '问' }}</button>
-        </div>
+          <div class="qa-input">
+            <input ref="qaInput" type="text" v-model="question" placeholder="基于这篇论文提问…" @keydown.enter="ask(question)" />
+            <button class="primary" @click="ask(question)" :disabled="asking">{{ asking ? '…' : '问' }}</button>
+          </div>
       </template>
 
       <!-- ============ 术语 ============ -->
