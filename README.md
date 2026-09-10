@@ -30,16 +30,19 @@ Open 设置 → paste any OpenAI-compatible base_url + key + model (DeepSeek / G
 
 ## Planned features
 
-| | Feature | Priority |
+| | Feature | Status |
 |---|---|---|
-| 🌐 | Full-paper bilingual reading, layout & formulas preserved (pdf2zh engine) | P0 |
-| ✏️ | Term-level translation with a personal glossary injected everywhere | P0 |
-| 🦴 | **Argument skeleton** — claims → evidence chain → controls → limitations, annotated on the page margin | P1 |
-| 🔎 | Skim mode — expand only the load-bearing paragraphs (and only translate those) | P1 |
-| 💬 | Single-paper Q&A with page-anchored, role-tagged answers | P1.5 |
-| 🃏 | Summary cards: one-glance card / methods protocol card / figures gallery | P1.5 |
-| 📓 | Term book (export to CSV/Anki), Markdown notes export, Zotero interop | P2 |
-| ⚖️ | Review mode — auto-draft weaknesses from the evidence chain | P2+ |
+| 🌐 | Full-paper bilingual reading (pdf2zh engine, layout & formulas preserved) | ✅ done |
+| ✏️ | Term-level translation with a personal glossary injected everywhere | ✅ done |
+| 🦴 | **Argument skeleton** — claims → evidence chain → controls, annotated on the margin | ✅ done |
+| ✒️ | **Marginalia** — sentence-level human notes: hedging, padding, stiff phrasing, AI-flavor… | ✅ done |
+| 🔎 | Skim mode — fade the boilerplate, keep the load-bearing paragraphs | ✅ done |
+| 💬 | Single-paper Q&A with ¶-anchored answers | ✅ done |
+| 🃏 | One-glance summary card | ✅ done |
+| 🔀 | Three translation views: side-by-side spread / full-text swap / interleaved | 🔜 next |
+| 🧪 | Methods protocol card · abbreviations table · figures gallery | planned |
+| 📓 | Markdown & Anki export · Zotero interop | planned |
+| ⚖️ | Review mode · cross-paper data extraction · region-select visual Q&A | later |
 
 ## Why
 
