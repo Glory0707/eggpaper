@@ -13,7 +13,20 @@ No accounts. No subscriptions. Papers never leave your machine — only LLM API 
 
 ## Status
 
-🚧 **Design stage.** MVP development starting — see [docs/design.md](docs/design.md) for the full design (in Chinese), roadmap and MVP acceptance criteria.
+🚧 **MVP running.** Upload → parse → argument-skeleton analysis → margin role tabs → sentence-level marginalia (妥协 / 凑字数 / AI 痕迹…) → glossary-accurate selection & paragraph translation → full-paper Q&A with ¶-citations → one-glance summary card — all working end-to-end against real two-column chemistry papers.
+
+Run it:
+
+```bash
+# backend (Python 3.10+)
+pip install -r backend/requirements.txt
+python backend/main.py            # 127.0.0.1:8430
+
+# frontend
+cd frontend && npm install && npm run dev   # http://localhost:5173
+```
+
+Open 设置 → paste any OpenAI-compatible base_url + key + model (DeepSeek / GLM / local Ollama all work). Without a key it runs in demo mode. Full design & roadmap: [docs/design.md](docs/design.md) (Chinese).
 
 ## Planned features
 

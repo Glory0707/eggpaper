@@ -22,3 +22,7 @@ config*.toml
 data/
 library/
 *.pdf
+
+_qa/
+_*.log
+_pid.txt

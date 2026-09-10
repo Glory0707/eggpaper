@@ -1,0 +1,51 @@
+async function req(method, url, body) {
+  const opt = { method, headers: {} }
+  if (body instanceof FormData) opt.body = body
+  else if (body !== undefined) {
+    opt.headers['Content-Type'] = 'application/json'
+    opt.body = JSON.stringify(body)
+  }
+  const r = await fetch(url, opt)
+  if (!r.ok) {
+    let msg = `${r.status}`
+    try { msg = (await r.json()).detail || msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return r.json()
+}
+
+export const api = {
+  papers: () => req('GET', '/api/papers'),
+  upload: (file) => { const fd = new FormData(); fd.append('file', file); return req('POST', '/api/papers', fd) },
+  paper: (pid) => req('GET', `/api/papers/${pid}`),
+  deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
+  paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
+  analyze: (pid) => req('POST', `/api/papers/${pid}/analyze`),
+  analysis: (pid) => req('GET', `/api/papers/${pid}/analysis`),
+  overrideRole: (pid, paraIdx, role) => req('POST', `/api/papers/${pid}/override-role`, { para_idx: paraIdx, role }),
+  marginaliaStart: (pid) => req('POST', `/api/papers/${pid}/marginalia`),
+  marginalia: (pid) => req('GET', `/api/papers/${pid}/marginalia`),
+  summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
+  ask: (pid, question) => req('POST', `/api/papers/${pid}/ask`, { question }),
+  qaHistory: (pid) => req('GET', `/api/papers/${pid}/qa-history`),
+  translateSelection: (pid, text, context) => req('POST', `/api/papers/${pid}/translate-selection`, { text, context }),
+  translatePara: (pid, idx) => req('POST', `/api/papers/${pid}/translate-para`, { idx }),
+  translateFull: (pid) => req('POST', `/api/papers/${pid}/translate-full`),
+  translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
+  glossary: () => req('GET', '/api/glossary'),
+  glossaryAdd: (item) => req('POST', '/api/glossary', item),
+  glossaryDelete: (id) => req('DELETE', `/api/glossary/${id}`),
+  settings: () => req('GET', '/api/settings'),
+  saveSettings: (body) => req('PUT', '/api/settings', body),
+  testSettings: () => req('POST', '/api/settings/test'),
+}
+
+export const ROLE_ZH = {
+  background: '背景铺垫', gap: '缺口转折', claim: '核心主张', evidence: '关键证据',
+  control: '对照参比', boilerplate: '标准流程', extension: '优化拓展', limitation: '让步局限',
+}
+export const KIND_ZH = {
+  hedge: '妥协让步', padding: '凑字数', stiff: '生硬别扭', redundant: '多余重复',
+  hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑',
+}
+export const CORE_ROLES = ['gap', 'claim', 'evidence', 'limitation']

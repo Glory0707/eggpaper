@@ -1,0 +1,11 @@
+# eggpaper 后端依赖（Python 3.10+）
+pymupdf>=1.24
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
+pyyaml>=6.0
+python-multipart>=0.0.9
+
+# 整本双语翻译引擎（可选，subprocess 隔离调用，AGPL 与本项目同生态）
+# pdf2zh>=1.9
+# 注意：需配合 tencentcloud-sdk-python-tmt==3.0.1300（新版 SDK 缺少 pdf2zh 依赖的类）
