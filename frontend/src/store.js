@@ -35,6 +35,7 @@ export const store = reactive({
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   toast: '',
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
+  tourStop: null,        // 论证漫游停止器（RightRail 注册）
 
   get mock() { return this.settings?.mock },
   get railRight() {

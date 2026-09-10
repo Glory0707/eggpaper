@@ -387,6 +387,46 @@ def glossary_export():
                     headers={"Content-Disposition": "attachment; filename=eggpaper-glossary.csv"})
 
 
+# ---------------- 图表速览 ----------------
+
+@app.get("/api/papers/{pid}/figures")
+def figures(pid: str):
+    import pymupdf
+    p = _paper_or_404(pid)
+    out = []
+    doc = pymupdf.open(p["path"])
+    try:
+        for pno in range(len(doc)):
+            rects = [pymupdf.Rect(i["bbox"]) for i in doc[pno].get_image_info()
+                     if i["bbox"][2] - i["bbox"][0] > 80 and i["bbox"][3] - i["bbox"][1] > 60]
+            merged = []
+            for r in rects:
+                for m in merged:
+                    if m.intersects(r):
+                        m |= r
+                        break
+                else:
+                    merged.append(r)
+            for r in merged:
+                out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
+                            "x1": round(r.x1, 1), "y1": round(r.y1, 1)})
+    finally:
+        doc.close()
+    return {"figures": out}
+
+
+@app.get("/api/papers/{pid}/figure.png")
+def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, dpi: int = 130):
+    import pymupdf
+    p = _paper_or_404(pid)
+    doc = pymupdf.open(p["path"])
+    try:
+        pix = doc[page].get_pixmap(clip=pymupdf.Rect(x0, y0, x1, y1), dpi=dpi)
+        return Response(content=pix.tobytes("png"), media_type="image/png")
+    finally:
+        doc.close()
+
+
 # ---------------- 问答 ----------------
 
 @app.post("/api/papers/{pid}/ask")

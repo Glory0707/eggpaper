@@ -124,7 +124,7 @@ onMounted(() => {
   window.addEventListener('eggpaper:terms-prefill', onPrefill)
 })
 onUnmounted(() => window.removeEventListener('eggpaper:terms-prefill', onPrefill))
-watch(tab, t => { if (t === 'ask') loadSuggest() })
+watch(tab, t => { if (t === 'ask') loadSuggest(); if (t === 'eye') loadFigures() })
 watch(() => store.analysis.status, s => { if (s === 'done') loadSuggest() })
 
 // ---------- 方法卡 / 缩写 / mini-map ----------
@@ -161,6 +161,45 @@ const currentClaim = computed(() => {
   }
   return best
 })
+
+// ---------- 论证漫游：沿证据链自动巡航 ----------
+const tourActive = ref(false)
+let tourTimer = null
+function tourClaim(c) {
+  stopTour()
+  const steps = c.anchors
+  if (!steps.length) { toast('这条主张没有登记证据段'); return }
+  tourActive.value = true
+  let i = 0
+  jumpPara(steps[0])
+  tourTimer = setInterval(() => {
+    i += 1
+    if (i >= steps.length) { stopTour(); return }
+    jumpPara(steps[i])
+  }, 2600)
+  store.tourStop = stopTour
+}
+function stopTour() {
+  if (tourTimer) { clearInterval(tourTimer); tourTimer = null }
+  tourActive.value = false
+  store.tourStop = null
+}
+onUnmounted(() => stopTour())
+
+// ---------- 图表速览 ----------
+const figures = ref([])
+const lightbox = ref(null)
+async function loadFigures() {
+  if (!store.currentId || figures.value.length) return
+  try {
+    const r = await api.figures(store.currentId)
+    figures.value = r.figures || []
+  } catch { /* 无图论文静默 */ }
+}
+function figJump(f) {
+  jumpTo(f.page, f.y0, f.y1)
+  lightbox.value = null
+}
 
 const termsFiltered = computed(() => {
   const f = termFilter.value.trim().toLowerCase()
@@ -199,12 +238,14 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         </div>
 
         <template v-else>
-          <div class="role-legend">
-            <span v-for="k in legendRoles" :key="k" class="rl" :title="ROLE_ZH[k]"
-                  @click="jumpPara(parseInt(Object.keys(store.analysis.annotations).find(x => store.analysis.annotations[x].role === k)))">
-              <i :style="{ background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }"></i>{{ ROLE_ZH[k] }}
-              <b>{{ roleCounts[k] }}</b>
-            </span>
+          <div class="struct-bar" title="段落角色构成，点色块跳转">
+            <span v-for="k in legendRoles" :key="k" class="sb-seg"
+                  :style="{ flexGrow: roleCounts[k], background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }"
+                  @click="jumpPara(parseInt(Object.keys(store.analysis.annotations).find(x => store.analysis.annotations[x].role === k)))"></span>
+          </div>
+          <div class="mono-label" style="margin:-6px 0 14px; display:flex; justify-content:space-between">
+            <span>{{ store.paras.length }} 段</span>
+            <span v-if="store.readingPara">读至 ¶{{ store.readingPara }}</span>
           </div>
 
           <div class="mono-label" style="margin-bottom:8px">GAP · 作者的出发点</div>
@@ -216,11 +257,13 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           </div>
 
           <div class="mono-label" style="margin:14px 0 8px">CLAIMS → EVIDENCE · 论证链</div>
-          <div class="claim-block" v-for="c in store.analysis.claims" :key="c.id"
+          <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id"
                :class="{ now: currentClaim === c.id }">
             <div class="c-head">
               <span class="c-id">{{ c.id }}</span>
               <span class="c-txt">{{ c.text }}</span>
+              <button class="ci-tour" :title="'论证漫游（' + c.anchors.length + ' 站）'"
+                      @click.stop="tourClaim(c)">▶</button>
             </div>
             <div class="ev-row" v-for="a in anchorsOf(c)" :key="a.idx" @click="jumpPara(a.idx)">
               <span class="e-dot">¶{{ a.idx }}</span>
@@ -297,6 +340,15 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           </div>
         </div>
 
+        <!-- 图表速览 -->
+        <div style="margin-top:16px" v-if="figures.length">
+          <div class="mono-label" style="margin-bottom:8px">图表速览 · {{ figures.length }}</div>
+          <div class="fig-strip">
+            <img v-for="(f, i) in figures" :key="i" class="fig-thumb" :src="api.figureUrl(store.currentId, f)"
+                 :title="`第 ${f.page + 1} 页`" @click="lightbox = f" />
+          </div>
+        </div>
+
         <!-- 导出 -->
         <div style="margin-top:16px;display:flex;gap:8px">
           <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>导出笔记 .md</a>
@@ -349,6 +401,15 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>
+    </div>
+
+    <!-- 图表灯箱 -->
+    <div class="lightbox" v-if="lightbox" @click="lightbox = null">
+      <img :src="api.figureUrl(store.currentId, lightbox, 200)" @click.stop />
+      <div class="lb-actions" @click.stop>
+        <button @click="figJump(lightbox)">在原文查看</button>
+        <button @click="lightbox = null">关闭</button>
+      </div>
     </div>
   </aside>
 </template>

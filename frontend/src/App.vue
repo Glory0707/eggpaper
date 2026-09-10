@@ -96,6 +96,7 @@ function onKey(e) {
     store.viewer.libOpen = false
     store.shortcutCard = false
     showSettings.value = false
+    store.tourStop?.()
     return
   }
   if (gPending.value) {
