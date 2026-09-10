@@ -32,8 +32,18 @@ function anchorsOf(claim) {
 // 提问框：预填与聚焦
 const question = ref('')
 const asking = ref(false)
-const QUICK = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？', '作者承认了哪些局限？']
+const GENERIC = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？', '作者承认了哪些局限？']
+const suggest = ref([])
 const qaInput = ref(null)
+
+async function loadSuggest() {
+  if (!store.currentId || suggest.value.length) return
+  try {
+    const r = await api.suggest(store.currentId)
+    suggest.value = r.questions || []
+  } catch { /* 静默，回退到通用问题 */ }
+}
+const quickList = computed(() => (suggest.value.length ? suggest.value : GENERIC))
 
 watch(() => store.askPrefill, pf => {
   if (!pf) return
@@ -114,6 +124,8 @@ onMounted(() => {
   window.addEventListener('eggpaper:terms-prefill', onPrefill)
 })
 onUnmounted(() => window.removeEventListener('eggpaper:terms-prefill', onPrefill))
+watch(tab, t => { if (t === 'ask') loadSuggest() })
+watch(() => store.analysis.status, s => { if (s === 'done') loadSuggest() })
 
 const termsFiltered = computed(() => {
   const f = termFilter.value.trim().toLowerCase()
@@ -145,7 +157,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <button style="margin-top:10px" @click="emit('analyze')">重试</button>
         </div>
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
-          <div class="serif" style="font-size:14.5px;line-height:1.7;color:var(--ink-2)">
+          <div style="font-size:14px;line-height:1.7;color:var(--ink-2)">
             还没有析读。<br />「析读全文」会站在作者的视角，把主张、证据、对照和样板段都翻出来。
           </div>
           <button class="primary" style="margin-top:12px" @click="emit('analyze')">析读全文</button>
@@ -217,7 +229,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
       <!-- ============ 提问 ============ -->
       <template v-if="tab === 'ask'">
         <div class="qa-quick">
-          <button v-for="q in QUICK" :key="q" @click="ask(q)">{{ q }}</button>
+          <button v-for="q in quickList" :key="q" @click="ask(q)">{{ q }}</button>
         </div>
         <div class="qa-msg" v-for="(m, i) in qaSegs" :key="i" :class="m.role">
           <div class="q-role">{{ m.role === 'user' ? '你' : 'EGGPAPER' }}</div>

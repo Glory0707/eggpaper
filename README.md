@@ -2,52 +2,70 @@
 
 > Crack the paper, read the marrow. 剥开论文的壳，直接读论证的芯。
 
-**eggpaper** is a local-first, lightweight reader for scientific papers.
+![reader](docs/screenshots/reader.png)
 
-It does two things well:
+**eggpaper** 是一个本地优先的轻量科研文献阅读器。它不做"更多翻译"，做两件别家没做的事：
 
-1. **Glossary-accurate translation** — full-paper bilingual reading with layout & formulas preserved, where *your* personal glossary governs every translation, summary and answer.
-2. **Argument-skeleton analysis** — it reads the paper the way the author wrote it: which claim is the core, which experiment is key evidence, which is just a control, which section is boilerplate you can skip.
+1. **术语一致的翻译**——一份个人术语表贯穿划词、段落、整本、总结、问答全部链路
+2. **论证骨架 + 眉批**——从作者写作意图解析论文：哪句是核心主张、哪个实验只是对照、哪段是凑字数的样板、哪里有 AI 痕迹
 
-No accounts. No subscriptions. Papers never leave your machine — only LLM API calls you configure (DeepSeek / GLM / any OpenAI-compatible endpoint, including local Ollama).
+文献、术语、批注全部留在本机；无账号、无订阅，LLM 用你自己的 key（DeepSeek / GLM / 本地 Ollama，任意 OpenAI 兼容端点）。
 
-## Status
+## 功能总览（全部已实现并实测）
 
-🚧 **MVP running.** Upload → parse → argument-skeleton analysis → margin role tabs → sentence-level marginalia (妥协 / 凑字数 / AI 痕迹…) → glossary-accurate selection & paragraph translation → full-paper Q&A with ¶-citations → one-glance summary card — all working end-to-end against real two-column chemistry papers.
+### 读
 
-Run it:
+- **翻译三模式**：`原文` / `译文`（整版中文，排版公式保留）/ `双语`（对开：左英右中成对滚动 · 交替：一页原文一页译文）
+- **略读模式**（f）：非核心段蒙纱成波浪，核心段琥珀条标记，`j/k` 只在主干上跳
+- **位置记忆**：刷新、重开、换篇，回到你离开的那一行
+
+### 懂
+
+- **论证骨架**：缺口 → 主张 → 证据链树形侧栏；八类角色页边书签片（背景/缺口/主张/证据/对照/样板/拓展/局限）；每个标签可溯源依据句、可改判、可回退
+- **眉批**：句级人性化批注——妥协让步 / 凑字数 / 生硬别扭 / 多余重复 / 吹嘘过头 / **AI 痕迹** / 点睛之笔 / 有坑。像实验室师兄在你肩膀边上说话
+- **框选即问**：划词气泡一键把译文钉到页边，问题直接对准某一段
+
+### 问
+
+- **单篇问答**：全文长上下文直塞，答案内联 ¶编号 引用，点击跳回原文
+- **论文专属推荐问题**：析读完成后自动生成 4 个最值得追问的问题（审稿人视角，不是泛泛之问）
+- **导入即通读**：PDF 拖进来，骨架与简报在后台自动生成，打开即有
+
+### 沉淀
+
+- **术语本**：内置化学/材料种子术语；划词一键收进；译名在所有输出中强制一致；筛选管理
+- **页边即资产**：查译、段译、眉批都钉在页边，跟随论文保存
+- **整本双语导出**：pdf2zh 引擎（bing/google/deepl/openai 可配），奇页原文偶页译文
+
+### 键盘流
+
+`j/k` 段间步进 · `t` 译当前段 · `s` 译划选 · `f` 略读 · `1/2/3` 三模式 · `/` 提问 · `x` 折叠右栏 · `g l` 文库 · `Alt+←` 返回原位 · `?` 快捷键卡
+
+## 截图
+
+| 阅读（页边双声音：AI 眉批 + 你的查译） | 双语对开 |
+|---|---|
+| ![reader](docs/screenshots/marginalia.png) | ![spread](docs/screenshots/dual-spread.png) |
+
+## 为什么做
+
+市面上要么是云端订阅的重方案（小绿鲸/ReadPaper），要么是只有翻译的开源引擎（pdf2zh），要么是贵且不可溯源的通用 PDF 问答（ChatPDF 类）。eggpaper 补的是：**本地轻量壳 + 术语全链一致 + 论证骨架**。骨架层对应 argumentative zoning / rhetorical roles 研究，句级眉批连学术原型都少见——这是产品的身份标识。
+
+## 运行
 
 ```bash
-# backend (Python 3.10+)
+# 后端（Python 3.10+）
 pip install -r backend/requirements.txt
-python backend/main.py            # 127.0.0.1:8430
+python backend/main.py                    # 127.0.0.1:8430
 
-# frontend
-cd frontend && npm install && npm run dev   # http://localhost:5173
+# 前端
+cd frontend && npm install && npm run dev # http://localhost:5173
 ```
 
-Open 设置 → paste any OpenAI-compatible base_url + key + model (DeepSeek / GLM / local Ollama all work). Without a key it runs in demo mode. Full design & roadmap: [docs/design.md](docs/design.md) (Chinese).
+首次打开：设置 → 填任意 OpenAI 兼容 base_url + key + model → 测试连接。不填 key 也可用（演示模式）。
 
-## Planned features
-
-| | Feature | Status |
-|---|---|---|
-| 🌐 | Full-paper bilingual reading (pdf2zh engine, layout & formulas preserved) | ✅ done |
-| ✏️ | Term-level translation with a personal glossary injected everywhere | ✅ done |
-| 🦴 | **Argument skeleton** — claims → evidence chain → controls, annotated on the margin | ✅ done |
-| ✒️ | **Marginalia** — sentence-level human notes: hedging, padding, stiff phrasing, AI-flavor… | ✅ done |
-| 🔎 | Skim mode — fade the boilerplate, keep the load-bearing paragraphs | ✅ done |
-| 💬 | Single-paper Q&A with ¶-anchored answers | ✅ done |
-| 🃏 | One-glance summary card | ✅ done |
-| 🔀 | Three translation views: side-by-side spread / full-text swap / interleaved | 🔜 next |
-| 🧪 | Methods protocol card · abbreviations table · figures gallery | planned |
-| 📓 | Markdown & Anki export · Zotero interop | planned |
-| ⚖️ | Review mode · cross-paper data extraction · region-select visual Q&A | later |
-
-## Why
-
-Existing tools are either cloud-heavy (accounts, subscriptions, uploads), translation-only, or generic PDF chat. eggpaper fills the gap: a small local tool where terminology stays consistent across everything, and where the differentiator is not "translate more" but *"understand what the author is actually doing"* — a capability grounded in argumentative-zoning / rhetorical-role research that no reading product ships today.
+设计文档：[design.md](docs/design.md)（定位与取舍）· [ux.md](docs/ux.md)（布局与交互）· [visual.md](docs/visual.md)（视觉与动效）· [plan.md](docs/plan.md)（计划与走查）。
 
 ## License
 
-[AGPL-3.0](LICENSE) — same ecosystem as pdf2zh/BabelDOC. Never fork this into a closed-source product.
+[AGPL-3.0](LICENSE) —— 与 pdf2zh/BabelDOC 同生态。请勿闭源套壳。

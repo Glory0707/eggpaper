@@ -28,6 +28,7 @@ export const api = {
   pin: (pid, body) => req('POST', `/api/papers/${pid}/pin`, body),
   unpin: (pid, mid) => req('DELETE', `/api/papers/${pid}/marginalia/${mid}`),
   summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
+  suggest: (pid) => req('GET', `/api/papers/${pid}/suggest`),
   ask: (pid, question) => req('POST', `/api/papers/${pid}/ask`, { question }),
   qaHistory: (pid) => req('GET', `/api/papers/${pid}/qa-history`),
   translateSelection: (pid, text, context) => req('POST', `/api/papers/${pid}/translate-selection`, { text, context }),

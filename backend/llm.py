@@ -161,6 +161,23 @@ def analyze_skeleton(title: str, paras: list) -> dict:
     return {"claims": claims, "roles": roles, "purposes": purposes}
 
 
+# ---------------- 论文专属推荐问题 ----------------
+
+def suggest_questions(title: str, claims: list, annos: dict) -> dict:
+    claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
+    gap = next((v["purpose"] for k, v in sorted(annos.items(), key=lambda x: int(x[0])) if v["role"] == "gap"), "")
+    out = chat([
+        {"role": "system", "content":
+            "你在帮一位研究生准备组会研读这篇论文。基于论文的主张与研究缺口，"
+            "出 4 个最值得追问的问题：要具体、有张力、直指要害（证据强度、方法选择、适用边界），"
+            "禁止'这篇论文讲了什么'这类泛泛之问。只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。"},
+        {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
+    ], max_tokens=4000, temperature=0.5)
+    data = parse_json(out)
+    qs = [str(q)[:80] for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
+    return {"questions": qs[:4]}
+
+
 # ---------------- 一眼卡 ----------------
 
 def _gloss_block(hits) -> str:

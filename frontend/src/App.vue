@@ -69,13 +69,12 @@ async function doTranslateFull() {
 
 async function onPickFile(file) {
   if (!file) return
-  toast('正在导入并解析…')
+  toast('已导入，正在后台通读…')
   try {
     const r = await api.upload(file)
     await refreshPapers()
     await openPaper(r.paper.id)
     store.viewer.libOpen = false
-    toast(`解析完成 · ${r.n_paragraphs} 段`)
   } catch (e) { toast('导入失败：' + e.message) }
 }
 
@@ -217,7 +216,7 @@ function onKey(e) {
     <div class="toast" v-if="store.toast">{{ store.toast }}</div>
     <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(38,32,21,.25)">
       <div class="modal" style="text-align:center">
-        <div class="serif" style="font-size:18px">松手，放到书桌上</div>
+        <div style="font-size:17px;font-weight:650">松手，放到书桌上</div>
       </div>
     </div>
   </div>

@@ -1,9 +1,8 @@
 import { createApp } from 'vue'
-import '@fontsource/fraunces/400.css'
-import '@fontsource/fraunces/600.css'
-import '@fontsource/fraunces/400-italic.css'
-import '@fontsource/noto-serif-sc/500.css'
-import '@fontsource/noto-serif-sc/700.css'
+import '@fontsource-variable/inter'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/600.css'
+import '@fontsource/fraunces/600-italic.css'
 import './styles.css'
 import App from './App.vue'
 

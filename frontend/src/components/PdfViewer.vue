@@ -195,7 +195,10 @@ function notesOnPage(pno) {
     const anchor = n.rect ? n.rect.y0 : paraByIdx.value[n.para_idx]?.bbox.y0 || 0
     let top = anchor * scale.value
     if (top < prevBottom + 6) top = prevBottom + 6
-    prevBottom = top + 96
+    // 估算卡高：类型章 + 批注行数 + 引文行数，宁多勿叠
+    const noteLines = Math.ceil((n.note || '').length / 9)
+    const quoteLines = Math.ceil(Math.min(n.quote.length, 42) / 15)
+    prevBottom = top + 46 + noteLines * 19 + quoteLines * 14
     out.push({ n, top })
   }
   return out

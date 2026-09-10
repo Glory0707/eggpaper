@@ -89,6 +89,9 @@ async def upload(file: UploadFile = File(...)):
     db.create_paper(pid, file.filename, title, path, n_pages)
     db.replace_paragraphs(pid, paras)
     row = db.get_paper(pid)
+    # AI 主动：导入即后台通读，打开时简报已就绪
+    db.update_paper(pid, analysis_status="running")
+    threading.Thread(target=_run_analysis, args=(pid, paras), daemon=True).start()
     return {"paper": row, "n_paragraphs": len(paras),
             "n_captions": sum(1 for p in paras if p["caption"])}
 
@@ -287,6 +290,22 @@ def summary(pid: str):
         hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
         data = llm.summarize(p["title"], db.get_paragraphs(pid), hits)
     db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
+    return data
+
+
+@app.get("/api/papers/{pid}/suggest")
+def suggest(pid: str):
+    p = _paper_or_404(pid)
+    if p["suggest"]:
+        return JSONResponse(json.loads(p["suggest"]))
+    if p["analysis_status"] != "done":
+        return {"questions": []}
+    if config.load()["mock"]:
+        data = {"questions": ["〔演示〕核心证据的强度如何？", "〔演示〕方法上有什么可挑剔的？"]}
+    else:
+        _, claims, annos = db.get_analysis(pid)
+        data = llm.suggest_questions(p["title"], claims, annos)
+    db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
     return data
 
 
