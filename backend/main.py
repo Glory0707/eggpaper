@@ -303,7 +303,17 @@ def override_role(pid: str, body: dict):
 
 # ---------------- 眉批（句级批注） ----------------
 
-def _resolve_rects(pid: str):
+def _band(n: dict) -> str:
+    """一条批注属于哪一档。
+
+    库里存了档位就用存的（自造类型只有存下来的那份算数）；老数据没存过，按类型推。
+    判"哪些是可疑之处"要看**档位**而不是类型名：类型是开放词表，模型会自造
+    「参考态不一」这种 warn 档的批注，只认 kind=='warning' 会把它们漏在外面。
+    """
+    return n.get("band") or llm.BAND_OF.get(n["kind"], "")
+
+
+
     """把 quote 定位成页面矩形。
 
     只作为**退路**：这里的搜索会跨不过换行和连字符，所以只能拿引文开头的一小段去搜，
@@ -471,7 +481,7 @@ def advisor(pid: str, cached: bool = False):
         _, claims, annos = db.get_analysis(pid)
         # 眉批已标的"有坑"当作**作者/读者已经认了的**薄弱点喂进去——三问的任务是
         # 在它们之上再狠一层，而不是把同一批话说第二遍（「问题」页④已经说过一遍了）
-        warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if n["kind"] == "warning"]
+        warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
         data = llm.advisor_questions(p["title"], claims, warns)
     db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
     return data
@@ -520,7 +530,7 @@ def _gen_six(p: dict, key: str):
                               _paras_of_role(pid, {"background"}, 6),
                               claims)
     if key == "next":
-        warns = [n["note"] for n in db.get_marginalia(pid) if n["kind"] == "warning"][:6]
+        warns = [n["note"] for n in db.get_marginalia(pid) if _band(n) == "warn"][:6]
         return llm.answer_next(p["title"],
                                _paras_of_role(pid, {"limitation"}),
                                _paras_of_role(pid, {"extension"}, 5),
