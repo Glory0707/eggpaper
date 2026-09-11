@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS marginalia(
 CREATE TABLE IF NOT EXISTS conversations(
   id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id TEXT, title TEXT, created_at TEXT, updated_at TEXT
 );
+-- 六个问题里需要模型回答的那三个（为什么重要 / 还能做什么 / 换个学科怎么看）：
+-- 按篇缓存，点过一次就不再花钱
+CREATE TABLE IF NOT EXISTS answers(
+  paper_id TEXT, key TEXT, json TEXT, PRIMARY KEY(paper_id, key)
+);
 -- 文库分类：一篇文献可以同时属于多个分类（Zotero 的 collection 语义，不是文件夹）
 CREATE TABLE IF NOT EXISTS collections(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, created_at TEXT
@@ -135,9 +140,36 @@ def purge_paper(pid: str):
     """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
     漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列。"""
     for t in ("paragraphs", "annotations", "claims", "marginalia",
-              "qa_messages", "conversations", "paper_collections"):
+              "qa_messages", "conversations", "paper_collections", "answers"):
         q(f"DELETE FROM {t} WHERE paper_id=?", (pid,), commit=True)
     q("DELETE FROM papers WHERE id=?", (pid,), commit=True)
+
+
+# ---------- 六个问题的答案缓存 ----------
+
+def answers_all(pid: str) -> dict:
+    out = {}
+    for r in q("SELECT key, json FROM answers WHERE paper_id=?", (pid,)):
+        try:
+            out[r["key"]] = json.loads(r["json"])
+        except ValueError:
+            pass
+    return out
+
+
+def answer_get(pid: str, key: str):
+    rows = q("SELECT json FROM answers WHERE paper_id=? AND key=?", (pid, key))
+    if not rows:
+        return None
+    try:
+        return json.loads(rows[0]["json"])
+    except ValueError:
+        return None
+
+
+def answer_put(pid: str, key: str, data):
+    q("INSERT OR REPLACE INTO answers(paper_id, key, json) VALUES(?,?,?)",
+      (pid, key, json.dumps(data, ensure_ascii=False)), commit=True)
 
 
 # ---------- 文库分类（Zotero 的 collection 语义：一篇可属于多类） ----------

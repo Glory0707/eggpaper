@@ -460,6 +460,73 @@ def ask_visual(body: dict):
     return {"answer": ans}
 
 
+# ---------------- 六个问题里需要生成的那三个 ----------------
+# 免费的两问（要解决什么 / 怎么解决的 / 还没解决什么）直接用骨架数据，不花 token；
+# 这三问按需生成、按篇缓存，和「获取」同一个纪律。语料只喂相关的几类段落。
+
+SIX_KEYS = ("why", "next", "lens")
+
+
+def _paras_of_role(pid: str, roles: set, cap: int = 8):
+    _, _, annos = db.get_analysis(pid)
+    paras = {x["idx"]: x for x in db.get_paragraphs(pid)}
+    out = [paras[int(k)] for k, v in annos.items() if v["role"] in roles and int(k) in paras]
+    return sorted(out, key=lambda p: p["idx"])[:cap]
+
+
+def _gen_six(p: dict, key: str):
+    pid = p["id"]
+    _, claims, annos = db.get_analysis(pid)
+    if key == "why":
+        return llm.answer_why(p["title"],
+                              _paras_of_role(pid, {"gap"}),
+                              _paras_of_role(pid, {"background"}, 6),
+                              claims)
+    if key == "next":
+        warns = [n["note"] for n in db.get_marginalia(pid) if n["kind"] == "warning"][:6]
+        return llm.answer_next(p["title"],
+                               _paras_of_role(pid, {"limitation"}),
+                               _paras_of_role(pid, {"extension"}, 5),
+                               claims, warns)
+    s = json.loads(p["summary"]) if p.get("summary") else {}
+    return llm.answer_lens(p["title"], s.get("one_line", ""), claims, db.get_paragraphs(pid))
+
+
+def _mock_six(key: str) -> dict:
+    if key == "why":
+        return {"text": "〔演示模式〕这件事之所以重要，是因为它卡住了下游一整类应用 [¶2]；"
+                        "而到现在没解决，是因为常规做法要引入不可控的缺陷 [¶3]。", "cites": [2, 3]}
+    return {"items": [
+        {"lead": "演示方向", "text": "〔演示模式〕换一组对照样品把这条路径单离出来 [¶12]。",
+         "ask": "怎么设计对照才能单离这条路径？", "cites": [12]},
+        {"lead": "演示方向二", "text": "〔演示模式〕把同样的判据搬到另一族氧化物上验证 [¶18]。",
+         "ask": "换到另一族氧化物要先验证什么？", "cites": [18]},
+    ]}
+
+
+@app.get("/api/papers/{pid}/six-answers")
+def six_answers(pid: str):
+    """只读缓存：打开一篇论文时问一次，没生成过的题返回 null。"""
+    _paper_or_404(pid)
+    return db.answers_all(pid)
+
+
+@app.get("/api/papers/{pid}/six-answers/{key}")
+def six_answer(pid: str, key: str):
+    p = _paper_or_404(pid)
+    if key not in SIX_KEYS:
+        raise HTTPException(404, "没有这个问题")
+    cached = db.answer_get(pid, key)
+    if cached:
+        return cached
+    _require_paras(pid)
+    data = _mock_six(key) if config.load()["mock"] else _gen_six(p, key)
+    if not (data.get("text") or data.get("items")):
+        raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
+    db.answer_put(pid, key, data)
+    return data
+
+
 @app.get("/api/papers/{pid}/method-card")
 def method_card(pid: str):
     p = _paper_or_404(pid)

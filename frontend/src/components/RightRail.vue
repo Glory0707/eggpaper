@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH, ROLE_COLOR, ROLE_TEXT_COLOR,
          KIND_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 import { lineSpanOf } from '../find'
 import AskPanel from './AskPanel.vue'
+import MdLite from './MdLite.vue'
 
 const USER_KINDS = ['lookup', 'region']   // 用户自己钉的（查译、选区问答），不算 AI 眉批
 
@@ -25,27 +26,59 @@ function jumpNote(n) {
   jumpPara(n.para_idx)
 }
 
-const gapParas = computed(() =>
-  store.paras.filter(p => store.analysis.annotations[String(p.idx)]?.role === 'gap'))
+/* ---------- 六个问题（骨架页签） ----------
+   段落角色退到幕后：页边书签、略读蒙纱、点段改判、跳转定位一律照旧，
+   但"图例 + 计数"那块 UI 换成读者真正会问的六个问题。
+   故意不把答案摊开：问题先出现，点哪条才展开哪条。
+   ①③④ 的正文是现成的（缺口段 / 主张链 / 局限段），一分钱不花；
+   ②⑤⑥ 要模型写一两句，走「获取」、按篇缓存。 */
+const SIX = [
+  { k: 'q1', n: 1, q: '要解决什么？' },
+  { k: 'q2', n: 2, q: '为什么要解决？', gen: 'why' },
+  { k: 'q3', n: 3, q: '怎么解决的？' },
+  { k: 'q4', n: 4, q: '还有什么没解决？' },
+  { k: 'q5', n: 5, q: '还能做什么？', gen: 'next' },
+  { k: 'q6', n: 6, q: '换个学科怎么看？', gen: 'lens' },
+]
+const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false, q6: false })
+function toggleSix(k) { openSix[k] = !openSix[k] }
 
-const roleCounts = computed(() => {
-  const c = {}
-  for (const v of Object.values(store.analysis.annotations)) c[v.role] = (c[v.role] || 0) + 1
-  return c
-})
-// 每个角色到底落在哪几段。一个角色往往有十几段，"点一下跳第一个"等于把
-// 其余位置全藏了——所以点开是摊开这一类的全部 ¶ 号，自己挑一个去。
-const roleParas = computed(() => {
-  const m = {}
-  for (const [k, a] of Object.entries(store.analysis.annotations)) (m[a.role] ||= []).push(parseInt(k))
-  for (const k of Object.keys(m)) m[k].sort((a, b) => a - b)
-  return m
-})
-const openRole = ref(null)
-function toggleRole(k) { openRole.value = openRole.value === k ? null : k }
-// 排序本身就是信息：主干在前，铺垫在后
-const ROLE_ORDER = ['claim', 'evidence', 'gap', 'limitation', 'control', 'extension', 'background', 'boilerplate']
-const legendRoles = computed(() => ROLE_ORDER.filter(k => roleCounts.value[k]))
+const six = reactive({ why: null, next: null, lens: null })
+const sixBusy = reactive({ why: false, next: false, lens: false })
+const Q_OF = { why: 'q2', next: 'q5', lens: 'q6' }
+
+async function loadSix() {
+  Object.assign(six, { why: null, next: null, lens: null })
+  Object.keys(openSix).forEach(k => (openSix[k] = false))   // 换篇回到"只有问题"的样子
+  if (!store.currentId) return
+  try { Object.assign(six, await api.sixAnswers(store.currentId)) } catch { /* 没缓存很正常 */ }
+}
+async function genSix(key) {
+  if (sixBusy[key]) return
+  sixBusy[key] = true
+  try {
+    six[key] = await api.sixAnswer(store.currentId, key)
+    openSix[Q_OF[key]] = true
+  } catch (e) { toast(e.message) }
+  sixBusy[key] = false
+}
+// 「方法卡」是"怎么解决的"那条的加深版：点一下跳到速览页并顺手取回（没取过才取）
+function openMethod() {
+  tab.value = 'eye'
+  if (!methodCard.value) genMethodCard()
+}
+// 「去问」：把这一条顺着问下去（带进提问面板并直接发出去）
+function askIt(q) {
+  if (!q) return
+  store.askPrefill = { question: q, send: true }
+}
+
+const parasOfRole = roles => store.paras.filter(p => roles.includes(annoRole(p.idx)))
+const annoRole = idx => store.analysis.annotations[String(idx)]?.role
+const annoOf = idx => store.analysis.annotations[String(idx)] || {}
+const gapParas = computed(() => parasOfRole(['gap']))
+const limitParas = computed(() => parasOfRole(['limitation']))
+const warnNotes = computed(() => store.marginalia.notes.filter(n => n.kind === 'warning'))
 
 function anchorsOf(claim) {
   return claim.anchors
@@ -230,7 +263,7 @@ const termsFiltered = computed(() => {
   return list.filter(t => t.term_en.toLowerCase().includes(f) || t.term_zh.includes(f))
 })
 
-watch(() => store.currentId, () => { tab.value = 'skeleton' })
+watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { immediate: true })
 </script>
 
 <template>
@@ -270,47 +303,93 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         </template>
 
         <template v-else>
-          <!-- 图例就是页边那些色块的样本；点一类摊开它的全部位置 -->
-          <div class="mono-label" style="margin:0 0 7px; display:flex; justify-content:space-between">
-            <span>段落角色</span>
-            <span v-if="store.readingPara">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
-          </div>
-          <div class="role-legend">
-            <span class="rl" v-for="k in legendRoles" :key="k" :class="{ on: openRole === k }" @click="toggleRole(k)">
-              <i :style="{ background: ROLE_COLOR[k], color: roleInk(k) }">{{ ROLE_GLYPH[k] }}</i>
-              {{ ROLE_ZH[k] }}
-              <b>{{ roleCounts[k] }}</b>
-            </span>
-          </div>
-          <div class="role-hits" v-if="openRole && roleParas[openRole]">
-            <button v-for="idx in roleParas[openRole]" :key="idx" class="rh-chip" @click="jumpPara(idx)">¶{{ idx }}</button>
+          <!-- 六个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
+          <div class="mono-label six-head">
+            <span>六个问题</span>
+            <span v-if="store.readingPara" class="mono-num">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
           </div>
 
-          <div class="mono-label" style="margin-bottom:8px">研究缺口</div>
-          <div class="gap-node" v-for="p in gapParas" :key="p.idx">
-            <div class="gap-row" @click="jumpPara(p.idx)">
-              <span class="g-tag">¶{{ p.idx }}</span>
-              <span class="g-txt">{{ store.analysis.annotations[String(p.idx)]?.purpose || p.text.slice(0, 40) + '…' }}</span>
-            </div>
-          </div>
+          <section class="six" v-for="s in SIX" :key="s.k" :class="{ open: openSix[s.k] }">
+            <button class="six-q" @click="toggleSix(s.k)">
+              <i>{{ s.n }}</i><span class="qt">{{ s.q }}</span>
+              <b v-if="s.k === 'q1' && gapParas.length">{{ gapParas.length }}</b>
+              <b v-else-if="s.k === 'q3' && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
+              <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
+            </button>
 
-          <div class="mono-label" style="margin:14px 0 8px">论点与证据 · {{ store.analysis.claims.length }} 条</div>
-          <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id">
-            <div class="c-head">
-              <span class="c-id">{{ c.id }}</span>
-              <span class="c-txt">{{ c.text }}</span>
+            <div class="six-a" v-show="openSix[s.k]">
+              <!-- ① 要解决什么：缺口段（作者自己点出的问题），没有就退回最大的一条主张 -->
+              <template v-if="s.k === 'q1'">
+                <div class="gap-row" v-for="p in gapParas" :key="p.idx" @click="jumpPara(p.idx)">
+                  <span class="g-tag">¶{{ p.idx }}</span>
+                  <span class="g-txt">{{ annoOf(p.idx).purpose || p.text.slice(0, 40) + '…' }}</span>
+                </div>
+                <div class="six-note" v-if="!gapParas.length && store.analysis.claims.length">
+                  原文没有点明的缺口段。从主张看，它在解决：{{ store.analysis.claims[0].text }}
+                </div>
+              </template>
+
+              <!-- ② 为什么要解决：生成一句（含依据段号），点右侧获取 -->
+              <template v-else-if="s.k === 'q2'">
+                <MdLite v-if="six.why?.text" class="six-txt" :text="six.why.text" @cite="jumpPara" />
+                <button v-else class="six-get" :disabled="sixBusy.why" @click="genSix('why')">
+                  {{ sixBusy.why ? '正在想' : '获取' }}
+                </button>
+              </template>
+
+              <!-- ③ 怎么解决的：主张 → 证据链 -->
+              <template v-else-if="s.k === 'q3'">
+                <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id">
+                  <div class="c-head" @click="c.anchors.length && jumpPara(c.anchors[0])">
+                    <span class="c-id">{{ c.id }}</span>
+                    <span class="c-txt">{{ c.text }}</span>
+                  </div>
+                  <div class="ev-row" v-for="a in anchorsOf(c)" :key="a.idx" @click="jumpPara(a.idx)">
+                    <span class="e-dot">¶{{ a.idx }}</span>
+                    <span class="e-bar" :style="{ background: ROLE_COLOR[a.anno.role] }"></span>
+                    <span class="e-note">
+                      <span class="rg-kind" :style="{ color: ROLE_TEXT_COLOR[a.anno.role] }">{{ ROLE_ZH[a.anno.role] }}</span>
+                      {{ a.anno.purpose }}
+                      <div class="ev-q" v-if="eqq(a.idx)">该实验回答：{{ eqq(a.idx) }}</div>
+                    </span>
+                  </div>
+                  <div v-if="!anchorsOf(c).length" class="six-note">未找到直接证据段</div>
+                </div>
+                <div class="six-foot">
+                  <button @click="openMethod">方法卡 · protocol</button>
+                </div>
+              </template>
+
+              <!-- ④ 还有什么没解决：局限段 + 眉批里标"有坑"的句子 -->
+              <template v-else-if="s.k === 'q4'">
+                <div class="gap-row" v-for="p in limitParas" :key="p.idx" @click="jumpPara(p.idx)">
+                  <span class="g-tag">¶{{ p.idx }}</span>
+                  <span class="g-txt">{{ annoOf(p.idx).purpose || p.text.slice(0, 40) + '…' }}</span>
+                </div>
+                <div v-for="n in warnNotes" :key="'w' + n.id" class="ev-row" @click="jumpNote(n)">
+                  <span class="e-dot">¶{{ n.para_idx }}</span>
+                  <span class="e-bar" :style="{ background: KIND_COLOR.warning }"></span>
+                  <span class="e-note">{{ n.note }}</span>
+                </div>
+                <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
+                  作者没有明说局限，眉批里也没有标出可疑之处。
+                </div>
+              </template>
+
+              <!-- ⑤⑥ 生成型：几条方向 / 几个学科视角，每条都能顺下去问 -->
+              <template v-else>
+                <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
+                  <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
+                  <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
+                  <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
+                </div>
+                <button v-if="!six[s.gen]?.items?.length" class="six-get"
+                        :disabled="sixBusy[s.gen]" @click="genSix(s.gen)">
+                  {{ sixBusy[s.gen] ? '正在想' : '获取' }}
+                </button>
+              </template>
             </div>
-            <div class="ev-row" v-for="a in anchorsOf(c)" :key="a.idx" @click="jumpPara(a.idx)">
-              <span class="e-dot">¶{{ a.idx }}</span>
-              <span class="e-bar" :style="{ background: ROLE_COLOR[a.anno.role] }"></span>
-              <span class="e-note">
-                <span class="rg-kind" :style="{ color: ROLE_TEXT_COLOR[a.anno.role] }">{{ ROLE_ZH[a.anno.role] }}</span>
-                {{ a.anno.purpose }}
-                <div class="ev-q" v-if="eqq(a.idx)">该实验回答：{{ eqq(a.idx) }}</div>
-              </span>
-            </div>
-            <div v-if="!anchorsOf(c).length" style="font-size:var(--fs-sm);color:var(--ink-3);margin-top:6px">未找到直接证据段</div>
-          </div>
+          </section>
 
           <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.some(n => !USER_KINDS.includes(n.kind))"
                style="margin-top:16px">

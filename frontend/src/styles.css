@@ -1080,6 +1080,50 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   background: var(--paper-deep); border-radius: 4px; padding: 10px 12px;
 }
 
+/* ============================================================
+   六个问题（骨架页签）
+   问题是一行按钮、答案收起在下面——读一篇论文该带着问题进去，
+   所以默认只看见问题；点哪条才摊开哪条。
+   ============================================================ */
+.six-head { margin: 0 0 8px; display: flex; justify-content: space-between; }
+.six { border-top: 1px solid var(--hairline-soft); }
+.six:last-of-type { border-bottom: 1px solid var(--hairline-soft); }
+.six-q {
+  width: 100%; display: flex; align-items: center; gap: 8px; text-align: left;
+  padding: 9px 4px; background: transparent; border: none; border-radius: 0;
+  font-size: var(--fs-md); color: var(--ink-2); font-weight: 550;
+}
+.six-q:hover { background: var(--accent-soft); color: var(--ink); transform: none; box-shadow: none; }
+.six-q i {
+  font-style: normal; font-family: var(--mono); font-size: var(--fs-xs);
+  width: 16px; flex-shrink: 0; color: var(--ink-3); text-align: right;
+}
+.six.open .six-q { color: var(--ink); font-weight: 650; }
+.six-q .qt { flex: 1; min-width: 0; }
+/* 收起时给一个"里面有多少东西"的读数：不点开也知道值不值得点 */
+.six-q b { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 400; color: var(--ink-3); }
+.six-a { padding: 0 0 12px 24px; }
+.six-txt { font-size: var(--fs-sm); line-height: 1.72; color: var(--ink); }
+.six-note { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
+.six-get {
+  font-size: var(--fs-sm); padding: 3px 14px; color: var(--ink-2);
+  background: var(--card-2); border: 1px solid var(--hairline); border-radius: 3px;
+}
+.six-get:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
+.six-foot { margin-top: 8px; }
+.six-foot button { font-size: var(--fs-xs); padding: 2px 9px; color: var(--ink-3); background: transparent; border-color: transparent; }
+.six-foot button:hover { color: var(--accent-deep); background: var(--accent-soft); transform: none; box-shadow: none; }
+/* 一条方向 / 一个学科视角：抬头 + 一两句 + 一句能顺下去问的话 */
+.six-item { margin-top: 10px; }
+.six-item:first-child { margin-top: 0; }
+.six-item .si-lead { font-size: var(--fs-sm); font-weight: 650; color: var(--ink); margin-bottom: 2px; }
+.six-item .si-ask {
+  display: block; margin-top: 5px; text-align: left; max-width: 100%;
+  font-size: var(--fs-xs); padding: 2px 8px; border-radius: 3px;
+  color: var(--accent-deep); background: var(--accent-soft); border-color: var(--accent-line);
+}
+.six-item .si-ask:hover { background: var(--accent); color: #fff; border-color: var(--accent-deep); }
+
 /* 右栏收起按钮 */
 .rtabs .rt-collapse {
   flex: 0 0 auto; width: 26px; padding: 0; font-size: var(--fs-sm);

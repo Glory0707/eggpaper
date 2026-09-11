@@ -21,18 +21,23 @@ ROLE_ZH = {
 
 # ---------------- 基础调用 ----------------
 
-def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2) -> str:
+def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
+         no_think: bool = False) -> str:
+    """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。"""
     cfg = config.load()
     if cfg["mock"] or not cfg["provider"]["api_key"]:
         raise RuntimeError("MOCK")
     budget = max_tokens
     out = ""
     for _ in range(2):                      # 推理模型可能耗尽 token 空想，空结果加倍重试
+        body = {"model": cfg["provider"]["model"], "messages": messages,
+                "max_tokens": budget, "temperature": temperature}
+        if no_think:
+            body["thinking"] = {"type": "disabled"}
         r = httpx.post(
             f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
             headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
-            json={"model": cfg["provider"]["model"], "messages": messages,
-                  "max_tokens": budget, "temperature": temperature},
+            json=body,
             timeout=600,
         )
         r.raise_for_status()
@@ -530,3 +535,87 @@ def vision_ask(image_dataurl: str, question: str) -> str:
     )
     r.raise_for_status()
     return (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
+
+
+# ---------------- 六个问题里需要生成的那三个 ----------------
+# 语料只喂"回答这个问题用得上的那几类段落"，别把全文塞进去——
+# 喂全了模型就会把别的问题的答案也一起倒出来，正好是我们要避免的。
+
+
+def _paras_block(items: list, cap: int = 600) -> str:
+    return "\n".join(f"¶{p['idx']} {(p.get('text') or '')[:cap]}" for p in items)
+
+
+def _items(raw) -> dict:
+    """三个生成题共用的清洗：lead/text/ask 三个字段，没有 text 的一条不留。"""
+    items = []
+    for it in (raw or []):
+        if not isinstance(it, dict):
+            continue
+        text = str(it.get("text") or "").strip()[:300]
+        if not text:
+            continue
+        items.append({"lead": str(it.get("lead") or "").strip()[:20],
+                      "text": text,
+                      "ask": str(it.get("ask") or "").strip()[:80],
+                      "cites": cites_of(text)})
+    return {"items": items[:3]}
+
+
+def answer_why(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
+    """为什么要解决：为什么重要、为什么到现在还没解决。只吃缺口段 + 背景段 + 主张。"""
+    out = chat([
+        {"role": "system", "content":
+            "你在帮一位研究生说清一篇论文'为什么值得做'。只依据给你的段落，说两句话："
+            "这件事为什么重要（对领域、对什么有影响），以及为什么到现在还没解决或有争议。"
+            "句尾标出依据段号，如 [¶3]；没有依据的话就不要说。"
+            '只输出 JSON：{"text":"<两句话，≤90字，含 [¶n] 标注>"}，不要代码块，不要解释。'},
+        {"role": "user", "content":
+            f"论文标题：{title or ''}\n\n"
+            f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
+            f"[背景]\n{_paras_block(backgrounds, 400)}\n\n"
+            "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
+    ], max_tokens=3000, temperature=0.3, no_think=True)
+    text = str(parse_json(out).get("text") or "").strip()[:400]
+    return {"text": text, "cites": cites_of(text)}
+
+
+def answer_next(title: str, limits: list, exts: list, claims: list, warns: list) -> dict:
+    """还能做什么：从作者承认的局限、他做的延伸、以及可疑之处往前推 2~3 条。"""
+    payload = (f"论文标题：{title or ''}\n\n"
+               f"[作者承认的局限]\n{_paras_block(limits)}\n\n"
+               f"[作者做的延伸]\n{_paras_block(exts, 400)}\n\n"
+               "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims))
+    if warns:
+        payload += "\n\n[可疑之处]\n" + "\n".join(f"- {w}" for w in warns)
+    out = chat([
+        {"role": "system", "content":
+            "你是带学生读论文的师兄。基于这篇论文承认的局限、它自己做的延伸、以及被标出的可疑之处，"
+            "说出 2~3 条'接下来可以做什么'——要具体、可执行、有指向（该做哪个材料、该补哪组对照、"
+            "该换哪种方法），禁止'进一步研究''拓宽应用'这类空话。每条配一句能直接拿去问模型的追问。"
+            '只输出 JSON：{"items":[{"lead":"<方向名，≤8字>",'
+            '"text":"<做什么、为什么，≤70字，句尾带依据段号 [¶n]，没有依据就不标>",'
+            '"ask":"<顺着这条往下问的一句话，≤30字>"}]}，不要代码块。'},
+        {"role": "user", "content": payload},
+    ], max_tokens=4000, temperature=0.45, no_think=True)
+    return _items(parse_json(out).get("items"))
+
+
+def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
+    """换个学科怎么看：同一篇论文，别的领域的人会盯什么、会问什么。"""
+    body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
+    out = chat([
+        {"role": "system", "content":
+            "同一个问题，不同学科的人盯的地方不一样。这篇论文如果落到别的领域的人手里，"
+            "他会盯它哪一部分、为什么。给出 2~3 个**真的不同**的领域视角"
+            "（比如做催化的、做理论计算的、做表征的、做工程的、做产业化的），"
+            "每个视角说清'他盯什么'和'他会问什么'。不要复述论文内容。"
+            '只输出 JSON：{"items":[{"lead":"<领域名，≤10字>",'
+            '"text":"<他会盯这篇的哪一点、为什么，≤70字>",'
+            '"ask":"<他会提出的那个问题，≤30字>"}]}，不要代码块。'},
+        {"role": "user", "content":
+            f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
+            "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) +
+            f"\n\n[正文节选]\n{body}"},
+    ], max_tokens=4000, temperature=0.6, no_think=True)
+    return _items(parse_json(out).get("items"))
