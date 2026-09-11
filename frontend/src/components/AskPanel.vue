@@ -47,6 +47,10 @@ async function loadConvs(keep = false) {
 }
 async function loadMsgs() {
   if (!pid.value || !convId.value) { msgs.value = []; return }
+  // 屏幕上的 msgs 只能有一个作者：要么流式在写，要么历史在写。
+  // 正在生成时载入历史，会把刚推上去的那问一答整个换掉——问题看着发出了，
+  // 回答其实还在往一个已经不在列表里的对象里吐（症状：发了没反应）。
+  if (busy.value) return
   loading.value = true
   try {
     const r = await api.qaHistory(pid.value, convId.value)
@@ -56,10 +60,11 @@ async function loadMsgs() {
   await nextTick()
   scrollBottom(false)
 }
-async function reload() { await loadConvs(); await loadMsgs() }
+// 换会话 = 放弃这一摊正在跑的回答：先停下来（半截由 send 的尾巴落库），再读新历史
+async function reload() { stop(true); await loadConvs(); await loadMsgs() }
 
-watch(() => store.currentId, async () => { stop(true); convId.value = null; await reload() })
-watch(convId, (n, o) => { if (n !== o) loadMsgs() })
+watch(() => store.currentId, async () => { convId.value = null; await reload() })
+watch(convId, (n, o) => { if (n !== o) { stop(true); loadMsgs() } })
 
 // ---------- 滚动 ----------
 function onScroll() {
@@ -80,6 +85,9 @@ function follow() { if (atBottom.value) { const el = scrollEl.value; if (el) el.
 async function send(q) {
   q = (q ?? text.value).trim()
   if (!q || busy.value || !pid.value) return
+  // 会话还没载入完就问（预填抢跑）：先把会话取回来，别让服务端替我们猜是哪一摊。
+  // 猜错的后果是问题落进另一摊对话，而这个面板显示的又不是那一摊。
+  if (!convId.value) await loadConvs()
   text.value = ''
   await nextTick(); autoGrow(); inputEl.value?.focus()
   const um = reactive({ role: 'user', content: q })
@@ -212,14 +220,26 @@ function applyPrefill(pf) {
   nextTick(() => { autoGrow(); inputEl.value?.focus() })
   if (pf.send) nextTick(() => send())      // 「去问」= 直接问出去，别再让人按一次回车
 }
-watch(() => store.askPrefill, pf => { if (pf) { applyPrefill(pf); store.askPrefill = null } })
-watch(() => store.askFocusTick, () => nextTick(() => inputEl.value?.focus()))
+/* 首次载入（会话列表 + 历史）没走完之前，预填一律先存着。
+   抢跑的后果是实测过的：send() 拿不到会话号 → 服务端按"最近一摊"落库 →
+   会话号随后被 loadConvs 补上 → 触发 loadMsgs → 刚推上去的那问一答被历史整个换掉，
+   屏幕上只剩旧消息，而回答正往一个已经不在列表里的对象里吐。 */
+let ready = false
+let pending = null
+function takePrefill(pf) {
+  if (!ready) { pending = pf; return }
+  applyPrefill(pf)
+}
+watch(() => store.askPrefill, pf => { if (pf) { takePrefill(pf); store.askPrefill = null } })
+watch(() => store.askFocusTick, () => nextTick(() => inputEl.value?.focus({ preventScroll: true })))
 
 onMounted(async () => {
-  if (store.askPrefill) { applyPrefill(store.askPrefill); store.askPrefill = null }
-  else nextTick(() => inputEl.value?.focus({ preventScroll: true }))
+  if (store.askPrefill) { pending = store.askPrefill; store.askPrefill = null }
   await loadConvs()
   await loadMsgs()
+  ready = true
+  if (pending) { const pf = pending; pending = null; await nextTick(); applyPrefill(pf) }
+  else nextTick(() => inputEl.value?.focus({ preventScroll: true }))
 })
 onUnmounted(() => { stop(true) })
 </script>
@@ -253,8 +273,12 @@ onUnmounted(() => { stop(true) })
 
       <div v-for="(m, i) in msgs" :key="m.id || 'm' + i" class="qa-msg" :class="m.role">
         <div class="q-role">{{ m.role === 'user' ? '你' : 'EGGPAPER' }}</div>
-        <MdLite v-if="m.role === 'assistant'" class="q-body md" :text="m.content || ' '"
-                @cite="jumpPara" />
+        <template v-if="m.role === 'assistant'">
+          <!-- 思考型模型要先想 30~60 秒才吐第一个字。这段空等不写出来的话，
+               "正在想"和"发了没反应"在屏幕上长得一模一样。 -->
+          <div v-if="m.streaming && !m.content" class="q-body md qa-wait">正在想<span class="r-dots">…</span></div>
+          <MdLite v-else class="q-body md" :text="m.content || ' '" @cite="jumpPara" />
+        </template>
         <div class="q-body" v-else>{{ m.content }}</div>
         <span v-if="m.streaming" class="qa-caret"></span>
         <div class="qa-cites" v-if="m.citations?.length">

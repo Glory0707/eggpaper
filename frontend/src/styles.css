@@ -547,7 +547,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .rtabs .rt:hover { transform: none; box-shadow: none; background: rgba(38, 32, 21, 0.04); }
 .rtabs .rt.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-.rbody { flex: 1; overflow-y: auto; padding: 14px 16px 30px; min-height: 0; }
+.rbody { flex: 1; overflow-y: auto; padding: 14px 16px 30px; min-height: 0; position: relative; }
 
 /* 骨架 */
 .gap-node { margin-bottom: 10px; }
@@ -601,6 +601,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .qa-msg .q-role { font-family: var(--sans); font-weight: 600; font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 4px; }
 .qa-msg.user .q-body { font-size: var(--fs-read); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 4px; padding: 8px 11px; }
 .qa-msg.assistant .q-body { font-size: var(--fs-read); line-height: 1.7; }
+/* 等第一个字的空窗（思考型模型要 30~60 秒）：写出来，别让气泡空着 */
+.qa-msg .qa-wait { color: var(--ink-3); }
 .md .md-cite, .qa-cite {
   font-family: var(--mono); font-size: var(--fs-xs); padding: 0 4px; margin: 0 1px;
   background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-deep);
@@ -652,7 +654,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 /* 进度：笔画线 */
 .reading { padding: 8px 2px; }
 .reading .r-line { font-size: var(--fs-md); color: var(--ink-2); }
-.reading .r-dots { display: inline-block; animation: dots 1.4s steps(4) infinite; width: 18px; text-align: left; }
+/* 三个点：凡是"在等模型"的地方都用它（骨架/一眼卡/破壳/提问的正在想） */
+.r-dots { display: inline-block; animation: dots 1.4s steps(4) infinite; width: 18px; text-align: left; }
 .reading .r-bar { height: 2px; background: var(--hairline-soft); margin-top: 10px; overflow: hidden; }
 .reading .r-bar i {
   display: block; height: 100%; width: 30%; background: var(--accent);
@@ -959,6 +962,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
    骨架和 DeepSeek / 豆包一致：上面一排会话，中间滚消息，下面钉住输入框。
    ============================================================ */
 .rbody.flush { padding: 0; overflow: hidden; }
+/* 提问面板常驻（切页签不打断正在生成的回答），所以它不是 rbody 的普通内容，
+   而是盖在 rbody 上的一层：.flush 时 rbody 没有内边距，inset:0 正好铺满 */
+.ask-layer { position: absolute; inset: 0; }
 .ask-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
 .cv-bar {

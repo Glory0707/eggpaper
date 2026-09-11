@@ -113,6 +113,8 @@ const quickList = computed(() => (suggest.value.length ? suggest.value : GENERIC
 // 划词/¶ 提问：切到提问页，剩下的交给 AskPanel（它读 store.askPrefill）
 watch(() => store.askPrefill, pf => { if (pf) tab.value = 'ask' })
 watch(() => store.askFocusTick, () => { tab.value = 'ask' })
+// 提问面板现在常驻（切页签不打断生成），所以"进页面就有光标"要自己补一下
+watch(tab, t => { if (t === 'ask') store.askFocusTick++ })
 
 // ---------- 术语 ----------
 const terms = ref([])
@@ -526,7 +528,12 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
       </template>
 
       <!-- ============ 提问 ============ -->
-      <AskPanel v-if="tab === 'ask'" :quick="quickList" />
+      <!-- 常驻不卸载：切去看原文时，正在生成的回答不该被掐掉。unmount 会 abort 掉这条流，
+           服务端因此不写回答行——库里的症状就是"只有问题、没有回答"。
+           所以改成显示/隐藏，在 rbody 上盖一层。 -->
+      <div class="ask-layer" v-show="tab === 'ask'">
+        <AskPanel :quick="quickList" />
+      </div>
     </div>
 
     <!-- 图表灯箱：像看图片一样左右翻 -->
