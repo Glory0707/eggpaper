@@ -76,6 +76,20 @@ def main():
         step("1/5 构建前端")
         run(["npm", "run", "build"], cwd=os.path.join(ROOT, "frontend"), shell=(os.name == "nt"))
 
+    # 图标/manifest 的 URL 上带着 ?v=<版本号>（见 frontend/index.html 的注释：Chromium
+    # 把 favicon 按URL缓存在自己的 Favicons 数据库里，URL 不变就一直给旧图——老版本
+    # 升级后任务栏还是旧图标就是这条坑）。这里把 dist 里的 v= 统一替换成本次版本号，
+    # 保证每次发版浏览器都当它是新图标重新拉取。
+    dist_index = os.path.join(ROOT, "frontend", "dist", "index.html")
+    with open(dist_index, encoding="utf-8") as f:
+        html = f.read()
+    import re as _re
+    html2 = _re.sub(r"v=[0-9A-Za-z.]+", f"v={ver}", html)
+    if html2 != html:
+        with open(dist_index, "w", encoding="utf-8") as f:
+            f.write(html2)
+        print(f"  图标版本号已换成 v={ver}")
+
     step("2/5 生成图标")
     run([py, os.path.join(ROOT, "tools", "make_icon.py")])
 
