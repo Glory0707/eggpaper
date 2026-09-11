@@ -351,6 +351,34 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .sheet-stage { display: flex; flex-direction: column; align-items: center; gap: 26px; }
 
+/* ---------- 入场：破壳 → 纸面 ----------
+   载入时不再是一行字加两个点在转，而是这枚印章自己在那儿：一枚标记、一条细线
+   （宽度就是真进度，pdf.js 给的）、一行"正在破壳"。载入完成不是"啪"地换画面，
+   而是破壳先淡出、纸面淡入并轻轻落下 6px——像把纸放上桌，不是弹出一个窗口。 */
+.hatch {
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+  margin: 96px auto 0;
+}
+.hatch-mark { width: 68px; height: 68px; color: var(--accent); opacity: 0.9; animation: hatchIn 420ms var(--ease-out) both; }
+@keyframes hatchIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 0.9; transform: none; } }
+.hatch-line {
+  width: 148px; height: 1.5px; background: var(--hairline-soft);
+  border-radius: 1px; overflow: hidden;
+}
+.hatch-line i {
+  display: block; height: 100%; background: var(--accent); opacity: 0.8; border-radius: 1px;
+  transition: width 260ms var(--ease-smooth);
+}
+.hatch-word {
+  font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.16em;
+  color: var(--ink-3);
+}
+/* 破壳退场快一点、纸面进来慢一点（退场永远比入场快） */
+.desk-leave-active { transition: opacity 90ms var(--ease-smooth); }
+.desk-leave-to { opacity: 0; }
+.desk-enter-active { transition: opacity 240ms var(--ease-out), transform 240ms var(--ease-out); }
+.desk-enter-from { opacity: 0; transform: translateY(6px); }
+
 /* 出图进度线：贴书桌顶部，细到几乎看不见，但你在换模式时知道它在干活 */
 .stage-line {
   position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 200;

@@ -246,7 +246,7 @@ function onKey(e) {
       <main class="desk">
         <div class="empty" v-if="!store.paper">
           <EggMark class="egg-big" :class="{ hop: dragOver }" />
-          <div class="e-title">剥开论文的壳，读论证的芯</div>
+          <div class="e-title">一篇读透，胜过扫过十篇</div>
           <div class="e-sub">把 PDF 拖进来，或按 g l 打开文库</div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
         </div>

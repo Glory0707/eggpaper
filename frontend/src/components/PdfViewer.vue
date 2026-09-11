@@ -8,6 +8,7 @@ import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../fin
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
+import EggMark from './EggMark.vue'
 import { vDrag } from '../drag'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
@@ -18,6 +19,9 @@ const LS_POS = 'eggpaper:pos:'
 
 const deskEl = ref(null)
 const ready = ref(false)
+const loadPct = ref(0)         // 破壳进度：喂给入场那条细线
+let creep = 0                   // 缓慢逼近的底速（本地 PDF 的下载是瞬时的，
+                                // pdf.js 的进度回调基本不触发——只靠它，线会一直停在 0%）
 const zoom = ref(1)              // 在"适宽/适页"之上的微调倍率
 const fit = ref('width')         // width 适宽 / page 适页 / none 固定百分比
 const fitScale = ref(1)          // 适宽比例：容器宽 ÷ 纸宽
@@ -81,7 +85,16 @@ function isCore(p) { return CORE_ROLES.includes(roleOf(p) || 'background') }
 /* ---------------- 文档装载与 sheets 构建 ---------------- */
 
 async function getDoc(kind) {
-  if (!docs[kind]) docs[kind] = await pdfjsLib.getDocument(`/api/papers/${store.currentId}/pdf?variant=${kind}`).promise
+  if (!docs[kind]) {
+    const task = pdfjsLib.getDocument(`/api/papers/${store.currentId}/pdf?variant=${kind}`)
+    // 首次打开才报进度：换姿势是本地重排，不需要（也不会有）下载进度
+    if (!sheets.value.length) {
+      task.onProgress = ({ loaded, total }) => {
+        if (total) loadPct.value = Math.max(loadPct.value, Math.min(0.94, loaded / total))
+      }
+    }
+    docs[kind] = await task.promise
+  }
   return docs[kind]
 }
 
@@ -123,10 +136,21 @@ async function buildSheets() {
   sheets.value = rows
 }
 
+// 破壳那条线：真进度有就用真的，没有也让它一直往前挪一点（上限 90%），
+// 免得"在等"和"卡死了"长得一样。到 1 由 ready 那一拍负责。
+function startCreep() {
+  stopCreep()
+  creep = setInterval(() => {
+    if (loadPct.value >= 0.9) return
+    loadPct.value = Math.min(0.9, loadPct.value + (0.92 - loadPct.value) * 0.22)
+  }, 240)
+}
+function stopCreep() { clearInterval(creep); creep = 0 }
+
 async function load({ keepPlace = false } = {}) {
   loading = true
   const veryFirst = !sheets.value.length
-  if (veryFirst) ready.value = false
+  if (veryFirst) { ready.value = false; loadPct.value = 0.08; startCreep() }
   // 换姿势（原文/译文/双语/对开）前先记住读到哪里，换完再落回同一页同一高度
   const anchor = keepPlace || !veryFirst ? currentAnchor() : null
   sheets.value = []
@@ -141,6 +165,8 @@ async function load({ keepPlace = false } = {}) {
   }
   await measure()
   await renderAll()
+  stopCreep()
+  loadPct.value = 1
   ready.value = true
   await nextTick()
   await measureNotes()
@@ -850,6 +876,7 @@ onBeforeUnmount(() => {
   scroller()?.removeEventListener('wheel', onUserScroll)
   scroller()?.removeEventListener('wheel', onWheelZoom)
   scroller()?.removeEventListener('touchstart', onUserScroll)
+  stopCreep()
   for (const d of Object.values(docs)) { try { d?.destroy() } catch { /* */ } }
   docs = { orig: null, dual: null, mono: null }
 })
@@ -979,9 +1006,11 @@ watch(() => store.marginalia.notes, (n, o) => {
 
 <template>
   <div class="desk-inner" ref="deskEl">
-    <div class="reading" v-if="!ready" style="max-width:420px;margin:60px auto">
-      <div class="r-line">正在破壳<span class="r-dots">…</span></div>
-      <div class="r-bar"><i /></div>
+    <Transition name="desk" mode="out-in">
+    <div class="hatch" v-if="!ready">
+      <EggMark class="hatch-mark" />
+      <div class="hatch-line"><i :style="{ width: Math.round(loadPct * 100) + '%' }" /></div>
+      <div class="hatch-word">正在破壳</div>
     </div>
 
     <div v-else class="sheet-stage">
@@ -1056,6 +1085,7 @@ watch(() => store.marginalia.notes, (n, o) => {
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 出图进度：一条不挡路的细线，比"遮住论文的加载器"诚实 -->
     <div class="stage-line" v-if="ready && rendering"><i /></div>
