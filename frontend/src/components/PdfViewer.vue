@@ -5,6 +5,7 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, KIND_ZH, CORE_ROLES, KIND_COLOR, KIND_TEXT_COLOR } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
+import { prettyChem } from '../chem'
 import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
 import { vDrag } from '../drag'
@@ -1046,7 +1047,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
                 <button v-if="!pending" class="mg-del" title="移除这条批注" @click.stop="unpin(n.id)">×</button>
               </div>
-              <div class="mg-body">{{ n.note }}</div>
+              <div class="mg-body">{{ prettyChem(n.note) }}</div>
               <span class="mg-quote" :title="'跳到纸上这句：' + n.quote" @click.stop="jumpQuote(n)">“{{ n.quote.slice(0, 40) }}{{ n.quote.length > 40 ? '…' : '' }}”</span>
               <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->
               <span v-if="quoteLoose(n)" class="mg-loose" title="模型抄回的引文与原文略有出入，纸上的划线只盖对得上的那一段">≈</span>

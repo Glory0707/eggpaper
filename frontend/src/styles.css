@@ -511,6 +511,14 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .gap-row:hover { background: rgba(38, 32, 21, 0.05); }
 .gap-row .g-tag { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; color: #fff; background: var(--r-gap); border-radius: 2px; padding: 2px 5px; flex-shrink: 0; }
 .gap-row .g-txt { font-family: var(--sans); font-weight: 500; font-size: var(--fs-read); line-height: 1.6; }
+/* 段下面的原文摘句：①④ 光有 22 字的目的看不出问题到底是什么，得让它自己说话 */
+.gap-quote {
+  margin: 3px 0 2px 26px; padding: 6px 9px; border-radius: 3px;
+  background: var(--paper-deep);
+  font-size: var(--fs-sm); line-height: 1.68; color: var(--ink-2);
+  cursor: pointer; transition: color var(--t-fast) var(--ease-smooth);
+}
+.gap-quote:hover { color: var(--ink); }
 .ev-row { display: flex; gap: 7px; align-items: baseline; margin-top: 7px; padding-left: 2px; cursor: pointer; }
 .ev-row:hover .e-note { color: var(--ink); }
 .ev-row .e-dot { width: calc(22px * var(--fs-scale)); font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
@@ -636,6 +644,13 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .f-row label { display: block; margin-bottom: 5px; }
 .modal .f-row input, .modal .f-row select { width: 100%; }
 .modal .f-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; align-items: center; }
+/* 应用内对话框（确认 / 输入）：比设置窄一点，正文一行一句，确定键可以是朱红 */
+.modal.dialog { width: 372px; }
+.modal.dialog .dlg-body { font-size: var(--fs-md); line-height: 1.7; color: var(--ink-2); margin-bottom: 14px; }
+.modal.dialog .dlg-input { width: 100%; }
+.modal.dialog .f-actions { margin-top: 16px; }
+.modal .primary.danger { background: var(--vermilion); border-color: #9d3a25; }
+.modal .primary.danger:hover { background: #9d3a25; }
 .modal .test-reply { font-size: var(--fs-sm); color: var(--ink-3); margin-right: auto; max-width: 210px; }
 
 /* 护眼底纹：小色片 + 名，选中的那档套一圈墨环 */

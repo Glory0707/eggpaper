@@ -3,6 +3,8 @@
  * 只解析模型真会吐的那几种。不做通用解析器——通用解析器会顺手把表格、嵌套引用、
  * HTML 透传都带进来，在这类"读一句算一句"的面板里全是风险和噪音。
  */
+import { prettyChem } from './chem'
+
 const CITE = /¶\s*\d+/
 const CODE = /`[^`]+`/
 const BOLD = /\*\*[^*]+\*\*/
@@ -10,7 +12,7 @@ const BOLD = /\*\*[^*]+\*\*/
 export function mdSegs(text) {
   const out = []
   for (const raw of String(text || '').split('\n')) {
-    let t = raw.replace(/\s+$/, '')
+    let t = prettyChem(raw.replace(/\s+$/, ''))
     let head = 0, bullet = false
     const hm = t.match(/^(#{1,4})\s*(.*)$/)
     if (hm) { head = hm[1].length; t = hm[2] }

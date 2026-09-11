@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, KIND_ZH, KIND_COLOR } from '../store'
 import { lineSpanOf } from '../find'
+import { prettyChem } from '../chem'
 import AskPanel from './AskPanel.vue'
 import MdLite from './MdLite.vue'
 
@@ -13,6 +14,15 @@ const tab = ref('skeleton')
 const rbodyEl = ref(null)      // 「↗」指针要滚到指定那一问，得能问到滚动容器
 
 const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
+
+// 摘一段原文：断在句末更体面，断不了就按字数切
+function excerpt(text, cap = 132) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim()
+  if (t.length <= cap) return t
+  const cut = t.slice(0, cap)
+  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('。'), cut.lastIndexOf('; '))
+  return (stop > cap * 0.55 ? cut.slice(0, stop + 1) : cut + '…')
+}
 
 function jumpPara(idx) {
   const p = paraByIdx.value[idx]
@@ -402,12 +412,17 @@ watch(() => store.currentId, () => {
             <div class="six-a" v-show="openSix[s.k]">
               <!-- ① 要解决什么：缺口段（作者自己点出的问题），没有就退回最大的一条主张 -->
               <template v-if="s.k === 'q1'">
-                <div class="gap-row" v-for="p in gapParas" :key="p.idx" @click="jumpPara(p.idx)">
-                  <span class="g-tag">¶{{ p.idx }}</span>
-                  <span class="g-txt">{{ annoOf(p.idx).purpose || p.text.slice(0, 40) + '…' }}</span>
+                <div v-for="p in gapParas" :key="p.idx" class="gap-node">
+                  <div class="gap-row" @click="jumpPara(p.idx)">
+                    <span class="g-tag">¶{{ p.idx }}</span>
+                    <span class="g-txt">{{ annoOf(p.idx).purpose }}</span>
+                  </div>
+                  <!-- 目的句只说"这段在干嘛"，问题到底是什么得看原文自己怎么说的 -->
+                  <div class="gap-quote" @click="jumpPara(p.idx)">{{ excerpt(p.text) }}</div>
                 </div>
-                <div class="six-note" v-if="!gapParas.length">
-                  原文没有点明的缺口段——从下一条的主张链往回看，要解决的问题就是第一条主张要回答的那个。
+                <div class="six-note" v-if="!gapParas.length && store.analysis.claims.length">
+                  原文没有单独点出缺口段。它要解决的问题，就是第一条主张要回答的那个：
+                  <b>{{ store.analysis.claims[0].text }}</b>
                 </div>
               </template>
 
@@ -444,15 +459,18 @@ watch(() => store.currentId, () => {
 
               <!-- ④ 还有什么没解决：局限段 + 眉批里标"有坑"的句子 -->
               <template v-else-if="s.k === 'q4'">
-                <div class="gap-row" v-for="p in limitParas" :key="p.idx" @click="jumpPara(p.idx)">
-                  <span class="g-tag">¶{{ p.idx }}</span>
-                  <span class="g-txt">{{ annoOf(p.idx).purpose || p.text.slice(0, 40) + '…' }}</span>
+                <div v-for="p in limitParas" :key="p.idx" class="gap-node">
+                  <div class="gap-row" @click="jumpPara(p.idx)">
+                    <span class="g-tag">¶{{ p.idx }}</span>
+                    <span class="g-txt">{{ annoOf(p.idx).purpose }}</span>
+                  </div>
+                  <div class="gap-quote" @click="jumpPara(p.idx)">{{ excerpt(p.text) }}</div>
                 </div>
                 <div v-for="n in warnNotes" :key="'w' + n.id" class="ev-row" @click="jumpNote(n)">
                   <span class="e-dot">¶{{ n.para_idx }}</span>
                   <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] || KIND_COLOR.warning }"></span>
                   <span class="e-note">
-                    {{ n.note }}
+                    {{ prettyChem(n.note) }}
                     <button class="ev-ask" title="就这条批注追问模型" @click.stop="askNote(n)">问 ↗</button>
                   </span>
                 </div>
@@ -500,9 +518,9 @@ watch(() => store.currentId, () => {
           <div class="r-bar"><i /></div>
         </div>
         <div class="card-eye" v-else>
-          <div class="ce-one">{{ store.summary.one_line }}</div>
+          <div class="ce-one">{{ prettyChem(store.summary.one_line) }}</div>
           <div class="ce-row go" @click="gotoSix('q3')" title="去「问题」页第 3 问：主张与证据链">
-            <span class="ce-k">发现</span><span class="ce-v">{{ store.summary.findings }}</span>
+            <span class="ce-k">发现</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>
           <div class="ce-row go" @click="gotoSix('q4')" :title="`去「问题」页第 4 问：${todoLine}`">
@@ -531,15 +549,15 @@ watch(() => store.currentId, () => {
             <span v-else-if="mcBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
           </div>
           <div class="card-eye" v-if="methodCard?.goal">
-            <div class="ce-row"><span class="ce-k">目标</span><span class="ce-v">{{ methodCard.goal }}</span></div>
-            <div class="ce-row"><span class="ce-k">体系</span><span class="ce-v">{{ methodCard.system }}</span></div>
-            <div class="ce-row"><span class="ce-k">条件</span><span class="ce-v">{{ methodCard.conditions }}</span></div>
+            <div class="ce-row"><span class="ce-k">目标</span><span class="ce-v">{{ prettyChem(methodCard.goal) }}</span></div>
+            <div class="ce-row"><span class="ce-k">体系</span><span class="ce-v">{{ prettyChem(methodCard.system) }}</span></div>
+            <div class="ce-row"><span class="ce-k">条件</span><span class="ce-v">{{ prettyChem(methodCard.conditions) }}</span></div>
             <div class="ce-row"><span class="ce-k">步骤</span>
               <span class="ce-v">
-                <div class="mc-step" v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ s }}</div>
+                <div class="mc-step" v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ prettyChem(s) }}</div>
               </span>
             </div>
-            <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">注意</span><span class="ce-v">{{ methodCard.notes }}</span></div>
+            <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">注意</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
             <button v-if="!mcMore && methodCard.steps.length > MC_STEPS" class="blk-more" @click="mcMore = true">
               展开全部 {{ methodCard.steps.length }} 步<span v-if="methodCard.notes"> · 注意</span>
             </button>
@@ -556,12 +574,9 @@ watch(() => store.currentId, () => {
           </div>
           <div v-if="advisor.length">
             <div class="adv-item" v-for="(q, i) in advisor" :key="i">
-              <div class="adv-q">Q{{ i + 1 }} · {{ q.q }}</div>
-              <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ o }}</li></ul>
+              <div class="adv-q">Q{{ i + 1 }} · {{ prettyChem(q.q) }}</div>
+              <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ prettyChem(o) }}</li></ul>
             </div>
-          </div>
-          <div v-else-if="store.analysis.status === 'done'" class="six-note">
-            拿去组会或答辩时最可能被问住的三个问题——作者自己已经承认的那些不算。
           </div>
           <div v-else class="six-note">先析读全文，才有主张和薄弱点可以问。</div>
         </div>

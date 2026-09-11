@@ -7,6 +7,7 @@
  */
 import { computed, nextTick, ref } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper } from '../store'
+import { confirmBox } from '../dialog'
 
 const emit = defineEmits(['import', 'close'])
 const fileInput = ref(null)
@@ -91,7 +92,11 @@ async function doRename(c) {
   try { await api.collRename(c.id, n); await refreshCollections() } catch (e) { toast(e.message) }
 }
 async function delColl(c) {
-  if (!confirm(`删掉分类「${c.name}」？（文献本身不会被删，只是不再归在这一类）`)) return
+  const yes = await confirmBox({
+    title: '删除分类', ok: '删除', danger: true,
+    body: `「${c.name}」里的文献不会被删，只是不再归在这一类。`,
+  })
+  if (!yes) return
   try {
     await api.collDelete(c.id)
     if (store.lib.coll === c.id) store.lib.coll = 'all'
@@ -139,7 +144,11 @@ function onDrop(e) {
   emit('import', e.dataTransfer?.files?.[0])
 }
 async function del(pid, name) {
-  if (!confirm(`删除《${name.slice(0, 30)}…》及其全部批注？本地的骨架、眉批、问答会一起清掉。`)) return
+  const yes = await confirmBox({
+    title: '删除文献', ok: '删除', danger: true,
+    body: `《${name.slice(0, 40)}》以及它的批注、析读、问答会一起从本机删掉。`,
+  })
+  if (!yes) return
   try {
     await api.deletePaper(pid)
   } catch (e) { toast('删除失败：' + e.message); return }
@@ -237,7 +246,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 
     <div class="drop-hint" :class="{ over }" @click="fileInput.click()"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
-      拖入 PDF · 或点击导入
+      拖入 PDF 或点击导入
     </div>
     <input ref="fileInput" type="file" accept="application/pdf" hidden @change="onFile" />
   </div>

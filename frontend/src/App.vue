@@ -6,6 +6,8 @@ import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import RightRail from './components/RightRail.vue'
 import SettingsModal from './components/SettingsModal.vue'
+import Dialog from './components/Dialog.vue'
+import { dlg, dlgCancel } from './dialog'
 import EggMark from './components/EggMark.vue'
 
 const showSettings = ref(false)
@@ -139,6 +141,9 @@ const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.
 /* ---------------- 键盘流 ---------------- */
 function onKey(e) {
   const t = e.target
+  // 对话框是最上面一层：Esc 先关它，别的浮层这一拍都别动
+  // （否则"删分类"弹窗开着按 Esc，会把整个文库也一起收掉）
+  if (dlg.open) { if (e.key === 'Escape') { e.preventDefault(); dlgCancel() } return }
   if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) return
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
@@ -268,6 +273,9 @@ function onKey(e) {
     <Transition name="fade">
       <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" />
     </Transition>
+    <!-- 全局唯一的应用内对话框：别处 await confirmBox / inputBox 就行。
+         别放进上面那个 Transition——Transition 只允许一个子节点，多一个就编译不过 -->
+    <Dialog />
 
     <!-- 键盘卡 -->
     <Transition name="pop">

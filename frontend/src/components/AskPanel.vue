@@ -10,6 +10,7 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, askStream, store, toast, jumpTo } from '../store'
+import { confirmBox, inputBox } from '../dialog'
 import MdLite from './MdLite.vue'
 
 const props = defineProps({ quick: { type: Array, default: () => [] } })
@@ -179,14 +180,18 @@ async function newConv() {
 async function renameConv() {
   const c = curConv.value
   if (!c) return
-  const t = prompt('会话名称', c.title)
+  const t = await inputBox({ title: '重命名会话', value: c.title, placeholder: '会话名称', ok: '改名' })
   if (t == null) return
   try { await api.convRename(c.id, t.trim() || '新对话'); await loadConvs(true) } catch (e) { toast(e.message) }
 }
 async function delConv() {
   const c = curConv.value
   if (!c) return
-  if (!confirm(`删除会话「${c.title}」？其中的问答会一起删掉。`)) return
+  const yes = await confirmBox({
+    title: '删除会话', danger: true, ok: '删除',
+    body: `「${c.title}」里的问答会一起删掉，论文与批注不受影响。`,
+  })
+  if (!yes) return
   try {
     stop(true)
     await api.convDelete(c.id)

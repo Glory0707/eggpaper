@@ -512,7 +512,9 @@ def method_card(title: str, paras: list) -> dict:
             '"conditions":"<关键条件与参数：仪器、软件、参数值，≤120字>",'
             '"steps":["<步骤1，≤40字>", "<步骤2>", "..."],'
             '"notes":"<复现时要注意的坑，≤60字>"}'
-            "步骤要具体可执行，保留关键数字。不要 markdown 代码块，不要解释。"},
+            "步骤要具体可执行，保留关键数字。写法：化学式与上下标用 Unicode 字符"
+            "（Sc₂O₃、10⁻⁷、Oₛ），不要 LaTeX、不要 $…$、不要用下划线代替下标。"
+            "不要 markdown 代码块，不要解释。"},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
     return parse_json(out)
