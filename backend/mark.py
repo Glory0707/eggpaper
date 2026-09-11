@@ -13,28 +13,38 @@ VIEW = 96                                   # 与 SVG 的 viewBox 同尺度
 ACCENT = (29, 78, 95)                       # --accent
 PAPER = (255, 255, 255)
 
-# 尺寸 → (环宽, [(字条 y, 宽)], 字条高)
+# 「壮」的那一版：画满画布（椭圆撑到边）、环更粗、字条减到两条。
+# 16/24px 用它——这两个尺寸上"照比例缩"的结果是环 2px、字条 1.6px，落下来就是一团糊。
+# 托盘、favicon 的小尺寸、exe 的小尺寸都用它（用户在标题栏/任务栏/tab 上看到的就是这些）。
+BOLD = {
+    16: (15.0, [(36, 46), (58, 34)], 12.0),
+    20: (14.0, [(35, 45), (57, 33)], 11.0),
+    24: (14.0, [(34, 44), (56, 32)], 11.0),
+    32: (13.0, [(34, 40), (56, 28)], 10.0),
+}
+# 尺寸 → (环宽, [(字条 y, 宽)], 字条高)。32px 以上细节吃得下，按正常比例来。
 SPEC = {
-    16: (13.0, [(34, 26), (54, 16)], 10.0),          # 只留两条、环最粗
-    24: (11.0, [(32, 30), (46, 34), (60, 18)], 8.0),
-    32: (9.0, [(32, 30), (45, 36), (58, 20)], 7.0),
+    40: (8.0, [(32, 32), (44, 38), (56, 36), (67, 20)], 6.5),
     48: (7.0, [(31, 34), (43, 40), (55, 38), (66, 20)], 6.0),
 }
 FULL = (6.0, [(30, 36), (42, 42), (54, 40), (66, 22)], 5.5)   # 128/256 用完整稿
-# 托盘专用：画满画布（托盘只给 16~20px，留白等于把自己缩小）
-TRAY_SPEC = {
-    16: (15.0, [(36, 46), (58, 34)], 12.0),
-    24: (14.0, [(34, 44), (56, 32)], 11.0),
-    32: (15.0, [(36, 46), (58, 34)], 12.0),
-}
+FULL_BOX = (18, 14, 78, 82)          # 正常比例时的椭圆框（96 视口）
+BOLD_BOX = (5, 2, 91, 94)            # 画满时撑到边
 
 
 def spec_for(px: int, tray: bool = False):
-    table = TRAY_SPEC if tray else SPEC
-    for k in sorted(table):
+    """这套尺寸用哪一版几何 + 椭圆框。
+
+    32px 以下一律走 BOLD（画满、环粗、两条字条）：这几个尺寸是"标题栏 / 任务栏 / 托盘 /
+    tab"用的，读者只看一眼，细节留不住，**形状壮不壮**才是关键。32px 以上细节吃得下。
+    """
+    if px <= 32:                        # 小尺寸一律"壮"的那版（含托盘与任务栏）
+        key = min(BOLD, key=lambda k: abs(k - px))
+        return BOLD[key], BOLD_BOX
+    for k in sorted(SPEC):
         if px <= k:
-            return table[k]
-    return FULL if not tray else TRAY_SPEC[32]
+            return SPEC[k], FULL_BOX
+    return FULL, FULL_BOX
 
 
 def draw(px: int, tile: bool = False, tray: bool = False) -> Image.Image:
@@ -44,11 +54,7 @@ def draw(px: int, tile: bool = False, tray: bool = False) -> Image.Image:
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     k = size / VIEW
-    w, bars, h = spec_for(px, tray)
-    if tray:                                 # 托盘：椭圆撑到边
-        box = (5, 2, 91, 94)
-    else:
-        box = (18, 14, 78, 82)
+    (w, bars, h), box = spec_for(px, tray)
     if tile:
         d.rounded_rectangle([0, 0, size - 1, size - 1], radius=size // 5, fill=PAPER)
     d.ellipse([box[0] * k, box[1] * k, box[2] * k, box[3] * k],

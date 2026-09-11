@@ -84,7 +84,7 @@ def _ico_bytes(imgs, sizes) -> bytes:
 
 def make_ico(out_path: str) -> str:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    sizes = [16, 24, 32, 48, 64, 128, 256]
+    sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
     imgs = [_draw(s, tile=(s >= 48)) for s in sizes]
     with open(out_path, "wb") as f:
         f.write(_ico_bytes(imgs, sizes))

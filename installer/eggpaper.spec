@@ -14,8 +14,8 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 datas = [
     (os.path.join(ROOT, "frontend", "dist"), "frontend/dist"),   # 前端界面
     (os.path.join(ROOT, "VERSION"), "."),                        # 版本号（更新检查要用）
+    (os.path.join(ROOT, "installer", "eggpaper.ico"), "."),      # 多尺寸图标：窗口/托盘取它
 ]
-# 后端按包名引用的东西，PyInstaller 静态分析看不到，手动点名
 hiddenimports = [
     # 托盘（pystray 的后端是按平台动态选的，静态分析看不到）
     "pystray._win32", "PIL.Image", "PIL.ImageDraw",
@@ -38,7 +38,8 @@ a = Analysis(
     # excludes 的优先级高于 hiddenimports，列进去就是"明明装了却说找不到"。
     excludes=["numpy", "scipy", "pandas", "matplotlib", "tkinter", "pytest",
               "IPython", "notebook",
-              # 独立窗口走浏览器应用模式，不用内嵌 WebView（pywebview 会带 pythonnet，+25MB）
+              # 独立窗口走浏览器应用模式。pywebview 试过并撤掉：它在打包环境里
+              # import 就卡住（pythonnet 加载 .NET 时握着 GIL，兜底计时都跑不到）。
               "webview", "pythonnet", "clr_loader"],
     noarchive=False,
 )

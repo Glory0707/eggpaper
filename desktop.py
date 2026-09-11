@@ -9,7 +9,7 @@
 1. **默认浏览器；`--window` 给一个没有浏览器边框的独立窗口**。这个应用的交互
    （划词、Ctrl+F、缩放、打印、多标签）全长在浏览器上，所以窗口用系统自带的
    Edge/Chrome 的 **应用模式**（`--app=URL`）开——同样的引擎、同样的能力、自己的任务栏
-   条目，**不额外背一个 WebView 运行时**。装了 pywebview 的话优先用它（真内嵌窗口）。
+   条目，**不额外背一个 WebView 运行时**。
 2. **没有控制台窗口**（打包时 console=False）。所以任何启动失败都必须写进日志文件，
    路径 %LOCALAPPDATA%\\eggpaper\\logs\\app.log——设置面板里写了怎么找到它。
 3. **单实例**。端口上已经有 eggpaper 在跑（用户双击了两次图标），就只打开浏览器，
@@ -149,6 +149,12 @@ def start_tray(url: str, port: int, log) -> bool:
     return True
 
 
+def _window_only_mode(url: str) -> int:
+    """`--window-only`：本进程只开一个窗口（独立进程，不干扰服务进程）。"""
+    import window as winmod
+    return winmod.run_window_only(url)
+
+
 def _open_window(url: str, log) -> bool:
     """独立窗口：实现放在 backend/window.py（界面里那颗「在独立窗口打开」走同一份）。
 
@@ -162,7 +168,7 @@ def _open_window(url: str, log) -> bool:
         log("独立窗口不可用（模块没打进包）：")
         log(traceback.format_exc())
         return False
-    how = winmod.open_window(url)
+    how = winmod.open_window(url)               # 开发模式：直接开
     log(f"独立窗口：{how}" if how else "没找到可用的浏览器（Edge/Chrome），退回默认浏览器")
     return bool(how)
 
@@ -290,6 +296,9 @@ def _install_crash_log(log):
 def main():
     _setup_paths()
     _dpi_aware()
+    if "--window-only" in sys.argv:                 # 只开窗口的那个进程
+        port = _running_instance() or PORTS[0]
+        return _window_only_mode(f"http://{HOST}:{port}/")
     import appinfo
     log = _log
     _install_crash_log(log)
