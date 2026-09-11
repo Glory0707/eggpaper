@@ -112,7 +112,6 @@ async function copy(row) {
           </div>
 
           <div class="cite-foot">
-            <span>抄自 PDF 首页的刊头、页脚与页边水印，投稿前核对一眼</span>
             <a v-if="link" :href="link" target="_blank" rel="noreferrer">去核对 ↗</a>
             <button class="ghost" :disabled="busy" @click="recognize">
               {{ busy ? '重认中…' : '重新识别' }}

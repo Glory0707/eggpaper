@@ -791,10 +791,10 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .cite-row .cr-cp { flex: 0 0 auto; opacity: 0; font-size: var(--fs-xs); color: var(--ink-3); }
 .cite-row:hover .cr-cp { opacity: 1; color: var(--accent); }
 .cite-foot {
-  display: flex; align-items: center; gap: 10px; margin-top: 15px; padding-top: 12px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+  margin-top: 15px; padding-top: 12px;
   border-top: 1px solid var(--hairline); font-size: var(--fs-xs); color: var(--ink-3);
 }
-.cite-foot span { flex: 1; }
 .cite-foot a { color: var(--accent); text-decoration: none; }
 .cite-foot a:hover { text-decoration: underline; }
 
@@ -1081,25 +1081,32 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .ask-layer { position: absolute; inset: 0; }
 .ask-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
+/* 会话栏：一行等高（26px）的三件套——切换 / 新建 / 改名 / 删掉。
+   图标统一成 14px 的线条 SVG：原来一个细 ＋、一个实心 ✎、一个彩色 emoji 🗑，
+   三种份量凑在一行里显得没整理过，而且 emoji 的颜色也不属于这套墨色。 */
 .cv-bar {
-  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
-  padding: 7px 8px; border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 8px; border-bottom: 1px solid var(--hairline);
   background: var(--card);
 }
 .cv-pick {
-  flex: 1; min-width: 0; font-size: var(--fs-sm); padding: 4px 6px;
-  border: 1px solid var(--hairline); border-radius: 3px; background: var(--card-2);
-  color: var(--ink-2);
+  flex: 1; min-width: 0; height: 26px; font-size: var(--fs-sm);
+  padding: 0 6px; border: 1px solid var(--hairline); border-radius: 3px;
+  background: var(--card-2); color: var(--ink-2);
 }
+.cv-pick:hover { border-color: var(--ink-3); }
 .cv-btn {
-  flex: 0 0 auto; padding: 3px 7px; font-size: var(--fs-sm);
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
   border-color: transparent; background: transparent; color: var(--ink-2);
+  border-radius: 3px;
 }
-.cv-btn:hover { background: var(--accent-soft); transform: none; box-shadow: none; }
+.cv-btn svg { width: 14px; height: 14px; display: block; }
+.cv-btn:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
+.cv-btn.danger:hover { background: rgba(184, 70, 46, 0.09); color: var(--vermilion); }
 
 .qa-scroll { flex: 1; overflow-y: auto; padding: 14px 14px 18px; min-height: 0; position: relative; }
-.qa-empty { padding: 6px 2px 0; }
-.qa-empty .qe-title { font-weight: 650; font-size: var(--fs-xl); letter-spacing: -0.01em; margin-bottom: 12px; }
+.qa-empty { padding: 2px; }
 /* 较早的对话被压缩过：一行字说明它还在，悬停能看全文 */
 .qa-fold {
   font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 10px;

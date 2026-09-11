@@ -36,6 +36,10 @@ let ctl = null                   // 当前流：{abort, done}
 let gotDone = false
 
 const curConv = computed(() => convs.value.find(c => c.id === convId.value) || null)
+/* 选择器里只列"问过话的"会话 + 当前这一摊。
+   点几下 ＋ 又没问的空会话都叫"新对话"，全挂在列表里既是噪音、又像是丢了内容；
+   当前这一摊永远留着（刚点 ＋ 就是它，标题就是"新对话"）。 */
+const shownConvs = computed(() => convs.value.filter(c => c.id === convId.value || c.n > 0))
 const empty = computed(() => !msgs.value.length && !loading.value)
 
 // ---------- 载入 ----------
@@ -251,18 +255,31 @@ onUnmounted(() => { stop(true) })
 
 <template>
   <div class="ask-panel">
-    <!-- 会话栏：切换 / 新建 / 改名 / 删掉。文案只有动作，没有注解 -->
+    <!-- 会话栏：切换 / 新建 / 改名 / 删掉。文案只有动作，没有注解。
+         三个图标是同一套线条 SVG（一个细 ＋、一个实心 ✎、一个彩色 emoji 🗑 混在一起
+         看着像三个人画的），删除键悬停才转朱红 -->
     <div class="cv-bar">
       <select class="cv-pick" :value="convId ?? ''" title="切换会话"
               @change="e => (convId = Number(e.target.value))">
-        <option v-for="c in convs" :key="c.id" :value="c.id">
-          {{ c.title }}{{ c.n ? ` · ${c.n}` : '' }}
-        </option>
-        <option v-if="!convs.length" :value="''">新对话</option>
+        <option v-for="c in shownConvs" :key="c.id" :value="c.id">{{ c.title }}</option>
+        <option v-if="!shownConvs.length" :value="''">新对话</option>
       </select>
-      <button class="cv-btn" title="新建会话" @click="newConv">＋</button>
-      <button class="cv-btn" title="重命名" @click="renameConv">✎</button>
-      <button class="cv-btn" title="删除会话" :disabled="!curConv" @click="delConv">🗑</button>
+      <button class="cv-btn" title="新建会话" @click="newConv">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13" /></svg>
+      </button>
+      <button class="cv-btn" title="重命名" :disabled="!curConv" @click="renameConv">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16.5 3.5a2.6 2.6 0 013.7 3.7L8 19.4l-4.6 1.1L4.5 16z" />
+        </svg>
+      </button>
+      <button class="cv-btn danger" title="删除会话" :disabled="!curConv" @click="delConv">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3.5 6.5h17M9 6.5V4.2h6v2.3M6.2 6.5l.9 13.3h9.8l.9-13.3" />
+        </svg>
+      </button>
     </div>
 
     <div class="qa-scroll" ref="scrollEl" @scroll.passive="onScroll">
@@ -270,7 +287,6 @@ onUnmounted(() => { stop(true) })
       <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">更早的对话已存为摘要</div>
 
       <div v-if="empty" class="qa-empty">
-        <div class="qe-title">这一篇的问答</div>
         <div class="qa-quick">
           <button v-for="q in props.quick" :key="q" :title="q" @click="send(q)">{{ q }}</button>
         </div>

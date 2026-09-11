@@ -331,7 +331,12 @@ def conv_create(pid: str, title: str = "新对话") -> int:
 
 def conv_list(pid: str):
     """一篇论文的会话列表。第一次问之前也会有一个默认会话，免得"没有会话"成为
-    一条要前端特判的分支——列表永远至少有一条，永远是它被选中。"""
+    一条要前端特判的分支——列表永远至少有一条，永远是它被选中。
+
+    带上每条会话的问答数 `n`：**不给界面显示**（名字后面挂个"· 4"只会把名字挤短），
+    而是给前端过滤用——点了几下 ＋ 又没问的空会话不必留在选择器里，
+    它们一条消息都没有、还都叫"新对话"，挂着纯是噪音。
+    """
     if not q("SELECT id FROM conversations WHERE paper_id=?", (pid,)):
         conv_create(pid, "新对话")
     _adopt_orphan_qa(pid)
