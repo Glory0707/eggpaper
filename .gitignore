@@ -26,3 +26,7 @@ library/
 _qa/
 _*.log
 _pid.txt
+
+# 作者私人笔记（作者要求不上传）
+docs/作者手记.md
+_cmsg.txt
