@@ -217,7 +217,6 @@ function onKey(e) {
         </button>
       </div>
       <div class="actions">
-        <span class="status-dot" :class="store.mock ? 'warn' : 'ok'" :title="store.mock ? '演示模式' : 'LLM 已配置'"></span>
         <button class="ghost" @click="showSettings = true" title="设置">⚙</button>
       </div>
     </header>

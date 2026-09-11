@@ -47,7 +47,6 @@ export const store = reactive({
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
 
-  get mock() { return this.settings?.mock },
   // 窄窗（半屏、竖屏、小笔记本）：右栏不再占版面，改成浮在书桌上的抽屉
   get narrow() { return this.vw < 1180 },
   get railRight() {

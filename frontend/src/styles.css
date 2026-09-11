@@ -259,10 +259,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .toggle.on { color: var(--ink); background: var(--accent-soft); border-color: var(--accent-line); }
 .toggle.on::before { content: '● '; font-size: var(--fs-xs); vertical-align: 1px; color: var(--accent-deep); }
 
-.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.status-dot.ok { background: #58884f; }
-.status-dot.warn { background: var(--accent); }
-.status-dot.bad { background: var(--vermilion); }
+/* 原来这里有一个 8px 的状态点（绿=LLM 已配置 / 靛=演示模式）。删了：
+   配好了模型是**正常状态**，正常状态不需要一盏灯；演示模式的答案自己会写
+   〔演示模式〕，顶栏这盏灯只是给"一切正常"加的一点装饰。 */
 
 /* ---------- 左栏：图标条 + 浮出文库 ---------- */
 .left-strip {
@@ -680,9 +679,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .f-row input, .modal .f-row select { width: 100%; }
 .modal .f-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; align-items: center; }
 .modal .test-reply { font-size: var(--fs-sm); color: var(--ink-3); margin-right: auto; max-width: 210px; }
-.modal .mock-row { display: flex; align-items: center; gap: 7px; font-size: var(--fs-sm); color: var(--ink-2); margin: 6px 0; }
-/* 上面那条 .f-row label{display:block} 会把复选框旁边的字顶成竖排，这里拉回行内 */
-.modal .mock-row label { display: inline; margin: 0; }
 
 /* 护眼底纹：小色片 + 名，选中的那档套一圈墨环 */
 .modal .care-row { display: flex; gap: 6px; }
