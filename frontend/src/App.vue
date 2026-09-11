@@ -246,8 +246,8 @@ function onKey(e) {
       <main class="desk">
         <div class="empty" v-if="!store.paper">
           <EggMark class="egg-big" :class="{ hop: dragOver }" />
-          <div class="e-title">一篇读透，胜过扫过十篇</div>
-          <div class="e-sub">把 PDF 拖进来，或按 g l 打开文库</div>
+          <div class="e-title">论文，启动！</div>
+          <div class="e-sub">把 PDF 拖进来</div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
         </div>
         <PdfViewer v-else :key="store.currentId" @override="onOverride" />
