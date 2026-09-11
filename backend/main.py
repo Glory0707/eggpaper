@@ -23,6 +23,11 @@ from glossary_seed import SEED
 app = FastAPI(title="eggpaper", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# 服务"已经能接请求了"的信号。启动器靠它判断就绪——**故意不用"回连自己一次"那种探测**：
+# 实测有的机器上（安全软件在管链路），进程连自己 127.0.0.1 的连接会卡在 SYN_SENT（丢包而不是拒绝），
+# 于是"服务起来了但探不通"，启动器等 15 秒就把自己退掉——用户看到的就是"双击没反应"。
+READY = threading.Event()
+
 
 def _human_msg(exc: Exception) -> str:
     """把模型服务最常见的几种失败翻成人话。异常处理器与新加的流式问答共用这一份，
@@ -1209,8 +1214,24 @@ if os.path.isdir(DIST):
     app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
 
 
+@app.on_event("startup")
+def _mark_ready():
+    READY.set()
+
+
 def serve(port: int = 8430, log_level: str = "info"):
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level=log_level)
+    """起服务。
+
+    打包版传 `log_config=None`：uvicorn 默认要装一套**带颜色的控制台日志**，
+    而打包版没有控制台（console=False）——实测在冻结环境里这一步会直接抛
+    `ValueError: Unable to configure formatter 'default'`，服务起不来，
+    用户那头就是"双击图标没反应"。日志本来也没地方显示，索性不装。
+    开发模式保持原样（终端里要看请求日志）。
+    """
+    if appinfo.is_frozen():
+        uvicorn.run(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
+    else:
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level=log_level)
 
 
 if __name__ == "__main__":

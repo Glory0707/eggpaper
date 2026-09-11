@@ -1,6 +1,5 @@
 # 🥚 eggpaper
 
-> Crack the paper, read the marrow. 剥开论文的壳，直接读论证的芯。
 
 ![reader](docs/screenshots/reader.png)
 

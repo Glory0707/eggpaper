@@ -15,12 +15,14 @@
 3. **单实例**。端口上已经有 eggpaper 在跑（用户双击了两次图标），就只打开浏览器，
    不再起第二个进程去抢同一份 SQLite 和文库。
 """
+import json
 import os
 import socket
 import subprocess
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 
 HOST = "127.0.0.1"
@@ -66,16 +68,21 @@ def start_tray(url: str, port: int, log) -> bool:
         log(f"托盘不可用（{e}）")
         return False
 
-    def mark(size=64):
-        """托盘图标：和界面里那枚印章同一个形状（椭圆环 + 三行字条）。"""
-        ss, im = 4, None
+    def mark(size=32):
+        """托盘图标：和界面里那枚印章同一个形状，但**画满画布**。
+
+        托盘只会显示 16~20px，之前按"界面上那枚印章"的比例照搬（标记只占中间六成、
+        环又细），缩到 16px 就只剩一点，看着偏小。这里把椭圆撑到边、环加粗、字条减到两条，
+        并把 32px 的图交给 Windows 自己缩——小尺寸才立得住。
+        """
+        ss = 4
         im = Image.new("RGBA", (size * ss, size * ss), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
         k = size * ss / 96
-        d.ellipse([18 * k, 14 * k, 78 * k, 82 * k], outline=(29, 78, 95), width=max(2, round(8 * k)))
-        for y, w in ((32, 30), (45, 36), (58, 20)):
-            d.rounded_rectangle([(48 - w / 2) * k, (y - 4) * k, (48 + w / 2) * k, (y + 4) * k],
-                                radius=4 * k, fill=(29, 78, 95))
+        d.ellipse([5 * k, 2 * k, 91 * k, 94 * k], outline=(29, 78, 95), width=max(3, round(15 * k)))
+        for y, w in ((36, 46), (58, 34)):      # 围绕椭圆中心（48）对称，别偏上
+            d.rounded_rectangle([(48 - w / 2) * k, (y - 6) * k, (48 + w / 2) * k, (y + 6) * k],
+                                radius=6 * k, fill=(29, 78, 95))
         return im.resize((size, size), Image.LANCZOS)
 
     def on_open(icon, item):
@@ -126,20 +133,52 @@ def _open(url: str, log):
     webbrowser.open(url)
 
 
-def _serving(port: int) -> str:
-    """这个端口上已经跑着 eggpaper 吗？是就返回它的版本号。"""
+def _instance_file() -> str:
+    import appinfo
+    return os.path.join(os.path.dirname(appinfo.data_dir()), "instance.json")
+
+
+def _running_instance():
+    """已经有一个 eggpaper 在跑吗？有就返回它记下的端口。
+
+    读的是它自己写的 instance.json（含 pid），再确认那个 pid 还活着。
+    **不用"连一下端口试试"那种判断**：实测在有的机器上，进程连自己的
+    127.0.0.1 会卡在 SYN_SENT（链路被丢包而不是被拒绝），于是"明明在跑却探不到"。
+    pid 加文件锁是本地操作，不受这条链路影响。
+    """
     try:
-        import httpx
-        r = httpx.get(f"http://{HOST}:{port}/api/version", timeout=1.2)
-        return str(r.json().get("version") or "") if r.status_code == 200 else ""
-    except Exception:
-        return ""
+        with open(_instance_file(), encoding="utf-8") as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return None
+    pid = int(info.get("pid") or 0)
+    if pid <= 0 or pid == os.getpid():
+        return None
+    try:
+        os.kill(pid, 0)          # Windows 上也会检查存在性；不存在则抛
+    except OSError:
+        return None
+    return int(info.get("port") or 0) or None
 
 
-def _free(port: int) -> bool:
+def _port_free(port: int) -> bool:
+    """这个端口能不能绑上。用 bind 而不是 connect——绑定是本机操作，
+    不会像"回连自己"那样在某些机器上卡住。"""
     with socket.socket() as s:
-        s.settimeout(0.4)
-        return s.connect_ex((HOST, port)) != 0
+        try:
+            s.bind((HOST, port))
+            return True
+        except OSError:
+            return False
+
+
+def _write_instance(port: int):
+    try:
+        with open(_instance_file(), "w", encoding="utf-8") as f:
+            json.dump({"port": port, "pid": os.getpid(),
+                       "version": __import__("appinfo").version()}, f)
+    except OSError as e:
+        _log(f"写 instance.json 失败：{e}")
 
 
 def _pdf_arg(argv) -> str:
@@ -173,35 +212,49 @@ def main():
     want_window = "--window" in sys.argv
     want_tray = "--no-tray" not in sys.argv
 
-    for port in PORTS:                       # 已经有实例在跑：只开浏览器
-        v = _serving(port)
-        if v:
-            log(f"{port} 上已有一个实例（{v}），打开浏览器即可")
-            if pdf:
-                log(f"把这份 PDF 交给它：{pdf}")
-                _handoff(port, pdf)
-            if want_window and _open_window(f"http://{HOST}:{port}/", log):
-                return 0
-            _open(f"http://{HOST}:{port}/", log)
+    running = _running_instance()
+    if running:                              # 已经有实例在跑：只开浏览器
+        log(f"已有一个 eggpaper 在跑（端口 {running}），打开界面即可")
+        if pdf:
+            log(f"把这份 PDF 交给它：{pdf}")
+            _handoff(running, pdf)
+        if want_window and _open_window(f"http://{HOST}:{running}/", log):
             return 0
+        _open(f"http://{HOST}:{running}/", log)
+        return 0
 
-    port = next((p for p in PORTS if _free(p)), None)
+    port = next((p for p in PORTS if _port_free(p)), None)
     if port is None:
         log("没有可用端口（8430-8432 都被占），无法启动")
         return 1
 
-    import main as backend                  # noqa: E402  导入即建好 app 与数据目录
-    threading.Thread(target=backend.serve, kwargs={"port": port, "log_level": "warning"},
-                     daemon=True).start()
+    try:
+        import main as backend              # noqa: E402  导入即建好 app 与数据目录
+    except Exception:
+        log("后端模块导入失败：")
+        log(traceback.format_exc())
+        return 1
+    def _serve():
+        # 线程里的异常在无控制台的打包版里**一个字都看不到**（console=False，
+        # stderr 没有去处），所以这里必须自己接住并写日志——否则症状只有
+        # "服务没起来"，原因永远查不出。
+        try:
+            backend.serve(port=port, log_level="warning")
+        except Exception:
+            log("服务线程挂了：")
+            log(traceback.format_exc())
+
+    threading.Thread(target=_serve, daemon=True).start()
 
     url = f"http://{HOST}:{port}/"
-    for _ in range(60):                      # 等它真的能应答再开浏览器，别甩给用户一个 404
-        if _serving(port):
-            break
-        time.sleep(0.25)
-    else:
-        log("服务 15 秒内没起来，请把这份日志发给作者")
+    # 就绪判定走**进程内事件**（backend.READY），不问网络：这台机器上"连自己"可能被丢包
+    if not backend.READY.wait(45):
+        log(f"服务 45 秒内没起来（端口 {port}）——如果上面没有别的错，把这份日志发给作者")
         return 1
+    if _port_free(port):        # 服务都报 ready 了，这个端口就该是"被自己占着"的；还空着说明没绑上
+        log(f"服务报告已启动，但 {port} 还是空的——端口可能被别的程序抢了，重开一次即可")
+        return 1
+    _write_instance(port)
     log(f"服务已就绪：{url}")
     if pdf:
         _handoff(port, pdf)

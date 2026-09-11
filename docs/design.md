@@ -1,6 +1,5 @@
 # eggpaper 项目设计
 
-> 剥开论文的壳，读论证的芯。Crack the paper, read the marrow.
 > v0.3 · 2026-09-11（已实现能力移至 [README](../README.md)，本文只保留定位、原则、取舍与未竟事项）
 
 ---

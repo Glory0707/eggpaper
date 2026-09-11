@@ -139,8 +139,26 @@ def contact_sheet(out_path: str) -> str:
     return out_path
 
 
+def make_web_icons(public_dir: str) -> list:
+    """给前端也放一份：favicon + 192/512 的 PNG。
+
+    这三个是**浏览器标签、独立窗口（Edge 应用模式）、任务栏**这几处的图标来源。
+    之前只做了 exe 的图标，网页这边一个 link 都没有——标签页和任务栏就只能是
+    浏览器的默认图或者被拉伸的小图，看着就是"糊"。
+    """
+    os.makedirs(public_dir, exist_ok=True)
+    out = []
+    make_ico(os.path.join(public_dir, "favicon.ico"))
+    out.append("favicon.ico")
+    for size in (192, 512):
+        _draw(size, tile=True).save(os.path.join(public_dir, f"icon-{size}.png"))
+        out.append(f"icon-{size}.png")
+    return out
+
+
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
-    out = os.path.normpath(os.path.join(here, "..", "installer", "eggpaper.ico"))
-    print("写好:", make_ico(out))
-    print("对照表:", contact_sheet(os.path.join(here, "..", "_qa", "shots", "icon_sheet.png")))
+    root = os.path.normpath(os.path.join(here, ".."))
+    print("写好:", make_ico(os.path.join(root, "installer", "eggpaper.ico")))
+    print("网页图标:", make_web_icons(os.path.join(root, "frontend", "public")))
+    print("对照表:", contact_sheet(os.path.join(root, "_qa", "shots", "icon_sheet.png")))
