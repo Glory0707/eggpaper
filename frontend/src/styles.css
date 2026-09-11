@@ -293,9 +293,10 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 }
 .para-core-bar { position: absolute; left: -7px; width: 3px; background: var(--yolk); opacity: 0.85; border-radius: 1px; }
 
-/* 段落把手 */
+/* 段落把手。16px 透明桥面搭在纸边上：从正文移向把手时鼠标始终没离开
+   .page 的后代区域，不会触发纸面的 mouseleave，把手就不会半路消失 */
 .para-handle {
-  position: absolute; right: -2px; transform: translateX(100%);
+  position: absolute; left: calc(100% - 16px); margin-left: 2px; padding-left: 16px;
   display: flex; gap: 3px; z-index: 70;
 }
 .para-handle button {

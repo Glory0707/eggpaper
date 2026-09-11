@@ -19,6 +19,7 @@ const fitScale = ref(1)
 const midX = ref(0)              // 书桌中线：缩放条/提示贴它，而不是视口中线
 const sheets = ref([])
 const hoverPara = ref(null)      // 段落 hover：驱动把手
+const handleY = ref(0)           // 把手跟鼠标的纵位（夹在段落带内），不是钉在段顶
 const roleCard = ref(null)       // { idx, x, y } 点开的角色卡，只有点击能开关
 const noteHeights = ref({})      // 旁批实测高度，摊平用
 const expandedNote = ref(null)   // 展开的批注卡
@@ -30,6 +31,7 @@ const flash = ref(null)
 
 const canvases = ref([]), textLayers = ref([]), pageEls = ref([])
 const doneKeys = new Set()
+const renderQueues = new Map()   // gi -> 渲染链尾：同一画布严格串行，杜绝并发 render
 let passToken = 0
 const scroller = () => deskEl.value?.closest('.desk') || deskEl.value
 let docs = { orig: null, dual: null, mono: null }
@@ -142,34 +144,46 @@ async function renderAll() {
   }
 }
 
-async function renderItem(it) {
+// 同一画布的渲染任务串成一条链，后来者排队；轮到执行时重新对齐当前
+// scale / 当前 DOM——排队期间换过页或换过模式的活动直接作废。
+function doRenderItem(it) {
   const key = it.key + ':' + scale.value.toFixed(3)
   if (doneKeys.has(key)) return
+  if (!flatItems.value.includes(it)) return          // 这一项已被新布局替换
   const canvas = canvases.value[it.gi], tlEl = textLayers.value[it.gi], el = pageEls.value[it.gi]
   if (!canvas || !el) return
-  const doc = await getDoc(it.doc)
-  const page = await doc.getPage(it.page + 1)
-  const viewport = page.getViewport({ scale: scale.value })
-  const dpr = Math.min(2.5, window.devicePixelRatio || 1)
-  canvas.width = Math.floor(viewport.width * dpr)
-  canvas.height = Math.floor(viewport.height * dpr)
-  canvas.style.width = viewport.width + 'px'
-  canvas.style.height = viewport.height + 'px'
-  el.style.setProperty('--scale-factor', scale.value)
-  const ctx = canvas.getContext('2d', { alpha: false })
-  ctx.fillStyle = '#fff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  try {
-    await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise
-    if (tlEl && it.text) {
-      tlEl.innerHTML = ''
-      const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
-      await tl.render()
+  const doc = getDoc(it.doc)
+  return doc.then(async d => {
+    const page = await d.getPage(it.page + 1)
+    const viewport = page.getViewport({ scale: scale.value })
+    const dpr = Math.min(2.5, window.devicePixelRatio || 1)
+    canvas.width = Math.floor(viewport.width * dpr)
+    canvas.height = Math.floor(viewport.height * dpr)
+    canvas.style.width = viewport.width + 'px'
+    canvas.style.height = viewport.height + 'px'
+    el.style.setProperty('--scale-factor', scale.value)
+    const ctx = canvas.getContext('2d', { alpha: false })
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    try {
+      await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise
+      if (tlEl && it.text) {
+        tlEl.innerHTML = ''
+        const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
+        await tl.render()
+      }
+      doneKeys.add(key)
+    } catch (err) {
+      console.error('[eggpaper] render fail', it.key, err)
     }
-    doneKeys.add(key)
-  } catch (err) {
-    console.error('[eggpaper] render fail', it.key, err)
-  }
+  })
+}
+
+function renderItem(it) {
+  const prev = renderQueues.get(it.gi) || Promise.resolve()
+  const task = prev.then(() => doRenderItem(it))
+  renderQueues.set(it.gi, task.catch(() => {}))
+  return task
 }
 
 function scheduleRender() {
@@ -283,14 +297,25 @@ function toggleNote(n) {
 
 /* ---------------- 段落 hover 把手 ---------------- */
 
+// 把手悬着一拍再消失：鼠标斜着穿过纸边/把手指间缝隙时不至于半路卸载
+let hoverGrace = null
+function clearHoverSoon() {
+  clearTimeout(hoverGrace)
+  hoverGrace = setTimeout(() => { if (!handleHold.value) hoverPara.value = null }, 350)
+}
+function cancelHoverClear() { clearTimeout(hoverGrace) }
+
 function onPageMove(e, it) {
   if (!it.text || it.origPage < 0) return
+  cancelHoverClear()
   const el = pageEls.value[it.gi]
   if (!el) return
   const localY = e.clientY - el.getBoundingClientRect().top
   for (const p of parasByPage.value[it.origPage] || []) {
     if (localY >= p.bbox.y0 * scale.value - 2 && localY <= p.bbox.y1 * scale.value + 2) {
       hoverPara.value = p.idx
+      // 把手贴着鼠标出现：向右一小步就够到，不用斜穿半个段落
+      handleY.value = Math.min(Math.max(localY - 10, p.bbox.y0 * scale.value), Math.max(p.bbox.y0 * scale.value, p.bbox.y1 * scale.value - 22))
       return
     }
   }
@@ -504,6 +529,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   ro?.disconnect()
+  clearTimeout(hoverGrace)
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('mousedown', onDocDown)
   window.removeEventListener('resize', updateMid)
@@ -632,11 +658,12 @@ watch(() => store.marginalia.notes, (n, o) => {
     <div v-else style="display:flex; flex-direction:column; align-items:center; gap:26px">
       <div class="spread-row" v-for="(s, si) in sheets" :key="si">
         <div class="page-wrap" v-for="it in s.items" :key="it.key">
-          <div class="page" :ref="el => (pageEls[it.gi] = el)"
-               :style="{ width: it.w * scale + 'px', height: it.h * scale + 'px' }"
-               @mousemove="e => { if (store.viewer.frame) return; onPageMove(e, it) }"
-               @mousedown="e => startFrameDrag(e, it)"
-               @mouseleave="() => { if (!handleHold) hoverPara = null }">
+            <div class="page" :ref="el => (pageEls[it.gi] = el)"
+                 :style="{ width: it.w * scale + 'px', height: it.h * scale + 'px' }"
+                 @mousemove="e => { if (store.viewer.frame) return; onPageMove(e, it) }"
+                 @mousedown="e => startFrameDrag(e, it)"
+                 @mouseleave="() => { if (!handleHold) clearHoverSoon() }">
+
             <canvas :ref="el => (canvases[it.gi] = el)"></canvas>
             <div class="textLayer" v-if="it.text && !store.viewer.frame" :ref="el => (textLayers[it.gi] = el)"></div>
             <div v-if="frameRect && frameRect.gi === it.gi" class="frame-rect"
@@ -663,9 +690,10 @@ watch(() => store.marginalia.notes, (n, o) => {
             </div>
 
             <!-- 段落把手 -->
-            <div class="para-handle" v-if="hoverPara != null && it.text"
-                 :style="{ top: (paraByIdx[hoverPara]?.bbox.y0 ?? 0) * scale + 'px' }"
-                 @mouseenter="handleHold = true" @mouseleave="() => { handleHold = false; hoverPara = null }">
+            <div class="para-handle" v-if="hoverPara != null && it.text && paraByIdx[hoverPara]?.page === it.origPage"
+                 :style="{ top: handleY + 'px' }"
+                 @mouseenter="() => { handleHold = true; cancelHoverClear() }"
+                 @mouseleave="() => { handleHold = false; clearHoverSoon() }">
               <button :class="{ busy: pendingPara === hoverPara }" @click="translateParaAndPin(hoverPara)">
                 {{ pendingPara === hoverPara ? '…' : '译' }}
               </button>
