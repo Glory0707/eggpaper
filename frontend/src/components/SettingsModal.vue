@@ -23,14 +23,6 @@ const CARES = [
   { k: 'sand', zh: '米黄', bg: '#f5f5dc' },
 ]
 function pickCare(k) { store.viewer.care = k }
-
-/* 皮肤：素净是主视觉，蛋仔是可选的玩心。和护眼一样点了立刻生效，
-   但"蛋仔"要预览的那点差别只在标记上，所以两枚标记就直接画在按钮里。 */
-const SKINS = [
-  { k: 'plain', zh: '素净' },
-  { k: 'egg', zh: '蛋仔' },
-]
-function pickSkin(k) { store.viewer.skin = k }
 const testing = ref(false)
 const reply = ref('')
 
@@ -88,15 +80,6 @@ function save() {
           <button v-for="c in CARES" :key="c.k" class="care-chip" :class="{ on: store.viewer.care === c.k }"
                   @click="pickCare(c.k)">
             <i :style="{ background: c.bg }"></i>{{ c.zh }}
-          </button>
-        </div>
-      </div>
-      <div class="f-row">
-        <label class="mono-label">皮肤</label>
-        <div class="care-row">
-          <button v-for="s in SKINS" :key="s.k" class="care-chip skin-chip"
-                  :class="{ on: store.viewer.skin === s.k }" @click="pickSkin(s.k)">
-            <span class="skin-dot" :class="s.k"></span>{{ s.zh }}
           </button>
         </div>
       </div>

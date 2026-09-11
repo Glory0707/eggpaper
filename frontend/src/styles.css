@@ -922,16 +922,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   display: inline-flex; align-items: center; gap: 5px;
   font-size: var(--fs-sm); color: var(--ink-2); cursor: pointer; white-space: nowrap;
 }
-.modal .skin-chip { gap: 7px; }
-/* 皮肤预览就用那两枚标记的缩影：一个环，一颗蛋 */
-.modal .skin-dot { width: 13px; height: 16px; flex-shrink: 0; }
-.modal .skin-dot.plain {
-  border: 1.6px solid var(--ink-2); border-radius: 50% 50% 50% 50% / 58% 58% 45% 45%;
-}
-.modal .skin-dot.egg {
-  background: var(--accent); border-radius: 50% 50% 48% 48% / 60% 60% 42% 42%;
-  transform: rotate(-8deg);
-}
 
 /* ============================================================
    提问面板（右栏）
@@ -1138,31 +1128,3 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   .qa-caret { animation: none; }
 }
 
-/* ============================================================
-   皮肤：蛋仔（可选）
-   只动"底 + 圆角 + 主色"，不动字号、不动排版、不动字形。
-   主色仍是深橙（白底 5.8:1、白字压上去 5.8:1），不学游戏的糖果色：
-   那是另一套调性，而且"蛋仔派对"是法院认过的未注册驰名商标，配色靠得太近不划算。
-   ============================================================ */
-html[data-skin='egg'] {
-  --paper: #fdf9f1; --paper-deep: #f8f2e6; --card: #fffdf8; --card-2: #fffdf9;
-  --veil: rgba(255, 251, 243, 0.88);
-  --ink: #241d15; --ink-2: #5b5044; --ink-3: #6f6455;
-  --hairline: rgba(80, 52, 20, 0.16); --hairline-soft: rgba(80, 52, 20, 0.08);
-  --accent: #a8481a; --accent-deep: #7d3312;
-  --accent-soft: rgba(168, 72, 26, 0.12); --accent-line: rgba(168, 72, 26, 0.34);
-  --code-bg: rgba(168, 72, 26, 0.07);
-}
-html[data-skin='egg'] button,
-html[data-skin='egg'] input[type='text'],
-html[data-skin='egg'] textarea,
-html[data-skin='egg'] select,
-html[data-skin='egg'] .card-eye,
-html[data-skin='egg'] .modal,
-html[data-skin='egg'] .keys-card,
-html[data-skin='egg'] .chip { border-radius: 8px; }
-html[data-skin='egg'] .mg-note { border-radius: 0 8px 8px 0; }
-html[data-skin='egg'] .role-tab { border-radius: 0 8px 8px 0; }
-html[data-skin='egg'] .page { border-radius: 4px; }
-html[data-skin='egg'] .zoom-bar { border-radius: 9px; }
-html[data-skin='egg'] .toast { border-radius: 10px; }

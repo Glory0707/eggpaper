@@ -29,7 +29,6 @@ export const store = reactive({
     spread: lsGet('spread', 'spread'),
     layers: lsGet('layers', { skeleton: true, marginalia: true, skim: false }),
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
-    skin: lsGet('skin', 'plain'),          // plain 素净 / egg 蛋仔（可选皮肤）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
     railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
     frame: false,
@@ -78,13 +77,8 @@ function paintCare(v) {
 }
 watch(() => store.viewer.care, v => { lsSet('care', v); paintCare(v) }, { immediate: true })
 
-/* 皮肤同理落在 <html> 上：素净那套是默认，蛋仔那套额外挂一个属性，
-   所有"变圆、变暖"的规则都写在 html[data-skin='egg'] 下，一行都不外溢。 */
-watch(() => store.viewer.skin, v => {
-  lsSet('skin', v)
-  if (v && v !== 'plain') document.documentElement.dataset.skin = v
-  else delete document.documentElement.dataset.skin
-}, { immediate: true })
+// 旧版本在 <html> 上留过 data-skin（皮肤已删）：留着只会让 devtools 里多一个没用的属性
+delete document.documentElement.dataset.skin
 
 export async function refreshPapers() {
   store.papers = await api.papers()
