@@ -281,11 +281,8 @@ onUnmounted(() => { stop(true) })
         </template>
         <div class="q-body" v-else>{{ m.content }}</div>
         <span v-if="m.streaming" class="qa-caret"></span>
-        <div class="qa-cites" v-if="m.citations?.length">
-          <span class="qc-label">依据</span>
-          <button v-for="c in m.citations" :key="c" @click="jumpPara(c)"
-                  :title="paraByIdx[c] ? `跳到第 ${paraByIdx[c].page + 1} 页` : '原文没有这一段'">¶{{ c }}</button>
-        </div>
+        <!-- 这里原来还有一行「依据 ¶1 ¶5 ¶6…」。删了：它列的就是正文里那些已经可点的 ¶，
+             一字不差地再说一遍（后端 cites_of 就是从答案正文里正则抓的）。 -->
         <div class="qa-acts" v-if="!m.streaming">
           <button @click="copy(m)" title="复制这条">复制</button>
           <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen(i)"

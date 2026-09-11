@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH, ROLE_COLOR, ROLE_TEXT_COLOR,
          KIND_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 import { lineSpanOf } from '../find'
@@ -10,6 +10,7 @@ const USER_KINDS = ['lookup', 'region']   // 用户自己钉的（查译、选�
 
 const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
+const rbodyEl = ref(null)      // 「↗」指针要滚到指定那一问，得能问到滚动容器
 
 const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
 
@@ -67,6 +68,17 @@ function openMethod() {
   tab.value = 'eye'
   if (!methodCard.value) genMethodCard()
 }
+/* 一眼卡上的「↗」：指到「问题」页对应的那一问去，展开并滚到它。
+   一眼卡负责"三十秒知道这篇讲什么"，想深了顺着箭头走——**指针，不是把内容再抄一遍**。 */
+function gotoSix(k) {
+  tab.value = 'skeleton'
+  openSix[k] = true
+  nextTick(() => {
+    const i = SIX.findIndex(s => s.k === k)
+    const el = rbodyEl.value?.querySelectorAll('.six')[i]
+    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  })
+}
 // 就一条批注追问：把批注和它引的原话一起交给模型，问题才问得准
 function askNote(n) {
   const kind = KIND_ZH[n.kind] || n.kind
@@ -89,6 +101,19 @@ const annoOf = idx => store.analysis.annotations[String(idx)] || {}
 const gapParas = computed(() => parasOfRole(['gap']))
 const limitParas = computed(() => parasOfRole(['limitation']))
 const warnNotes = computed(() => store.marginalia.notes.filter(n => n.kind === 'warning'))
+// 眉批速览＝④之外的那些。①「有坑」归④，②用户自己钉的（查译/选区问答）不算眉批
+const digestNotes = computed(() =>
+  store.marginalia.status === 'done'
+    ? store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind) && n.kind !== 'warning')
+    : [])
+// 待解那一行：只报有的那一边。"作者承认 0 处"这种话没人爱看
+const todoLine = computed(() => {
+  const a = limitParas.value.length, b = warnNotes.value.length
+  if (a && b) return `作者承认 ${a} 处局限 · 眉批另标出 ${b} 处可疑`
+  if (a) return `作者承认 ${a} 处局限，眉批没有另标可疑`
+  if (b) return `眉批标出 ${b} 处可疑，作者自己没写局限`
+  return '作者没有明说局限，眉批也没标出可疑之处'
+})
 
 function anchorsOf(claim) {
   return claim.anchors
@@ -150,8 +175,22 @@ onUnmounted(() => {
   window.removeEventListener('eggpaper:terms-prefill', onPrefill)
   window.removeEventListener('keydown', onFigKey)
 })
-watch(tab, t => { if (t === 'ask') loadSuggest(); if (t === 'eye') loadFigures() })
-watch(() => store.analysis.status, s => { if (s === 'done') loadSuggest() })
+watch(tab, t => {
+  if (t === 'ask') loadSuggest()
+  if (t === 'eye') { loadFigures(); loadCachedBlocks() }
+})
+// 重算析读 / 重写眉批之后，服务端把由主张派生的缓存都作废了，前端手里那份也得跟着丢，
+// 否则一眼卡还是旧的、方法卡还是旧的、三问还在问一句已经删掉的"有坑"。
+watch(() => store.analysis.status, s => {
+  if (s !== 'done') return
+  methodCard.value = null; advisor.value = []; suggest.value = []
+  loadSuggest(); loadCachedBlocks()
+})
+watch(() => store.marginalia.status, s => {
+  if (s !== 'done') return
+  advisor.value = []
+  loadCachedBlocks()
+})
 
 /* ---------- 右栏宽度：拖动改，双击复位 ----------
    经典分栏拖动：位移直接写进 railW，宽度过渡由 CSS 负责；拖的过程中把过渡关掉
@@ -192,23 +231,32 @@ onUnmounted(() => {
 // ---------- 方法卡 / 缩写 / mini-map ----------
 const methodCard = ref(null)
 const mcBusy = ref(false)
+const mcMore = ref(false)          // 方法卡展开：默认只露前三步
+const MC_STEPS = 3
+const stepsShown = computed(() => {
+  const all = methodCard.value?.steps || []
+  return mcMore.value ? all : all.slice(0, MC_STEPS)
+})
 async function genMethodCard() {
   mcBusy.value = true
   try { methodCard.value = await api.methodCard(store.currentId) }
   catch (e) { toast('生成失败：' + e.message) }
   mcBusy.value = false
 }
+// 本文缩写：**只列还没收进术语表的**。收进去之后它就出现在下面那张表里了，
+// 同一对 en→zh 在同一屏里出现两次没有意义（反馈由 toast 负责）。
 const abbrList = computed(() => {
   try {
     const abbrs = JSON.parse(store.paper?.abbrs || '{}')
     const saved = new Set(terms.value.map(t => t.term_en.toLowerCase()))
-    return Object.entries(abbrs).map(([en, zh]) => ({ en, zh, saved: saved.has(en.toLowerCase()) }))
+    return Object.entries(abbrs)
+      .filter(([en]) => !saved.has(en.toLowerCase()))
+      .map(([en, zh]) => ({ en, zh }))
   } catch { return [] }
 })
 async function saveAbbr(a) {
   await api.glossaryAdd({ term_en: a.en, term_zh: a.zh, source: 'abbr' })
-  a.saved = true
-  loadTerms()
+  loadTerms()                     // 列表里少一条、下面的术语表多一条，动作可见
   toast(`「${a.en}」已收进术语表`)
 }
 function eqq(idx) {
@@ -217,7 +265,9 @@ function eqq(idx) {
 }
 
 // ---------- 导师三问 ----------
-// 不主动预生成：这是要花 token 的一次调用，没点"获取"就不该发生
+// 不主动预生成：这是要花 token 的一次调用，没点"获取"就不该发生。
+// 但**读缓存**是免费的——进速览页时静默读一次，算过的东西就直接显示出来，
+// 不然每次换篇都要重点「获取」，点了才知道"其实早算过了"。
 const advisor = ref([])
 const advBusy = ref(false)
 async function loadAdvisor() {
@@ -226,6 +276,21 @@ async function loadAdvisor() {
   try { const r = await api.advisor(store.currentId); advisor.value = r.questions || [] }
   catch (e) { toast('生成失败：' + e.message) }
   advBusy.value = false
+}
+async function loadCachedBlocks() {
+  if (!store.currentId) return
+  if (!methodCard.value) {
+    try {
+      const r = await api.methodCard(store.currentId, true)
+      if (r?.goal) methodCard.value = r
+    } catch { /* 没缓存很正常 */ }
+  }
+  if (!advisor.value.length && store.analysis.status === 'done') {
+    try {
+      const r = await api.advisor(store.currentId, true)
+      advisor.value = r.questions || []
+    } catch { /* 同上 */ }
+  }
 }
 
 // ---------- 图表速览 ----------
@@ -275,7 +340,18 @@ const termsFiltered = computed(() => {
   return list.filter(t => t.term_en.toLowerCase().includes(f) || t.term_zh.includes(f))
 })
 
-watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { immediate: true })
+/* 换篇：所有"按篇"的东西都要清干净。不清的症状是上一章的方法卡、导师三问、
+   图表缩略图、推荐问题在新论文上继续摆着——而这些还都带 `if (已有) return` 的守卫，
+   意味着它们**永远不会**被换成新论文的（比闪一下更难发现）。 */
+watch(() => store.currentId, () => {
+  tab.value = 'skeleton'
+  methodCard.value = null
+  mcMore.value = false
+  advisor.value = []
+  figures.value = []
+  suggest.value = []
+  loadSix()
+}, { immediate: true })
 </script>
 
 <template>
@@ -292,22 +368,22 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
       <button class="rt" :class="{ on: tab === 'terms' }" @click="tab = 'terms'">术语</button>
       <button class="rt-collapse" title="收起右栏（x）" @click="store.viewer.railUser = false">»</button>
     </div>
-    <div class="rbody" :class="{ flush: tab === 'ask' }">
-      <!-- ============ 骨架 ============ -->
+    <div class="rbody" ref="rbodyEl" :class="{ flush: tab === 'ask' }">
+      <!-- ============ 问题 ============ -->
       <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
-          <div class="r-line">正在拆骨架<span class="r-dots">…</span></div>
+          <div class="r-line">正在通读<span class="r-dots">…</span></div>
           <div class="r-bar"><i /></div>
         </div>
         <div v-else-if="store.analysis.status === 'error'" style="padding:8px 2px">
           <div style="font-size:var(--fs-sm);color:var(--vermilion);line-height:1.6">{{ store.analysis.error }}</div>
           <button style="margin-top:10px" @click="emit('analyze')">重试</button>
         </div>
+        <!-- 没析读时只陈述状态：顶栏那颗「析读」就在上面，同一屏里放第二个同名按钮是重复 -->
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? '还没有析读。' : '这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但这六个问题答不了。' }}
+            {{ store.paras.length ? '还没有析读——顶栏「析读」读完全文，才有这六个问题的答案。' : '这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但这六个问题答不了。' }}
           </div>
-          <button v-if="store.paras.length" class="primary" style="margin-top:12px" @click="emit('analyze')">析读全文</button>
         </div>
 
         <template v-else-if="!store.paras.length">
@@ -335,8 +411,8 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
                   <span class="g-tag">¶{{ p.idx }}</span>
                   <span class="g-txt">{{ annoOf(p.idx).purpose || p.text.slice(0, 40) + '…' }}</span>
                 </div>
-                <div class="six-note" v-if="!gapParas.length && store.analysis.claims.length">
-                  原文没有点明的缺口段。从主张看，它在解决：{{ store.analysis.claims[0].text }}
+                <div class="six-note" v-if="!gapParas.length">
+                  原文没有点明的缺口段——从下一条的主张链往回看，要解决的问题就是第一条主张要回答的那个。
                 </div>
               </template>
 
@@ -405,11 +481,11 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
             </div>
           </section>
 
-          <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.some(n => !USER_KINDS.includes(n.kind))"
-               style="margin-top:16px">
-            <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind)).length }} 条</div>
-            <div v-for="n in store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind)).slice(0, 8)" :key="n.id"
-                 class="ev-row" @click="jumpNote(n)">
+          <!-- 眉批速览：只收④没管的那些。标着「有坑」的批注已经在④里逐条列过一遍，
+               同一句话在同一页出现两次，读起来就是噪音。 -->
+          <div v-if="digestNotes.length" style="margin-top:16px">
+            <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ digestNotes.length }} 条</div>
+            <div v-for="n in digestNotes.slice(0, 8)" :key="n.id" class="ev-row" @click="jumpNote(n)">
               <span class="e-dot"></span>
               <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] }"></span>
               <span class="e-note">
@@ -424,6 +500,8 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
       </template>
 
       <!-- ============ 速览 ============ -->
+      <!-- 这一页只干三件事：三十秒定位（一眼卡）、能不能复现（方法卡）、组会会被问什么（导师三问）。
+           「为什么重要」归问题页②，「依据在哪」归③，「作者承认了什么」归④——这里只留指针，不搬内容。 -->
       <template v-if="tab === 'eye'">
         <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}</div>
         <div v-else-if="!store.summary" class="reading">
@@ -432,64 +510,73 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
         </div>
         <div class="card-eye" v-else>
           <div class="ce-one">{{ store.summary.one_line }}</div>
-          <div class="ce-row"><span class="ce-k">贡献</span><span class="ce-v">{{ store.summary.contributions }}</span></div>
-          <div class="ce-row"><span class="ce-k">方法</span><span class="ce-v">{{ store.summary.methods }}</span></div>
-          <div class="ce-row"><span class="ce-k">发现</span><span class="ce-v">{{ store.summary.findings }}</span></div>
+          <div class="ce-row go" @click="gotoSix('q3')" title="去「问题」页第 3 问：主张与证据链">
+            <span class="ce-k">发现</span><span class="ce-v">{{ store.summary.findings }}</span>
+            <span class="ce-go">↗</span>
+          </div>
+          <div class="ce-row go" @click="gotoSix('q4')" :title="`去「问题」页第 4 问：${todoLine}`">
+            <span class="ce-k">待解</span>
+            <span class="ce-v">{{ todoLine }}</span>
+            <span class="ce-go">↗</span>
+          </div>
           <div class="ce-kw"><span class="chip" v-for="k in store.summary.keywords" :key="k">{{ k }}</span></div>
         </div>
 
-        <!-- 方法卡 -->
-        <div style="margin-top:16px">
-          <div class="mono-label" style="margin-bottom:8px;display:flex;justify-content:space-between">
-            <span>方法卡</span>
-          </div>
-          <div v-if="!methodCard">
-            <button style="width:100%" @click="genMethodCard" :disabled="mcBusy"
-                    title="把方法整理成可复现的 protocol">
-              {{ mcBusy ? '获取中…' : '获取' }}
-            </button>
-          </div>
-          <div class="card-eye" v-else>
-            <div class="ce-row"><span class="ce-k">目标</span><span class="ce-v">{{ methodCard.goal }}</span></div>
-            <div class="ce-row"><span class="ce-k">体系</span><span class="ce-v">{{ methodCard.system }}</span></div>
-            <div class="ce-row"><span class="ce-k">条件</span><span class="ce-v">{{ methodCard.conditions }}</span></div>
-            <div class="ce-row"><span class="ce-k">步骤</span>
-              <span class="ce-v">
-                <div class="mc-step" v-for="(s, i) in methodCard.steps" :key="i">{{ i + 1 }}. {{ s }}</div>
-              </span>
-            </div>
-            <div class="ce-row" v-if="methodCard.notes"><span class="ce-k">注意</span><span class="ce-v">{{ methodCard.notes }}</span></div>
-          </div>
-        </div>
-
-        <!-- 图表速览 -->
-        <div style="margin-top:16px" v-if="figures.length">
-          <div class="mono-label" style="margin-bottom:8px">图表速览 · {{ figures.length }}</div>
+        <!-- 图表：紧跟着一眼卡。读完结论就想看图，这是读论文的自然顺序 -->
+        <div class="blk" v-if="figures.length">
+          <div class="blk-head"><span class="mono-label">图表速览 · {{ figures.length }}</span></div>
           <div class="fig-strip">
             <img v-for="(f, i) in figures" :key="i" class="fig-thumb" :src="api.figureUrl(store.currentId, f)"
                  :title="`第 ${f.page + 1} 页`" @click="figIdx = i" />
           </div>
         </div>
 
-        <!-- 导师三问 -->
-        <div style="margin-top:16px">
-          <div class="mono-label" style="margin-bottom:8px">导师三问</div>
-          <div v-if="!advisor.length">
-            <button style="width:100%" @click="loadAdvisor" :disabled="advBusy"
-                    title="生成最可能被问住的 3 个问题">
-              {{ advBusy ? '获取中…' : '获取' }}
+        <!-- 方法卡：目标/体系/条件 + 前三步默认露出，其余收起（八步全铺开自己就一屏） -->
+        <div class="blk">
+          <div class="blk-head">
+            <span class="mono-label">方法卡</span>
+            <button v-if="!methodCard?.goal && !mcBusy" class="blk-get" @click="genMethodCard"
+                    title="把方法整理成可复现的 protocol">获取</button>
+            <span v-else-if="mcBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
+          </div>
+          <div class="card-eye" v-if="methodCard?.goal">
+            <div class="ce-row"><span class="ce-k">目标</span><span class="ce-v">{{ methodCard.goal }}</span></div>
+            <div class="ce-row"><span class="ce-k">体系</span><span class="ce-v">{{ methodCard.system }}</span></div>
+            <div class="ce-row"><span class="ce-k">条件</span><span class="ce-v">{{ methodCard.conditions }}</span></div>
+            <div class="ce-row"><span class="ce-k">步骤</span>
+              <span class="ce-v">
+                <div class="mc-step" v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ s }}</div>
+              </span>
+            </div>
+            <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">注意</span><span class="ce-v">{{ methodCard.notes }}</span></div>
+            <button v-if="!mcMore && methodCard.steps.length > MC_STEPS" class="blk-more" @click="mcMore = true">
+              展开全部 {{ methodCard.steps.length }} 步<span v-if="methodCard.notes"> · 注意</span>
             </button>
           </div>
-          <div v-else>
+        </div>
+
+        <!-- 导师三问：只问作者没承认的那一层。作者认了的、眉批标了的，在问题页④ -->
+        <div class="blk">
+          <div class="blk-head">
+            <span class="mono-label">导师三问</span>
+            <button v-if="!advisor.length && !advBusy && store.analysis.status === 'done'" class="blk-get"
+                    @click="loadAdvisor" title="组会 / 答辩时最可能被问住的三个问题">获取</button>
+            <span v-else-if="advBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
+          </div>
+          <div v-if="advisor.length">
             <div class="adv-item" v-for="(q, i) in advisor" :key="i">
               <div class="adv-q">Q{{ i + 1 }} · {{ q.q }}</div>
               <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ o }}</li></ul>
             </div>
           </div>
+          <div v-else-if="store.analysis.status === 'done'" class="six-note">
+            拿去组会或答辩时最可能被问住的三个问题——作者自己已经承认的那些不算。
+          </div>
+          <div v-else class="six-note">先析读全文，才有主张和薄弱点可以问。</div>
         </div>
 
         <!-- 导出 -->
-        <div style="margin-top:16px;display:flex;gap:8px">
+        <div class="blk" style="display:flex;gap:8px">
           <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>导出笔记 .md</a>
         </div>
       </template>
@@ -504,9 +591,8 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
               <span class="t-en" :title="a.en">{{ a.en }}</span>
               <span class="t-arrow">→</span>
               <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
-              <button v-if="!a.saved" class="t-del" style="font-size:var(--fs-sm)" title="收进术语表"
+              <button class="t-del" style="font-size:var(--fs-sm)" title="收进术语表"
                       @click="saveAbbr(a)">＋</button>
-              <span v-else class="mono-label">已收</span>
             </div>
           </div>
         </div>

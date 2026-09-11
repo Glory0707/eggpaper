@@ -1133,7 +1133,7 @@ watch(() => store.marginalia.notes, (n, o) => {
             <div v-for="{ p, role, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx"
                  class="role-tab" :class="{ on: roleCard?.idx === p.idx }"
                  :style="{ top: top + 'px', background: ROLE_COLOR[role], color: roleInk(role) }"
-                 :title="`¶${p.idx} · ${ROLE_ZH[role]}${annoPurpose(p.idx) ? ' — ' + annoPurpose(p.idx) : ''}`"
+                 :title="`¶${p.idx} · ${ROLE_ZH[role]}`"
                  @click.stop="openRoleCard($event, p)">
               <span class="pn">{{ ROLE_GLYPH[role] }}</span>
             </div>
@@ -1206,11 +1206,10 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
     </Transition>
 
-    <!-- 框选中：常驻提示 + 退出口 -->
+    <!-- 框选中：常驻退出口。顶栏那颗「框选」此刻正亮着，这里不必再把同一个词说一遍 -->
     <Transition name="pop">
     <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
-      <span class="fh-tag">框选</span>
-      <button @click="store.viewer.frame = false">退出</button>
+      <button @click="store.viewer.frame = false">退出框选</button>
     </div>
     </Transition>
 

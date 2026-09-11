@@ -249,8 +249,12 @@ def _run_analysis(pid: str, paras: list):
                 data["purposes"][str(p["idx"])] = "参考文献"
         db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
                                               for k, v in data["roles"].items()})
-        db.answers_clear(pid)          # 主张换了一批，那三问的旧答案就不算数了
-        db.update_paper(pid, abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
+        # 主张换了一批，所有"由主张派生的东西"就都是旧结论了：六问②⑤⑥、一眼卡、
+        # 推荐问题、导师三问、方法卡。只清其中一半是最难看的——一眼卡说 A，骨架里
+        # 已经没有 A 了，或者三问还在问一个被删掉的主张。宁可再生一次。
+        db.answers_clear(pid)
+        db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
+                        abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
     except Exception as e:
         db.set_analysis(pid, [], {}, status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
@@ -327,7 +331,9 @@ def _run_marginalia(pid: str, paras: list):
         use = [p for p in paras if not p.get("in_refs")]
         notes = llm.mock_marginalia(paras) if config.load()["mock"] else llm.analyze_marginalia(title, use)
         db.set_marginalia(pid, notes)
-        db.answers_clear(pid)          # "还能做什么"吃眉批里的"有坑"，重写眉批要一起作废
+        # "还能做什么"吃眉批里的"有坑"，导师三问的输入也是这批 warning——重写眉批要一起作废
+        db.answers_clear(pid)
+        db.update_paper(pid, advisor=None)
         _resolve_rects(pid)
     except Exception as e:
         db.set_marginalia(pid, [], status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
@@ -431,17 +437,21 @@ KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别�
 
 
 @app.get("/api/papers/{pid}/advisor")
-def advisor(pid: str):
+def advisor(pid: str, cached: bool = False):
     p = _paper_or_404(pid)
     _require_paras(pid)
     if p["advisor"]:
         return JSONResponse(json.loads(p["advisor"]))
+    if cached:                       # 同 method-card：进速览页只读缓存，不顺手生成
+        return {"questions": []}
     if p["analysis_status"] != "done":
         return {"questions": []}
     if config.load()["mock"]:
         data = {"questions": [{"q": "〔演示〕证据够硬吗？", "outline": ["演示要点"]}]}
     else:
         _, claims, annos = db.get_analysis(pid)
+        # 眉批已标的"有坑"当作**作者/读者已经认了的**薄弱点喂进去——三问的任务是
+        # 在它们之上再狠一层，而不是把同一批话说第二遍（「问题」页④已经说过一遍了）
         warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if n["kind"] == "warning"]
         data = llm.advisor_questions(p["title"], claims, warns)
     db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
@@ -530,11 +540,15 @@ def six_answer(pid: str, key: str):
 
 
 @app.get("/api/papers/{pid}/method-card")
-def method_card(pid: str):
+def method_card(pid: str, cached: bool = False):
     p = _paper_or_404(pid)
     _require_paras(pid)
     if p["method_card"]:
         return JSONResponse(json.loads(p["method_card"]))
+    # cached=1：只读缓存，没有就明说"没有"。进速览页要先把算过的东西显示出来，
+    # 但"读缓存"和"花一次模型调用"是两件事，不能让前者偷偷变成后者。
+    if cached:
+        return {}
     if config.load()["mock"]:
         data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
                 "steps": ["步骤一", "步骤二"], "notes": ""}
@@ -563,7 +577,8 @@ def export_md(pid: str):
             for a in c["anchors"]:
                 anno = annos.get(str(a))
                 if anno:
-                    lines.append(f"  - ¶{a} {llm.ROLE_ZH.get(anno['role'], '')}：{anno['purpose']}")
+                    # 不再每行写一遍角色名（原来 11 行全是"关键证据："）——角色在下一节按类汇总
+                    lines.append(f"  - ¶{a}：{anno['purpose']}")
             lines.append("")
         by_role = {}
         for k, v in annos.items():
@@ -595,16 +610,6 @@ def glossary_export():
         w.writerow([r["term_en"], r["term_zh"], r["domain"], r["note"], r["source"]])
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=eggpaper-glossary.csv"})
-
-
-@app.get("/api/glossary/export.txt")
-def glossary_export_anki():
-    """Anki 可直接导入的 TSV（正面=英文，背面=中文）。"""
-    lines = ["#separator:tab", "#html:false"]
-    for r in db.glossary_list():
-        lines.append(r["term_en"] + "\t" + r["term_zh"])
-    return Response(content="\n".join(lines), media_type="text/plain; charset=utf-8",
-                    headers={"Content-Disposition": "attachment; filename=eggpaper-anki.txt"})
 
 
 # ---------------- 图表速览 ----------------

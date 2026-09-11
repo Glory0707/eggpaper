@@ -145,6 +145,17 @@ export async function refreshMarginalia() {
   Object.assign(store.marginalia, m)
 }
 
+/* 重新析读会把一眼卡一并作废（它是旧主张的产物），所以析读完成后要重新取一次。
+   取的过程本身会触发生成，页面上就是"正在写一眼卡…"再转一圈——这是对的，
+   总比留一张对不上新骨架的卡片好。 */
+export async function reloadSummary() {
+  if (!store.currentId) return
+  store.summary = null
+  store.summaryErr = ''
+  try { store.summary = await api.summary(store.currentId) }
+  catch (e) { store.summaryErr = e.message }
+}
+
 export function jumpTo(page, y0, y1) {
   store.jump = { page, y0, y1, at: Date.now() }
 }

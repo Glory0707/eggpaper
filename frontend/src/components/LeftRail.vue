@@ -165,7 +165,8 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
          @mousedown="startResize" @dblclick="libW = LIB_DEF"></div>
 
     <div class="rail-head">
-      <span class="mono-label">文库 · {{ store.papers.length }} 篇</span>
+      <!-- 篇数在这块里已经说过了（左条的角标 + 下面「全部 N」），标题不再重复第三个 -->
+      <span class="mono-label">文库</span>
       <button class="ghost head-x" title="收起文库" @click="emit('close')">‹</button>
     </div>
 

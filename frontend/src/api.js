@@ -30,11 +30,12 @@ export const api = {
   pin: (pid, body) => req('POST', `/api/papers/${pid}/pin`, body),
   unpin: (pid, mid) => req('DELETE', `/api/papers/${pid}/marginalia/${mid}`),
   summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
-  methodCard: (pid) => req('GET', `/api/papers/${pid}/method-card`),
+  // cached=1：只读缓存，没有就返回空——进速览页要把算过的显示出来，但不该顺手花一次模型调用
+  methodCard: (pid, cached = false) => req('GET', `/api/papers/${pid}/method-card${cached ? '?cached=1' : ''}`),
   suggest: (pid) => req('GET', `/api/papers/${pid}/suggest`),
   sixAnswers: (pid) => req('GET', `/api/papers/${pid}/six-answers`),
   sixAnswer: (pid, key) => req('GET', `/api/papers/${pid}/six-answers/${key}`),
-  advisor: (pid) => req('GET', `/api/papers/${pid}/advisor`),
+  advisor: (pid, cached = false) => req('GET', `/api/papers/${pid}/advisor${cached ? '?cached=1' : ''}`),
   figures: (pid) => req('GET', `/api/papers/${pid}/figures`),
   askVisual: (body) => req('POST', '/api/ask-visual', body),
   figureUrl: (pid, f, dpi = 130) =>

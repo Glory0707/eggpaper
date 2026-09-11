@@ -592,8 +592,32 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .card-eye .ce-row { display: flex; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--hairline-soft); }
 .card-eye .ce-k { font-family: var(--sans); font-weight: 600; font-size: var(--fs-xs); color: var(--ink-3); width: 58px; flex-shrink: 0; padding-top: 3px; }
-.card-eye .ce-v { font-size: var(--fs-read); line-height: 1.68; color: var(--ink-2); }
+.card-eye .ce-v { font-size: var(--fs-read); line-height: 1.68; color: var(--ink-2); flex: 1; min-width: 0; }
 .card-eye .ce-kw { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 16px 14px; border-top: 1px solid var(--hairline-soft); }
+/* 带 ↗ 的行＝指针：内容在「问题」页那一问里，这里只留一句摘要 + 一个去处。
+   悬停才亮出箭头，和眉批上那个「问 ↗」是同一套动作语言。 */
+.card-eye .ce-row.go { cursor: pointer; }
+.card-eye .ce-row.go:hover { background: var(--accent-soft); }
+.card-eye .ce-go { flex: 0 0 auto; font-size: var(--fs-sm); color: var(--accent-deep); opacity: 0; align-self: flex-start; }
+.card-eye .ce-row.go:hover .ce-go { opacity: 1; }
+
+/* 速览页的块头：标签在左、动作在右。动作是一个小 chip，不是一个占满一行的大按钮
+   ——三个大按钮排下来像三件没做完的事 */
+.blk { margin-top: 18px; }
+.blk-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.blk-head .mono-label { margin: 0; }
+.blk-get {
+  margin-left: auto; font-size: var(--fs-sm); padding: 2px 12px; color: var(--ink-2);
+  background: var(--card-2); border: 1px solid var(--hairline); border-radius: 3px;
+}
+.blk-get:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
+.blk-busy { margin-left: auto; font-size: var(--fs-sm); color: var(--ink-3); }
+.blk-more {
+  display: block; width: 100%; text-align: center; padding: 7px 0;
+  font-size: var(--fs-sm); color: var(--ink-3); background: transparent;
+  border: none; border-top: 1px solid var(--hairline-soft); border-radius: 0;
+}
+.blk-more:hover { color: var(--accent-deep); background: var(--accent-soft); transform: none; box-shadow: none; }
 
 /* 提问 */
 .qa-msg { margin-bottom: 14px; }
@@ -606,8 +630,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   font-family: var(--mono); font-size: var(--fs-xs); padding: 0 4px; margin: 0 1px;
   background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-deep);
 }
-.qa-cites { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.qa-cites button { font-family: var(--mono); font-size: var(--fs-xs); padding: 1.5px 7px; background: var(--card-2); color: var(--ink-2); border-radius: 2px; }
 .qa-input { display: flex; gap: 7px; padding-top: 4px; }
 .qa-input input { flex: 1; }
 .qa-quick { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin-bottom: 12px; }
@@ -861,20 +883,18 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .find-hit.cur { background: rgba(29, 78, 95, 0.3); box-shadow: 0 0 0 1.5px var(--accent-deep); }
 
 /* 框选中：常驻提示 + 退出口，绝不让人找不到怎么取消 */
+/* 框选态：一颗「退出框选」就够。原来左边还有一个靛色「框选」标签，
+   而顶栏那颗「框选」按钮此时正亮着——同一个词在一屏里说两遍。 */
 .frame-hint {
   top: 70px;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center;
   background: var(--ink); color: var(--card);
-  border-radius: 20px; padding: 7px 8px 7px 14px; font-size: var(--fs-sm);
+  border-radius: 20px; padding: 5px 7px; font-size: var(--fs-sm);
   box-shadow: var(--shadow-pop);
-}
-.frame-hint .fh-tag {
-  font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.14em;
-  color: #fff; background: var(--accent); border-radius: 10px; padding: 2px 7px;
 }
 .frame-hint button {
   background: var(--card-2); border: none; border-radius: 14px;
-  font-size: var(--fs-sm); padding: 3px 11px; color: var(--ink); font-weight: 600;
+  font-size: var(--fs-sm); padding: 3px 12px; color: var(--ink); font-weight: 600;
 }
 .frame-hint button:hover { transform: none; box-shadow: none; background: #fff; }
 
@@ -1014,13 +1034,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   font-size: var(--fs-xs); padding: 2px 6px; border-radius: 3px;
 }
 .qa-acts button:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
-.qa-cites { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 7px; }
-.qa-cites .qc-label { font-size: var(--fs-xs); color: var(--ink-3); }
-.qa-cites button {
-  font-family: var(--mono); font-size: var(--fs-xs); padding: 1px 7px;
-  background: var(--card-2); color: var(--ink-2); border-radius: 3px;
-}
-.qa-cites button:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
 
 .qa-tobottom {
   position: sticky; bottom: 6px; left: 50%; translate: -50% 0; z-index: 6;

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis } from './store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis,
+         reloadSummary } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import RightRail from './components/RightRail.vue'
@@ -75,7 +76,8 @@ async function poll() {
 watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
 
 watch(() => store.analysis.status, (n, o) => {
-  if (o === 'running' && n === 'done') rollOnce()
+  // 析读把一眼卡一起作废了（服务端清了缓存），所以这里要重新取一次
+  if (o === 'running' && n === 'done') { rollOnce(); reloadSummary() }
 })
 
 async function doAnalyze() {
