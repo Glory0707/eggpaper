@@ -4,9 +4,12 @@
 `POST /api/window`（界面里点「在独立窗口打开」）。
 
 为什么用 Edge/Chrome 的**应用模式**而不是 WebView 壳子：Windows 上 WebView2 的
-运行时提供者就是 Edge——同一个引擎，应用模式还不用往安装包里塞那几十兆。
-窗口没有地址栏、没有标签页，任务栏里就是 eggpaper 自己。
-装了 pywebview 的话优先用它（真内嵌窗口，不依赖用户的浏览器）。
+运行时提供者就是 Edge——同一个引擎，应用模式还不用往安装包里塞那几十兆
+（pywebview 一路会带 pythonnet，实测 +25MB）。窗口没有地址栏、没有标签页。
+
+**一个说清楚的取舍**：应用模式窗口的任务栏按钮图标是**浏览器自己的**（Chromium 给
+这种窗口不设专属图标）。要让任务栏显示 eggpaper 的图标，只能用原生窗口（pywebview
+那一路）——那是 +25MB 与一层冻结风险换来的，需要时再说。
 """
 import os
 import subprocess
@@ -30,18 +33,6 @@ def browser_exe() -> str:
 
 def open_window(url: str, size=(1440, 940)) -> str:
     """开一个独立窗口。返回用了哪种方式（给日志/界面提示用），失败返回空串。"""
-    try:
-        import webview                                   # noqa: F401  装了才走这条
-        import threading
-        import webview as wv
-
-        def run():
-            wv.create_window("eggpaper", url, width=size[0], height=size[1])
-            wv.start()
-        threading.Thread(target=run, daemon=True).start()
-        return "pywebview"
-    except ImportError:
-        pass
     exe = browser_exe()
     if not exe:
         return ""

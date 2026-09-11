@@ -17,43 +17,15 @@ import os
 
 from PIL import Image, ImageDraw
 
-VIEW = 96                                   # 与 SVG 的 viewBox 同尺度
-ACCENT = (29, 78, 95)                       # --accent
-PAPER = (255, 255, 255)
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
+import mark  # noqa: E402  几何与配色只在 mark.py 里维护一份
 
-# 每个尺寸一套：(环宽, 字条列表[(y, 宽)], 条高)
-SPEC = {
-    16: (13.0, [(34, 26), (54, 16)], 10.0),          # 只留两条、环最粗
-    24: (11.0, [(32, 30), (46, 34), (60, 18)], 8.0),
-    32: (9.0, [(32, 30), (45, 36), (58, 20)], 7.0),
-    48: (7.0, [(31, 34), (43, 40), (55, 38), (66, 20)], 6.0),
-}
-FULL = (6.0, [(30, 36), (42, 42), (54, 40), (66, 22)], 5.5)   # 128/256 用完整稿
+VIEW, ACCENT, PAPER = mark.VIEW, mark.ACCENT, mark.PAPER
 
 
-def _spec(px):
-    for k in sorted(SPEC):
-        if px <= k:
-            return SPEC[k]
-    return FULL
-
-
-def _draw(px: int, tile: bool) -> Image.Image:
-    ss = 4
-    size = px * ss
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    k = size / VIEW
-    w, bars, h = _spec(px)
-    if tile:
-        r = size // 5
-        d.rounded_rectangle([0, 0, size - 1, size - 1], radius=r, fill=PAPER)
-    d.ellipse([18 * k, 14 * k, 78 * k, 82 * k], outline=ACCENT, width=max(2, round(w * k)))
-    for y, bw in bars:
-        d.rounded_rectangle([(48 - bw / 2) * k, (y - h / 2) * k,
-                             (48 + bw / 2) * k, (y + h / 2) * k],
-                            radius=h * k / 2, fill=ACCENT)
-    return img.resize((px, px), Image.LANCZOS)
+def _draw(px: int, tile: bool = False):
+    return mark.draw(px, tile=tile)
 
 
 def _dib(img) -> bytes:

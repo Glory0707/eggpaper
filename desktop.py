@@ -15,6 +15,8 @@
 3. **单实例**。端口上已经有 eggpaper 在跑（用户双击了两次图标），就只打开浏览器，
    不再起第二个进程去抢同一份 SQLite 和文库。
 """
+import ctypes
+from ctypes import wintypes
 import json
 import os
 import socket
@@ -58,6 +60,18 @@ def _log(msg: str):
         print(line)
 
 
+def _dpi_aware():
+    """先声明 DPI 感知，再问系统"托盘图标要多大"——否则问到的永远是 96 DPI 下的 16px，
+    在 125%/150% 缩放的屏幕上被系统放大，看着就是糊的。"""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)      # PROCESS_SYSTEM_DPI_AWARE
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 def start_tray(url: str, port: int, log) -> bool:
     """托盘图标：打开界面 / 查更新 / 退出。打包版默认开——否则用户想关掉这个
     "后台服务"只能进设置里点，或者去任务管理器。"""
@@ -68,22 +82,33 @@ def start_tray(url: str, port: int, log) -> bool:
         log(f"托盘不可用（{e}）")
         return False
 
-    def mark(size=32):
-        """托盘图标：和界面里那枚印章同一个形状，但**画满画布**。
+    def tray_image():
+        """托盘图标：**按 Windows 要的尺寸原生画**，不缩放。
 
-        托盘只会显示 16~20px，之前按"界面上那枚印章"的比例照搬（标记只占中间六成、
-        环又细），缩到 16px 就只剩一点，看着偏小。这里把椭圆撑到边、环加粗、字条减到两条，
-        并把 32px 的图交给 Windows 自己缩——小尺寸才立得住。
+        为什么不能画个 32px 交给它缩：pystray 的 Windows 后端会把这张图存成
+        **单尺寸** ico，再用 LoadImage(LR_DEFAULTSIZE) 取系统小图标尺寸（100% 缩放下是
+        16px）——32px 被硬缩到 16px，糊的根源就在这一步（源码里 serialized_image +
+        LR_DEFAULTSIZE）。按目标尺寸画，1:1 落上去才清晰。
         """
-        ss = 4
-        im = Image.new("RGBA", (size * ss, size * ss), (0, 0, 0, 0))
-        d = ImageDraw.Draw(im)
-        k = size * ss / 96
-        d.ellipse([5 * k, 2 * k, 91 * k, 94 * k], outline=(29, 78, 95), width=max(3, round(15 * k)))
-        for y, w in ((36, 46), (58, 34)):      # 围绕椭圆中心（48）对称，别偏上
-            d.rounded_rectangle([(48 - w / 2) * k, (y - 6) * k, (48 + w / 2) * k, (y + 6) * k],
-                                radius=6 * k, fill=(29, 78, 95))
-        return im.resize((size, size), Image.LANCZOS)
+        import mark
+        try:
+            size = ctypes.windll.user32.GetSystemMetrics(49) or 16   # 49 = SM_CXSMICON
+        except Exception:
+            size = 16
+        size = max(16, min(64, size))            # 系统说多大就按多大画（DPI 感知之后是真值）
+        log(f"托盘图标按 {size}px 原生绘制")
+        return mark.draw(size, tray=True)
+
+    def guard(name, fn):
+        """托盘菜单的回调在托盘线程里跑，抛出去的异常没人接——**用户看到的就是"点了没反应"**。
+        所以每个回调都包一层：出错也写进日志，绝不静默。"""
+        def wrapped(icon, item):
+            try:
+                fn(icon, item)
+            except Exception:
+                log(f"托盘菜单「{name}」出错：")
+                log(traceback.format_exc())
+        return wrapped
 
     def on_open(icon, item):
         _open(url, log)
@@ -112,16 +137,34 @@ def start_tray(url: str, port: int, log) -> bool:
         icon.stop()
         os._exit(0)
 
-    icon = pystray.Icon("eggpaper", mark(), "eggpaper", menu=pystray.Menu(
-        pystray.MenuItem("打开界面", on_open, default=True),
-        pystray.MenuItem("在独立窗口打开", on_window),
-        pystray.MenuItem("检查更新", on_check),
+    icon = pystray.Icon("eggpaper", tray_image(), "eggpaper", menu=pystray.Menu(
+        pystray.MenuItem("打开界面", guard("打开界面", on_open), default=True),
+        pystray.MenuItem("在独立窗口打开", guard("在独立窗口打开", on_window)),
+        pystray.MenuItem("检查更新", guard("检查更新", on_check)),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("退出 eggpaper", on_quit),
+        pystray.MenuItem("退出 eggpaper", guard("退出 eggpaper", on_quit)),
     ))
     threading.Thread(target=icon.run, daemon=True).start()
     log("托盘图标已就绪")
     return True
+
+
+def _open_window(url: str, log) -> bool:
+    """独立窗口：实现放在 backend/window.py（界面里那颗「在独立窗口打开」走同一份）。
+
+    这里只负责"开 + 记日志"。**这个函数曾经被我从文件里删掉过而没人发现**：
+    托盘菜单回调里抛的异常当时是被静默吞掉的，用户点「在独立窗口打开」就是"没反应"，
+    日志里一个字都没有。现在托盘回调有守卫（出错必写日志），这种缺失不会再无声无息。
+    """
+    try:
+        import window as winmod
+    except Exception:
+        log("独立窗口不可用（模块没打进包）：")
+        log(traceback.format_exc())
+        return False
+    how = winmod.open_window(url)
+    log(f"独立窗口：{how}" if how else "没找到可用的浏览器（Edge/Chrome），退回默认浏览器")
+    return bool(how)
 
 
 def _open(url: str, log):
@@ -131,6 +174,34 @@ def _open(url: str, log):
         log(f"（EGGPAPER_NO_BROWSER=1，不打开浏览器）{url}")
         return
     webbrowser.open(url)
+
+
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+# **必须声明类型**：64 位下 HANDLE 是 64 位，ctypes 默认按 c_int 收返回值，句柄会被截断，
+# 之后传回去就是 WinError 6「句柄无效」——整个启动流程崩在探活这一步（实测踩过）。
+_kernel32.OpenProcess.restype = wintypes.HANDLE
+_kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+_kernel32.WaitForSingleObject.restype = wintypes.DWORD
+_kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+_kernel32.CloseHandle.restype = wintypes.BOOL
+_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+
+def _alive(pid: int) -> bool:
+    """这个 pid 还活着吗。
+
+    **不要用 `os.kill(pid, 0)`**：Windows 上它等价于 TerminateProcess(handle, 0)——
+    不是"探活"，是真把那个进程干掉。用 OpenProcess + WaitForSingleObject 看它还在不在。
+    """
+    WAIT_TIMEOUT = 0x00000102
+    PROCESS_SYNCHRONIZE = 0x00100000
+    h = _kernel32.OpenProcess(PROCESS_SYNCHRONIZE, False, pid)
+    if not h:
+        return False
+    try:
+        return _kernel32.WaitForSingleObject(h, 0) == WAIT_TIMEOUT
+    finally:
+        _kernel32.CloseHandle(h)
 
 
 def _instance_file() -> str:
@@ -154,9 +225,7 @@ def _running_instance():
     pid = int(info.get("pid") or 0)
     if pid <= 0 or pid == os.getpid():
         return None
-    try:
-        os.kill(pid, 0)          # Windows 上也会检查存在性；不存在则抛
-    except OSError:
+    if not _alive(pid):
         return None
     return int(info.get("port") or 0) or None
 
@@ -202,10 +271,28 @@ def _handoff(port: int, pdf: str) -> bool:
         return False
 
 
+def _install_crash_log(log):
+    """未捕获的异常一律写日志。
+
+    打包版（console=False）没有 stderr，崩溃就是"窗口闪一下/什么都没发生"，
+    连一句原因都留不下——排查只能靠猜。主线程和子线程都挂上。
+    """
+    def hook(exc_type, exc, tb):
+        log("未捕获的异常：")
+        log("".join(traceback.format_exception(exc_type, exc, tb)))
+    sys.excepthook = hook
+    try:
+        threading.excepthook = lambda a: hook(a.exc_type, a.exc_value, a.exc_traceback)
+    except Exception:
+        pass
+
+
 def main():
     _setup_paths()
+    _dpi_aware()
     import appinfo
     log = _log
+    _install_crash_log(log)
     log(f"启动 eggpaper {appinfo.version()}（packaged={appinfo.is_frozen()}）")
 
     pdf = _pdf_arg(sys.argv)

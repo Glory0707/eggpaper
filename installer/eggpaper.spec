@@ -22,7 +22,8 @@ hiddenimports = [
     "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.loops.asyncio",
     "uvicorn.protocols.http.auto", "uvicorn.protocols.http.h11_impl",
     "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on", "uvicorn.lifespan.off",
-    "appinfo", "citation", "config", "db", "glossary_seed", "llm", "pdfparse", "update",
+    "appinfo", "citation", "config", "db", "glossary_seed", "llm", "mark", "pdfparse",
+    "update", "window",
 ]
 
 a = Analysis(
@@ -36,7 +37,9 @@ a = Analysis(
     # 瘦身：这些一个都用不到。**注意别把 PIL 列进来**——托盘图标要用它，
     # excludes 的优先级高于 hiddenimports，列进去就是"明明装了却说找不到"。
     excludes=["numpy", "scipy", "pandas", "matplotlib", "tkinter", "pytest",
-              "IPython", "notebook"],
+              "IPython", "notebook",
+              # 独立窗口走浏览器应用模式，不用内嵌 WebView（pywebview 会带 pythonnet，+25MB）
+              "webview", "pythonnet", "clr_loader"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
