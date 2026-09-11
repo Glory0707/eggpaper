@@ -39,6 +39,12 @@ export const store = reactive({
   },
   jump: null,            // {page, y0, y1, at}
   cite: { open: false }, // 「引用」浮层：开在顶栏标题旁，内容由 CiteCard 自己拉
+  // 更新：打开软件时后台静默查一次，有新版才把 show 打开（UpdateCard 读这一份）
+  update: {
+    show: false, current: '', latest: '', notes: '', url: '', size: 0, sha256: '',
+    pub_date: '', required: false, packaged: false, installing: false,
+    prog: { state: 'idle', pct: 0, got: 0, total: 0, path: '', error: '' },
+  },
   askPrefill: null,      // {paraIdx} 或 {text}
   glossaryPrefill: null,
   shortcutCard: false,
@@ -99,6 +105,27 @@ watch(() => store.viewer.fs, k => {
 delete document.documentElement.dataset.skin
 // 同理：layers 里留过 skeleton（页边角色书签已删），清掉免得它继续被存回去
 delete store.viewer.layers.skeleton
+
+/* 查更新。silent=true（默认）时一切失败都咽下去——这是打开软件时的一次安静探测，
+   源没配、网断了、源上没东西，都不该变成一个报错弹窗。 */
+export async function checkUpdate(force = false, silent = true) {
+  try {
+    const r = await api.updateCheck(force)
+    if (r.has_update) store.update = { ...store.update, ...r, show: true }
+    return r
+  } catch (e) {
+    if (!silent) toast('检查更新失败：' + e.message)
+    return null
+  }
+}
+
+export async function loadVersion() {
+  try {
+    const v = await api.version()
+    store.update = { ...store.update, current: v.version, packaged: v.packaged }
+    return v
+  } catch { return null }
+}
 
 export async function refreshPapers() {
   store.papers = await api.papers()

@@ -3,7 +3,11 @@ import os
 
 import yaml
 
-DATA_DIR = os.environ.get("EGGPAPER_DATA", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
+import appinfo
+
+# 数据目录：开发时是 backend/data；打包后是 %LOCALAPPDATA%\eggpaper\data，
+# **不在安装目录里**——覆盖升级只换程序，用户的配置/文库/批注一根都不动
+DATA_DIR = appinfo.data_dir()
 CONFIG_PATH = os.path.join(DATA_DIR, "config.yaml")
 
 DEFAULTS = {
@@ -18,6 +22,13 @@ DEFAULTS = {
     "pdf2zh": {
         "service": "google",   # pdf2zh 翻译服务名（google/bing/openai/...）
         "options": "",         # 透传给 pdf2zh CLI 的额外参数
+    },
+    "update": {
+        # 更新源：一个静态目录的地址，里面放 latest.json 和安装包（见 tools/build_installer.py）
+        # 留空 = 不检查更新（开发时就是这个状态）
+        "feed_url": "",
+        "auto_check": True,    # 打开软件时自动查一次（不打扰：查到了才提示）
+        "cache_hours": 6,      # 同一个源多久之内不重复查
     },
 }
 

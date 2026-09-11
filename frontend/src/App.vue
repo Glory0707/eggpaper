@@ -1,13 +1,14 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis,
-         reloadSummary } from './store'
+         reloadSummary, checkUpdate, loadVersion } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import RightRail from './components/RightRail.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import Dialog from './components/Dialog.vue'
 import CiteCard from './components/CiteCard.vue'
+import UpdateCard from './components/UpdateCard.vue'
 import { dlg, dlgCancel } from './dialog'
 import EggMark from './components/EggMark.vue'
 
@@ -51,6 +52,13 @@ onMounted(async () => {
   await refreshCollections()
   if (store.papers.length) openPaper(store.papers[0].id)
   pollTimer = setInterval(poll, 3000)
+  // 更新：先问自己是哪个版本，再等 6 秒做一次安静探测。故意不抢首屏——
+  // 用户先看到论文，更新提示随后自己浮出来；源里没东西就什么都不会发生。
+  loadVersion().then(() => {
+    if (store.settings?.update?.auto_check !== false) {
+      setTimeout(() => checkUpdate(false, true), 6000)
+    }
+  })
   window.addEventListener('keydown', onKey)
   window.addEventListener('dragend', endDrag)
   window.addEventListener('blur', endDrag)
@@ -284,6 +292,7 @@ function onKey(e) {
          别放进上面那个 Transition——Transition 只允许一个子节点，多一个就编译不过 -->
     <Dialog />
     <CiteCard />
+    <UpdateCard />
 
     <!-- 键盘卡 -->
     <Transition name="pop">

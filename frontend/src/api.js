@@ -72,6 +72,14 @@ export const api = {
   glossaryAdd: (item) => req('POST', '/api/glossary', item),
   glossaryDelete: (id) => req('DELETE', `/api/glossary/${id}`),
   settings: () => req('GET', '/api/settings'),
+  version: () => req('GET', '/api/version'),
+  // 更新：查源 / 下载（进度另轮询）/ 交给安装器 / 退出程序
+  updateCheck: (force = false) => req('GET', `/api/update/check${force ? '?force=1' : ''}`),
+  updateDownload: (body) => req('POST', '/api/update/download', body),
+  updateProgress: () => req('GET', '/api/update/progress'),
+  updateInstall: (path) => req('POST', '/api/update/install', { path }),
+  revealUpdate: (path) => req('POST', '/api/update/reveal', { path }),
+  quit: () => req('POST', '/api/quit'),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
 }

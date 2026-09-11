@@ -1330,3 +1330,24 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   .qa-caret { animation: none; }
 }
 
+
+/* ---------- 更新提示（UpdateCard） ---------- */
+.modal.upd { width: 452px; }
+.upd-ver { display: flex; align-items: baseline; gap: 7px; margin-bottom: 12px; }
+.upd-ver .mono-num { font-family: var(--mono); font-size: var(--fs-md); color: var(--ink-3); }
+.upd-ver .upd-new { color: var(--accent); font-weight: 600; }
+.upd-ver .upd-arrow { color: var(--ink-3); font-size: var(--fs-sm); }
+.upd-ver .upd-date { font-size: var(--fs-xs); color: var(--ink-3); margin-left: auto; }
+.upd-notes {
+  font-size: var(--fs-md); line-height: 1.75; color: var(--ink-2);
+  background: var(--paper-deep); border-radius: 3px; padding: 10px 12px;
+  white-space: pre-wrap; max-height: 30vh; overflow-y: auto; margin-bottom: 12px;
+}
+.upd-notes.muted { color: var(--ink-3); }
+.upd-prog { margin-bottom: 12px; }
+.upd-bar { height: 4px; border-radius: 2px; background: var(--hairline); overflow: hidden; }
+.upd-bar i { display: block; height: 100%; background: var(--accent); transition: width 200ms var(--ease-smooth); }
+.upd-pct { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); margin-top: 5px; }
+.upd-note { font-size: var(--fs-sm); line-height: 1.7; color: var(--ink-2); margin-bottom: 10px; }
+.upd-note.err { color: var(--vermilion); }
+.upd-note.ok { color: var(--accent-deep); }

@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, ref } from 'vue'
-import { api, store, FS_SCALE } from '../store'
+import { api, store, FS_SCALE, toast, checkUpdate } from '../store'
 import { vDrag } from '../drag'
 
 const emit = defineEmits(['close', 'save'])
@@ -11,6 +11,8 @@ const f = reactive({
   api_key: store.settings.provider.key_masked || '',
   mock: store.settings.mock,
   service: store.settings.pdf2zh.service,
+  feed: store.settings.update?.feed_url || '',
+  auto_check: store.settings.update?.auto_check !== false,
   layers: { ...store.viewer.layers },
 })
 
@@ -48,9 +50,28 @@ async function test() {
   testing.value = false
 }
 
+/* 检查更新：先把更新源存下来再查（和"测试连接"一个道理，测的必须是刚填的东西） */
+const checking = ref(false)
+async function checkNow() {
+  checking.value = true
+  await api.saveSettings({ update: { feed_url: f.feed, auto_check: f.auto_check } })
+  store.settings = await api.settings()
+  const r = await checkUpdate(true, false)
+  checking.value = false
+  if (r?.has_update) { emit('close'); return }         // 有新版：把弹窗让给更新卡片
+  toast(r?.ok ? `已经是最新的（${r.current}）` : '没读到更新源：' + (r?.reason || '地址为空'))
+}
+
+/* 退出程序：打包版没有控制台窗口，用户需要一个"关掉它"的地方 */
+async function quitApp() {
+  try { await api.quit(); toast('正在退出…') } catch (e) { toast(e.message) }
+}
+
 function save() {
   Object.assign(store.viewer.layers, f.layers)
-  emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key, vision_model: f.vision_model }, mock: f.mock, pdf2zh: { service: f.service } })
+  emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key, vision_model: f.vision_model },
+                 mock: f.mock, pdf2zh: { service: f.service },
+                 update: { feed_url: f.feed, auto_check: f.auto_check } })
 }
 </script>
 
@@ -110,6 +131,22 @@ function save() {
           <option value="deepl">deepl</option>
           <option value="openai">openai（OpenAI 兼容）</option>
         </select>
+      </div>
+      <div class="f-row">
+        <label class="mono-label">更新源（静态目录地址，留空不检查）</label>
+        <input type="text" v-model="f.feed" placeholder="http://192.168.1.5:8440 或 https://…/eggpaper" />
+      </div>
+      <div class="f-line">
+        <span class="mono-label" style="margin:0">更新</span>
+        <label class="ck"><input type="checkbox" v-model="f.auto_check" />打开时自动检查</label>
+        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
+                @click="checkNow" :disabled="checking">{{ checking ? '检查中…' : '立即检查更新' }}</button>
+      </div>
+      <div class="f-line" v-if="store.update.packaged">
+        <span class="mono-label" style="margin:0">版本</span>
+        <span style="font-size:var(--fs-sm);color:var(--ink-2)">{{ store.update.current }}</span>
+        <button class="danger" style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
+                @click="quitApp" title="关掉后台服务（打包版靠这个退出）">退出 eggpaper</button>
       </div>
       <div class="f-actions">
         <span class="test-reply">{{ reply }}</span>

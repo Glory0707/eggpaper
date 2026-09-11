@@ -9,12 +9,14 @@ from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+import appinfo
 import citation
 import config
 import db
 import llm
 import pdfparse
 import translate_full
+import update
 from glossary_seed import SEED
 
 app = FastAPI(title="eggpaper", version="0.1.0")
@@ -71,7 +73,7 @@ def get_settings():
     return {"provider": {"base_url": p["base_url"], "model": p["model"],
                          "vision_model": p.get("vision_model", ""),
                          "has_key": bool(p["api_key"]), "key_masked": (p["api_key"][:6] + "…") if p["api_key"] else ""},
-            "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"]}
+            "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {})}
 
 
 @app.put("/api/settings")
@@ -87,6 +89,12 @@ def put_settings(body: dict):
         cfg["mock"] = bool(body["mock"])
     if "pdf2zh" in body:
         cfg["pdf2zh"].update(body["pdf2zh"])
+    if "update" in body:
+        u = body["update"]
+        if isinstance(u.get("feed_url"), str):
+            cfg["update"]["feed_url"] = u["feed_url"].strip()
+        if "auto_check" in u:
+            cfg["update"]["auto_check"] = bool(u["auto_check"])
     # 填了 key 就自动退出演示模式
     if cfg["provider"]["api_key"] and "mock" not in body:
         cfg["mock"] = False
@@ -97,6 +105,64 @@ def put_settings(body: dict):
 @app.post("/api/settings/test")
 def test_settings():
     return llm.test_connection()
+
+
+# ---------------- 版本与更新 ----------------
+
+@app.get("/api/version")
+def version_info():
+    return {"version": appinfo.version(), "packaged": update.is_packaged(),
+            "data_dir": config.DATA_DIR}
+
+
+@app.get("/api/update/check")
+def update_check(force: bool = False):
+    """查更新源。auto=0 时只读缓存不联网（打开软件时的那次安静探测走这条）。"""
+    cfg = config.load().get("update", {})
+    return update.check(cfg.get("feed_url", ""), force=force,
+                        cache_hours=float(cfg.get("cache_hours") or 6))
+
+
+@app.post("/api/update/download")
+def update_download(body: dict):
+    url = (body or {}).get("url") or ""
+    if not url:
+        raise HTTPException(400, "没有下载地址")
+    update.start_download(url, (body.get("sha256") or "").lower(), int(body.get("size") or 0))
+    return update.progress()
+
+
+@app.get("/api/update/progress")
+def update_progress():
+    return update.progress()
+
+
+@app.post("/api/update/install")
+def update_install(body: dict):
+    """把下好的安装包交给系统，然后本进程退出（安装器要替换的正是它占着的文件）。"""
+    path = (body or {}).get("path") or update.progress().get("path") or ""
+    if not update.install(path):
+        raise HTTPException(400, "安装包不在或无法启动，重新下载一次")
+    return {"ok": True}
+
+
+@app.post("/api/update/reveal")
+def update_reveal(body: dict):
+    update.open_folder((body or {}).get("path") or update.progress().get("path") or "")
+    return {"ok": True}
+
+
+@app.post("/api/quit")
+def quit_app():
+    """退出整个程序（打包版：没有控制台窗口，用户需要一个"关掉它"的地方）。"""
+    if not update.is_packaged():
+        return {"ok": False, "reason": "开发模式：直接在终端里 Ctrl+C"}
+    import threading as _th
+    def bye():
+        time.sleep(0.4)
+        os._exit(0)
+    _th.Thread(target=bye, daemon=True).start()
+    return {"ok": True}
 
 
 # ---------------- 论文 ----------------
@@ -1075,11 +1141,18 @@ def glossary_delete(gid: int):
 
 # ---------------- 前端静态托管（构建后） ----------------
 
-DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+DIST = appinfo.dist_dir()
 if os.path.isdir(DIST):
     from fastapi.staticfiles import StaticFiles
     app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
 
 
+def serve(port: int = 8430, log_level: str = "info"):
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level=log_level)
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8430)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=8430)
+    serve(ap.parse_args().port)

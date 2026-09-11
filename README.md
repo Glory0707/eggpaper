@@ -87,6 +87,50 @@
 
 市面上要么是云端订阅的重方案（小绿鲸/ReadPaper），要么是只有翻译的开源引擎（pdf2zh），要么是贵且不可溯源的通用 PDF 问答（ChatPDF 类）。eggpaper 补的是：**本地轻量壳 + 术语全链一致 + 论证骨架**。骨架层对应 argumentative zoning / rhetorical roles 研究，句级眉批连学术原型都少见——这是产品的身份标识。
 
+## 打包成安装包 + 给用户推更新
+
+作者在自己的机器上构建、发布，装了的人打开软件就收到提示，点一下就升级。
+**升级只换程序，不动数据**：用户数据（配置、文库 PDF、SQLite、批注）在
+`%LOCALAPPDATA%\eggpaper\data`，安装目录只放程序。
+
+```bash
+# 一次性：装打包工具
+uv venv .build-venv --python 3.11
+uv pip install --python .build-venv/Scripts/python.exe -r backend/requirements.txt pyinstaller pillow
+winget install --id JRSoftware.InnoSetup
+
+# 每次发布：改 VERSION（比如 0.2.0）→ 一条命令
+python tools/build_installer.py --notes "这一版改了什么（会显示在用户的更新提示里）"
+
+# 发布更新源（本机或局域网；也可以把 release/ 整个传到对象存储 / GitHub Releases）
+python tools/serve_update.py
+```
+
+产物在 `release/`：`eggpaper-<版本>-setup.exe` + `latest.json`（版本、大小、sha256、说明）。
+用户在「设置 → 更新源」填 `http://<你的IP>:8440`，之后每次打开软件会在 6 秒后安静地
+问一次 `latest.json`：有新版就弹提示，点「下载并安装」→ 下载完校验 sha256 →
+「立即重启并安装」会在后台静默装掉并重启软件。
+
+安装包本身：
+
+- `PrivilegesRequired=lowest`：默认装到 `%LOCALAPPDATA%\Programs\eggpaper`，**全程不弹 UAC**；
+  想换盘（比如 `D:\eggpaper`）在向导的「选择安装位置」页改——那一页是开着的，改一次就记住了。
+- **英文/中文**：向导是中文的（`[Messages]` 直接覆盖，不依赖第三方翻译文件），
+  并且**只有一个语言**，所以不会有"选择安装语言"那一页。
+- 向导哪些页：欢迎 → 选择安装位置 → 附加任务（桌面快捷方式）→ 准备安装 → 完成。
+- 升级认的是固定的 `AppId`，并且回到**上次装的那个目录**——静默升级不会装出第二份（这条踩过坑，见 plan M4.1）。
+- 卸载**不删用户数据**（数据在 `%LOCALAPPDATA%\eggpaper\data`，不在安装目录里）。
+
+两个先天的限制说清楚：
+
+- 安装包**没有代码签名**，Windows 首次运行会提示「未知发布者」——点"仍要运行"即可。
+  要消掉它得买一张代码签名证书，然后在 `installer/eggpaper.iss` 里填 `SignTool`。
+- **整本翻译（pdf2zh）没打进包**（AGPL 引擎，另装）。它在系统 PATH 里就能用；
+  没有的话，点「整本翻译」会明说"这一版安装包里没带 pdf2zh"，而不是报一堆 traceback。
+
+**打包版的数据目录和源码运行是两处**：安装版读 `%LOCALAPPDATA%\eggpaper\data`，
+源码运行读 `backend/data`。想把开发时的库带过去，把后者整个复制到前者即可。
+
 ## 运行
 
 ```bash
