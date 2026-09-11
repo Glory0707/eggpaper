@@ -341,6 +341,10 @@ def conv_touch(cid: int, title: str = None):
 
 
 def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: int = None) -> int:
+    """写一条问答。会话已经被删掉时**不写**（返回 0）——否则会留下一条谁也看不到的孤儿，
+    用户流式提问到一半把会话删了就会踩到。"""
+    if conv_id and not q("SELECT id FROM conversations WHERE id=?", (conv_id,)):
+        return 0
     q("INSERT INTO qa_messages(paper_id, role, content, citations, conv_id, created_at) VALUES(?,?,?,?,?,?)",
       (pid, role, content, json.dumps(citations or []), conv_id, _now()), commit=True)
     if conv_id:
