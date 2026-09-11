@@ -813,6 +813,36 @@ def paper_collections_set(pid: str, body: dict):
 
 # ---------------- 翻译 ----------------
 
+def _mock_translate(text: str):
+    """演示模式的假译文也假装在打字：同一条前端代码路径。"""
+    t = "〔演示译文〕" + text[:120]
+    for i in range(0, len(t), 3):
+        yield t[i:i + 3]
+        time.sleep(0.02)
+
+
+def _translate_sse(pid: str, text: str, context: str, hits: list):
+    """流式翻译。事件：delta（增量）/ done（术语命中）/ error（人话）。
+
+    术语命中随 done 一起回——它在翻译开始前就查好了，不必等译文走完。
+    """
+    buf = []
+    try:
+        if config.load()["mock"] or not config.load()["provider"]["api_key"]:
+            gen = _mock_translate(text)
+        else:
+            gen = llm.translate_stream(text, context, hits)
+        for piece in gen:
+            buf.append(piece)
+            yield _sse({"type": "delta", "text": piece})
+        zh = "".join(buf)
+        if not zh.strip():
+            raise RuntimeError("模型这次没返回内容")
+        yield _sse({"type": "done", "hits": hits})
+    except Exception as e:
+        yield _sse({"type": "error", "message": _human_msg(e)})
+
+
 @app.post("/api/papers/{pid}/translate-selection")
 def translate_selection(pid: str, body: dict):
     _paper_or_404(pid)
@@ -820,11 +850,9 @@ def translate_selection(pid: str, body: dict):
     if not text:
         raise HTTPException(400, "没有选中文本")
     hits = db.glossary_hit(text)
-    if config.load()["mock"]:
-        zh = "〔演示译文〕" + text[:120] + "…"
-    else:
-        zh = llm.translate(text, body.get("context", ""), hits)
-    return {"zh": zh, "hits": hits}
+    context = body.get("context", "")
+    return StreamingResponse(_translate_sse(pid, text, context, hits), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/papers/{pid}/translate-para")
@@ -834,16 +862,12 @@ def translate_para(pid: str, body: dict):
     idx = int(body["idx"])
     if idx not in paras:
         raise HTTPException(404, "段落不存在")
+    _require_paras(pid)          # 扫描件没有段落可译，直说
     para = paras[idx]
     hits = db.glossary_hit(para["text"])
-    if config.load()["mock"]:
-        zh = "〔演示译文〕" + para["text"][:200] + "…"
-    else:
-        ctx = paras.get(idx - 1, {}).get("text", "")
-        zh = llm.translate(para["text"], ctx, hits)
-    if not zh.strip():
-        raise HTTPException(503, "模型这次没返回内容，请重试一次")
-    return {"zh": zh, "hits": hits}
+    ctx = paras.get(idx - 1, {}).get("text", "")
+    return StreamingResponse(_translate_sse(pid, para["text"], ctx, hits), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/papers/{pid}/translate-full")

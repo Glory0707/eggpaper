@@ -6,6 +6,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { api, store, toast, KIND_ZH, ROLE_ZH, ROLE_GLYPH, CORE_ROLES, KIND_COLOR, ROLE_COLOR,
          ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
+import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
 import { vDrag } from '../drag'
 
@@ -589,11 +590,16 @@ function toggleNote(n) {
 async function translateParaAndPin(idx) {
   if (pendingPara.value != null) return
   pendingPara.value = idx
+  // 流式攒出来的译文；流结束后一次性钉到页边（页边卡不逐字跳，钉的是成品）
+  let zh = ''
   try {
-    const r = await api.translatePara(store.currentId, idx)
-    if (!r.zh || !r.zh.trim()) { toast('模型没返回内容，再试一次'); return }
+    await translateStream(store.currentId, 'para', { idx }, ev => {
+      if (ev.type === 'delta') zh += ev.text
+      else if (ev.type === 'error') throw new Error(ev.message)
+    }).done
+    if (!zh.trim()) { toast('模型没返回内容，再试一次'); return }
     const p = paraByIdx.value[idx]
-    await api.pin(store.currentId, { quote: (p?.text || '').slice(0, 150), note: r.zh, para_idx: idx, page: p?.page ?? 0 })
+    await api.pin(store.currentId, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
     await refreshM()
     toast('译文已钉在页边')
   } catch (e) { toast('翻译失败：' + e.message) }
@@ -629,36 +635,49 @@ function onMouseUp(e) {
   Object.assign(sel, { visible: true, x: Math.min(window.innerWidth - 360, r.right + 10),
                        y: Math.min(window.innerHeight - 230, r.top),
                        text, context, paraIdx, page, zh: '', hits: [], busy: false, err: '' })
+  selStream?.abort()          // 上一次的流别再往新气泡里写字
+}
+
+let selStream = null       // 进行中的划词翻译：换选区/关气泡时要掐掉，别让它往已关的气泡里写字
+function closeSel() {
+  selStream?.abort()
+  sel.visible = false
 }
 
 async function doTranslateSel() {
-  sel.busy = true; sel.err = ''
+  selStream?.abort()
+  sel.busy = true; sel.err = ''; sel.zh = ''; sel.hits = []
   try {
-    const r = await api.translateSelection(store.currentId, sel.text, sel.context)
-    sel.zh = r.zh; sel.hits = r.hits
-  } catch (e) { sel.err = e.message }
+    await translateStream(store.currentId, 'selection', { text: sel.text, context: sel.context }, ev => {
+      if (ev.type === 'delta') sel.zh += ev.text          // 字一到就显示，不等整段
+      else if (ev.type === 'done') sel.hits = ev.hits || []
+      else if (ev.type === 'error') { sel.err = ev.message; if (!sel.zh) sel.zh = '⚠ ' + ev.message }
+    }).done
+  } catch (e) {
+    if (e.name !== 'AbortError') { sel.err = e.message; if (!sel.zh) sel.zh = '⚠ ' + e.message }
+  }
   sel.busy = false
 }
 
 async function pinSel() {
-  if (!sel.zh) await doTranslateSel()
+  if (!sel.zh || sel.busy) await doTranslateSel()   // 流式版：busy 时也会把流等完
   if (!sel.zh) return
   await api.pin(store.currentId, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
   await refreshM()
-  sel.visible = false
+  closeSel()
   toast('已钉在页边')
 }
 
 function sendToGlossary() {
   store.glossaryPrefill = { term_en: sel.text.slice(0, 80), term_zh: (sel.zh || '').replace('〔演示译文〕', '').slice(0, 24) }
-  sel.visible = false
+  closeSel()
   toast('已带到术语表，请确认中文译法')
   window.dispatchEvent(new CustomEvent('eggpaper:terms-prefill'))
 }
 
 function askAboutSel() {
   store.askPrefill = { text: sel.text.slice(0, 80) }
-  sel.visible = false
+  closeSel()
 }
 
 async function refreshM() {
@@ -903,6 +922,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  selStream?.abort()
   ro?.disconnect()
   cancelAnimationFrame(roleCardRaf)
   document.removeEventListener('mouseup', onMouseUp)
@@ -1008,10 +1028,10 @@ function onDocDown(e) {
   // 划词气泡：点它以外任何地方都收（包括纸面本身）。
   // 原来把 .textLayer 排除在外，本意是"别把正在划的词弄丢"，结果是在纸上点哪儿都不关，
   // 只能去够那个小叉。其实点下去会清掉选区、mouseup 又会按新选区重开气泡，不会丢东西。
-  if (sel.visible && !t.closest('.sel-pop')) sel.visible = false
+  if (sel.visible && !t.closest('.sel-pop')) closeSel()
 }
 watch(() => store.escTick, () => {
-  sel.visible = false
+  closeSel()
   if (vis.visible) closeVis()
   roleCard.value = null
   if (searchOpen.value) closeSearch()
@@ -1184,18 +1204,20 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
         已选 {{ sel.text.length }} 字符
       </div>
-      <div v-if="sel.busy" style="font-size:var(--fs-sm);color:var(--ink-3)">翻译中…</div>
-      <div v-if="sel.err" style="font-size:var(--fs-sm);color:var(--vermilion)">{{ sel.err }}</div>
-      <div class="sp-zh" v-if="sel.zh">{{ sel.zh }}</div>
+      <div v-if="sel.busy && !sel.zh" style="font-size:var(--fs-sm);color:var(--ink-3)">翻译中…</div>
+      <div v-if="sel.err && !sel.zh" style="font-size:var(--fs-sm);color:var(--vermilion)">{{ sel.err }}</div>
+      <div class="sp-zh" v-if="sel.zh">{{ sel.zh }}<span v-if="sel.busy" class="qa-caret"></span></div>
       <div class="sp-hits" v-if="sel.hits.length">
         <span class="chip" v-for="h in sel.hits" :key="h.en">📌 {{ h.en }} → {{ h.zh }}</span>
       </div>
       <div class="sp-actions">
-        <button class="primary" style="padding:4px 10px" @click="doTranslateSel">{{ sel.zh ? '重译' : '翻译' }}</button>
+        <button class="primary" style="padding:4px 10px" @click="doTranslateSel" :disabled="sel.busy">
+          {{ sel.busy ? '翻译中' : (sel.zh ? '重译' : '翻译') }}
+        </button>
         <button style="padding:4px 10px" @click="pinSel">钉在页边</button>
         <button style="padding:4px 10px" @click="sendToGlossary">收进术语</button>
         <button style="padding:4px 10px" @click="askAboutSel">提问</button>
-        <button class="ghost" style="padding:4px 8px" @click="sel.visible = false">×</button>
+        <button class="ghost" style="padding:4px 8px" @click="closeSel()">×</button>
       </div>
     </div>
     </Transition>

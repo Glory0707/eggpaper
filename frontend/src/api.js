@@ -72,10 +72,10 @@ export const api = {
 
 /* SSE 流式回答。EventSource 不能 POST，所以用 fetch + ReadableStream 自己拆帧。
    onEvent 收到 {type:'delta'|'done'|'error'}；返回一个 abort() 用来"停止生成"。 */
-export function askStream(pid, body, onEvent) {
+export function sseStream(url, body, onEvent) {
   const ctrl = new AbortController()
   const done = (async () => {
-    const r = await fetch(api.askUrl(pid), {
+    const r = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body), signal: ctrl.signal,
     })
@@ -101,6 +101,15 @@ export function askStream(pid, body, onEvent) {
     }
   })()
   return { abort: () => ctrl.abort(), done }
+}
+
+export function askStream(pid, body, onEvent) {
+  return sseStream(api.askUrl(pid), body, onEvent)
+}
+
+// 翻译也走流式：划词等一秒就该见到字，等 10 秒才砸出整段没人受得了
+export function translateStream(pid, kind, body, onEvent) {
+  return sseStream(`/api/papers/${pid}/translate-${kind}`, body, onEvent)
 }
 
 export const ROLE_ZH = {

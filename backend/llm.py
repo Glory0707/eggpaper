@@ -43,13 +43,21 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2) -> st
     return out
 
 
-def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3):
-    """逐字吐内容。前端要的是"字一个个出来"的手感，而不是转圈 20 秒再砸一大段。"""
+def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3,
+                no_think: bool = False):
+    """逐字吐内容。前端要的是"字一个个出来"的手感，而不是转圈 20 秒再砸一大段。
+
+    no_think：推理模型（GLM 系）输出正文前会先"思考"5–10 秒，期间一个字都不吐。
+    翻译/短问答这类任务要不了那个深度，带上 thinking={"type":"disabled"} 能把
+    首字时间从 ~8s 压到 ~1.5s；不认识这个字段的端点会忽略它，所以坏了也不伤。
+    """
     cfg = config.load()
     if cfg["mock"] or not cfg["provider"]["api_key"]:
         raise RuntimeError("MOCK")
     payload = {"model": cfg["provider"]["model"], "messages": messages,
                "max_tokens": max_tokens, "temperature": temperature, "stream": True}
+    if no_think:
+        payload["thinking"] = {"type": "disabled"}
     with httpx.stream(
         "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
         headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
@@ -320,7 +328,8 @@ def ask(title: str, paras: list, history: list, question: str, hits=None, summar
 
 # ---------------- 划词/段落翻译 ----------------
 
-def translate(text: str, context: str = "", hits: list = None) -> str:
+def translate_messages(text: str, context: str = "", hits: list = None) -> list:
+    """组一次翻译的消息体。流式与非流式共用，免得两条路译出来的风格不一致。"""
     gloss = ""
     if hits:
         gloss = "术语表（必须使用以下译法）：\n" + "\n".join(f"- {h['en']} → {h['zh']}" for h in hits) + "\n\n"
@@ -329,11 +338,22 @@ def translate(text: str, context: str = "", hits: list = None) -> str:
     if context:
         user += f"[上下文：{context[:600]}]\n\n"
     user += f"[待翻译]\n{text[:4000]}"
-    out = chat([
+    return [
         {"role": "system", "content": "你是资深学术翻译，擅长化学/材料/工程领域论文的中英互译。"},
         {"role": "user", "content": user},
-    ], max_tokens=4000, temperature=0.1)
+    ]
+
+
+def translate(text: str, context: str = "", hits: list = None) -> str:
+    out = chat(translate_messages(text, context, hits), max_tokens=4000, temperature=0.1)
     return out.strip()
+
+
+def translate_stream(text: str, context: str = "", hits: list = None):
+    """逐字翻译。划词等场景等不了 10 秒的整段——首字 1 秒内就该出现。
+    翻译不需要模型先思考：关掉能把首字从 ~8s 压到 ~1.5s。"""
+    return chat_stream(translate_messages(text, context, hits),
+                       max_tokens=4000, temperature=0.1, no_think=True)
 
 
 # ---------------- 眉批（句级人性化批注） ----------------
