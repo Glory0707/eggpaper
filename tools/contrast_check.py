@@ -41,6 +41,12 @@ THEMES = {
     'sand 米黄': ('#f6f6ea', '#efefe0', '#fafaf2', '#fdfef9', ('#f5f5dc', 0.9)),
 }
 
+# 皮肤（蛋仔）：换的是底、墨、主色三组值，所以要单独验一遍——
+# 暖底最容易翻车的地方就是"深墨看着够深，其实压不到 4.5"
+SKINS = {
+    'egg 蛋仔': ('#fdf9f1', '#f8f2e6', '#fffdf8', '#fffdf9', '#241d15', '#5b5044', '#6f6455'),
+}
+
 print(f'{"底纹":<12}{"桌面":>7}{"沟槽":>7}{"面板":>7}{"浮层":>7}   {"纸面":>8}{"黑字/纸面":>10}')
 worst = 99
 for name, (paper, deep, card, card2, w) in THEMES.items():
@@ -55,6 +61,15 @@ for name, (paper, deep, card, card2, w) in THEMES.items():
 
 print(f'\n每组取最差（INK/INK2/INK3 里最低的那项）：{worst:.2f}  '
       f'{"✓ 全部 ≥4.5:1" if worst >= 4.5 else "✗ 有不达标"}')
+
+for name, (paper, deep, card, card2, i1, i2, i3) in SKINS.items():
+    cells = [min(ratio(i1, bg), ratio(i2, bg), ratio(i3, bg)) for bg in (paper, deep, card, card2)]
+    w = min(cells)
+    worst = min(worst, w)
+    print(f'{name:<12}' + ''.join(f'{c:>7.2f}' for c in cells) +
+          f'   {"（无洗色）":>8}{ratio("#000000", paper):>10.2f}  最差 {w:.2f}'
+          f' {"✓" if w >= 4.5 else "✗"}')
+
 print('\n细项（off 与 mung 逐项）：')
 for name in ('off 纯白', 'mung 豆沙绿'):
     paper, deep, card, card2, w = THEMES[name]
@@ -76,3 +91,11 @@ for name, bg in (('白纸', '#ffffff'), ('沟槽', '#f6f6f5'), ('豆沙绿纸', 
     print(f'  {name:<9} 强调色 {ratio(ACCENT, bg):>5.2f}   深档 {ratio(ACCENT_DEEP, bg):>5.2f}')
 print(f'  白字压强调色 {ratio("#ffffff", ACCENT):.2f}（主按钮）')
 print(f'  参照：白字压旧琥珀 #d08a1c 只有 {ratio("#ffffff", "#d08a1c"):.2f}——这是换色的硬理由')
+
+# 蛋仔皮肤的强调色：暖橙比靛青难达标，白字压上去必须仍然 ≥4.5
+EGG_ACCENT, EGG_ACCENT_DEEP = '#a8481a', '#7d3312'
+print('\n蛋仔皮肤强调色（暖橙）：')
+for name, bg in (('皮肤纸', '#fdf9f1'), ('皮肤沟槽', '#f8f2e6')):
+    print(f'  {name:<9} 强调色 {ratio(EGG_ACCENT, bg):>5.2f}   深档 {ratio(EGG_ACCENT_DEEP, bg):>5.2f}')
+print(f'  白字压强调色 {ratio("#ffffff", EGG_ACCENT):.2f}（主按钮）  '
+      f'{"✓" if ratio("#ffffff", EGG_ACCENT) >= 4.5 else "✗"}')

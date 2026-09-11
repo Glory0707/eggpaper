@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS marginalia(
   id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id TEXT, para_idx INTEGER, page INTEGER,
   quote TEXT, kind TEXT, note TEXT, rect TEXT
 );
+-- 一篇论文可以有好几摊对话（"读方法时问的"和"写综述时问的"不该混在一个上下文里），
+-- 所以问答按会话分组；上下文只取本会话的历史，和豆包的"新对话"是一个意思。
+CREATE TABLE IF NOT EXISTS conversations(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id TEXT, title TEXT, created_at TEXT, updated_at TEXT
+);
+-- 文库分类：一篇文献可以同时属于多个分类（Zotero 的 collection 语义，不是文件夹）
+CREATE TABLE IF NOT EXISTS collections(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS paper_collections(
+  paper_id TEXT, coll_id INTEGER, PRIMARY KEY(paper_id, coll_id)
+);
 """
 
 
@@ -70,6 +82,8 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE papers ADD COLUMN evidence_qs TEXT",
         "ALTER TABLE papers ADD COLUMN advisor TEXT",
         "ALTER TABLE paragraphs ADD COLUMN lines TEXT",   # 行级坐标：页边引文要按行画
+        "ALTER TABLE qa_messages ADD COLUMN conv_id INTEGER",   # 旧问答没有会话，迁移到默认会话
+        "ALTER TABLE papers ADD COLUMN last_read_at TEXT",      # 上次读到什么时候（文库排序用）
     ):
         try:
             c.execute(stmt)
@@ -100,7 +114,8 @@ def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int) -
 
 def list_papers():
     return [dict(r) for r in q(
-        "SELECT id, filename, title, n_pages, created_at, analysis_status, marginalia_status, translate_status FROM papers ORDER BY created_at DESC")]
+        "SELECT id, filename, title, n_pages, created_at, last_read_at, analysis_status, "
+        "marginalia_status, translate_status FROM papers ORDER BY created_at DESC")]
 
 
 def get_paper(pid: str):
@@ -111,6 +126,55 @@ def get_paper(pid: str):
 def update_paper(pid: str, **fields):
     keys = ",".join(f"{k}=?" for k in fields)
     q(f"UPDATE papers SET {keys} WHERE id=?", (*fields.values(), pid), commit=True)
+
+
+def purge_paper(pid: str):
+    """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
+    漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列。"""
+    for t in ("paragraphs", "annotations", "claims", "marginalia",
+              "qa_messages", "conversations", "paper_collections"):
+        q(f"DELETE FROM {t} WHERE paper_id=?", (pid,), commit=True)
+    q("DELETE FROM papers WHERE id=?", (pid,), commit=True)
+
+
+# ---------- 文库分类（Zotero 的 collection 语义：一篇可属于多类） ----------
+
+def collections_list():
+    return [dict(r) for r in q(
+        "SELECT c.id, c.name, (SELECT COUNT(*) FROM paper_collections p WHERE p.coll_id=c.id) AS n "
+        "FROM collections c ORDER BY c.name COLLATE NOCASE")]
+
+
+def collection_add(name: str) -> int:
+    q("INSERT INTO collections(name, created_at) VALUES(?,?)",
+      (name[:60], time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
+    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+
+
+def collection_rename(cid: int, name: str):
+    q("UPDATE collections SET name=? WHERE id=?", (name[:60], cid), commit=True)
+
+
+def collection_delete(cid: int):
+    q("DELETE FROM paper_collections WHERE coll_id=?", (cid,), commit=True)
+    q("DELETE FROM collections WHERE id=?", (cid,), commit=True)
+
+
+def collection_map():
+    """paper_id -> [coll_id]：一次查完，左栏不用每篇再问一次。"""
+    m = {}
+    for r in q("SELECT paper_id, coll_id FROM paper_collections"):
+        m.setdefault(r["paper_id"], []).append(r["coll_id"])
+    return m
+
+
+def set_paper_collections(pid: str, cids: list):
+    with _lock:
+        c = _get()
+        c.execute("DELETE FROM paper_collections WHERE paper_id=?", (pid,))
+        c.executemany("INSERT OR IGNORE INTO paper_collections(paper_id, coll_id) VALUES(?,?)",
+                      [(pid, int(x)) for x in cids])
+        c.commit()
 
 
 # ---------- paragraphs ----------
@@ -140,6 +204,8 @@ def paragraphs_need_lines(pid: str) -> bool:
 # ---------- skeleton ----------
 
 def set_analysis(pid: str, claims: list, annos: list, status: str = "done", error: str = None):
+    if not get_paper(pid):
+        return          # 后台析读跑完时这篇可能已被删除：别往空论文上灌数据
     with _lock:
         c = _get()
         c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
@@ -207,24 +273,110 @@ def glossary_hit(text: str):
 
 # ---------- QA ----------
 
-def qa_add(pid: str, role: str, content: str, citations: list = None):
-    q("INSERT INTO qa_messages(paper_id, role, content, citations, created_at) VALUES(?,?,?,?,?)",
-      (pid, role, content, json.dumps(citations or []), time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
+def _now() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def qa_history(pid: str, limit: int = 20):
-    rows = q("SELECT role, content, citations FROM (SELECT * FROM qa_messages WHERE paper_id=? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
-             (pid, limit))
+def conv_create(pid: str, title: str = "新对话") -> int:
+    now = _now()
+    q("INSERT INTO conversations(paper_id, title, created_at, updated_at) VALUES(?,?,?,?)",
+      (pid, title[:60], now, now), commit=True)
+    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+
+
+def conv_list(pid: str):
+    """一篇论文的会话列表。第一次问之前也会有一个默认会话，免得"没有会话"成为
+    一条要前端特判的分支——列表永远至少有一条，永远是它被选中。"""
+    if not q("SELECT id FROM conversations WHERE paper_id=?", (pid,)):
+        conv_create(pid, "新对话")
+    _adopt_orphan_qa(pid)
+    return [dict(r) for r in q(
+        "SELECT c.id, c.title, c.updated_at, "
+        "  (SELECT COUNT(*) FROM qa_messages m WHERE m.conv_id=c.id) AS n "
+        "FROM conversations c WHERE c.paper_id=? ORDER BY c.updated_at DESC, c.id DESC", (pid,))]
+
+
+def _adopt_orphan_qa(pid: str):
+    """旧库的问答没有会话号：给它们单开一摊"此前的提问"，别让历史粘在新对话里。"""
+    if not q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id IS NULL", (pid,)):
+        return
+    cid = conv_create(pid, "此前的提问")
+    q("UPDATE qa_messages SET conv_id=? WHERE paper_id=? AND conv_id IS NULL", (cid, pid), commit=True)
+
+
+def conv_rename(cid: int, title: str):
+    q("UPDATE conversations SET title=? WHERE id=?", (title[:60], cid), commit=True)
+
+
+def conv_delete(cid: int):
+    q("DELETE FROM qa_messages WHERE conv_id=?", (cid,), commit=True)
+    q("DELETE FROM conversations WHERE id=?", (cid,), commit=True)
+
+
+def conv_get(cid: int):
+    rows = q("SELECT * FROM conversations WHERE id=?", (cid,))
+    return dict(rows[0]) if rows else None
+
+
+def conv_touch(cid: int, title: str = None):
+    if title:
+        q("UPDATE conversations SET updated_at=?, title=? WHERE id=?", (_now(), title[:60], cid), commit=True)
+    else:
+        q("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), cid), commit=True)
+
+
+def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: int = None) -> int:
+    q("INSERT INTO qa_messages(paper_id, role, content, citations, conv_id, created_at) VALUES(?,?,?,?,?,?)",
+      (pid, role, content, json.dumps(citations or []), conv_id, _now()), commit=True)
+    if conv_id:
+        conv_touch(conv_id)
+    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+
+
+def qa_last_user_id(pid: str, conv_id: int):
+    rows = q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id=? AND role='user' ORDER BY id DESC LIMIT 1",
+             (pid, conv_id))
+    return rows[0]["id"] if rows else None
+
+
+def qa_history(pid: str, conv_id: int = None, limit: int = 200):
+    if conv_id:
+        rows = q("SELECT role, content, citations, id, conv_id FROM qa_messages "
+                 "WHERE paper_id=? AND conv_id=? ORDER BY id", (pid, conv_id))
+    else:
+        rows = q("SELECT role, content, citations, id, conv_id FROM (SELECT * FROM qa_messages "
+                 "WHERE paper_id=? ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (pid, limit))
     return [dict(r, citations=json.loads(r["citations"])) for r in rows]
+
+
+def qa_drop_last_assistant(pid: str, conv_id: int):
+    """重新生成 = 把最后一条回答删掉，连同它的用户问题一起交回前端重问。
+    返回被删掉的那条用户问题（没有就返回 None）。"""
+    rows = q("SELECT id, role, content FROM qa_messages WHERE paper_id=? AND conv_id=? ORDER BY id DESC LIMIT 2",
+             (pid, conv_id))
+    last = next((r for r in rows if r["role"] == "assistant"), None)
+    if last:
+        q("DELETE FROM qa_messages WHERE id=?", (last["id"],), commit=True)
+    prev = next((r for r in rows if r["role"] == "user" and (not last or r["id"] < last["id"])), None)
+    if prev:
+        q("DELETE FROM qa_messages WHERE id=?", (prev["id"],), commit=True)
+    return prev["content"] if prev else None
+
+
+def qa_delete(mid: int):
+    q("DELETE FROM qa_messages WHERE id=?", (mid,), commit=True)
 
 
 def qa_clear(pid: str):
     q("DELETE FROM qa_messages WHERE paper_id=?", (pid,), commit=True)
+    q("DELETE FROM conversations WHERE paper_id=?", (pid,), commit=True)
 
 
 # ---------- 眉批（句级人性化批注） ----------
 
 def set_marginalia(pid: str, notes: list, status: str = "done", error: str = None):
+    if not get_paper(pid):
+        return
     with _lock:
         c = _get()
         c.execute("DELETE FROM marginalia WHERE paper_id=?", (pid,))

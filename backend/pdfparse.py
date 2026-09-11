@@ -125,7 +125,10 @@ def extract_paragraphs(path: str) -> list:
                 if not col:
                     continue
                 ys = sorted(l["bbox"][1] for l in col)
-                pitch = statistics.median(b - a for a, b in zip(ys, ys[1:]) if 3 < b - a < 30) or 12
+                # 行距取中位数。注意 gaps 可能为空（整页只有一行、或行距都不在 3–30 之间），
+                # statistics.median([]) 会直接抛异常——一页只有一行文字的 PDF 不该让整篇导入失败
+                gaps = [b - a for a, b in zip(ys, ys[1:]) if 3 < b - a < 30]
+                pitch = statistics.median(gaps) if gaps else 12
 
                 cur = {"lines": [col[0]]}
                 groups = []

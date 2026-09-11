@@ -2,11 +2,12 @@
 import json
 import os
 import threading
+import time
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 import config
 import db
@@ -19,27 +20,32 @@ app = FastAPI(title="eggpaper", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-@app.exception_handler(Exception)
-async def _any_error(request, exc):
-    """别让异常裸奔——前端只会拿到一个"500"，用户看到的就是这个数字。
-    模型服务最常见的几种失败（限流、欠费、超时、模型名写错）在这里翻译成人话，
-    其余按类型给出原始信息，至少能定位。"""
+def _human_msg(exc: Exception) -> str:
+    """把模型服务最常见的几种失败翻成人话。异常处理器与新加的流式问答共用这一份，
+    免得"哪里报错"决定"用户看到什么"。"""
     msg = str(exc) or exc.__class__.__name__
     low = msg.lower()
     if "429" in msg or "too many requests" in low:
-        hint = "模型服务限流了（429），等一会儿再试"
-    elif "401" in msg or "unauthorized" in low or "invalid api key" in low:
-        hint = "API KEY 无效或过期（401），去设置里检查"
-    elif "402" in msg or "insufficient" in low or "quota" in low:
-        hint = "账户余额/额度不足，模型服务拒绝了请求"
-    elif "timeout" in low or "timed out" in low:
-        hint = "模型服务超时了，重试一次通常就好"
-    elif "404" in msg and "model" in low:
-        hint = "模型名不对（404），去设置里核对"
-    elif isinstance(exc, HTTPException):
-        hint = exc.detail
-    else:
-        hint = f"{exc.__class__.__name__}: {msg[:160]}"
+        return "模型服务限流了（429），等一会儿再试"
+    if "401" in msg or "unauthorized" in low or "invalid api key" in low:
+        return "API KEY 无效或过期（401），去设置里检查"
+    if "402" in msg or "insufficient" in low or "quota" in low:
+        return "账户余额/额度不足，模型服务拒绝了请求"
+    if "timeout" in low or "timed out" in low:
+        return "模型服务超时了，重试一次通常就好"
+    if "connect" in low or "connection" in low:
+        return "连不上模型服务，检查网络与 base_url"
+    if "404" in msg and "model" in low:
+        return "模型名不对（404），去设置里核对"
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return f"{exc.__class__.__name__}: {msg[:160]}"
+
+
+@app.exception_handler(Exception)
+async def _any_error(request, exc):
+    """别让异常裸奔——前端只会拿到一个"500"，用户看到的就是这个数字。"""
+    hint = _human_msg(exc)
     print(f"[eggpaper] {request.url.path} 出错 → {hint}")
     return JSONResponse({"detail": hint}, status_code=500)
 
@@ -102,24 +108,37 @@ def papers():
 @app.post("/api/papers")
 async def upload(file: UploadFile = File(...)):
     raw = await file.read()
-    if not raw[:4] == b"%PDF":
+    if raw[:4] != b"%PDF":
         raise HTTPException(400, "不是 PDF 文件")
+    if len(raw) < 256:
+        raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
     pid = db.new_id()
     path = os.path.join(PDF_DIR, f"{pid}.pdf")
     with open(path, "wb") as f:
         f.write(raw)
-    title = pdfparse.extract_title(path)
-    paras = pdfparse.extract_paragraphs(path)
-    import pymupdf
-    n_pages = len(pymupdf.open(path))
+    # 解析失败要收拾干净：留着半篇没有段落的"论文"，用户点开只能看见一个空书架
+    try:
+        title = pdfparse.extract_title(path)
+        paras = pdfparse.extract_paragraphs(path)
+        import pymupdf
+        n_pages = len(pymupdf.open(path))
+    except Exception as e:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise HTTPException(400, f"这份 PDF 读不了：{_human_msg(e)}")
     db.create_paper(pid, file.filename, title, path, n_pages)
     db.replace_paragraphs(pid, paras)
     row = db.get_paper(pid)
-    # AI 主动：导入即后台通读，打开时简报已就绪
-    db.update_paper(pid, analysis_status="running")
-    threading.Thread(target=_run_analysis, args=(pid, paras), daemon=True).start()
+    # AI 主动：导入即后台通读，打开时简报已就绪（没有文字层的扫描件没得析读，直接标完成）
+    db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                    analysis_status="running" if paras else "done")
+    if paras:
+        threading.Thread(target=_run_analysis, args=(pid, paras), daemon=True).start()
     return {"paper": row, "n_paragraphs": len(paras),
-            "n_captions": sum(1 for p in paras if p["caption"])}
+            "n_captions": sum(1 for p in paras if p["caption"]),
+            "no_text": not paras}
 
 
 def _paper_or_404(pid: str) -> dict:
@@ -127,6 +146,16 @@ def _paper_or_404(pid: str) -> dict:
     if not p:
         raise HTTPException(404, "论文不存在")
     return p
+
+
+NO_TEXT = "这份 PDF 没有可提取的文字层（多半是扫描件），析读和提问都无从下手；原文照样能读，图表也能框选问 AI"
+
+
+def _require_paras(pid: str) -> None:
+    """扫描件没有文字层：让它过一个"请求模型、等半天、返回胡话"的流程是最坏的选择，
+    直接说清楚做不到什么、还能做什么。"""
+    if not db.get_paragraphs(pid):
+        raise HTTPException(400, NO_TEXT)
 
 
 @app.get("/api/papers/{pid}")
@@ -137,18 +166,35 @@ def get_paper(pid: str):
     return p
 
 
+@app.post("/api/papers/{pid}/touch")
+def touch_paper(pid: str):
+    """记一笔"最近读过"，文库按最近阅读排序时用。"""
+    _paper_or_404(pid)
+    db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+    return {"ok": True}
+
+
+def _rm(path: str):
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 @app.delete("/api/papers/{pid}")
 def delete_paper(pid: str):
     p = _paper_or_404(pid)
-    for t in ("paragraphs", "annotations", "claims", "qa_messages", "marginalia"):
-        db.q(f"DELETE FROM {t} WHERE paper_id=?", (pid,), commit=True)
-    db.q("DELETE FROM papers WHERE id=?", (pid,), commit=True)
-    for f in (p["path"], p["dual_path"]):
-        if f and os.path.exists(f):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
+    db.purge_paper(pid)          # 段落/骨架/眉批/问答会话/分类归属，一张表都不留
+    # 文件也要走干净：原 PDF、双语版、译文版。双语文档是按 pid 命名的，
+    # 万一 mono_path 没记上（翻译中途失败），按文件名把残留的一起扫掉。
+    _rm(p["path"]); _rm(p["dual_path"]); _rm(p.get("mono_path"))
+    try:
+        for fn in os.listdir(TRANSLATED_DIR):
+            if fn.startswith(pid):
+                _rm(os.path.join(TRANSLATED_DIR, fn))
+    except OSError:
+        pass
     return {"ok": True}
 
 
@@ -211,6 +257,7 @@ def _run_analysis(pid: str, paras: list):
 @app.post("/api/papers/{pid}/analyze")
 def analyze(pid: str):
     p = _paper_or_404(pid)
+    _require_paras(pid)
     if p["analysis_status"] == "running":
         return {"status": "running"}
     db.update_paper(pid, analysis_status="running", analysis_error=None)
@@ -346,6 +393,7 @@ def marginalia_remove(pid: str, mid: int):
 @app.get("/api/papers/{pid}/summary")
 def summary(pid: str):
     p = _paper_or_404(pid)
+    _require_paras(pid)
     if p["summary"]:
         return JSONResponse(json.loads(p["summary"]))
     if config.load()["mock"]:
@@ -361,6 +409,7 @@ def summary(pid: str):
 @app.get("/api/papers/{pid}/suggest")
 def suggest(pid: str):
     p = _paper_or_404(pid)
+    _require_paras(pid)
     if p["suggest"]:
         return JSONResponse(json.loads(p["suggest"]))
     if p["analysis_status"] != "done":
@@ -381,6 +430,7 @@ KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别�
 @app.get("/api/papers/{pid}/advisor")
 def advisor(pid: str):
     p = _paper_or_404(pid)
+    _require_paras(pid)
     if p["advisor"]:
         return JSONResponse(json.loads(p["advisor"]))
     if p["analysis_status"] != "done":
@@ -412,6 +462,7 @@ def ask_visual(body: dict):
 @app.get("/api/papers/{pid}/method-card")
 def method_card(pid: str):
     p = _paper_or_404(pid)
+    _require_paras(pid)
     if p["method_card"]:
         return JSONResponse(json.loads(p["method_card"]))
     if config.load()["mock"]:
@@ -526,7 +577,65 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
         doc.close()
 
 
-# ---------------- 问答 ----------------
+# ---------------- 问答（流式 + 多会话） ----------------
+
+def _sse(obj: dict) -> str:
+    return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
+
+
+def _mock_stream(question: str):
+    """演示模式也走流式：同一条前端代码路径，接上真 key 不用改任何东西。"""
+    text = ("〔演示模式〕这是模拟回答，用来跑通界面。[¶1] 配好 API key 后这里会是真答案。\n\n"
+            "· 你问的是：" + question[:60] + "\n"
+            "· 回答会逐字出现，可以中途停下；停下时已经吐出来的部分会留着。")
+    for i in range(0, len(text), 3):
+        yield text[i:i + 3]
+        time.sleep(0.02)
+
+
+def _autotitle(pid: str, conv_id: int, question: str, is_first: bool):
+    """第一个问题就是这摊对话的标题——和豆包/DeepSeek 一样，省得用户自己起名。"""
+    if not is_first:
+        return
+    c = db.conv_get(conv_id)
+    if c and c["title"] in ("", "新对话"):
+        t = question.strip().replace("\n", " ")[:18]
+        db.conv_rename(conv_id, t + ("…" if len(question.strip()) > 18 else ""))
+
+
+def _stream_answer(p: dict, conv_id: int, question: str):
+    """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
+
+    落库的时机有两处：正常结束在这里写；用户中途点"停止生成"由前端调 qa-save 写，
+    因为客户端断开时服务端不保证还能把生成器走完——让能拿到半截答案的那一端负责存。
+    """
+    pid = p["id"]
+    uid = db.qa_add(pid, "user", question, conv_id=conv_id)
+    hist = db.qa_history(pid, conv_id)[:-1]
+    buf = []
+    try:
+        if config.load()["mock"] or not config.load()["provider"]["api_key"]:
+            gen = _mock_stream(question)
+        else:
+            hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+            gen = llm.chat_stream(llm.ask_messages(p["title"], db.get_paragraphs(pid), hist, question, hits))
+        for piece in gen:
+            buf.append(piece)
+            yield _sse({"type": "delta", "text": piece})
+        ans = "".join(buf)
+        if not ans.strip():
+            raise RuntimeError("模型这次没返回内容")
+        cites = llm.cites_of(ans)
+        aid = db.qa_add(pid, "assistant", ans, cites, conv_id=conv_id)
+        _autotitle(pid, conv_id, question, not any(h["role"] == "user" for h in hist))
+        yield _sse({"type": "done", "citations": cites, "user_id": uid, "assistant_id": aid})
+    except Exception as e:
+        hint = _human_msg(e)
+        ans = "".join(buf)
+        aid = db.qa_add(pid, "assistant", (ans + "\n\n⚠ " + hint) if ans.strip() else "⚠ " + hint,
+                        llm.cites_of(ans), conv_id=conv_id)
+        yield _sse({"type": "error", "message": hint, "user_id": uid, "assistant_id": aid})
+
 
 @app.post("/api/papers/{pid}/ask")
 def ask(pid: str, body: dict):
@@ -534,21 +643,88 @@ def ask(pid: str, body: dict):
     question = (body.get("question") or "").strip()
     if not question:
         raise HTTPException(400, "问题不能为空")
-    db.qa_add(pid, "user", question)
-    if config.load()["mock"]:
-        ans, cites = "〔演示模式〕这是模拟回答。[¶1]", [1]
+    _require_paras(pid)          # 没有原文就没有"只依据原文"这回事，它不该去答
+    conv_id = body.get("conv_id")
+    if conv_id:
+        c = db.conv_get(int(conv_id))
+        if not c or c["paper_id"] != pid:
+            raise HTTPException(404, "会话不存在")
+        conv_id = int(conv_id)
     else:
-        hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
-        r = llm.ask(p["title"], db.get_paragraphs(pid), db.qa_history(pid), question, hits)
-        ans, cites = r["answer"], r["citations"]
-    db.qa_add(pid, "assistant", ans, cites)
-    return {"answer": ans, "citations": cites}
+        conv_id = db.conv_list(pid)[0]["id"]
+    # 校验都过了再开流：一旦开始 SSE，HTTP 头已经发出去，改不成 4xx 了
+    return StreamingResponse(_stream_answer(p, conv_id, question), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                                      "Connection": "keep-alive"})
+
+
+@app.get("/api/papers/{pid}/conversations")
+def conversations(pid: str):
+    _paper_or_404(pid)
+    return db.conv_list(pid)
+
+
+@app.post("/api/papers/{pid}/conversations")
+def conversation_new(pid: str, body: dict = None):
+    _paper_or_404(pid)
+    return {"id": db.conv_create(pid, (body or {}).get("title") or "新对话")}
+
+
+@app.patch("/api/conversations/{cid}")
+def conversation_patch(cid: int, body: dict):
+    if not db.conv_get(cid):
+        raise HTTPException(404, "会话不存在")
+    db.conv_rename(cid, (body.get("title") or "新对话").strip() or "新对话")
+    return {"ok": True}
+
+
+@app.delete("/api/conversations/{cid}")
+def conversation_delete(cid: int):
+    if not db.conv_get(cid):
+        raise HTTPException(404, "会话不存在")
+    db.conv_delete(cid)
+    return {"ok": True}
 
 
 @app.get("/api/papers/{pid}/qa-history")
-def qa_history(pid: str):
+def qa_history(pid: str, conv_id: int = None):
     _paper_or_404(pid)
-    return db.qa_history(pid)
+    if conv_id is None:
+        return {"messages": db.qa_history(pid), "conv_id": None}
+    return {"messages": db.qa_history(pid, conv_id), "conv_id": conv_id}
+
+
+@app.post("/api/papers/{pid}/qa-save")
+def qa_save(pid: str, body: dict):
+    """用户中途"停止生成"：把已经吐出来的半截答案存下来。
+    返回两端 id，前端据此把"删除/重新生成"接回真实的行上。"""
+    _paper_or_404(pid)
+    content = (body.get("content") or "").strip()
+    conv_id = body.get("conv_id")
+    if not content:
+        return {"ok": False}
+    aid = db.qa_add(pid, "assistant", content, llm.cites_of(content), conv_id=conv_id)
+    return {"ok": True, "citations": llm.cites_of(content),
+            "assistant_id": aid, "user_id": db.qa_last_user_id(pid, conv_id) if conv_id else None}
+
+
+@app.post("/api/papers/{pid}/regenerate")
+def qa_regenerate(pid: str, body: dict):
+    """重新生成：把这一问一答都撤掉，返回原问题，由前端重新发问。"""
+    _paper_or_404(pid)
+    conv_id = body.get("conv_id")
+    if not conv_id:
+        raise HTTPException(400, "缺少会话")
+    q = db.qa_drop_last_assistant(pid, int(conv_id))
+    if not q:
+        raise HTTPException(400, "没有可重新生成的问题")
+    return {"question": q}
+
+
+@app.delete("/api/conversations/{cid}/messages/{mid}")
+def qa_delete_one(cid: int, mid: int):
+    db.qa_delete(mid)
+    return {"ok": True}
 
 
 @app.delete("/api/papers/{pid}/qa-history")
@@ -556,6 +732,46 @@ def qa_clear(pid: str):
     _paper_or_404(pid)
     db.qa_clear(pid)
     return {"ok": True}
+
+
+# ---------------- 文库分类 ----------------
+
+@app.get("/api/collections")
+def collections():
+    return {"collections": db.collections_list(), "map": db.collection_map()}
+
+
+@app.post("/api/collections")
+def collection_new(body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "分类要有名字")
+    return {"id": db.collection_add(name)}
+
+
+@app.patch("/api/collections/{cid}")
+def collection_patch(cid: int, body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "分类要有名字")
+    db.collection_rename(cid, name)
+    return {"ok": True}
+
+
+@app.delete("/api/collections/{cid}")
+def collection_delete(cid: int):
+    db.collection_delete(cid)
+    return {"ok": True}
+
+
+@app.put("/api/papers/{pid}/collections")
+def paper_collections_set(pid: str, body: dict):
+    _paper_or_404(pid)
+    ids = body.get("ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(400, "ids 必须是数组")
+    db.set_paper_collections(pid, ids)
+    return {"ok": True, "ids": ids}
 
 
 # ---------------- 翻译 ----------------

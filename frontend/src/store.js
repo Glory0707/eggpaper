@@ -1,7 +1,7 @@
 import { reactive, watch } from 'vue'
 import { api } from './api'
 
-export { api, ROLE_ZH, ROLE_GLYPH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR,
+export { api, askStream, ROLE_ZH, ROLE_GLYPH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR,
          ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from './api'
 
 const LS = 'eggpaper:'
@@ -20,14 +20,18 @@ export const store = reactive({
   analysis: { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' },
   marginalia: { status: 'none', notes: [] },
   summary: null,
-  qa: [],
+  summaryErr: '',
   settings: null,
+  // 文库：分类 + 搜索 + 排序。map 是 paper_id → [分类 id]，一次拉全，列表里不用逐篇问
+  lib: { colls: [], map: {}, coll: 'all', q: '', sort: lsGet('libSort', 'added') },
   viewer: {
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
     layers: lsGet('layers', { skeleton: true, marginalia: true, skim: false }),
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
+    skin: lsGet('skin', 'plain'),          // plain 素净 / egg 蛋仔（可选皮肤）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
+    railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
     frame: false,
     libOpen: false,
   },
@@ -38,9 +42,10 @@ export const store = reactive({
   askFocusTick: 0,
   escTick: 0,            // 按 Esc 递增：PDF 侧的浮层（划词/框选/角色卡）据此全部收起
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
+  reflowTick: 0,          // 栏宽拖完递增一次：论文据此重新定标（拖的过程中不重排）
   toast: '',
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
-  visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答        // 论证漫游停止器（RightRail 注册）
+  visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
 
   get mock() { return this.settings?.mock },
   // 窄窗（半屏、竖屏、小笔记本）：右栏不再占版面，改成浮在书桌上的抽屉
@@ -63,6 +68,8 @@ watch(() => store.viewer.variant, v => lsSet('variant', v))
 watch(() => store.viewer.spread, v => lsSet('spread', v))
 watch(() => store.viewer.layers, v => lsSet('layers', v), { deep: true })
 watch(() => store.viewer.railUser, v => lsSet('railUser', v))
+watch(() => store.viewer.railW, v => lsSet('railW', v))
+watch(() => store.lib.sort, v => lsSet('libSort', v))
 
 /* 护眼底纹落在 <html> 上：CSS 变量在那里改，全站（含空态、弹层）一起换 */
 function paintCare(v) {
@@ -71,8 +78,25 @@ function paintCare(v) {
 }
 watch(() => store.viewer.care, v => { lsSet('care', v); paintCare(v) }, { immediate: true })
 
+/* 皮肤同理落在 <html> 上：素净那套是默认，蛋仔那套额外挂一个属性，
+   所有"变圆、变暖"的规则都写在 html[data-skin='egg'] 下，一行都不外溢。 */
+watch(() => store.viewer.skin, v => {
+  lsSet('skin', v)
+  if (v && v !== 'plain') document.documentElement.dataset.skin = v
+  else delete document.documentElement.dataset.skin
+}, { immediate: true })
+
 export async function refreshPapers() {
   store.papers = await api.papers()
+}
+
+export async function refreshCollections() {
+  const r = await api.collections()
+  store.lib.colls = r.collections
+  store.lib.map = r.map
+  if (store.lib.coll !== 'all' && store.lib.coll !== 'none' && !r.collections.some(c => c.id === store.lib.coll)) {
+    store.lib.coll = 'all'      // 选中的分类被删了：回"全部"，别停在空列表上
+  }
 }
 
 export async function openPaper(pid) {
@@ -83,12 +107,13 @@ export async function openPaper(pid) {
   store.paper = await api.paper(pid)
   store.paras = await api.paragraphs(pid)
   store.summary = null
-  store.qa = []
+  store.summaryErr = ''
   store.viewer.restorePos = pos.scroll || 0
   refreshAnalysis()
   refreshMarginalia()
-  api.qaHistory(pid).then(h => (store.qa = h)).catch(() => {})
-  api.summary(pid).then(s => (store.summary = s)).catch(() => {})
+  // 一眼卡是后台压的：压不出来（比如扫描件）要说出来，别让"正在压出…"一直转
+  api.summary(pid).then(s => (store.summary = s)).catch(e => (store.summaryErr = e.message))
+  api.touchPaper(pid).then(() => refreshPapers()).catch(() => {})
 }
 
 export async function refreshAnalysis() {

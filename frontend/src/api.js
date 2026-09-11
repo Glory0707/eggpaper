@@ -20,6 +20,7 @@ export const api = {
   upload: (file) => { const fd = new FormData(); fd.append('file', file); return req('POST', '/api/papers', fd) },
   paper: (pid) => req('GET', `/api/papers/${pid}`),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
+  touchPaper: (pid) => req('POST', `/api/papers/${pid}/touch`),
   paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
   analyze: (pid) => req('POST', `/api/papers/${pid}/analyze`),
   analysis: (pid) => req('GET', `/api/papers/${pid}/analysis`),
@@ -38,8 +39,25 @@ export const api = {
     `/api/papers/${pid}/figure.png?page=${f.page}&x0=${f.x0}&y0=${f.y0}&x1=${f.x1}&y1=${f.y1}&dpi=${dpi}`,
   exportMdUrl: (pid) => `/api/papers/${pid}/export.md`,
   glossaryCsvUrl: '/api/glossary/export.csv',
-  ask: (pid, question) => req('POST', `/api/papers/${pid}/ask`, { question }),
-  qaHistory: (pid) => req('GET', `/api/papers/${pid}/qa-history`),
+
+  // 提问：会话 + 流式回答
+  askUrl: (pid) => `/api/papers/${pid}/ask`,
+  conversations: (pid) => req('GET', `/api/papers/${pid}/conversations`),
+  convNew: (pid, title) => req('POST', `/api/papers/${pid}/conversations`, { title }),
+  convRename: (cid, title) => req('PATCH', `/api/conversations/${cid}`, { title }),
+  convDelete: (cid) => req('DELETE', `/api/conversations/${cid}`),
+  qaHistory: (pid, convId) => req('GET', `/api/papers/${pid}/qa-history${convId ? `?conv_id=${convId}` : ''}`),
+  qaSave: (pid, body) => req('POST', `/api/papers/${pid}/qa-save`, body),
+  qaRegenerate: (pid, convId) => req('POST', `/api/papers/${pid}/regenerate`, { conv_id: convId }),
+  qaDeleteOne: (cid, mid) => req('DELETE', `/api/conversations/${cid}/messages/${mid}`),
+
+  // 文库分类
+  collections: () => req('GET', '/api/collections'),
+  collAdd: (name) => req('POST', '/api/collections', { name }),
+  collRename: (cid, name) => req('PATCH', `/api/collections/${cid}`, { name }),
+  collDelete: (cid) => req('DELETE', `/api/collections/${cid}`),
+  paperColls: (pid, ids) => req('PUT', `/api/papers/${pid}/collections`, { ids }),
+
   translateSelection: (pid, text, context) => req('POST', `/api/papers/${pid}/translate-selection`, { text, context }),
   translatePara: (pid, idx) => req('POST', `/api/papers/${pid}/translate-para`, { idx }),
   translateFull: (pid) => req('POST', `/api/papers/${pid}/translate-full`),
@@ -50,6 +68,39 @@ export const api = {
   settings: () => req('GET', '/api/settings'),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
+}
+
+/* SSE 流式回答。EventSource 不能 POST，所以用 fetch + ReadableStream 自己拆帧。
+   onEvent 收到 {type:'delta'|'done'|'error'}；返回一个 abort() 用来"停止生成"。 */
+export function askStream(pid, body, onEvent) {
+  const ctrl = new AbortController()
+  const done = (async () => {
+    const r = await fetch(api.askUrl(pid), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: ctrl.signal,
+    })
+    if (!r.ok || !r.body) {
+      let msg = `${r.status} ${r.statusText || ''}`.trim()
+      try { msg = (await r.json()).detail || msg } catch { /* 非 JSON 就用状态码 */ }
+      throw new Error(msg)
+    }
+    const reader = r.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { done: fin, value } = await reader.read()
+      if (fin) break
+      buf += dec.decode(value, { stream: true })
+      const frames = buf.split('\n\n')
+      buf = frames.pop()
+      for (const f of frames) {
+        const line = f.replace(/^data:\s?/, '').trim()
+        if (!line) continue
+        try { onEvent(JSON.parse(line)) } catch { /* 半帧/心跳，忽略 */ }
+      }
+    }
+  })()
+  return { abort: () => ctrl.abort(), done }
 }
 
 export const ROLE_ZH = {

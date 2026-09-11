@@ -43,6 +43,38 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2) -> st
     return out
 
 
+def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3):
+    """逐字吐内容。前端要的是"字一个个出来"的手感，而不是转圈 20 秒再砸一大段。"""
+    cfg = config.load()
+    if cfg["mock"] or not cfg["provider"]["api_key"]:
+        raise RuntimeError("MOCK")
+    payload = {"model": cfg["provider"]["model"], "messages": messages,
+               "max_tokens": max_tokens, "temperature": temperature, "stream": True}
+    with httpx.stream(
+        "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
+        json=payload, timeout=httpx.Timeout(600, connect=20),
+    ) as r:
+        r.raise_for_status()
+        for raw in r.iter_lines():
+            if not raw:
+                continue
+            line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
+            if not line or line == "[DONE]":
+                if line == "[DONE]":
+                    break
+                continue
+            try:
+                j = json.loads(line)
+            except ValueError:
+                continue
+            choices = j.get("choices") or [{}]
+            delta = choices[0].get("delta") or {}
+            piece = delta.get("content") or ""
+            if piece:
+                yield piece
+
+
 def parse_json(text: str) -> dict:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     i, j = text.find("{"), text.rfind("}")
@@ -229,15 +261,25 @@ QA_SYSTEM = """你是论文精读助手，基于给定的论文全文回答研�
 4. 回答用中文，术语首次出现给出英文"""
 
 
-def ask(title: str, paras: list, history: list, question: str, hits=None) -> dict:
+def ask_messages(title: str, paras: list, history: list, question: str, hits=None) -> list:
+    """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))[:80000]
     msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n论文标题：{title or ''}\n\n{body}"}]
-    for h in history[-6:]:
-        msgs.append({"role": h["role"], "content": h["content"]})
+    for h in history[-8:]:
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": question})
-    out = chat(msgs, max_tokens=6000, temperature=0.3)
-    cites = sorted({int(n) for n in re.findall(r"¶\s*(\d+)", out)})
-    return {"answer": out, "citations": cites}
+    return msgs
+
+
+def cites_of(text: str) -> list:
+    """从回答里抓 [¶5] 这类依据段号——引用角标可点击跳原文，靠的就是它。"""
+    return sorted({int(n) for n in re.findall(r"¶\s*(\d+)", text or "")})
+
+
+def ask(title: str, paras: list, history: list, question: str, hits=None) -> dict:
+    out = chat(ask_messages(title, paras, history, question, hits), max_tokens=6000, temperature=0.3)
+    return {"answer": out, "citations": cites_of(out)}
 
 
 # ---------------- 划词/段落翻译 ----------------

@@ -1,9 +1,9 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH, ROLE_COLOR, ROLE_TEXT_COLOR,
          KIND_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 import { lineSpanOf } from '../find'
-import MdLite from './MdLite.vue'
+import AskPanel from './AskPanel.vue'
 
 const USER_KINDS = ['lookup', 'region']   // 用户自己钉的（查译、选区问答），不算 AI 眉批
 
@@ -54,12 +54,10 @@ function anchorsOf(claim) {
 }
 
 // ---------- 提问 ----------
-// 提问框：预填与聚焦
-const question = ref('')
-const asking = ref(false)
+// 问答本身在 AskPanel 里（会话、流式、停止、复制、重新生成）；这里只负责
+// "该问什么"——论文专属的推荐问题，空态里给出来，省得对着空框发呆。
 const GENERIC = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？', '作者承认了哪些局限？']
 const suggest = ref([])
-const qaInput = ref(null)
 async function loadSuggest() {
   if (!store.currentId || suggest.value.length) return
   try {
@@ -69,35 +67,9 @@ async function loadSuggest() {
 }
 const quickList = computed(() => (suggest.value.length ? suggest.value : GENERIC))
 
-watch(() => store.askPrefill, pf => {
-  if (!pf) return
-  tab.value = 'ask'
-  question.value = pf.paraIdx ? `¶${pf.paraIdx} 这段在说什么？` : `这段在说什么：「${pf.text}」？`
-  store.askPrefill = null
-  nextTick(() => qaInput.value?.focus())
-})
-watch(() => store.askFocusTick, () => { tab.value = 'ask'; nextTick(() => qaInput.value?.focus()) })
-
-async function ask(q) {
-  if (!q?.trim() || asking.value) return
-  question.value = ''
-  asking.value = true
-  store.qa.push({ role: 'user', content: q, citations: [] })
-  try {
-    const r = await api.ask(store.currentId, q)
-    store.qa.push({ role: 'assistant', content: r.answer, citations: r.citations })
-  } catch (e) {
-    store.qa.push({ role: 'assistant', content: '⚠ ' + e.message, citations: [] })
-  }
-  asking.value = false
-  scrollQa()
-}
-function scrollQa() {
-  setTimeout(() => qaEnd.value?.scrollIntoView({ behavior: 'smooth' }), 30)
-}
-const qaEnd = ref(null)
-
-// 问答里的 ¶n 引用点击跳回原文（解析与排版在 MdLite 里）
+// 划词/¶ 提问：切到提问页，剩下的交给 AskPanel（它读 store.askPrefill）
+watch(() => store.askPrefill, pf => { if (pf) tab.value = 'ask' })
+watch(() => store.askFocusTick, () => { tab.value = 'ask' })
 
 // ---------- 术语 ----------
 const terms = ref([])
@@ -136,6 +108,42 @@ onUnmounted(() => {
 watch(tab, t => { if (t === 'ask') loadSuggest(); if (t === 'eye') loadFigures() })
 watch(() => store.analysis.status, s => { if (s === 'done') loadSuggest() })
 
+/* ---------- 右栏宽度：拖动改，双击复位 ----------
+   经典分栏拖动：位移直接写进 railW，宽度过渡由 CSS 负责；拖的过程中把过渡关掉
+   （body.rail-resizing），松手再交还给 CSS，否则边缘会黏在手后面。
+   键盘也能改（←/→），拖不动鼠标的人不该被挡在外面。 */
+const RAIL_MIN = 268, RAIL_MAX = 760, RAIL_DEF = 336
+const railDragging = ref(false)
+let rStartX = 0, rStartW = 0
+
+function startRailResize(e) {
+  e.preventDefault()
+  rStartX = e.clientX
+  rStartW = store.viewer.railW
+  railDragging.value = true
+  document.body.classList.add('rail-resizing')
+  document.addEventListener('mousemove', onRailResize)
+  document.addEventListener('mouseup', endRailResize)
+}
+function onRailResize(e) {
+  const w = rStartW - (e.clientX - rStartX)      // 往左拖 = 变宽
+  store.viewer.railW = Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)))
+}
+function endRailResize() {
+  railDragging.value = false
+  document.body.classList.remove('rail-resizing')
+  document.removeEventListener('mousemove', onRailResize)
+  document.removeEventListener('mouseup', endRailResize)
+  store.reflowTick++          // 拖完了才让论文重新定标，拖的过程中不重排（不然每帧都在重画）
+}
+function nudgeRail(d) {
+  store.viewer.railW = Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, store.viewer.railW + d)))
+  store.reflowTick++
+}
+onUnmounted(() => {
+  endRailResize()
+})
+
 // ---------- 方法卡 / 缩写 / mini-map ----------
 const methodCard = ref(null)
 const mcBusy = ref(false)
@@ -164,6 +172,7 @@ function eqq(idx) {
 }
 
 // ---------- 导师三问 ----------
+// 不主动预生成：这是要花 token 的一次调用，没点"获取"就不该发生
 const advisor = ref([])
 const advBusy = ref(false)
 async function loadAdvisor() {
@@ -173,7 +182,6 @@ async function loadAdvisor() {
   catch (e) { toast('生成失败：' + e.message) }
   advBusy.value = false
 }
-watch(() => store.analysis.status, s => { if (s === 'done') loadAdvisor() })
 
 // ---------- 图表速览 ----------
 const figures = ref([])
@@ -227,13 +235,19 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
 
 <template>
   <aside class="rail-right">
+    <!-- 分栏拖手：贴在右栏左缘，往左拖变宽 -->
+    <div class="rail-grip" :class="{ on: railDragging }" role="separator" aria-orientation="vertical"
+         tabindex="0" title="拖动改宽度 · 双击复位（←/→ 也能调）"
+         @mousedown="startRailResize" @dblclick="store.viewer.railW = RAIL_DEF; store.reflowTick++"
+         @keydown.left.prevent="nudgeRail(28)" @keydown.right.prevent="nudgeRail(-28)"></div>
     <div class="rtabs">
       <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">骨架</button>
       <button class="rt" :class="{ on: tab === 'eye' }" @click="tab = 'eye'">速览</button>
       <button class="rt" :class="{ on: tab === 'ask' }" @click="tab = 'ask'">提问</button>
       <button class="rt" :class="{ on: tab === 'terms' }" @click="tab = 'terms'">术语</button>
+      <button class="rt-collapse" title="收起右栏（x）" @click="store.viewer.railUser = false">»</button>
     </div>
-    <div class="rbody">
+    <div class="rbody" :class="{ flush: tab === 'ask' }">
       <!-- ============ 骨架 ============ -->
       <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
@@ -246,10 +260,14 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         </div>
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            还没有析读。
+            {{ store.paras.length ? '还没有析读。' : '这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但骨架析读无从下手。' }}
           </div>
-          <button class="primary" style="margin-top:12px" @click="emit('analyze')">析读全文</button>
+          <button v-if="store.paras.length" class="primary" style="margin-top:12px" @click="emit('analyze')">析读全文</button>
         </div>
+
+        <template v-else-if="!store.paras.length">
+          <div class="r-note">这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但骨架析读无从下手。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图可以看。</span></div>
+        </template>
 
         <template v-else>
           <!-- 图例就是页边那些色块的样本；点一类摊开它的全部位置 -->
@@ -310,7 +328,8 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
 
       <!-- ============ 速览 ============ -->
       <template v-if="tab === 'eye'">
-        <div v-if="!store.summary" class="reading">
+        <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}</div>
+        <div v-else-if="!store.summary" class="reading">
           <div class="r-line">正在压出一眼卡<span class="r-dots">…</span></div>
           <div class="r-bar"><i /></div>
         </div>
@@ -328,8 +347,9 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             <span>方法卡</span>
           </div>
           <div v-if="!methodCard">
-            <button style="width:100%" @click="genMethodCard" :disabled="mcBusy">
-              {{ mcBusy ? '整理中…' : '把方法整理成可复现的 protocol' }}
+            <button style="width:100%" @click="genMethodCard" :disabled="mcBusy"
+                    title="把方法整理成可复现的 protocol">
+              {{ mcBusy ? '获取中…' : '获取' }}
             </button>
           </div>
           <div class="card-eye" v-else>
@@ -358,8 +378,9 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         <div style="margin-top:16px">
           <div class="mono-label" style="margin-bottom:8px">导师三问</div>
           <div v-if="!advisor.length">
-            <button style="width:100%" @click="loadAdvisor" :disabled="advBusy">
-              {{ advBusy ? '推演中…' : '生成最可能被问住的 3 个问题' }}
+            <button style="width:100%" @click="loadAdvisor" :disabled="advBusy"
+                    title="生成最可能被问住的 3 个问题">
+              {{ advBusy ? '获取中…' : '获取' }}
             </button>
           </div>
           <div v-else>
@@ -377,23 +398,6 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
       </template>
 
       <!-- ============ 提问 ============ -->
-      <template v-if="tab === 'ask'">
-        <div class="qa-quick">
-          <button v-for="q in quickList" :key="q" @click="ask(q)">{{ q }}</button>
-        </div>
-        <div class="qa-msg" v-for="(m, i) in store.qa" :key="i" :class="m.role">
-          <div class="q-role">{{ m.role === 'user' ? '你' : 'EGGPAPER' }}</div>
-          <MdLite v-if="m.role === 'assistant'" class="q-body" :text="m.content" @cite="jumpPara" />
-          <div class="q-body" v-else>{{ m.content }}</div>
-        </div>
-        <div ref="qaEnd"></div>
-          <div class="qa-input">
-            <input ref="qaInput" type="text" v-model="question" placeholder="基于这篇论文提问…" @keydown.enter="ask(question)" />
-            <button class="primary" @click="ask(question)" :disabled="asking">{{ asking ? '…' : '问' }}</button>
-          </div>
-      </template>
-
-      <!-- ============ 术语 ============ -->
       <template v-if="tab === 'terms'">
         <!-- 本文用到的缩写：论文自带的，一键收进术语表 -->
         <div style="margin-bottom:14px" v-if="abbrList.length">
@@ -425,6 +429,9 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>
+
+      <!-- ============ 提问 ============ -->
+      <AskPanel v-if="tab === 'ask'" :quick="quickList" />
     </div>
 
     <!-- 图表灯箱：像看图片一样左右翻 -->

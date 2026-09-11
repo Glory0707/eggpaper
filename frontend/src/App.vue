@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, openPaper, refreshAnalysis } from './store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import RightRail from './components/RightRail.vue'
@@ -9,10 +9,17 @@ import EggMark from './components/EggMark.vue'
 
 const showSettings = ref(false)
 const dragOver = ref(false)
-const wobble = ref(false)
+const roll = ref(false)          // 完成一个动作时，印章滚一下（借蛋仔的"动作"，不借它的配色）
 const gPending = ref(false)
 const VARIANTS = ['original', 'mono', 'dual']
 let pollTimer = null
+
+function rollOnce(ms = 700) {
+  roll.value = false
+  requestAnimationFrame(() => { roll.value = true })
+  clearTimeout(rollOnce._t)
+  rollOnce._t = setTimeout(() => (roll.value = false), ms)
+}
 
 const tranReady = computed(() => store.paper?.translate_status === 'done')
 
@@ -37,6 +44,7 @@ function endDrag() { dragOver.value = false }
 onMounted(async () => {
   store.settings = await api.settings()
   await refreshPapers()
+  await refreshCollections()
   if (store.papers.length) openPaper(store.papers[0].id)
   pollTimer = setInterval(poll, 3000)
   window.addEventListener('keydown', onKey)
@@ -57,7 +65,7 @@ async function poll() {
   const p = store.papers.find(x => x.id === store.currentId)
   if (p && p.translate_status === 'running') {
     const j = await api.translateStatus(store.currentId)
-    if (j.status === 'done') { await refreshPapers(); toast('双语已生成，切「译文」或「双语」查看') }
+    if (j.status === 'done') { await refreshPapers(); rollOnce(); toast('双语已生成，切「译文」或「双语」查看') }
     if (j.status === 'error') { await refreshPapers(); toast('整本翻译失败：' + (j.error || '').slice(0, 80)) }
   }
 }
@@ -67,10 +75,7 @@ async function poll() {
 watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
 
 watch(() => store.analysis.status, (n, o) => {
-  if (o === 'running' && n === 'done') {
-    wobble.value = true
-    setTimeout(() => (wobble.value = false), 600)
-  }
+  if (o === 'running' && n === 'done') rollOnce()
 })
 
 async function doAnalyze() {
@@ -108,8 +113,15 @@ async function onPickFile(file) {
   try {
     const r = await api.upload(file)
     await refreshPapers()
+    // 正在看某个分类时导入的，就顺手归到那个分类里——Zotero 的"导入到分类"一个意思
+    const c = store.lib.coll
+    if (typeof c === 'number') {
+      try { await api.paperColls(r.paper.id, [c]); await refreshCollections() } catch { /* 归类失败不影响导入 */ }
+    }
     await openPaper(r.paper.id)
     store.viewer.libOpen = false
+    if (r.no_text) toast('这份 PDF 没有可提取的文字（可能是扫描件），只有阅读功能可用')
+    else if (r.n_paragraphs && r.n_paragraphs < 5) toast('这份 PDF 只认出 ' + r.n_paragraphs + ' 段，析读结果可能很粗')
   } catch (e) { toast('导入失败：' + e.message) }
 }
 
@@ -167,7 +179,7 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" title="eggpaper">
-        <EggMark class="egg" compact :class="{ wobble }" />
+        <EggMark class="egg" compact :class="{ roll }" />
         <span class="name">eggpaper</span>
       </div>
       <div class="doc-head" v-if="store.paper">
@@ -227,7 +239,7 @@ function onKey(e) {
       <!-- 中：书桌。drop 不拦在这里：让它冒到 .app 统一收，拖到纸上也能导入 -->
       <main class="desk">
         <div class="empty" v-if="!store.paper">
-          <EggMark class="egg-big" :class="{ open: dragOver }" />
+          <EggMark class="egg-big" :class="{ hop: dragOver }" />
           <div class="e-title">剥开论文的壳，读论证的芯</div>
           <div class="e-sub">把 PDF 拖进来，或按 g l 打开文库</div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
@@ -238,7 +250,10 @@ function onKey(e) {
       <!-- 右栏折叠把手 -->
       <button class="rail-tab" v-if="store.paper && !store.railRight" title="展开右栏 · x"
               @click="store.viewer.railUser = true">◂</button>
-      <div class="rail-wrap" :class="{ collapsed: !store.railRight }">
+      <!-- 没有论文就没有右栏：一个只有页签的空栏目会让人以为它坏了，
+           而且里面的问答会对着一个不存在的 paper_id 发请求 -->
+      <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight }"
+           :style="{ '--rail-w': store.viewer.railW + 'px' }">
         <RightRail @analyze="doAnalyze" @marginalia="doMarginalia" />
       </div>
     </div>
@@ -247,7 +262,7 @@ function onKey(e) {
       <div class="lib-mask" v-if="store.viewer.libOpen" @click="store.viewer.libOpen = false"></div>
     </Transition>
     <Transition name="slide-l">
-      <LibPanel v-if="store.viewer.libOpen" @pick="openPaper" @import="onPickFile" @close="store.viewer.libOpen = false" />
+      <LibPanel v-if="store.viewer.libOpen" @import="onPickFile" @close="store.viewer.libOpen = false" />
     </Transition>
     <Transition name="fade">
       <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" />

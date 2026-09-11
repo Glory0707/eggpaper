@@ -13,7 +13,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
 defineEmits(['override'])
 
-const GUTTER = 196        // 184 的批注带 + 12 的左边距，measure() 要按整宽算
+const GUTTER_FULL = 184   // 有批注时的整条页边（184 的批注带 + 12 的左边距）
+const GUTTER_TAB = 24      // 只挂角色书签：留一条窄边就够，宽度全还给论文
 const LS_POS = 'eggpaper:pos:'
 
 const deskEl = ref(null)
@@ -64,6 +65,16 @@ const parasByPage = computed(() => {
 })
 const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
 const notesShown = computed(() => (store.viewer.layers.marginalia ? store.marginalia.notes : []))
+/* 页边要多宽，取决于"上面真有东西要放吗"：
+   有批注 → 整条 184；只有骨架书签 → 24 的窄边；两层都关 → 干脆不留，
+   论文因此能多出近 200px 的宽度。这条宽度是 measure() 的输入，图层一变就得重排。 */
+const gutterW = computed(() => {
+  if (store.viewer.layers.marginalia && notesShown.value.length) return GUTTER_FULL
+  if (store.viewer.layers.skeleton) return GUTTER_TAB
+  return 0
+})
+// 页边和纸之间留多少：整条批注带留 12，一条窄书签带留 6，没有页边就不留
+const gutterPad = computed(() => (gutterW.value >= GUTTER_FULL ? 12 : gutterW.value ? 6 : 0))
 const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 const tranReady = computed(() => store.paper?.translate_status === 'done')
 const isSpread = computed(() => store.viewer.variant === 'dual' && store.viewer.spread === 'spread')
@@ -256,10 +267,10 @@ function measure() {
   const sc = scroller()
   if (!sc || !first) return
   const perRow = sheets.value[0].items.length
-  const gutterW = store.viewer.variant === 'original' ? GUTTER : 6
+  const gutter = gutterW.value + gutterPad.value
   // 量的是滚动容器（书桌）的宽度，不是 .desk-inner——后者是 max-content，
   // 会随排版自己长大，拿它算"适宽"就成了正反馈：纸越大 → 容器越宽 → 纸更大。
-  fitScale.value = (sc.clientWidth - 60 - gutterW - (perRow === 2 ? 20 : 0)) / (first.w * perRow)
+  fitScale.value = (sc.clientWidth - 60 - gutter - (perRow === 2 ? 20 : 0)) / (first.w * perRow)
   // 适页：把一整页塞进书桌高度（留出上下内边距）
   pageFitScale.value = (sc.clientHeight - 56) / first.h
 }
@@ -356,19 +367,38 @@ function rectStyle(p) {
            width: (b.x1 - b.x0) * scale.value + 'px', height: (b.y1 - b.y0) * scale.value + 'px' }
 }
 
-function tabsOnPage(pno) {
-  const out = []
-  let prevBottom = -1
-  for (const p of parasByPage.value[pno] || []) {
-    const role = roleOf(p)
-    if (!role) continue
-    let top = p.bbox.y0 * scale.value
-    if (top < prevBottom + 3) top = prevBottom + 3
-    prevBottom = top + 25
-    out.push({ p, role, top })
+/* 页边书签的排布：每个书签贴着自己那一段，挤在一起就往下让。
+   难点是"让出去"没有上限——一段话密的地方能堆二十来个书签，一路让下去就伸到
+   下一页的页边上了。所以让完之后量一次越界：越了就整体压缩间距（宁可贴住，
+   也不许翻页），压到极限还放不下才允许重叠。 */
+const TAB_H = 22, TAB_GAP = 5
+const tabLayouts = computed(() => {
+  const out = {}
+  for (const it of flatItems.value) {
+    const pno = it.origPage
+    if (pno == null || pno < 0) continue
+    const rows = (parasByPage.value[pno] || []).filter(p => roleOf(p))
+    if (!rows.length) continue
+    const pageH = it.h * scale.value
+    const tops = rows.map(p => p.bbox.y0 * scale.value)
+    const place = (gap) => {
+      const arr = []
+      let prev = -1e9
+      for (const y of tops) { const t = Math.round(Math.max(y, prev + TAB_H + gap)); arr.push(t); prev = t }
+      return arr
+    }
+    let arr = place(TAB_GAP)
+    const over = arr[arr.length - 1] + TAB_H - (pageH - 2)
+    if (over > 0) {
+      const room = pageH - 2 - TAB_H - tops[0]
+      const need = room / Math.max(1, rows.length - 1) - TAB_H
+      arr = place(Math.max(3 - TAB_H, Math.min(TAB_GAP, need)))
+    }
+    out[pno] = rows.map((p, i) => ({ p, role: roleOf(p), top: Math.max(0, arr[i]) }))
   }
   return out
-}
+})
+function tabsOnPage(pno) { return tabLayouts.value[pno] || [] }
 
 // 旁批高度靠实测：先按估算摆一遍，渲染后量真实高度再摆第二遍。
 // 这样长批注展开后只会把下面的推开，不会压在别人身上。
@@ -971,6 +1001,10 @@ watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: tru
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
 watch(() => store.paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
+// 图层开关（骨架/眉批/略读）会改页边宽度和标注的密度，换完要重新定标落回原处
+watch(() => store.viewer.layers, () => reflow(), { deep: true })
+// 右栏/文库拖宽结束时不需要 ResizeObserver 的延迟：直接重排一次
+watch(() => store.reflowTick, () => reflow())
 watch(() => store.marginalia.notes, (n, o) => {
   spanCache.clear()
   if (n.length && (!o || n.length > o.length)) {
@@ -1005,8 +1039,8 @@ watch(() => store.marginalia.notes, (n, o) => {
             <div class="para-zone">
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
                 <div v-if="store.viewer.layers.skim && it.origPage >= 0 && roleOf(p) && !isCore(p)"
-                     class="para-fade"
-                     :style="{ ...rectStyle(p), transitionDelay: Math.min(400, pi * 12) + 'ms' }"></div>
+                     class="para-fade veil"
+                     :style="{ ...rectStyle(p), animationDelay: Math.min(400, pi * 12) + 'ms' }"></div>
                 <div v-else-if="store.viewer.layers.skim && it.origPage >= 0 && roleOf(p) && isCore(p)"
                      class="para-core-bar"
                      :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"></div>
@@ -1032,9 +1066,10 @@ watch(() => store.marginalia.notes, (n, o) => {
             </div>
           </div>
 
-          <!-- 页边批注带 -->
-          <div class="gutter" v-if="it.margin"
-               :style="{ height: (pageLayouts[it.origPage]?.height || it.h * scale) + 'px' }">
+          <!-- 页边批注带：宽度跟着"有没有东西要放"走 -->
+          <div class="gutter" v-if="it.margin && gutterW > 0"
+               :style="{ height: (pageLayouts[it.origPage]?.height || it.h * scale) + 'px',
+                         width: gutterW + 'px', marginLeft: gutterPad + 'px' }">
             <div v-for="{ p, role, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx"
                  class="role-tab" :class="{ on: roleCard?.idx === p.idx }"
                  :style="{ top: top + 'px', background: ROLE_COLOR[role], color: roleInk(role) }"
@@ -1044,9 +1079,10 @@ watch(() => store.marginalia.notes, (n, o) => {
             </div>
             <div v-for="{ n, top, pending } in notesOnPage(it.origPage)" :key="'mg' + n.id"
                  class="mg-note" :data-nid="n.id"
+                 :style="{ top: top + 'px', borderLeftColor: KIND_COLOR[n.kind],
+                           width: Math.max(120, gutterW - 30) + 'px' }"
                  :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
                            clamped: (n.note || '').length > 34, clampable: (n.note || '').length > 34 }"
-                 :style="{ top: top + 'px', borderLeftColor: KIND_COLOR[n.kind] }"
                  @click="toggleNote(n)">
               <div class="mg-head">
                 <span class="mg-kind" :style="{ color: KIND_TEXT_COLOR[n.kind] }">
