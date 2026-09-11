@@ -24,6 +24,7 @@ const expandedNote = ref(null)   // 展开的批注卡
 const pendingPara = ref(null)    // 段译进行中
 const freshNotes = ref(false)
 const backChip = ref(false)
+const rendering = ref(false)     // 正在出图：顶部一条细线，不遮内容
 const flash = ref(null)
 
 const canvases = ref([]), textLayers = ref([]), pageEls = ref([])
@@ -96,23 +97,103 @@ async function buildSheets() {
   sheets.value = rows
 }
 
-async function load() {
-  ready.value = false
+async function load({ keepPlace = false } = {}) {
+  loading = true
+  const veryFirst = !sheets.value.length
+  if (veryFirst) ready.value = false
+  // 换姿势（原文/译文/双语/对开）前先记住读到哪里，换完再落回同一页同一高度
+  const anchor = keepPlace || !veryFirst ? currentAnchor() : null
   sheets.value = []
   doneKeys.clear()
   try {
     await buildSheets()
   } catch (e) {
-    toast('文档加载失败：' + e.message); return
+    toast('文档加载失败：' + e.message)
+    ready.value = true
+    loading = false
+    return
   }
   await measure()
   await renderAll()
   ready.value = true
   await nextTick()
   await measureNotes()
-  const pos = store.viewer.restorePos
-  if (pos) { scroller().scrollTop = pos; store.viewer.restorePos = 0 }
+  if (anchor) applyAnchor(anchor)
+  else if (store.viewer.restorePos) { scroller().scrollTop = store.viewer.restorePos; store.viewer.restorePos = 0 }
+  loading = false
 }
+
+/* 页码定位。三种模式的页号不是一回事：
+   原文页 i / 译文第 i 页（1:1）/ 双语文档里 2i=原文、2i+1=译文。
+   统一换算成"原文第几页"，跳转和位置记忆才不会跨模式错位。 */
+function origPageOf(it) {
+  if (!it) return 0
+  if (it.origPage >= 0) return it.origPage
+  if (it.doc === 'dual') return Math.floor(it.page / 2)
+  return it.page
+}
+function pageItem(pno) {
+  const items = flatItems.value
+  return items.find(x => x.origPage === pno)
+      || items.find(x => x.doc === 'mono' && x.page === pno)
+      || items.find(x => x.doc === 'dual' && x.page === 2 * pno + 1)
+      || null
+}
+
+/* 当前读到哪：原文页码 + 页内高度比例（比例让不同缩放/排布之间也能对上） */
+function currentAnchor() {
+  const sc = scroller()
+  if (!sc) return null
+  const items = flatItems.value
+  if (!items.length) return null
+  const top = sc.scrollTop + 8
+  let cur = null
+  for (const it of items) {
+    const el = pageEls.value[it.gi]
+    if (!el) continue
+    if (el.offsetTop <= top) cur = it
+    else break
+  }
+  if (!cur) return { page: origPageOf(items[0]), frac: 0 }
+  const el = pageEls.value[cur.gi]
+  const h = el?.offsetHeight || 1
+  return {
+    page: origPageOf(cur),
+    frac: Math.min(1, Math.max(0, (top - (el?.offsetTop || 0)) / h)),
+  }
+}
+
+function restoreAnchor(a) {
+  const it = pageItem(a.page)
+  const el = it && pageEls.value[it.gi]
+  if (!el) return false
+  scroller().scrollTop = el.offsetTop + a.frac * (el.offsetHeight || 0)
+  return true
+}
+
+/* 落位要跟一堆异步赛跑（换模式渲染、右栏宽度动画、画布重定标），
+   谁先谁后说不准，所以不赌一次成功：落完量一次，偏了就再落一次，
+   最多四五拍收敛；用户一旦自己滚动就立刻撒手。 */
+let anchorCancel = false
+function applyAnchor(a) {
+  if (!a || !scroller()) return
+  anchorCancel = false
+  let tries = 4
+  const check = () => {
+    if (anchorCancel || tries-- <= 0) return
+    const it = pageItem(a.page)
+    const el = it && pageEls.value[it.gi]
+    if (!el) return
+    const h = el.offsetHeight || 1
+    const got = (scroller().scrollTop - el.offsetTop) / h
+    if (Math.abs(got - a.frac) <= 0.03) return          // 已经落对，收工
+    restoreAnchor(a)
+    setTimeout(check, 110)
+  }
+  restoreAnchor(a)
+  setTimeout(check, 110)
+}
+function onUserScroll() { anchorCancel = true }
 
 /* ---------------- 渲染 ---------------- */
 
@@ -132,13 +213,33 @@ function updateMid() {
   midX.value = Math.round(r.left + r.width / 2)
 }
 
+// 容器宽度变了要重新定标：缩完要落回同一处，别让读者的视线跳走。
+// 注意锚点只在一次连发里记第一拍——右栏折叠是 320ms 的动画，中途每帧都重记的话
+// 记到的是"新宽度 + 旧页高"的错位坐标，落位就会偏。
+let reflowT = null, reflowAnchor = null, loading = false
+function reflow() {
+  if (loading) return                       // 换模式那次由 load() 负责落位，别抢
+  if (reflowT == null) reflowAnchor = currentAnchor()
+  clearTimeout(reflowT)
+  reflowT = setTimeout(async () => {
+    reflowT = null
+    measure()
+    await renderAll()
+    await measureNotes()
+    if (reflowAnchor) applyAnchor(reflowAnchor)
+    reflowAnchor = null
+  }, 200)
+}
+
 async function renderAll() {
   const seq = ++passToken
+  rendering.value = true
   await nextTick()
   for (let i = 0; i < flatItems.value.length; i++) {
     if (seq !== passToken) return
     await renderItem(flatItems.value[i])
   }
+  if (seq === passToken) rendering.value = false
 }
 
 // 同一画布的渲染任务串成一条链，后来者排队；轮到执行时重新对齐当前
@@ -416,7 +517,7 @@ async function applyJump() {
   backStack.push(scroller().scrollTop)
   if (backStack.length > 30) backStack.shift()
   await nextTick()
-  const it = flatItems.value.find(x => x.origPage === j.page)
+  const it = pageItem(j.page)
   const el = it && pageEls.value[it.gi]
   if (!el) return
   scroller().scrollTo({ top: el.offsetTop + j.y0 * scale.value - scroller().clientHeight * 0.28, behavior: 'smooth' })
@@ -442,7 +543,7 @@ function jumpBack() {
 function paraAbsY(idx) {
   const p = paraByIdx.value[idx]
   if (!p) return null
-  const it = flatItems.value.find(x => x.origPage === p.page)
+  const it = pageItem(p.page)
   const el = it && pageEls.value[it.gi]
   if (!el) return null
   return el.offsetTop + p.bbox.y0 * scale.value
@@ -513,12 +614,14 @@ onMounted(async () => {
     if (saved.zoom) zoom.value = saved.zoom
   } catch { /* */ }
   await measureNotes()
-  ro = new ResizeObserver(() => { measure(); scheduleRender() })
+  ro = new ResizeObserver(() => { reflow() })
   ro.observe(deskEl.value.parentElement || deskEl.value)
   document.addEventListener('mouseup', onMouseUp)
   document.addEventListener('mousedown', onDocDown)
   window.addEventListener('resize', updateMid)
   scroller().addEventListener('scroll', onScroll, { passive: true })
+  scroller().addEventListener('wheel', onUserScroll, { passive: true })
+  scroller().addEventListener('touchstart', onUserScroll, { passive: true })
 })
 
 onBeforeUnmount(() => {
@@ -528,6 +631,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocDown)
   window.removeEventListener('resize', updateMid)
   scroller()?.removeEventListener('scroll', onScroll)
+  scroller()?.removeEventListener('wheel', onUserScroll)
+  scroller()?.removeEventListener('touchstart', onUserScroll)
   for (const d of Object.values(docs)) { try { d?.destroy() } catch { /* */ } }
   docs = { orig: null, dual: null, mono: null }
 })
@@ -629,8 +734,8 @@ watch(() => store.escTick, () => {
   roleCard.value = null
 })
 
-watch(() => store.viewer.variant, () => { doneKeys.clear(); load(); saveLater() })
-watch(() => store.viewer.spread, () => { doneKeys.clear(); buildSheets().then(() => { measure(); renderAll() }); saveLater() })
+watch(() => store.viewer.variant, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
+watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
 watch(() => store.jump, applyJump)
 watch(() => store.marginalia.notes, (n, o) => {
@@ -649,7 +754,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div class="r-bar"><i /></div>
     </div>
 
-    <div v-else style="display:flex; flex-direction:column; align-items:center; gap:26px">
+    <div v-else class="sheet-stage">
       <div class="spread-row" v-for="(s, si) in sheets" :key="si">
         <div class="page-wrap" v-for="it in s.items" :key="it.key">
             <div class="page" :ref="el => (pageEls[it.gi] = el)"
@@ -713,22 +818,30 @@ watch(() => store.marginalia.notes, (n, o) => {
       </div>
     </div>
 
+    <!-- 出图进度：一条不挡路的细线，比"遮住论文的加载器"诚实 -->
+    <div class="stage-line" v-if="ready && rendering"><i /></div>
+
     <!-- 缩放 -->
+    <Transition name="fade">
     <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px' }">
       <button @click="zoom = Math.max(0.5, zoom - 0.15)">－</button>
       <button class="zb-num" @click="zoom = 1">{{ Math.round(zoom * 100) }}%</button>
       <button @click="zoom = Math.min(2.5, zoom + 0.15)">＋</button>
     </div>
+    </Transition>
 
     <!-- 框选中：常驻提示 + 退出口 -->
+    <Transition name="pop">
     <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
       <span class="fh-tag">框选</span>
       <span>在页面上拖一块区域，松手就问</span>
       <kbd>Esc</kbd>
       <button @click="store.viewer.frame = false">退出</button>
     </div>
+    </Transition>
 
     <!-- 划词气泡 -->
+    <Transition name="pop">
     <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }" @mouseup.stop>
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
         已选 {{ sel.text.length }} 字符
@@ -747,9 +860,11 @@ watch(() => store.marginalia.notes, (n, o) => {
         <button class="ghost" style="padding:4px 8px" @click="sel.visible = false">×</button>
       </div>
     </div>
+    </Transition>
 
     <!-- 返回原位 -->
     <!-- 框选视觉问答 -->
+    <Transition name="pop">
     <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }" @mouseup.stop>
       <div class="vp-head">
         <span class="mono-label">选区问 AI</span>
@@ -771,8 +886,10 @@ watch(() => store.marginalia.notes, (n, o) => {
         <button class="ghost" style="padding:4px 10px" @click="closeVis">关闭</button>
       </div>
     </div>
+    </Transition>
 
     <!-- 角色卡：点页边书签打开 -->
+    <Transition name="pop">
     <div class="role-card" v-if="roleCard && roleCardData" ref="roleCardEl"
          :style="{ left: roleCard.x + 'px', top: roleCard.y + 'px' }" @mousedown.stop>
       <div class="rc-top">
@@ -788,9 +905,12 @@ watch(() => store.marginalia.notes, (n, o) => {
         <option v-for="(zh, k) in ROLE_ZH" :key="k" :value="k">{{ zh }}</option>
       </select>
     </div>
+    </Transition>
 
-    <button class="back-chip desk-float" v-if="backChip" :style="{ left: midX + 'px' }" @click="jumpBack">
-      返回原位 · Alt+←
-    </button>
+    <Transition name="pop">
+      <button class="back-chip desk-float" v-if="backChip" :style="{ left: midX + 'px' }" @click="jumpBack">
+        返回原位 · Alt+←
+      </button>
+    </Transition>
   </div>
 </template>

@@ -32,7 +32,6 @@ async function del(pid, name) {
 </script>
 
 <template>
-  <div class="lib-mask" @click="emit('close')"></div>
   <div class="lib-panel" @keydown.esc="emit('close')">
     <div class="rail-head">
       <span class="mono-label">文库 · {{ store.papers.length }} 篇</span>

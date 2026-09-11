@@ -466,6 +466,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
     </div>
 
     <!-- 图表灯箱 -->
+    <Transition name="fade">
     <div class="lightbox" v-if="lightbox" @click="lightbox = null">
       <img :src="api.figureUrl(store.currentId, lightbox, 200)" @click.stop />
       <div class="lb-actions" @click.stop>
@@ -474,5 +475,6 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         <button @click="lightbox = null">关闭</button>
       </div>
     </div>
+    </Transition>
   </aside>
 </template>

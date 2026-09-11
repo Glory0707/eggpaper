@@ -11,6 +11,7 @@ const showSettings = ref(false)
 const dragOver = ref(false)
 const wobble = ref(false)
 const gPending = ref(false)
+const VARIANTS = ['original', 'mono', 'dual']
 let pollTimer = null
 
 const tranReady = computed(() => store.paper?.translate_status === 'done')
@@ -149,15 +150,20 @@ function onKey(e) {
         <div class="t">本地文献批注台</div>
       </div>
       <div class="actions" v-if="store.paper">
-        <div class="segmented">
+        <div class="segmented" :style="{ '--n': 3, '--i': VARIANTS.indexOf(store.viewer.variant) }">
+          <span class="seg-thumb" />
           <button :class="{ on: store.viewer.variant === 'original' }" @click="store.viewer.variant = 'original'">原文</button>
           <button :class="{ on: store.viewer.variant === 'mono' }" :disabled="tranSt !== 'done'" @click="store.viewer.variant = 'mono'">译文</button>
           <button :class="{ on: store.viewer.variant === 'dual' }" :disabled="tranSt !== 'done'" @click="store.viewer.variant = 'dual'">双语</button>
         </div>
-        <div class="segmented mini" v-if="store.viewer.variant === 'dual'">
-          <button :class="{ on: store.viewer.spread === 'spread' }" @click="store.viewer.spread = 'spread'">对开</button>
-          <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">交替</button>
-        </div>
+        <Transition name="fade">
+          <div class="segmented mini" v-if="store.viewer.variant === 'dual'"
+               :style="{ '--n': 2, '--i': store.viewer.spread === 'spread' ? 0 : 1 }">
+            <span class="seg-thumb" />
+            <button :class="{ on: store.viewer.spread === 'spread' }" @click="store.viewer.spread = 'spread'">对开</button>
+            <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">交替</button>
+          </div>
+        </Transition>
         <button class="toggle" :class="{ on: store.viewer.layers.skim }" @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
         <button class="toggle" :class="{ on: store.viewer.frame }" title="框选任意区域问 AI（r）"
                 @click="store.viewer.frame = !store.viewer.frame">框选</button>
@@ -205,10 +211,18 @@ function onKey(e) {
       </div>
     </div>
 
-    <LibPanel v-if="store.viewer.libOpen" @pick="openPaper" @import="onPickFile" @close="store.viewer.libOpen = false" />
-    <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" />
+    <Transition name="fade">
+      <div class="lib-mask" v-if="store.viewer.libOpen" @click="store.viewer.libOpen = false"></div>
+    </Transition>
+    <Transition name="slide-l">
+      <LibPanel v-if="store.viewer.libOpen" @pick="openPaper" @import="onPickFile" @close="store.viewer.libOpen = false" />
+    </Transition>
+    <Transition name="fade">
+      <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" />
+    </Transition>
 
     <!-- 键盘卡 -->
+    <Transition name="pop">
     <div class="keys-card" v-if="store.shortcutCard" @click="store.shortcutCard = false">
       <div class="mono-label" style="margin-bottom:8px">键盘 · 按 ? 收起</div>
       <div class="k-row"><span>下一段 / 上一段（略读时仅核心段）</span><kbd>j / k</kbd></div>
@@ -223,12 +237,17 @@ function onKey(e) {
       <div class="k-row"><span>返回原位</span><kbd>Alt + ←</kbd></div>
       <div class="k-row"><span>收起所有浮层 / 退出框选</span><kbd>Esc</kbd></div>
     </div>
+    </Transition>
 
-    <div class="toast" v-if="store.toast">{{ store.toast }}</div>
-    <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(38,32,21,.25)">
+    <Transition name="pop">
+      <div class="toast" v-if="store.toast">{{ store.toast }}</div>
+    </Transition>
+    <Transition name="fade">
+    <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(29,27,23,.22)">
       <div class="modal" style="text-align:center">
         <div style="font-size:var(--fs-xl);font-weight:650">松手，放到书桌上</div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>

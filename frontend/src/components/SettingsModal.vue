@@ -34,6 +34,7 @@ function save() {
 
 <template>
   <div class="modal-mask" @click.self="emit('close')">
+    <Transition name="pop" appear>
     <div class="modal">
       <h3>设置 · 只存本机</h3>
       <div class="f-row">
@@ -78,5 +79,6 @@ function save() {
         <button class="primary" @click="save">保存</button>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
