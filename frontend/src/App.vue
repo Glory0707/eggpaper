@@ -52,6 +52,14 @@ async function doAnalyze() {
   await refreshAnalysis()
 }
 
+async function onOverride({ idx, role }) {
+  try {
+    await api.overrideRole(store.currentId, idx, role)
+    await refreshAnalysis()
+    toast(role ? '已改判' : '已回到推断')
+  } catch (e) { toast('改判失败：' + e.message) }
+}
+
 async function doMarginalia() {
   if (!store.currentId) return
   await api.marginaliaStart(store.currentId)
@@ -186,7 +194,7 @@ function onKey(e) {
           <div class="e-sub">把 PDF 拖进来，或按 g l 打开文库</div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
         </div>
-        <PdfViewer v-else :key="store.currentId" @override="async ({ idx, role }) => { await api.overrideRole(store.currentId, idx, role); await refreshAnalysis() }" />
+        <PdfViewer v-else :key="store.currentId" @override="onOverride" />
       </main>
 
       <!-- 右栏折叠把手 -->
@@ -219,7 +227,7 @@ function onKey(e) {
     <div class="toast" v-if="store.toast">{{ store.toast }}</div>
     <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(38,32,21,.25)">
       <div class="modal" style="text-align:center">
-        <div style="font-size:17px;font-weight:650">松手，放到书桌上</div>
+        <div style="font-size:var(--fs-xl);font-weight:650">松手，放到书桌上</div>
       </div>
     </div>
   </div>

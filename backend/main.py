@@ -195,8 +195,9 @@ def analysis(pid: str):
 @app.post("/api/papers/{pid}/override-role")
 def override_role(pid: str, body: dict):
     _paper_or_404(pid)
-    role = body.get("role")
-    if role not in llm.ROLES:
+    role = body.get("role") or ""
+    # 空串 = 回到推断（卡片上的「回到推断」），别当成非法角色拒掉
+    if role and role not in llm.ROLES:
         raise HTTPException(400, "角色不合法")
     db.override_annotation(pid, int(body["para_idx"]), role)
     return {"ok": True}

@@ -18,13 +18,10 @@ const zoom = ref(1)
 const fitScale = ref(1)
 const midX = ref(0)              // 书桌中线：缩放条/提示贴它，而不是视口中线
 const sheets = ref([])
-const hoverPara = ref(null)      // 段落 hover：驱动把手
-const handleY = ref(0)           // 把手跟鼠标的纵位（夹在段落带内），不是钉在段顶
 const roleCard = ref(null)       // { idx, x, y } 点开的角色卡，只有点击能开关
 const noteHeights = ref({})      // 旁批实测高度，摊平用
 const expandedNote = ref(null)   // 展开的批注卡
 const pendingPara = ref(null)    // 段译进行中
-const handleHold = ref(false)
 const freshNotes = ref(false)
 const backChip = ref(false)
 const flash = ref(null)
@@ -267,18 +264,41 @@ function notesOnPage(pno) { return pageLayouts.value[pno]?.notes || [] }
 
 /* ---------------- 角色卡：点击开，Esc/点外/×关 ---------------- */
 
-function openRoleCard(e, p) {
-  if (roleCard.value?.idx === p.idx) { roleCard.value = null; return }
-  const r = e.currentTarget.getBoundingClientRect()
-  const w = 226, h = 210
+let roleCardAnchor = null        // 打开卡片的那个书签元素
+let roleCardRaf = 0
+const roleCardEl = ref(null)
+
+// 卡片跟着书签走：页面一滚就重新贴回书签旁边，而不是被滚没了
+function placeRoleCard() {
+  if (roleCard.value == null || !roleCardAnchor) return
+  const r = roleCardAnchor.getBoundingClientRect()
+  const desk = (deskEl.value?.closest('.desk') || deskEl.value)?.getBoundingClientRect()
+  if (desk && (r.bottom < desk.top - 40 || r.top > desk.bottom + 40)) { closeRoleCard(); return }
+  const h = roleCardEl.value?.offsetHeight || 170
   roleCard.value = {
-    idx: p.idx,
-    x: Math.max(12, r.left - w - 8),
-    y: Math.min(Math.max(64, r.top - 10), window.innerHeight - h),
+    idx: roleCard.value.idx,
+    x: Math.max(12, r.left - 226 - 8),
+    y: Math.min(Math.max(desk ? desk.top + 10 : 64, r.top - 10), window.innerHeight - h - 14),
   }
-  expandedNote.value = null
 }
-function closeRoleCard() { roleCard.value = null }
+function followRoleCard() {
+  if (roleCard.value == null) return
+  cancelAnimationFrame(roleCardRaf)
+  roleCardRaf = requestAnimationFrame(placeRoleCard)
+}
+
+async function openRoleCard(e, p) {
+  if (roleCard.value?.idx === p.idx) { closeRoleCard(); return }
+  roleCardAnchor = e.currentTarget
+  roleCard.value = { idx: p.idx, x: 0, y: 0 }
+  expandedNote.value = null
+  await nextTick()
+  placeRoleCard()
+}
+function closeRoleCard() {
+  roleCard.value = null
+  roleCardAnchor = null
+}
 
 const roleCardData = computed(() => {
   const idx = roleCard.value?.idx
@@ -295,32 +315,6 @@ function toggleNote(n) {
   measureNotes()
 }
 
-/* ---------------- 段落 hover 把手 ---------------- */
-
-// 把手悬着一拍再消失：鼠标斜着穿过纸边/把手指间缝隙时不至于半路卸载
-let hoverGrace = null
-function clearHoverSoon() {
-  clearTimeout(hoverGrace)
-  hoverGrace = setTimeout(() => { if (!handleHold.value) hoverPara.value = null }, 350)
-}
-function cancelHoverClear() { clearTimeout(hoverGrace) }
-
-function onPageMove(e, it) {
-  if (!it.text || it.origPage < 0) return
-  cancelHoverClear()
-  const el = pageEls.value[it.gi]
-  if (!el) return
-  const localY = e.clientY - el.getBoundingClientRect().top
-  for (const p of parasByPage.value[it.origPage] || []) {
-    if (localY >= p.bbox.y0 * scale.value - 2 && localY <= p.bbox.y1 * scale.value + 2) {
-      hoverPara.value = p.idx
-      // 把手贴着鼠标出现：向右一小步就够到，不用斜穿半个段落
-      handleY.value = Math.min(Math.max(localY - 10, p.bbox.y0 * scale.value), Math.max(p.bbox.y0 * scale.value, p.bbox.y1 * scale.value - 22))
-      return
-    }
-  }
-}
-
 async function translateParaAndPin(idx) {
   if (pendingPara.value != null) return
   pendingPara.value = idx
@@ -334,8 +328,6 @@ async function translateParaAndPin(idx) {
   } catch (e) { toast('翻译失败：' + e.message) }
   finally { pendingPara.value = null }
 }
-
-function askPara(idx) { store.askPrefill = { paraIdx: idx } }
 
 /* ---------------- 划词 ---------------- */
 
@@ -352,7 +344,9 @@ function onMouseUp(e) {
   const r = range.getBoundingClientRect()
   const pageEl = node.closest('.page')
   const it = flatItems.value.find(x => pageEls.value[x.gi] === pageEl)
-  let context = '', paraIdx = 0, page = 0
+  // 定位不到段落时不能默认成 ¶0：那会把笔记钉到第一页的页边去。
+  // 用选中文字所在页兜底，para_idx 记 -1（不参与同段重钉去重）
+  let context = '', paraIdx = -1, page = it?.origPage ?? 0
   if (it && it.origPage >= 0) {
     const localY = r.top - pageEl.getBoundingClientRect().top
     for (const p of parasByPage.value[it.origPage] || []) {
@@ -484,7 +478,7 @@ store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey }
 
 let spyT = null, saveT = null
 function onScroll() {
-  if (roleCard.value != null) roleCard.value = null   // 卡片是 fixed 的，纸一动它就跟丢锚点
+  followRoleCard()          // 卡片跟着书签走，不再一滚就消失
   clearTimeout(spyT)
   spyT = setTimeout(() => {
     const focusY = scroller().scrollTop + scroller().clientHeight * 0.4
@@ -529,7 +523,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   ro?.disconnect()
-  clearTimeout(hoverGrace)
+  cancelAnimationFrame(roleCardRaf)
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('mousedown', onDocDown)
   window.removeEventListener('resize', updateMid)
@@ -660,9 +654,7 @@ watch(() => store.marginalia.notes, (n, o) => {
         <div class="page-wrap" v-for="it in s.items" :key="it.key">
             <div class="page" :ref="el => (pageEls[it.gi] = el)"
                  :style="{ width: it.w * scale + 'px', height: it.h * scale + 'px' }"
-                 @mousemove="e => { if (store.viewer.frame) return; onPageMove(e, it) }"
-                 @mousedown="e => startFrameDrag(e, it)"
-                 @mouseleave="() => { if (!handleHold) clearHoverSoon() }">
+                 @mousedown="e => startFrameDrag(e, it)">
 
             <canvas :ref="el => (canvases[it.gi] = el)"></canvas>
             <div class="textLayer" v-if="it.text && !store.viewer.frame" :ref="el => (textLayers[it.gi] = el)"></div>
@@ -687,17 +679,6 @@ watch(() => store.marginalia.notes, (n, o) => {
                                background: KIND_COLOR[n.kind] + '2e',
                                borderBottom: '2px solid ' + KIND_COLOR[n.kind] + '99' }"></div>
               </template>
-            </div>
-
-            <!-- 段落把手 -->
-            <div class="para-handle" v-if="hoverPara != null && it.text && paraByIdx[hoverPara]?.page === it.origPage"
-                 :style="{ top: handleY + 'px' }"
-                 @mouseenter="() => { handleHold = true; cancelHoverClear() }"
-                 @mouseleave="() => { handleHold = false; clearHoverSoon() }">
-              <button :class="{ busy: pendingPara === hoverPara }" @click="translateParaAndPin(hoverPara)">
-                {{ pendingPara === hoverPara ? '…' : '译' }}
-              </button>
-              <button @click="askPara(hoverPara)">问</button>
             </div>
           </div>
 
@@ -749,11 +730,11 @@ watch(() => store.marginalia.notes, (n, o) => {
 
     <!-- 划词气泡 -->
     <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }" @mouseup.stop>
-      <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:12px;color:var(--ink-3)">
+      <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
         已选 {{ sel.text.length }} 字符
       </div>
-      <div v-if="sel.busy" style="font-size:12px;color:var(--ink-3)">翻译中…</div>
-      <div v-if="sel.err" style="font-size:12px;color:var(--vermilion)">{{ sel.err }}</div>
+      <div v-if="sel.busy" style="font-size:var(--fs-sm);color:var(--ink-3)">翻译中…</div>
+      <div v-if="sel.err" style="font-size:var(--fs-sm);color:var(--vermilion)">{{ sel.err }}</div>
       <div class="sp-zh" v-if="sel.zh">{{ sel.zh }}</div>
       <div class="sp-hits" v-if="sel.hits.length">
         <span class="chip" v-for="h in sel.hits" :key="h.en">📌 {{ h.en }} → {{ h.zh }}</span>
@@ -778,12 +759,12 @@ watch(() => store.marginalia.notes, (n, o) => {
       <input type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" placeholder="问这个选区…" />
       <div class="sp-actions">
-        <button style="padding:3px 8px; font-size:11px" @click="() => { vis.question = '讲解这张图：画了什么、支持什么结论'; askVisual() }">讲解此图</button>
-        <button style="padding:3px 8px; font-size:11px" @click="() => { vis.question = '这个公式每一步的含义和推导逻辑'; askVisual() }">讲公式</button>
-        <button style="padding:3px 8px; font-size:11px" @click="() => { vis.question = '挖一下这张表里的数据：趋势、异常和可疑之处'; askVisual() }">挖表格</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '讲解这张图：画了什么、支持什么结论'; askVisual() }">讲解此图</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '这个公式每一步的含义和推导逻辑'; askVisual() }">讲公式</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '挖一下这张表里的数据：趋势、异常和可疑之处'; askVisual() }">挖表格</button>
       </div>
-      <div v-if="vis.busy" style="font-size:12px;color:var(--ink-3);margin-top:8px">看图作答中…</div>
-      <div v-if="vis.err" style="font-size:12px;color:var(--vermilion);margin-top:8px">{{ vis.err }}</div>
+      <div v-if="vis.busy" style="font-size:var(--fs-sm);color:var(--ink-3);margin-top:8px">看图作答中…</div>
+      <div v-if="vis.err" style="font-size:var(--fs-sm);color:var(--vermilion);margin-top:8px">{{ vis.err }}</div>
       <div class="sp-zh" v-if="vis.answer" style="margin-top:8px">{{ vis.answer }}</div>
       <div class="sp-actions">
         <button v-if="vis.answer" style="padding:4px 10px" @click="pinVisual">钉在页边</button>
@@ -792,7 +773,7 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
 
     <!-- 角色卡：点页边书签打开 -->
-    <div class="role-card" v-if="roleCard && roleCardData"
+    <div class="role-card" v-if="roleCard && roleCardData" ref="roleCardEl"
          :style="{ left: roleCard.x + 'px', top: roleCard.y + 'px' }" @mousedown.stop>
       <div class="rc-top">
         <span class="rc-role" :style="{ color: ROLE_COLOR[roleCardData.role] }">{{ ROLE_ZH[roleCardData.role] }}</span>

@@ -262,33 +262,30 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <div class="r-bar"><i /></div>
         </div>
         <div v-else-if="store.analysis.status === 'error'" style="padding:8px 2px">
-          <div style="font-size:12.5px;color:var(--vermilion);line-height:1.6">{{ store.analysis.error }}</div>
+          <div style="font-size:var(--fs-sm);color:var(--vermilion);line-height:1.6">{{ store.analysis.error }}</div>
           <button style="margin-top:10px" @click="emit('analyze')">重试</button>
         </div>
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
-          <div style="font-size:14px;line-height:1.7;color:var(--ink-2)">
+          <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
             还没有析读。<br />「析读全文」会站在作者的视角，把主张、证据、对照和样板段都翻出来。
           </div>
           <button class="primary" style="margin-top:12px" @click="emit('analyze')">析读全文</button>
         </div>
 
         <template v-else>
-          <div class="struct-bar" title="段落角色构成，点色块跳转">
-            <span v-for="k in legendRoles" :key="k" class="sb-seg"
-                  :style="{ flexGrow: roleCounts[k], background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }"
-                  @click="jumpFirst(k)"></span>
+          <!-- 一张表说清两件事：段落构成 + 页边那些字是什么意思。点一下跳到该角色首段 -->
+          <div class="mono-label" style="margin:0 0 6px; display:flex; justify-content:space-between">
+            <span>段落角色 · 点一下跳到该类首段</span>
+            <span v-if="store.readingPara">读至 ¶{{ store.readingPara }}</span>
           </div>
-          <div class="role-legend" title="页边那条色标上的字，点一下跳到该角色的第一段">
+          <div class="role-legend">
             <span class="rl" v-for="k in legendRoles" :key="k" @click="jumpFirst(k)">
               <i :style="{ background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }">{{ ROLE_GLYPH[k] }}</i>
               {{ ROLE_ZH[k] }}
-              <b style="font-family:var(--mono);font-size:9px;color:var(--ink-3);font-weight:400">{{ roleCounts[k] }}</b>
+              <b class="mono-num" style="font-weight:400">{{ roleCounts[k] }}</b>
             </span>
           </div>
-          <div class="mono-label" style="margin:0 0 14px; display:flex; justify-content:space-between">
-            <span>{{ store.paras.length }} 段</span>
-            <span v-if="store.readingPara">读至 ¶{{ store.readingPara }}</span>
-          </div>
+          <div class="mono-label" style="margin:0 0 14px">{{ store.paras.length }} 段</div>
 
           <div class="mono-label" style="margin-bottom:8px">GAP · 作者的出发点</div>
           <div class="gap-node" v-for="p in gapParas" :key="p.idx">
@@ -311,12 +308,12 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
               <span class="e-dot">¶{{ a.idx }}</span>
               <span class="e-bar" :style="{ background: `var(--r-${a.anno.role === 'boilerplate' ? 'boiler' : a.anno.role})` }"></span>
               <span class="e-note">
-                <span class="mono-label" style="font-size:9px">{{ ROLE_ZH[a.anno.role] }}</span>
+                <span class="mono-label">{{ ROLE_ZH[a.anno.role] }}</span>
                 {{ a.anno.purpose }}
                 <div class="ev-q" v-if="eqq(a.idx)">该实验回答：{{ eqq(a.idx) }}</div>
               </span>
             </div>
-            <div v-if="!anchorsOf(c).length" style="font-size:11.5px;color:var(--ink-3);margin-top:6px">未找到直接证据段</div>
+            <div v-if="!anchorsOf(c).length" style="font-size:var(--fs-sm);color:var(--ink-3);margin-top:6px">未找到直接证据段</div>
           </div>
 
           <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.some(n => n.kind !== 'lookup')"
@@ -325,7 +322,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             <div v-for="n in store.marginalia.notes.filter(n => n.kind !== 'lookup').slice(0, 8)" :key="n.id" class="ev-row" @click="n.rect && jumpTo(n.page, n.rect.y0, n.rect.y1)">
               <span class="e-dot"></span>
               <span class="e-bar" :style="{ background: `var(--k-${n.kind})` }"></span>
-              <span class="e-note"><span class="mono-label" style="font-size:9px">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}</span>
+              <span class="e-note"><span class="mono-label">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}</span>
             </div>
           </div>
           <button v-else-if="store.marginalia.status !== 'done' && store.marginalia.status !== 'running'"
@@ -443,9 +440,9 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
               <span class="t-en" :title="a.en">{{ a.en }}</span>
               <span class="t-arrow">→</span>
               <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
-              <button v-if="!a.saved" class="t-del" style="font-size:12px" title="收进术语表"
+              <button v-if="!a.saved" class="t-del" style="font-size:var(--fs-sm)" title="收进术语表"
                       @click="saveAbbr(a)">＋</button>
-              <span v-else class="mono-label" style="font-size:8px">已收</span>
+              <span v-else class="mono-label">已收</span>
             </div>
           </div>
         </div>
@@ -456,13 +453,13 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <input type="text" v-model="termForm.term_zh" placeholder="中文" style="flex:1" />
           <button @click="addTerm">＋</button>
         </div>
-        <input type="text" v-model="termFilter" placeholder="筛选…" style="width:100%; margin-bottom:8px; font-size:12px" />
+        <input type="text" v-model="termFilter" placeholder="筛选…" style="width:100%; margin-bottom:8px; font-size:var(--fs-sm)" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl" download>导出 CSV</a></div>
         <div v-for="t in termsFiltered" :key="t.id" class="term-row">
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
-          <span v-if="t.source === 'seed'" class="mono-label" style="font-size:8px">SEED</span>
+          <span v-if="t.source === 'seed'" class="mono-label">SEED</span>
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>
