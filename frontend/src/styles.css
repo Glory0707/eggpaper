@@ -1120,7 +1120,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .six-q .qt { flex: 1; min-width: 0; }
 /* 收起时给一个"里面有多少东西"的读数：不点开也知道值不值得点 */
 .six-q b { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 400; color: var(--ink-3); }
-.six-a { padding: 0 0 12px 24px; }
+.six-a { padding: 6px 0 13px 24px; }   /* 上面留一口气：展开的第一行别贴着问题 */
 .six-txt { font-size: var(--fs-md); line-height: 1.74; color: var(--ink); }
 .six-note { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
 .six-get {
