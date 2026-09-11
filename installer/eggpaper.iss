@@ -113,6 +113,13 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 ; 整个 onedir 产物（exe + _internal）。注意：用户数据不在这里，也不会被这里覆盖
 Source: "..\build\pyi\eggpaper\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; 网页图标搬进 dist\icons\ 之后，这几张旧位置的还在——留着就会"明明换了图标，
+; 服务端还能吐出旧的那张"，排查时能白耗半天。升级时顺手清掉。
+Type: files; Name: "{app}\_internal\frontend\dist\icon-192.png"
+Type: files; Name: "{app}\_internal\frontend\dist\icon-512.png"
+Type: files; Name: "{app}\_internal\frontend\dist\favicon-256.png"
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyExe}"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"

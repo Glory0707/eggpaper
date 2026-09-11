@@ -97,7 +97,7 @@ def start_tray(url: str, port: int, log) -> bool:
             size = 16
         size = max(16, min(64, size))            # 系统说多大就按多大画（DPI 感知之后是真值）
         log(f"托盘图标按 {size}px 原生绘制")
-        return mark.draw(size, tray=True)
+        return mark.draw(size)
 
     def guard(name, fn):
         """托盘菜单的回调在托盘线程里跑，抛出去的异常没人接——**用户看到的就是"点了没反应"**。

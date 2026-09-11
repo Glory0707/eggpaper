@@ -82,14 +82,15 @@ def _ico_bytes(imgs, sizes) -> bytes:
     return struct.pack("<HHH", 0, 1, n) + dirs + blobs
 
 
-def make_ico(out_path: str) -> str:
+def make_ico(out_path: str, also_png: bool = True) -> str:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
     imgs = [_draw(s, tile=(s >= 48)) for s in sizes]
     with open(out_path, "wb") as f:
         f.write(_ico_bytes(imgs, sizes))
     # 顺手留一张 256 的 png：Inno Setup 的向导图标要 png/bmp
-    imgs[-1].save(out_path.replace(".ico", "-256.png"))
+    if also_png:
+        imgs[-1].save(out_path.replace(".ico", "-256.png"))
     return out_path
 
 
@@ -111,20 +112,30 @@ def contact_sheet(out_path: str) -> str:
     return out_path
 
 
-def make_web_icons(public_dir: str) -> list:
-    """给前端也放一份：favicon + 192/512 的 PNG。
+WEB_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 192, 256, 512)
 
-    这三个是**浏览器标签、独立窗口（Edge 应用模式）、任务栏**这几处的图标来源。
-    之前只做了 exe 的图标，网页这边一个 link 都没有——标签页和任务栏就只能是
-    浏览器的默认图或者被拉伸的小图，看着就是"糊"。
+
+def make_web_icons(public_dir: str) -> list:
+    """给前端放一整套**按目标尺寸各画一张**的 PNG（public/icons/）+ 根上的 favicon.ico。
+
+    这四个地方——浏览器标签、独立窗口（Edge 应用模式）的标题栏、任务栏、桌面快捷方式
+    ——图标都是"页面声明的那几张里挑一张"，挑中的那张还要被缩放一次。
+
+    **为什么每个尺寸都得有一张原图**：Chromium 挑图标是"按需要的尺寸找最接近的一张"。
+    只放 192/512 两个大图时它会拿大图缩到 32/48，缩一次还看得过去；真正糊的是另一端
+    ——早先 index.html 里挂了一条内联 SVG（旧几何、三条字条、缝不到 1.2px），
+    Chromium 把它栅格化成很小的位图再放大到 48，于是不管怎么重做 ICO，
+    任务栏一直是那坨糊（用户连说了几轮"还是糊/没变"都是它）。
+    现在每个尺寸都给一张原图，它挑哪张、都不用重采样。
     """
-    os.makedirs(public_dir, exist_ok=True)
     out = []
-    make_ico(os.path.join(public_dir, "favicon.ico"))
+    icons = os.path.join(public_dir, "icons")
+    os.makedirs(icons, exist_ok=True)
+    for size in WEB_SIZES:
+        _draw(size, tile=(size >= 48)).save(os.path.join(icons, f"icon-{size}.png"))
+        out.append(f"icons/icon-{size}.png")
+    make_ico(os.path.join(public_dir, "favicon.ico"), also_png=False)
     out.append("favicon.ico")
-    for size in (192, 512):
-        _draw(size, tile=True).save(os.path.join(public_dir, f"icon-{size}.png"))
-        out.append(f"icon-{size}.png")
     return out
 
 

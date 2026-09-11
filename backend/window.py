@@ -11,6 +11,13 @@ Edge——同一个引擎，不用往安装包里塞几十兆，也没有额外�
 但在**打包环境里 `import webview` 就卡住**——pythonnet 加载 .NET 运行时，握着 GIL 不撒手，
 连"10 秒没出来就退回应用模式"这种兜底计时都跑不到（主线程要 GIL 才能跑 Python 回调）。
 一个会僵住的窗口不值得为了一个任务栏图标去换，所以这条路撤掉了，留这段话防止再试一遍。
+
+**关于图标**（踩了三轮才看清）：这种窗口的标题栏与**任务栏按钮**图标取的是**页面声明的那几张图**
+（favicon / app icon），不是 exe 里嵌的那份——所以"改 ICO 对任务栏没用"是正常的，
+该改的地方是 `frontend/index.html` 与 `manifest.webmanifest`：每个尺寸都给一张按目标尺寸现画的
+原图（`tools/make_icon.py` → `frontend/public/icons/`），并用 `?v=` 版本号绕开浏览器**按 URL 记的**
+图标缓存。曾经挂在 index.html 里的那条内联 SVG 是"怎么改都糊"的真凶：Chromium 会把它栅格化成
+很小的位图再放大到 48。
 """
 import os
 import subprocess
