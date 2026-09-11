@@ -3,7 +3,8 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, KIND_ZH, ROLE_ZH, ROLE_GLYPH, CORE_ROLES, KIND_COLOR, ROLE_COLOR } from '../store'
+import { api, store, toast, KIND_ZH, ROLE_ZH, ROLE_GLYPH, CORE_ROLES, KIND_COLOR, ROLE_COLOR,
+         ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -792,7 +793,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                :style="{ height: (pageLayouts[it.origPage]?.height || it.h * scale) + 'px' }">
             <div v-for="{ p, role, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx"
                  class="role-tab" :class="{ on: roleCard?.idx === p.idx }"
-                 :style="{ top: top + 'px', background: ROLE_COLOR[role] }"
+                 :style="{ top: top + 'px', background: ROLE_COLOR[role], color: roleInk(role) }"
                  :title="`¶${p.idx} · ${ROLE_ZH[role]}（点开可改判）`"
                  @click.stop="openRoleCard($event, p)">
               <span class="pn">{{ ROLE_GLYPH[role] }}</span>
@@ -804,7 +805,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                  :style="{ top: top + 'px', borderLeftColor: KIND_COLOR[n.kind] }"
                  @click="toggleNote(n)">
               <div class="mg-head">
-                <span class="mg-kind" :style="{ color: KIND_COLOR[n.kind] }">
+                <span class="mg-kind" :style="{ color: KIND_TEXT_COLOR[n.kind] }">
                   {{ n.kind === 'lookup' ? (pending ? '翻译中' : '你 · 查译') : KIND_ZH[n.kind] }}
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
@@ -893,7 +894,7 @@ watch(() => store.marginalia.notes, (n, o) => {
     <div class="role-card" v-if="roleCard && roleCardData" ref="roleCardEl"
          :style="{ left: roleCard.x + 'px', top: roleCard.y + 'px' }" @mousedown.stop>
       <div class="rc-top">
-        <span class="rc-role" :style="{ color: ROLE_COLOR[roleCardData.role] }">{{ ROLE_ZH[roleCardData.role] }}</span>
+        <span class="rc-role" :style="{ color: ROLE_TEXT_COLOR[roleCardData.role] }">{{ ROLE_ZH[roleCardData.role] }}</span>
         <span v-if="roleCardData.anno.user_override" class="rc-flag">已改判</span>
         <span class="rc-num">¶{{ roleCard.idx }} · 第 {{ roleCardData.p.page + 1 }} 页</span>
         <button class="rc-x" title="关闭（Esc）" @click="closeRoleCard">×</button>

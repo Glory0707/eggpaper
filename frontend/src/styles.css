@@ -24,15 +24,15 @@
   --yolk-soft: rgba(208, 138, 28, 0.15);
   --vermilion: #b8462e;
 
-  /* 角色色（印刷低饱和） */
-  --r-background: #a89c85;
-  --r-gap: #b8462e;
-  --r-claim: #b0740d;
-  --r-evidence: #55704d;
-  --r-control: #637a8e;
-  --r-boiler: #ab9166;
-  --r-extension: #7b6e96;
-  --r-limit: #99505f;
+  /* 角色色标：不是八个色相，是"该给多少注意力"的四个档 */
+  --r-claim: #d08a1c;        /* 唯一暖色：核心主张 */
+  --r-evidence: #57534a;     /* 深灰：论证主干 */
+  --r-gap: #57534a;
+  --r-control: #8e8a80;      /* 中灰：外围与让步 */
+  --r-extension: #8e8a80;
+  --r-limit: #8e8a80;
+  --r-background: #c9c4ba;   /* 浅灰：铺垫与流程 */
+  --r-boiler: #c9c4ba;
 
   /* 字号：四档 + display。加档之前先问是不是真的需要 */
   --fs-xl: 15px;      /* 大：文档标题、主张、一眼卡主句、弹窗标题 */
@@ -480,21 +480,27 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .ev-row .e-note { font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.55; }
 
 /* 角色图例：解释页边那条色标上的字 */
-/* 角色图例：解释页边那条色标上的字。跟着全站纪律去盒子——只靠方块和留白分块 */
-.role-legend { display: flex; flex-wrap: wrap; gap: 2px 8px; margin: 0 0 14px; }
+/* 角色图例：就是页边那些色块的样本。两列素排，不加边框——边框会让 8 项看起来像 8 个按钮 */
+.role-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin: 0 0 14px; }
 .role-legend .rl {
-  display: inline-flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; gap: 6px; min-width: 0;
   font-size: var(--fs-xs); color: var(--ink-2); cursor: pointer;
-  border-radius: 3px; padding: 2px 5px 2px 2px;
-  transition: color var(--t-fast) var(--ease-smooth), background var(--t-fast) var(--ease-smooth);
+  border-radius: 3px; padding: 1px 4px 1px 1px;
+  transition: background var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth);
 }
 .role-legend .rl:hover { color: var(--ink); background: var(--yolk-soft); }
+.role-legend .rl > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .role-legend .rl i {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; border-radius: 2px; font-style: normal;
-  font-family: var(--sans); font-size: var(--fs-xs); font-weight: 600;
-  color: #fff; box-shadow: inset -2px 0 rgba(0, 0, 0, 0.18);
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 16px; height: 16px; border-radius: 3px; font-style: normal;
+  font-family: var(--sans); font-size: 10px; font-weight: 600;
 }
+.role-legend .rl b {
+  margin-left: auto; font-family: var(--mono); font-size: 10px; font-weight: 400; color: var(--ink-3);
+}
+
+/* 右栏里的小字角色/类型标签（正文色，不用色块色） */
+.rg-kind { font-size: var(--fs-xs); font-weight: 600; }
 
 /* 一眼卡 */
 .card-eye { border: 1px solid var(--hairline); background: var(--card-2); border-radius: 4px; overflow: hidden; }

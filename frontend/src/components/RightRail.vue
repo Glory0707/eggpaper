@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH } from '../store'
+import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH, ROLE_COLOR, ROLE_TEXT_COLOR,
+         KIND_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 
 const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
@@ -20,7 +21,9 @@ const roleCounts = computed(() => {
   for (const v of Object.values(store.analysis.annotations)) c[v.role] = (c[v.role] || 0) + 1
   return c
 })
-const legendRoles = computed(() => Object.keys(ROLE_ZH).filter(k => roleCounts.value[k]))
+// 排序本身就是信息：主干在前，铺垫在后
+const ROLE_ORDER = ['claim', 'evidence', 'gap', 'limitation', 'control', 'extension', 'background', 'boilerplate']
+const legendRoles = computed(() => ROLE_ORDER.filter(k => roleCounts.value[k]))
 
 function jumpFirst(k) {
   const hit = Object.keys(store.analysis.annotations).find(x => store.analysis.annotations[x].role === k)
@@ -274,15 +277,15 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
 
         <template v-else>
           <!-- 一张表说清两件事：段落构成 + 页边那些字是什么意思。点一下跳到该角色首段 -->
-          <div class="mono-label" style="margin:0 0 6px; display:flex; justify-content:space-between">
-            <span>段落角色 · 点一下跳到该类首段</span>
+          <div class="mono-label" style="margin:0 0 7px; display:flex; justify-content:space-between">
+            <span>段落角色 · 色越深越靠近论证主干</span>
             <span v-if="store.readingPara">读至 ¶{{ store.readingPara }}</span>
           </div>
           <div class="role-legend">
             <span class="rl" v-for="k in legendRoles" :key="k" @click="jumpFirst(k)">
-              <i :style="{ background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }">{{ ROLE_GLYPH[k] }}</i>
+              <i :style="{ background: ROLE_COLOR[k], color: roleInk(k) }">{{ ROLE_GLYPH[k] }}</i>
               {{ ROLE_ZH[k] }}
-              <b class="mono-num" style="font-weight:400">{{ roleCounts[k] }}</b>
+              <b>{{ roleCounts[k] }}</b>
             </span>
           </div>
           <div class="mono-label" style="margin:0 0 14px">{{ store.paras.length }} 段</div>
@@ -306,9 +309,9 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             </div>
             <div class="ev-row" v-for="a in anchorsOf(c)" :key="a.idx" @click="jumpPara(a.idx)">
               <span class="e-dot">¶{{ a.idx }}</span>
-              <span class="e-bar" :style="{ background: `var(--r-${a.anno.role === 'boilerplate' ? 'boiler' : a.anno.role})` }"></span>
+              <span class="e-bar" :style="{ background: ROLE_COLOR[a.anno.role] }"></span>
               <span class="e-note">
-                <span class="mono-label">{{ ROLE_ZH[a.anno.role] }}</span>
+                <span class="rg-kind" :style="{ color: ROLE_TEXT_COLOR[a.anno.role] }">{{ ROLE_ZH[a.anno.role] }}</span>
                 {{ a.anno.purpose }}
                 <div class="ev-q" v-if="eqq(a.idx)">该实验回答：{{ eqq(a.idx) }}</div>
               </span>
@@ -321,7 +324,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ store.marginalia.notes.filter(n => n.kind !== 'lookup').length }} 条</div>
             <div v-for="n in store.marginalia.notes.filter(n => n.kind !== 'lookup').slice(0, 8)" :key="n.id" class="ev-row" @click="n.rect && jumpTo(n.page, n.rect.y0, n.rect.y1)">
               <span class="e-dot"></span>
-              <span class="e-bar" :style="{ background: `var(--k-${n.kind})` }"></span>
+              <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] }"></span>
               <span class="e-note"><span class="mono-label">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}</span>
             </div>
           </div>

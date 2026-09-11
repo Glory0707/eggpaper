@@ -1,7 +1,8 @@
 import { reactive, watch } from 'vue'
 import { api } from './api'
 
-export { api, ROLE_ZH, ROLE_GLYPH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR } from './api'
+export { api, ROLE_ZH, ROLE_GLYPH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR,
+         ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from './api'
 
 const LS = 'eggpaper:'
 
