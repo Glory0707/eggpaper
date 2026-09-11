@@ -1,7 +1,7 @@
 import { reactive, watch } from 'vue'
 import { api } from './api'
 
-export { api, ROLE_ZH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR } from './api'
+export { api, ROLE_ZH, ROLE_GLYPH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR } from './api'
 
 const LS = 'eggpaper:'
 
@@ -33,6 +33,7 @@ export const store = reactive({
   glossaryPrefill: null,
   shortcutCard: false,
   askFocusTick: 0,
+  escTick: 0,            // 按 Esc 递增：PDF 侧的浮层（划词/框选/角色卡）据此全部收起
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   toast: '',
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}

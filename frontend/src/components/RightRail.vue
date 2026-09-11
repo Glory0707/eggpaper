@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH } from '../store'
+import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH } from '../store'
 
 const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
@@ -21,6 +21,11 @@ const roleCounts = computed(() => {
   return c
 })
 const legendRoles = computed(() => Object.keys(ROLE_ZH).filter(k => roleCounts.value[k]))
+
+function jumpFirst(k) {
+  const hit = Object.keys(store.analysis.annotations).find(x => store.analysis.annotations[x].role === k)
+  if (hit != null) jumpPara(parseInt(hit))
+}
 
 function anchorsOf(claim) {
   return claim.anchors
@@ -219,7 +224,11 @@ async function askFigure(f) {
     const blob = await (await fetch(url)).blob()
     const img = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob) })
     lightbox.value = null
-    store.visPrefill = { img, question: '讲解这张图：画了什么、支持论文的哪个结论、有什么可疑之处。' }
+    const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
+    store.visPrefill = {
+      img, question: '讲解这张图：画了什么、支持论文的哪个结论、有什么可疑之处。',
+      page: f.page, paraIdx: para?.idx ?? 0, rect: { x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y1 },
+    }
   } catch (e) { toast('取图失败：' + e.message) }
 }
 function figJump(f) {
@@ -267,9 +276,16 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <div class="struct-bar" title="段落角色构成，点色块跳转">
             <span v-for="k in legendRoles" :key="k" class="sb-seg"
                   :style="{ flexGrow: roleCounts[k], background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }"
-                  @click="jumpPara(parseInt(Object.keys(store.analysis.annotations).find(x => store.analysis.annotations[x].role === k)))"></span>
+                  @click="jumpFirst(k)"></span>
           </div>
-          <div class="mono-label" style="margin:-6px 0 14px; display:flex; justify-content:space-between">
+          <div class="role-legend" title="页边那条色标上的字，点一下跳到该角色的第一段">
+            <span class="rl" v-for="k in legendRoles" :key="k" @click="jumpFirst(k)">
+              <i :style="{ background: `var(--r-${k === 'boilerplate' ? 'boiler' : k})` }">{{ ROLE_GLYPH[k] }}</i>
+              {{ ROLE_ZH[k] }}
+              <b style="font-family:var(--mono);font-size:9px;color:var(--ink-3);font-weight:400">{{ roleCounts[k] }}</b>
+            </span>
+          </div>
+          <div class="mono-label" style="margin:0 0 14px; display:flex; justify-content:space-between">
             <span>{{ store.paras.length }} 段</span>
             <span v-if="store.readingPara">读至 ¶{{ store.readingPara }}</span>
           </div>
@@ -354,19 +370,6 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           </div>
         </div>
 
-        <!-- 本文缩写 -->
-        <div style="margin-top:16px" v-if="abbrList.length">
-          <div class="mono-label" style="margin-bottom:8px">本文缩写 · {{ abbrList.length }}</div>
-          <div class="term-row" v-for="a in abbrList" :key="a.en">
-            <span class="t-en" :title="a.en">{{ a.en }}</span>
-            <span class="t-arrow">→</span>
-            <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
-            <button v-if="!a.saved" class="t-del" style="font-size:11px" title="收进术语表"
-                    @click="saveAbbr(a)">＋</button>
-            <span v-else class="mono-label" style="font-size:8px">已收</span>
-          </div>
-        </div>
-
         <!-- 图表速览 -->
         <div style="margin-top:16px" v-if="figures.length">
           <div class="mono-label" style="margin-bottom:8px">图表速览 · {{ figures.length }}</div>
@@ -429,6 +432,25 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
 
       <!-- ============ 术语 ============ -->
       <template v-if="tab === 'terms'">
+        <!-- 本文用到的缩写：论文自带的，一键收进术语表 -->
+        <div style="margin-bottom:14px" v-if="abbrList.length">
+          <div class="mono-label" style="margin-bottom:6px; display:flex; justify-content:space-between">
+            <span>本文缩写 · {{ abbrList.length }}</span>
+            <span style="letter-spacing:0">点 ＋ 收入术语表</span>
+          </div>
+          <div class="abbr-list">
+            <div class="term-row" v-for="a in abbrList" :key="a.en">
+              <span class="t-en" :title="a.en">{{ a.en }}</span>
+              <span class="t-arrow">→</span>
+              <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
+              <button v-if="!a.saved" class="t-del" style="font-size:12px" title="收进术语表"
+                      @click="saveAbbr(a)">＋</button>
+              <span v-else class="mono-label" style="font-size:8px">已收</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mono-label" style="margin-bottom:6px">术语表 · {{ terms.length }}</div>
         <div class="term-form">
           <input type="text" v-model="termForm.term_en" placeholder="英文" style="flex:1.2" />
           <input type="text" v-model="termForm.term_zh" placeholder="中文" style="flex:1" />

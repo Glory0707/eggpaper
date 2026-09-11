@@ -238,9 +238,10 @@ def marginalia_set_rect(mid: int, rect: dict):
     q("UPDATE marginalia SET rect=? WHERE id=?", (json.dumps(rect), mid), commit=True)
 
 
-def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, kind: str = "lookup") -> int:
-    q("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note) VALUES(?,?,?,?,?,?)",
-      (pid, para_idx, page, quote, kind, note), commit=True)
+def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, kind: str = "lookup",
+                   rect: dict = None) -> int:
+    q("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect) VALUES(?,?,?,?,?,?,?)",
+      (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None), commit=True)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
 
 

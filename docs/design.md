@@ -43,13 +43,12 @@
 
 - **P2 剩余**：批量速览 · 审稿模式 · Zotero 深度集成 · Tauri 打包 · OCR
 - **已毕业到 README**：方法卡、缩写表、图表速览+灯箱问图、Markdown 导出、mini-map、论证漫游、结构条、框选视觉问答、导师三问、该实验回答、Anki 导出（2026-09-11 两轮清算）
-- **已毕业到 README**：方法卡、缩写表、图表速览、Markdown 导出、mini-map、论证漫游、结构条（2026-09-11）
 - **P3**：数据对比表 · 批量速览 · 审稿模式 · Zotero 深度集成 · Tauri 打包 · OCR 扫描件
 
 ## 5. 架构（已验证）
 
 ```
-浏览器 UI（Vue3 + pdf.js，Inter/JetBrains Mono/楷体/Fraunces 四声字体）
+浏览器 UI（Vue3 + pdf.js，Inter + JetBrains Mono 两声字体，Fraunces 只署 wordmark）
         │ localhost
 FastAPI：解析(PyMuPDF) · 骨架/眉批/总结/问答/推荐问题(LLM 适配器) ·
         翻译调度(pdf2zh subprocess) · SQLite

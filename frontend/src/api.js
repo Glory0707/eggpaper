@@ -55,6 +55,11 @@ export const ROLE_ZH = {
   background: '背景铺垫', gap: '缺口转折', claim: '核心主张', evidence: '关键证据',
   control: '对照参比', boilerplate: '标准流程', extension: '优化拓展', limitation: '让步局限',
 }
+// 页边书签上只放一个字：色标 + 首字，扫一眼就知道这段是什么
+export const ROLE_GLYPH = {
+  background: '背', gap: '缺', claim: '主', evidence: '证',
+  control: '对', boilerplate: '流', extension: '拓', limitation: '限',
+}
 export const KIND_ZH = {
   hedge: '妥协让步', padding: '凑字数', stiff: '生硬别扭', redundant: '多余重复',
   hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑', lookup: '查译',

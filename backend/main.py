@@ -263,20 +263,29 @@ def marginalia_get(pid: str):
 
 @app.post("/api/papers/{pid}/pin")
 def pin_lookup(pid: str, body: dict):
-    """把查译/段译钉到页边（用户资产，持久化）。"""
+    """把查译/段译/框选答疑钉到页边（用户资产，持久化）。"""
     p = _paper_or_404(pid)
     quote = (body.get("quote") or "").strip()
     note = (body.get("note") or "").strip()
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
     para_idx = int(body.get("para_idx") or 0)
-    # 同段重钉 = 更新而非新增
-    dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
-               (pid, para_idx))
-    if dup:
-        db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
-        return {"id": dup[0]["id"]}
-    mid = db.marginalia_add(pid, para_idx, int(body.get("page") or 0), quote[:200], note[:600], kind="lookup")
+    # 框选答疑自带区域矩形：锚点就是那块区域，也不和别的钉子挤同一段
+    rect = body.get("rect") or None
+    if rect:
+        try:
+            rect = {k: float(rect[k]) for k in ("x0", "y0", "x1", "y1")}
+        except (KeyError, TypeError, ValueError):
+            rect = None
+    if not rect:
+        # 同段重钉 = 更新而非新增
+        dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
+                   (pid, para_idx))
+        if dup:
+            db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
+            return {"id": dup[0]["id"]}
+    mid = db.marginalia_add(pid, para_idx, int(body.get("page") or 0), quote[:200], note[:600],
+                            kind="lookup", rect=rect)
     return {"id": mid}
 
 

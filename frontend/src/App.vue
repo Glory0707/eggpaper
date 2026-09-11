@@ -97,6 +97,8 @@ function onKey(e) {
     store.shortcutCard = false
     showSettings.value = false
     store.tourStop?.()
+    store.viewer.frame = false     // 框选模式永远能一键退出
+    store.escTick++                // PDF 侧的划词/框选/角色卡浮层收起
     return
   }
   if (gPending.value) {
@@ -179,12 +181,7 @@ function onKey(e) {
       <!-- 中：书桌 -->
       <main class="desk" @drop.stop>
         <div class="empty" v-if="!store.paper">
-          <svg class="egg-big" viewBox="0 0 100 125" fill="none">
-            <path d="M50 6 C26 30 12 62 12 82 a38 40 0 0 0 76 0 C88 62 74 30 50 6 Z" stroke="#8d8066" stroke-width="2.5" fill="#fffdf6" />
-            <circle cx="50" cy="82" r="17" fill="#d08a1c" opacity="0.85" />
-            <path d="M32 44 C36 36 42 28 50 20" stroke="#d08a1c" stroke-width="2.5" stroke-linecap="round" />
-            <path v-if="dragOver" d="M56 10 l5 7 l-7 5 l6 6" stroke="#b8462e" stroke-width="2.2" fill="none" stroke-linecap="round" />
-          </svg>
+          <EggMark class="egg-big" :class="{ open: dragOver }" />
           <div class="e-title">剥开论文的壳，读论证的芯</div>
           <div class="e-sub">把 PDF 拖进来，或按 g l 打开文库</div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
@@ -210,11 +207,13 @@ function onKey(e) {
       <div class="k-row"><span>译当前段并钉页边</span><kbd>t</kbd></div>
       <div class="k-row"><span>翻译划选</span><kbd>s</kbd></div>
       <div class="k-row"><span>略读</span><kbd>f</kbd></div>
+      <div class="k-row"><span>框选问 AI（Esc 退出）</span><kbd>r</kbd></div>
       <div class="k-row"><span>原文 / 译文 / 双语</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>聚焦提问</span><kbd>/</kbd></div>
       <div class="k-row"><span>折叠右栏</span><kbd>x</kbd></div>
       <div class="k-row"><span>文库</span><kbd>g l</kbd></div>
       <div class="k-row"><span>返回原位</span><kbd>Alt + ←</kbd></div>
+      <div class="k-row"><span>收起所有浮层 / 退出框选</span><kbd>Esc</kbd></div>
     </div>
 
     <div class="toast" v-if="store.toast">{{ store.toast }}</div>

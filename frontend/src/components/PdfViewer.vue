@@ -3,23 +3,24 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, KIND_ZH, ROLE_ZH, CORE_ROLES, KIND_COLOR, ROLE_COLOR } from '../store'
+import { api, store, toast, KIND_ZH, ROLE_ZH, ROLE_GLYPH, CORE_ROLES, KIND_COLOR, ROLE_COLOR } from '../store'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
 defineEmits(['override'])
 
-const GUTTER = 158
+const GUTTER = 196        // 184 的批注带 + 12 的左边距，measure() 要按整宽算
 const LS_POS = 'eggpaper:pos:'
 
 const deskEl = ref(null)
 const ready = ref(false)
 const zoom = ref(1)
 const fitScale = ref(1)
+const midX = ref(0)              // 书桌中线：缩放条/提示贴它，而不是视口中线
 const sheets = ref([])
 const hoverPara = ref(null)      // 段落 hover：驱动把手
-const hoverTab = ref(null)       // 标签 hover：驱动角色卡
-const stickyTab = ref(null)      // 点击标签：粘性角色卡
+const roleCard = ref(null)       // { idx, x, y } 点开的角色卡，只有点击能开关
+const noteHeights = ref({})      // 旁批实测高度，摊平用
 const expandedNote = ref(null)   // 展开的批注卡
 const pendingPara = ref(null)    // 段译进行中
 const handleHold = ref(false)
@@ -49,7 +50,6 @@ const isSpread = computed(() => store.viewer.variant === 'dual' && store.viewer.
 function roleOf(p) {
   return store.viewer.layers.skeleton ? store.analysis.annotations[String(p.idx)]?.role : null
 }
-function annoOf(p) { return store.analysis.annotations[String(p.idx)] }
 function isCore(p) { return CORE_ROLES.includes(roleOf(p) || 'background') }
 
 /* ---------------- 文档装载与 sheets 构建 ---------------- */
@@ -110,6 +110,7 @@ async function load() {
   await renderAll()
   ready.value = true
   await nextTick()
+  await measureNotes()
   const pos = store.viewer.restorePos
   if (pos) { scroller().scrollTop = pos; store.viewer.restorePos = 0 }
 }
@@ -118,10 +119,18 @@ async function load() {
 
 function measure() {
   const first = sheets.value[0]?.items?.[0]
+  updateMid()
   if (!deskEl.value || !first) return
   const perRow = sheets.value[0].items.length
   const gutterW = store.viewer.variant === 'original' ? GUTTER : 6
   fitScale.value = (deskEl.value.clientWidth - 60 - gutterW - (perRow === 2 ? 20 : 0)) / (first.w * perRow)
+}
+
+function updateMid() {
+  const el = deskEl.value?.closest('.desk') || deskEl.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  midX.value = Math.round(r.left + r.width / 2)
 }
 
 async function renderAll() {
@@ -184,38 +193,92 @@ function tabsOnPage(pno) {
     if (!role) continue
     let top = p.bbox.y0 * scale.value
     if (top < prevBottom + 3) top = prevBottom + 3
-    prevBottom = top + 22
-    out.push({ p, role, anno: annoOf(p), top })
+    prevBottom = top + 25
+    out.push({ p, role, top })
   }
   return out
 }
 
+// 旁批高度靠实测：先按估算摆一遍，渲染后量真实高度再摆第二遍。
+// 这样长批注展开后只会把下面的推开，不会压在别人身上。
 function noteHeight(n) {
-  const noteLines = Math.max(1, Math.ceil((n.note || '').length / 10))
-  const quoteLines = Math.ceil(Math.min(n.quote.length, 42) / 16)
-  return 40 + Math.min(noteLines, 3) * 18 + quoteLines * 13 + 8
+  const noteLines = Math.max(1, Math.ceil((n.note || '').length / 11))
+  return 34 + Math.min(noteLines, 3) * 19 + 20
 }
 
-function notesOnPage(pno) {
-  const cands = notesShown.value
-    .filter(n => n.page === pno)
-    .map(n => ({ n, anchor: (n.rect ? n.rect.y0 : paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value }))
-  // 段译进行中的占位卡
-  if (pendingPara.value != null) {
-    const p = paraByIdx.value[pendingPara.value]
-    if (p && p.page === pno)
-      cands.push({ n: { id: 'pending', kind: 'lookup', page: pno, quote: (p.text || '').slice(0, 60), note: '翻译中…' }, anchor: p.bbox.y0 * scale.value, pending: true })
+async function measureNotes() {
+  await nextTick()
+  const next = { ...noteHeights.value }
+  let changed = false
+  for (const el of document.querySelectorAll('.mg-note[data-nid]')) {
+    const h = el.offsetHeight
+    const id = el.dataset.nid
+    if (!h) continue                       // 还没上桌，别拿 0 去摊平
+    if (Math.abs((next[id] || 0) - h) > 0.5) { next[id] = h; changed = true }
   }
-  cands.sort((a, b) => a.anchor - b.anchor)
-  const out = []
-  let prevBottom = -1
-  for (const c of cands) {
-    let top = c.anchor
-    if (top < prevBottom + 8) top = prevBottom + 8
-    prevBottom = top + noteHeight(c.n) + (expandedNote.value === c.n.id ? 46 : 0)
-    out.push({ n: c.n, top, pending: !!c.pending })
+  if (changed) noteHeights.value = next
+}
+
+// 旁批是「钉在纸边的」，不是「长在纸里的」：一条展开变长了，整条页边就往下让，
+// 让出来的高度只影响这一行的排布，绝不压到下一页身上。
+// 高度靠实测收敛：先按估算摆一遍 → 渲染后量真实高度 → 再摆一遍。
+const pageLayouts = computed(() => {
+  const out = {}
+  for (const it of flatItems.value) {
+    if (it.origPage == null || it.origPage < 0) continue
+    const baseH = it.h * scale.value
+    const cands = notesShown.value
+      .filter(n => n.page === it.origPage)
+      .map(n => ({ n, anchor: (n.rect ? n.rect.y0 : paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value }))
+    if (pendingPara.value != null) {
+      const p = paraByIdx.value[pendingPara.value]
+      if (p && p.page === it.origPage)
+        cands.push({ n: { id: 'pending', kind: 'lookup', page: it.origPage, quote: (p.text || '').slice(0, 60), note: '翻译中…' }, anchor: p.bbox.y0 * scale.value, pending: true })
+    }
+    cands.sort((a, b) => a.anchor - b.anchor)
+    const notes = []
+    let prevBottom = -1, bottom = 0
+    for (const c of cands) {
+      const top = Math.max(c.anchor, prevBottom + 8)
+      prevBottom = top + (noteHeights.value[c.n.id] || noteHeight(c.n))
+      bottom = prevBottom
+      notes.push({ n: c.n, top, pending: !!c.pending })
+    }
+    out[it.origPage] = { notes, height: Math.max(baseH, bottom + 14) }
   }
   return out
+})
+
+function notesOnPage(pno) { return pageLayouts.value[pno]?.notes || [] }
+
+/* ---------------- 角色卡：点击开，Esc/点外/×关 ---------------- */
+
+function openRoleCard(e, p) {
+  if (roleCard.value?.idx === p.idx) { roleCard.value = null; return }
+  const r = e.currentTarget.getBoundingClientRect()
+  const w = 226, h = 210
+  roleCard.value = {
+    idx: p.idx,
+    x: Math.max(12, r.left - w - 8),
+    y: Math.min(Math.max(64, r.top - 10), window.innerHeight - h),
+  }
+  expandedNote.value = null
+}
+function closeRoleCard() { roleCard.value = null }
+
+const roleCardData = computed(() => {
+  const idx = roleCard.value?.idx
+  if (idx == null) return null
+  const p = paraByIdx.value[idx]
+  const anno = store.analysis.annotations[String(idx)]
+  if (!p || !anno) return null
+  return { p, anno, role: anno.role }
+})
+
+function toggleNote(n) {
+  if ((n.note || '').length <= 34) return
+  expandedNote.value = expandedNote.value === n.id ? null : n.id
+  measureNotes()
 }
 
 /* ---------------- 段落 hover 把手 ---------------- */
@@ -254,7 +317,6 @@ function askPara(idx) { store.askPrefill = { paraIdx: idx } }
 const sel = reactive({ visible: false, x: 0, y: 0, text: '', context: '', paraIdx: 0, page: 0, zh: '', hits: [], busy: false, err: '' })
 
 function onMouseUp(e) {
-  if (e.target && !e.target.closest?.('.role-card') && !e.target.closest?.('.role-tab')) stickyTab.value = null
   const s = window.getSelection()
   if (!s || s.isCollapsed || !s.rangeCount) return
   const text = s.toString().trim()
@@ -397,6 +459,7 @@ store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey }
 
 let spyT = null, saveT = null
 function onScroll() {
+  if (roleCard.value != null) roleCard.value = null   // 卡片是 fixed 的，纸一动它就跟丢锚点
   clearTimeout(spyT)
   spyT = setTimeout(() => {
     const focusY = scroller().scrollTop + scroller().clientHeight * 0.4
@@ -420,6 +483,8 @@ function savePos() {
     spread: store.viewer.spread, zoom: zoom.value,
   }))
 }
+// 换了姿势也要记住：不能只在滚动时才存
+function saveLater() { clearTimeout(saveT); saveT = setTimeout(savePos, 250) }
 
 onMounted(async () => {
   await load()
@@ -428,15 +493,20 @@ onMounted(async () => {
     const saved = JSON.parse(localStorage.getItem(LS_POS + store.currentId) || '{}')
     if (saved.zoom) zoom.value = saved.zoom
   } catch { /* */ }
+  await measureNotes()
   ro = new ResizeObserver(() => { measure(); scheduleRender() })
   ro.observe(deskEl.value.parentElement || deskEl.value)
   document.addEventListener('mouseup', onMouseUp)
+  document.addEventListener('mousedown', onDocDown)
+  window.addEventListener('resize', updateMid)
   scroller().addEventListener('scroll', onScroll, { passive: true })
 })
 
 onBeforeUnmount(() => {
   ro?.disconnect()
   document.removeEventListener('mouseup', onMouseUp)
+  document.removeEventListener('mousedown', onDocDown)
+  window.removeEventListener('resize', updateMid)
   scroller()?.removeEventListener('scroll', onScroll)
   for (const d of Object.values(docs)) { try { d?.destroy() } catch { /* */ } }
   docs = { orig: null, dual: null, mono: null }
@@ -455,7 +525,8 @@ function cropItem(it, r) {
   return off.toDataURL('image/jpeg', 0.85)
 }
 
-const vis = reactive({ visible: false, x: 0, y: 0, img: '', question: '', answer: '', busy: false, err: '' })
+const vis = reactive({ visible: false, x: 0, y: 0, img: '', question: '', answer: '', busy: false, err: '',
+                       page: 0, paraIdx: 0, rect: null })
 
 function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
@@ -474,13 +545,23 @@ function startFrameDrag(e, it) {
     const x1 = Math.max(rr.x0, rr.x1), y1 = Math.max(rr.y0, rr.y1)
     if (x1 - x0 < 24 || y1 - y0 < 24) return
     const img = cropItem(it, { x0, y0, x1, y1 })
+    // 记住这是哪一页、哪一段，钉页边时才落得准
+    const s = scale.value
+    let paraIdx = 0
+    for (const p of parasByPage.value[it.origPage] || []) {
+      if (y0 / s >= p.bbox.y0 - 3 && y0 / s <= p.bbox.y1 + 3) { paraIdx = p.idx; break }
+    }
     Object.assign(vis, { visible: true, x: Math.min(window.innerWidth - 410, ev.clientX + 12),
-                         y: Math.min(window.innerHeight - 320, Math.max(64, ev.clientY - 60)),
-                         img, question: '解释选区里的内容。', answer: '', busy: false, err: '' })
+                         y: Math.min(window.innerHeight - 340, Math.max(64, ev.clientY - 60)),
+                         img, question: '解释选区里的内容。', answer: '', busy: false, err: '',
+                         page: it.origPage, paraIdx,
+                         rect: it.origPage >= 0 ? { x0: x0 / s, y0: y0 / s, x1: x1 / s, y1: y1 / s } : null })
   }
   frameRect.value = { x0: p0.x, y0: p0.y, x1: p0.x, y1: p0.y }
   document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
 }
+
+function closeVis() { vis.visible = false }
 
 async function askVisual() {
   if (!vis.question.trim() || vis.busy) return
@@ -493,30 +574,51 @@ async function askVisual() {
 }
 
 async function pinVisual() {
+  if (vis.busy) return
   if (!vis.answer) await askVisual()
   if (!vis.answer) return
-  await api.pin(store.currentId, { quote: '[选区] ' + vis.question.slice(0, 60), note: vis.answer.slice(0, 560), para_idx: 0, page: 0 })
+  await api.pin(store.currentId, {
+    quote: '[选区] ' + vis.question.slice(0, 60), note: vis.answer.slice(0, 560),
+    para_idx: vis.paraIdx, page: vis.page, rect: vis.rect,
+  })
   await refreshM()
+  closeVis()
   toast('已钉在页边')
 }
 
 watch(() => store.visPrefill, pf => {
   if (!pf) return
-  Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(window.innerWidth / 2) - 260), y: 90,
-                       img: pf.img, question: pf.question || '讲解这张图。', answer: '', busy: false, err: '' })
+  Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(midX.value || window.innerWidth / 2) - 190), y: 90,
+                       img: pf.img, question: pf.question || '讲解这张图。', answer: '', busy: false, err: '',
+                       page: pf.page ?? 0, paraIdx: pf.paraIdx ?? 0, rect: pf.rect ?? null })
   store.visPrefill = null
   askVisual()
 })
 
-watch(() => store.viewer.variant, () => { doneKeys.clear(); load() })
-watch(() => store.viewer.spread, () => { doneKeys.clear(); buildSheets().then(() => { measure(); renderAll() }) })
-watch(scale, () => { doneKeys.clear(); scheduleRender() })
+/* 点空白处收起浮层；Esc 交给 store.escTick */
+function onDocDown(e) {
+  const t = e.target
+  if (!t?.closest) return
+  if (roleCard.value != null && !t.closest('.role-card') && !t.closest('.role-tab')) roleCard.value = null
+  if (vis.visible && !t.closest('.vis-pop')) closeVis()
+  if (sel.visible && !t.closest('.sel-pop') && !t.closest('.textLayer')) sel.visible = false
+}
+watch(() => store.escTick, () => {
+  sel.visible = false
+  if (vis.visible) closeVis()
+  roleCard.value = null
+})
+
+watch(() => store.viewer.variant, () => { doneKeys.clear(); load(); saveLater() })
+watch(() => store.viewer.spread, () => { doneKeys.clear(); buildSheets().then(() => { measure(); renderAll() }); saveLater() })
+watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
 watch(() => store.jump, applyJump)
 watch(() => store.marginalia.notes, (n, o) => {
   if (n.length && (!o || n.length > o.length)) {
     freshNotes.value = true
     setTimeout(() => (freshNotes.value = false), 1600)
   }
+  measureNotes()
 })
 </script>
 
@@ -573,40 +675,29 @@ watch(() => store.marginalia.notes, (n, o) => {
 
           <!-- 页边批注带 -->
           <div class="gutter" v-if="it.margin"
-               :style="{ height: it.h * scale + 'px', background: 'var(--paper-deep)', borderLeft: '1px solid var(--hairline-soft)', marginLeft: '10px', paddingLeft: '6px', marginRight: '-6px' }">
-            <div v-for="{ p, role, anno, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx" class="role-tab"
+               :style="{ height: (pageLayouts[it.origPage]?.height || it.h * scale) + 'px' }">
+            <div v-for="{ p, role, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx"
+                 class="role-tab" :class="{ on: roleCard?.idx === p.idx }"
                  :style="{ top: top + 'px', background: ROLE_COLOR[role] }"
-                 @mouseenter="hoverTab = p.idx" @mouseleave="() => { if (stickyTab !== p.idx) hoverTab = null }"
-                 @click.stop="() => { stickyTab = stickyTab === p.idx ? null : p.idx; hoverTab = stickyTab }">
-              <span class="pn">{{ p.idx }}</span>
-              <div class="role-card" v-if="hoverTab === p.idx || stickyTab === p.idx"
-                   @mouseenter="hoverTab = p.idx" @mouseleave="() => { if (stickyTab !== p.idx) hoverTab = null }">
-                <div class="rc-role" :style="{ color: ROLE_COLOR[role] }">
-                  {{ ROLE_ZH[role] }}
-                  <span v-if="anno.user_override" class="rc-flag">已改</span>
-                </div>
-                <div class="rc-purpose">「{{ anno.purpose || '推断中' }}」</div>
-                <div class="rc-hint">推断 · 可改判</div>
-                <select :value="role" @change="e => $emit('override', { idx: p.idx, role: e.target.value })">
-                  <option value="">回到推断</option>
-                  <option v-for="(zh, k) in ROLE_ZH" :key="k" :value="k">{{ zh }}</option>
-                </select>
-              </div>
+                 :title="`¶${p.idx} · ${ROLE_ZH[role]}（点开可改判）`"
+                 @click.stop="openRoleCard($event, p)">
+              <span class="pn">{{ ROLE_GLYPH[role] }}</span>
             </div>
             <div v-for="{ n, top, pending } in notesOnPage(it.origPage)" :key="'mg' + n.id"
-                 class="mg-note" :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
-                                           clamped: (n.note || '').length > 26 }"
-                 :style="{ top: top + 'px' }"
-                 @click="n.note.length > 26 && (expandedNote = expandedNote === n.id ? null : n.id)">
+                 class="mg-note" :data-nid="n.id"
+                 :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
+                           clamped: (n.note || '').length > 34, clampable: (n.note || '').length > 34 }"
+                 :style="{ top: top + 'px', borderLeftColor: KIND_COLOR[n.kind] }"
+                 @click="toggleNote(n)">
               <div class="mg-head">
-                <span class="mg-kind" :style="{ background: KIND_COLOR[n.kind] }">
-                  {{ n.kind === 'lookup' ? '你 · 查译' : KIND_ZH[n.kind] }}
+                <span class="mg-kind" :style="{ color: KIND_COLOR[n.kind] }">
+                  {{ n.kind === 'lookup' ? (pending ? '翻译中' : '你 · 查译') : KIND_ZH[n.kind] }}
                 </span>
-                <button v-if="n.kind === 'lookup' && !pending" class="mg-del" title="移除"
-                        @click.stop="unpin(n.id)">×</button>
+                <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
+                <button v-if="!pending" class="mg-del" title="移除这条批注" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ n.note }}</div>
-              <span class="mg-quote">“{{ n.quote.slice(0, 42) }}{{ n.quote.length > 42 ? '…' : '' }}”</span>
+              <span class="mg-quote" :title="n.quote">“{{ n.quote.slice(0, 40) }}{{ n.quote.length > 40 ? '…' : '' }}”</span>
             </div>
           </div>
         </div>
@@ -614,10 +705,18 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
 
     <!-- 缩放 -->
-    <div v-if="ready" style="position:fixed; left:50%; transform:translateX(-50%); bottom:18px; display:flex; gap:6px; z-index:80">
-      <button style="padding:4px 10px" @click="zoom = Math.max(0.5, zoom - 0.15)">－</button>
-      <button style="padding:4px 10px; font-family:var(--mono); font-size:11px" @click="zoom = 1">{{ Math.round(zoom * 100) }}%</button>
-      <button style="padding:4px 10px" @click="zoom = Math.min(2.5, zoom + 0.15)">＋</button>
+    <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px' }">
+      <button @click="zoom = Math.max(0.5, zoom - 0.15)">－</button>
+      <button class="zb-num" @click="zoom = 1">{{ Math.round(zoom * 100) }}%</button>
+      <button @click="zoom = Math.min(2.5, zoom + 0.15)">＋</button>
+    </div>
+
+    <!-- 框选中：常驻提示 + 退出口 -->
+    <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
+      <span class="fh-tag">框选</span>
+      <span>在页面上拖一块区域，松手就问</span>
+      <kbd>Esc</kbd>
+      <button @click="store.viewer.frame = false">退出</button>
     </div>
 
     <!-- 划词气泡 -->
@@ -643,6 +742,10 @@ watch(() => store.marginalia.notes, (n, o) => {
     <!-- 返回原位 -->
     <!-- 框选视觉问答 -->
     <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }" @mouseup.stop>
+      <div class="vp-head">
+        <span class="mono-label">选区问 AI</span>
+        <button class="vp-x" title="关闭（Esc）" @click="closeVis">×</button>
+      </div>
       <img class="vis-img" :src="vis.img" />
       <input type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" placeholder="问这个选区…" />
@@ -654,12 +757,31 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div v-if="vis.busy" style="font-size:12px;color:var(--ink-3);margin-top:8px">看图作答中…</div>
       <div v-if="vis.err" style="font-size:12px;color:var(--vermilion);margin-top:8px">{{ vis.err }}</div>
       <div class="sp-zh" v-if="vis.answer" style="margin-top:8px">{{ vis.answer }}</div>
-      <div class="sp-actions" v-if="vis.answer">
-        <button style="padding:4px 10px" @click="pinVisual">钉在页边</button>
-        <button class="ghost" style="padding:4px 8px" @click="vis.visible = false">×</button>
+      <div class="sp-actions">
+        <button v-if="vis.answer" style="padding:4px 10px" @click="pinVisual">钉在页边</button>
+        <button class="ghost" style="padding:4px 10px" @click="closeVis">关闭</button>
       </div>
     </div>
 
-    <button class="back-chip" v-if="backChip" @click="jumpBack">返回原位 · Alt+←</button>
+    <!-- 角色卡：点页边书签打开 -->
+    <div class="role-card" v-if="roleCard && roleCardData"
+         :style="{ left: roleCard.x + 'px', top: roleCard.y + 'px' }" @mousedown.stop>
+      <div class="rc-top">
+        <span class="rc-role" :style="{ color: ROLE_COLOR[roleCardData.role] }">{{ ROLE_ZH[roleCardData.role] }}</span>
+        <span v-if="roleCardData.anno.user_override" class="rc-flag">已改判</span>
+        <span class="rc-num">¶{{ roleCard.idx }} · 第 {{ roleCardData.p.page + 1 }} 页</span>
+        <button class="rc-x" title="关闭（Esc）" @click="closeRoleCard">×</button>
+      </div>
+      <div class="rc-purpose">{{ roleCardData.anno.purpose || '推断中' }}</div>
+      <div class="rc-hint">AI 按写法推断的角色 · 你可以改判</div>
+      <select :value="roleCardData.role" @change="e => $emit('override', { idx: roleCard.idx, role: e.target.value })">
+        <option value="">回到推断</option>
+        <option v-for="(zh, k) in ROLE_ZH" :key="k" :value="k">{{ zh }}</option>
+      </select>
+    </div>
+
+    <button class="back-chip desk-float" v-if="backChip" :style="{ left: midX + 'px' }" @click="jumpBack">
+      返回原位 · Alt+←
+    </button>
   </div>
 </template>
