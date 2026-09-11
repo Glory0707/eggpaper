@@ -605,12 +605,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .qa-input { display: flex; gap: 7px; padding-top: 4px; }
 .qa-input input { flex: 1; }
 .qa-quick { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin-bottom: 12px; }
-/* 推荐问题可能是一整句审稿人问题（80 字），横排会挤成一坨——竖排 + 两行截断，
-   想读全文有 title */
+/* 推荐问题是要拿来读的：竖排、整句显示，不截断。
+   原来这里写了两行截断（-webkit-line-clamp），但 <button> 上的 line-clamp 在 Chrome 里
+   不生效（UA 的 display 会把它吃掉），结果是**硬切在半句上**——比不显示更难看。 */
 .qa-quick button {
-  font-size: var(--fs-sm); padding: 6px 9px; color: var(--ink-2); border-radius: 3px;
-  text-align: left; line-height: 1.5;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: var(--fs-sm); padding: 7px 9px; color: var(--ink-2); border-radius: 3px;
+  text-align: left; line-height: 1.5; white-space: normal;
 }
 
 /* 术语 */

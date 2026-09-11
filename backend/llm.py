@@ -258,12 +258,26 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
             "好的问题具体到这篇的内容：怎么做的、数字在什么条件下得的、这个结论能不能用到别的体系、"
             "某个术语在这里到底指什么。你比他更懂这篇，什么最值得问由你判断——"
             "只要别停在'这篇讲了什么'这种翻开摘要就能回答的层面。"
+            "每条一两句说完，别写成一段（面板里是竖排按钮，太长读着累）。"
             "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。"},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
     ], max_tokens=4000, temperature=0.5)
     data = parse_json(out)
-    qs = [str(q)[:80] for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
+    qs = [_clip_q(str(q)) for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
     return {"questions": qs[:4]}
+
+
+def _clip_q(q: str) -> str:
+    """问题的长度上限只做兜底，且断在标点处。
+
+    原来直接 `[:80]`——四个问题末尾全是半句（"…是否包含 vdW 色散修正与零点能"），
+    读者拿到的是残句，比长一点糟糕得多。"""
+    q = q.strip()
+    if len(q) <= 150:
+        return q
+    cut = q[:150]
+    stop = max(cut.rfind("？"), cut.rfind("。"), cut.rfind("；"), cut.rfind("? "))
+    return cut[:stop + 1] if stop > 60 else cut + "…"
 
 
 # ---------------- 一眼卡 ----------------
