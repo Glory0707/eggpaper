@@ -126,7 +126,7 @@ export const ROLE_GLYPH = {
 export const KIND_ZH = {
   hedge: '妥协让步', padding: '凑字数', stiff: '生硬别扭', redundant: '多余重复',
   hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑',
-  lookup: '查译', region: '选区问答',
+  conflict: '前后打架', lookup: '查译', region: '选区问答',
 }
 // 色标只表达一件事：读的时候该给多少注意力。
 // 八个色相谁也记不住（人能一眼解码的上限是 3–4 个），所以颜色不该再区分
@@ -152,13 +152,13 @@ export const ROLE_TEXT_COLOR = {
 // 眉批用同一套逻辑：值得读 / 要当心 / 是噪音 / 你自己写的
 export const KIND_COLOR = {
   insight: '#1d4e5f',                                                          // 值得读
-  warning: '#b8462e', hype: '#b8462e', ai: '#b8462e',                          // 要当心
+  warning: '#b8462e', hype: '#b8462e', ai: '#b8462e', conflict: '#b8462e',       // 要当心
   padding: '#c9c4ba', redundant: '#c9c4ba', stiff: '#c9c4ba', hedge: '#c9c4ba', // 噪音／可跳过
   lookup: '#57534a', region: '#57534a',                                        // 你自己钉的
 }
 // 眉批标签的文字色（浅灰在白卡上看不清，另给可读的一档）
 export const KIND_TEXT_COLOR = {
-  insight: '#123a47', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25',
+  insight: '#123a47', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25', conflict: '#9d3a25',
   padding: '#6f6b62', redundant: '#6f6b62', stiff: '#6f6b62', hedge: '#6f6b62',
   lookup: '#3f3230', region: '#3f3230',
 }

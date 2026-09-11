@@ -167,6 +167,12 @@ def answer_get(pid: str, key: str):
         return None
 
 
+def answers_clear(pid: str):
+    # 骨架/眉批重算过之后，六个问题里那三问的缓存就是旧结论了——必须作废，
+    # 否则「还能做什么」会一直引用已经不存在的主张与局限。
+    q("DELETE FROM answers WHERE paper_id=?", (pid,), commit=True)
+
+
 def answer_put(pid: str, key: str, data):
     q("INSERT OR REPLACE INTO answers(paper_id, key, json) VALUES(?,?,?)",
       (pid, key, json.dumps(data, ensure_ascii=False)), commit=True)

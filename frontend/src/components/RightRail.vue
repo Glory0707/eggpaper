@@ -67,6 +67,16 @@ function openMethod() {
   tab.value = 'eye'
   if (!methodCard.value) genMethodCard()
 }
+// 就一条批注追问：把批注和它引的原话一起交给模型，问题才问得准
+function askNote(n) {
+  const kind = KIND_ZH[n.kind] || n.kind
+  store.askPrefill = {
+    question: `眉批标了「${kind}」：「${n.note}」——引文是“${(n.quote || '').slice(0, 60)}”。`
+      + `这条判断站得住吗？依据在哪几段？[¶${n.para_idx}]`,
+    send: true,
+  }
+}
+
 // 「去问」：把这一条顺着问下去（带进提问面板并直接发出去）
 function askIt(q) {
   if (!q) return
@@ -274,7 +284,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
          @mousedown="startRailResize" @dblclick="store.viewer.railW = RAIL_DEF; store.reflowTick++"
          @keydown.left.prevent="nudgeRail(28)" @keydown.right.prevent="nudgeRail(-28)"></div>
     <div class="rtabs">
-      <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">骨架</button>
+      <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">六问</button>
       <button class="rt" :class="{ on: tab === 'eye' }" @click="tab = 'eye'">速览</button>
       <button class="rt" :class="{ on: tab === 'ask' }" @click="tab = 'ask'">提问</button>
       <button class="rt" :class="{ on: tab === 'terms' }" @click="tab = 'terms'">术语</button>
@@ -293,19 +303,18 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
         </div>
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? '还没有析读。' : '这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但骨架析读无从下手。' }}
+            {{ store.paras.length ? '还没有析读。' : '这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但这六个问题答不了。' }}
           </div>
           <button v-if="store.paras.length" class="primary" style="margin-top:12px" @click="emit('analyze')">析读全文</button>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但骨架析读无从下手。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图可以看。</span></div>
+          <div class="r-note">这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但这六个问题答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图可以看。</span></div>
         </template>
 
         <template v-else>
           <!-- 六个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
-          <div class="mono-label six-head">
-            <span>六个问题</span>
+          <div class="six-head">
             <span v-if="store.readingPara" class="mono-num">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
           </div>
 
@@ -356,7 +365,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
                   <div v-if="!anchorsOf(c).length" class="six-note">未找到直接证据段</div>
                 </div>
                 <div class="six-foot">
-                  <button @click="openMethod">方法卡 · protocol</button>
+                  <button @click="openMethod">方法卡 ↗</button>
                 </div>
               </template>
 
@@ -368,8 +377,11 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
                 </div>
                 <div v-for="n in warnNotes" :key="'w' + n.id" class="ev-row" @click="jumpNote(n)">
                   <span class="e-dot">¶{{ n.para_idx }}</span>
-                  <span class="e-bar" :style="{ background: KIND_COLOR.warning }"></span>
-                  <span class="e-note">{{ n.note }}</span>
+                  <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] || KIND_COLOR.warning }"></span>
+                  <span class="e-note">
+                    {{ n.note }}
+                    <button class="ev-ask" title="就这条批注追问模型" @click.stop="askNote(n)">问 ↗</button>
+                  </span>
                 </div>
                 <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
                   作者没有明说局限，眉批里也没有标出可疑之处。
@@ -394,10 +406,14 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
           <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.some(n => !USER_KINDS.includes(n.kind))"
                style="margin-top:16px">
             <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind)).length }} 条</div>
-            <div v-for="n in store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind)).slice(0, 8)" :key="n.id" class="ev-row" @click="jumpNote(n)">
+            <div v-for="n in store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind)).slice(0, 8)" :key="n.id"
+                 class="ev-row" @click="jumpNote(n)">
               <span class="e-dot"></span>
               <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] }"></span>
-              <span class="e-note"><span class="mono-label">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}</span>
+              <span class="e-note">
+                <span class="mono-label">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}
+                <button class="ev-ask" title="就这条批注追问模型" @click.stop="askNote(n)">问 ↗</button>
+              </span>
             </div>
           </div>
           <button v-else-if="store.marginalia.status !== 'done' && store.marginalia.status !== 'running'"

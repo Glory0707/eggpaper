@@ -130,6 +130,8 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 2. 每一个给出的段落都必须有 role 和 purpose，role 不得虚构枚举之外的值
 3. purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照样品的必要性""交代测试条件，可跳过"
 4. 不要虚构不存在的段落编号；参考文献部分（若有）一律标 boilerplate
+4b. 图注（以 FIG./Figure/Table/Scheme 开头的段落）是**结果的一部分**，按它描述的内容给
+    evidence 或 extension，绝不要标 boilerplate——读者正要看图注
 5. 顺便抽取本文的缩写表 abbrs：{"abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}，没有就给空对象
 6. 每条关键证据都要给出它直接回答的问题：{"evidence_qs":{"<¶编号>":"<该实验/数据直接回答的问题，≤22字>"}}"""
 
@@ -365,7 +367,7 @@ def translate_stream(text: str, context: str = "", hits: list = None):
 
 MARGINALIA_SYSTEM = """你是实验室里最会读论文的师兄，正在一篇论文的打印稿上给师弟/师妹写眉批。你的批注从两个角度出发：穿透"作者写作时的心思"，减轻"读者的阅读负担"。只对值得说的句子下手——宁缺毋滥，绝大多数句子不值得批。
 
-批注类型（kind 只能取以下八种）：
+批注类型（kind 只能取以下九种）：
 - hedge     妥协让步：作者在给不足找台阶、留后路（"虽然在…条件下"、"相对较高"这类含糊话）
 - padding   凑字数：套话、正确的废话，整句删掉信息量不变
 - stiff     生硬别扭：翻译腔、拗口、为严谨而硬拗的句式
@@ -374,6 +376,7 @@ MARGINALIA_SYSTEM = """你是实验室里最会读论文的师兄，正在一篇
 - ai        AI 痕迹：典型 AI 腔——delve、crucial role、pave the way、Moreover/Furthermore 连环、句式长度均匀得可疑
 - insight   点睛之笔：真正的关键句，值得画线
 - warning   有坑：数据或方法的可疑之处，读者要小心
+- conflict  前后打架：这一处和本文别处的说法/数字对不上（摘要与结果、正文与图注、结论与数据）
 
 只输出 JSON，不要 markdown 代码块，不要解释：
 {"notes":[{"para":<¶编号>, "quote":"<原句片段，逐字复制，≤80字符>", "kind":"<类型>", "note":"<批注，≤30字>"}]}
@@ -382,7 +385,8 @@ MARGINALIA_SYSTEM = """你是实验室里最会读论文的师兄，正在一篇
 1. quote 必须逐字来自原文（可以只截句子的前半段），程序要靠它定位——绝对不要改写、翻译或加省略号
 2. 每段最多 2 条；这一批总共 ≤10 条；没有值得批的段落就不批
 3. note 要像人说话："这句纯凑字数，跳过""作者自己都没底""典型 AI 腔，删了不疼""这句是全文最硬的证据"
-4. 八种类型都可能，别只盯一种；insight 和 warning 比吐槽更有价值"""
+4. 九种类型都可能，别只盯一种；insight / warning / conflict 比吐槽更有价值
+5. conflict 要指得出和哪里对不上（"和摘要说的 0.1 eV 不一致""图注写五段、正文写四段"），别只说"矛盾"""
 
 
 def analyze_marginalia(title: str, paras: list) -> list:
@@ -414,7 +418,8 @@ def analyze_marginalia(title: str, paras: list) -> list:
                     note = str(n.get("note", "")).strip()[:60]
                 except (TypeError, ValueError):
                     continue
-                if not quote or kind not in ("hedge", "padding", "stiff", "redundant", "hype", "ai", "insight", "warning"):
+                if not quote or kind not in ("hedge", "padding", "stiff", "redundant", "hype", "ai",
+                                              "insight", "warning", "conflict"):
                     continue
                 if para_idx not in page_of or quote[:40] in seen:
                     continue

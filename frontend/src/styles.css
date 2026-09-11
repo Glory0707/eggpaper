@@ -385,6 +385,13 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .mg-mark { position: absolute; mix-blend-mode: multiply; border-radius: 1px; z-index: 4; pointer-events: none; }
 .mg-mark.draw { animation: draw 300ms var(--ease-out); transform-origin: left center; }
 @keyframes draw { from { transform: scaleX(0.2); opacity: 0; } to { transform: scaleX(1); opacity: 1; } }
+/* 鼠标停在页边那张卡上：纸上这一条亮起来——两边同一条命，指哪儿是哪儿 */
+.mg-mark.hot {
+  background: currentColor !important; opacity: 0.22;
+  box-shadow: 0 0 0 1px var(--accent-deep);
+}
+/* 引文只对上原文一部分（模型改写过）：底边改成点线，一眼看出"这里是近似的" */
+.mg-mark.loose { border-bottom-style: dotted; border-bottom-width: 1.5px; }
 
 /* 页边批注带 */
 .gutter {
@@ -440,7 +447,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 /* 旁批卡：单一左色规 + 素色标签，不用满色块，避免页边花 */
 .mg-note {
   position: absolute; left: 24px; width: 154px; z-index: 55;
-  font-family: var(--sans); font-size: var(--fs-sm); line-height: 1.58;
+  font-family: var(--sans); font-size: var(--fs-md); line-height: 1.62;
   color: var(--ink); padding: 7px 9px 8px;
   background: var(--card-2); border: 1px solid var(--hairline); border-radius: 0 3px 3px 0;
   border-left: 2.5px solid var(--ink-3);
@@ -471,6 +478,10 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 /* 卡里的滚动条要细，不然一条批注看着像个小窗口 */
 .mg-note .mg-body::-webkit-scrollbar { width: 6px; }
 .mg-note .mg-body::-webkit-scrollbar-thumb { border: none; border-radius: 3px; background: rgba(38, 32, 21, 0.22); }
+.mg-note .mg-loose {
+  float: right; font-size: var(--fs-xs); color: var(--ink-3);
+  margin-left: 4px; cursor: help; line-height: 1;
+}
 .mg-note .mg-quote {
   display: block; font-size: var(--fs-xs); color: var(--ink-3);
   margin-top: 5px; border-top: 1px dotted var(--hairline); padding-top: 4px;
@@ -530,12 +541,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .gap-row { display: flex; gap: 8px; align-items: baseline; cursor: pointer; padding: 3px 4px; border-radius: 3px; }
 .gap-row:hover { background: rgba(38, 32, 21, 0.05); }
 .gap-row .g-tag { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; color: #fff; background: var(--r-gap); border-radius: 2px; padding: 2px 5px; flex-shrink: 0; }
-.gap-row .g-txt { font-family: var(--sans); font-weight: 500; font-size: var(--fs-md); line-height: 1.5; }
+.gap-row .g-txt { font-family: var(--sans); font-weight: 500; font-size: var(--fs-md); line-height: 1.6; }
 .ev-row { display: flex; gap: 7px; align-items: baseline; margin-top: 7px; padding-left: 2px; cursor: pointer; }
 .ev-row:hover .e-note { color: var(--ink); }
 .ev-row .e-dot { width: 22px; font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
 .ev-row .e-bar { width: 4px; height: 13px; border-radius: 1.5px; flex-shrink: 0; transform: translateY(2px); }
-.ev-row .e-note { font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.55; }
+.ev-row .e-note { font-size: var(--fs-md); color: var(--ink-2); line-height: 1.6; }
 
 /* 角色图例：解释页边那条色标上的字 */
 /* 角色图例：就是页边那些色块的样本。两列素排，不加边框——边框会让 8 项看起来像 8 个按钮 */
@@ -568,7 +579,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .card-eye .ce-row { display: flex; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--hairline-soft); }
 .card-eye .ce-k { font-family: var(--sans); font-weight: 600; font-size: var(--fs-xs); color: var(--ink-3); width: 58px; flex-shrink: 0; padding-top: 3px; }
-.card-eye .ce-v { font-size: var(--fs-sm); line-height: 1.65; color: var(--ink-2); }
+.card-eye .ce-v { font-size: var(--fs-md); line-height: 1.68; color: var(--ink-2); }
 .card-eye .ce-kw { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 16px 14px; border-top: 1px solid var(--hairline-soft); }
 
 /* 提问 */
@@ -873,7 +884,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .ev-q { font-size: var(--fs-sm); color: var(--ink-3); margin-top: 3px; }
 .adv-item { border-top: 1px solid var(--hairline-soft); padding: 9px 2px; }
 .adv-q { font-weight: 600; font-size: var(--fs-md); line-height: 1.55; }
-.adv-outline { margin: 5px 0 0; padding-left: 16px; color: var(--ink-2); font-size: var(--fs-sm); line-height: 1.6; }
+.adv-outline { margin: 5px 0 0; padding-left: 16px; color: var(--ink-2); font-size: var(--fs-md); line-height: 1.65; }
 
 /* ============================================================
    浮窗：可以拖走
@@ -1085,7 +1096,14 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
    问题是一行按钮、答案收起在下面——读一篇论文该带着问题进去，
    所以默认只看见问题；点哪条才摊开哪条。
    ============================================================ */
-.six-head { margin: 0 0 8px; display: flex; justify-content: space-between; }
+.six-head { margin: 0 0 6px; display: flex; justify-content: flex-end; min-height: 14px; }
+/* 批注条目上的"问 ↗"：悬停才露，别让每条都挂个按钮 */
+.ev-ask {
+  border: none; background: transparent; color: var(--ink-3);
+  font-size: var(--fs-xs); padding: 0 3px; opacity: 0; margin-left: 4px;
+}
+.ev-row:hover .ev-ask { opacity: 1; }
+.ev-ask:hover { color: var(--accent-deep); background: var(--accent-soft); box-shadow: none; transform: none; }
 .six { border-top: 1px solid var(--hairline-soft); }
 .six:last-of-type { border-bottom: 1px solid var(--hairline-soft); }
 .six-q {
@@ -1103,7 +1121,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 /* 收起时给一个"里面有多少东西"的读数：不点开也知道值不值得点 */
 .six-q b { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 400; color: var(--ink-3); }
 .six-a { padding: 0 0 12px 24px; }
-.six-txt { font-size: var(--fs-sm); line-height: 1.72; color: var(--ink); }
+.six-txt { font-size: var(--fs-md); line-height: 1.74; color: var(--ink); }
 .six-note { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
 .six-get {
   font-size: var(--fs-sm); padding: 3px 14px; color: var(--ink-2);
@@ -1111,7 +1129,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .six-get:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
 .six-foot { margin-top: 8px; }
-.six-foot button { font-size: var(--fs-xs); padding: 2px 9px; color: var(--ink-3); background: transparent; border-color: transparent; }
+.six-foot button { font-size: var(--fs-sm); padding: 2px 9px; color: var(--ink-3); background: transparent; border-color: transparent; }
 .six-foot button:hover { color: var(--accent-deep); background: var(--accent-soft); transform: none; box-shadow: none; }
 /* 一条方向 / 一个学科视角：抬头 + 一两句 + 一句能顺下去问的话 */
 .six-item { margin-top: 10px; }

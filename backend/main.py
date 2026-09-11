@@ -249,6 +249,7 @@ def _run_analysis(pid: str, paras: list):
                 data["purposes"][str(p["idx"])] = "参考文献"
         db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
                                               for k, v in data["roles"].items()})
+        db.answers_clear(pid)          # 主张换了一批，那三问的旧答案就不算数了
         db.update_paper(pid, abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
     except Exception as e:
@@ -326,6 +327,7 @@ def _run_marginalia(pid: str, paras: list):
         use = [p for p in paras if not p.get("in_refs")]
         notes = llm.mock_marginalia(paras) if config.load()["mock"] else llm.analyze_marginalia(title, use)
         db.set_marginalia(pid, notes)
+        db.answers_clear(pid)          # "还能做什么"吃眉批里的"有坑"，重写眉批要一起作废
         _resolve_rects(pid)
     except Exception as e:
         db.set_marginalia(pid, [], status="error", error=f"{type(e).__name__}: {str(e)[:300]}")

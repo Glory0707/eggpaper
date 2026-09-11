@@ -81,6 +81,9 @@ const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 const tranReady = computed(() => store.paper?.translate_status === 'done')
 const isSpread = computed(() => store.viewer.variant === 'dual' && store.viewer.spread === 'spread')
 
+function annoPurpose(idx) {
+  return store.analysis.annotations[String(idx)]?.purpose || ''
+}
 function roleOf(p) {
   return store.viewer.layers.skeleton ? store.analysis.annotations[String(p.idx)]?.role : null
 }
@@ -483,18 +486,29 @@ function regionBox(n) {
 
 // 纸面上那段引文的精确矩形（逐行，DOM 量出来的），只给当前已渲染的页算
 const quoteMarks = ref({})          // noteId -> [{x,y,w,h}]
+const quoteCov = ref({})            // noteId -> 0~1：引文有多少能对回原文
 function computeQuoteMarks() {
-  const out = {}
+  const out = {}, cov = {}
   for (const n of notesShown.value) {
     if (isRegion(n) || !n.quote) continue
     const it = pageItem(n.page)
     const el = it && pageEls.value[it.gi]
     if (!el) continue
     const r = findQuoteRects(el, n.quote)
-    if (r) out[n.id] = r.rects
+    if (r) { out[n.id] = r.rects; cov[n.id] = r.覆盖比 }
   }
   quoteMarks.value = out
+  quoteCov.value = cov
 }
+// 引文对不上原文（模型改写、PDF 断词、跨栏）：划线只盖对得上的那截，卡片上要说一句
+function quoteLoose(n) {
+  const c = quoteCov.value[n.id]
+  return c != null && c < 0.75
+}
+
+// 卡片和纸上那条线是一条命：鼠标停在卡片上，对应的划线跟着亮起来
+const hotNote = ref(null)
+function hoverNote(id) { hotNote.value = id }
 // 没有 DOM 时的退路：按行级坐标画整行框（行数准，行内不裁）
 function spanBoxes(n) {
   const span = quoteSpan(n)
@@ -1104,7 +1118,7 @@ watch(() => store.marginalia.notes, (n, o) => {
               <!-- 眉批引文：按句子落行，划了几行就是几个块；框选钉子按区域画 -->
               <template v-for="{ n } in notesOnPage(it.origPage)" :key="'n' + n.id">
                 <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark" :data-nid="n.id"
-                     :class="{ draw: freshNotes }"
+                     :class="{ draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }"
                      :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px',
                                background: KIND_COLOR[n.kind] + '2e',
                                borderBottom: '2px solid ' + KIND_COLOR[n.kind] + '99' }"></div>
@@ -1119,7 +1133,7 @@ watch(() => store.marginalia.notes, (n, o) => {
             <div v-for="{ p, role, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx"
                  class="role-tab" :class="{ on: roleCard?.idx === p.idx }"
                  :style="{ top: top + 'px', background: ROLE_COLOR[role], color: roleInk(role) }"
-                 :title="`¶${p.idx} · ${ROLE_ZH[role]}`"
+                 :title="`¶${p.idx} · ${ROLE_ZH[role]}${annoPurpose(p.idx) ? ' — ' + annoPurpose(p.idx) : ''}`"
                  @click.stop="openRoleCard($event, p)">
               <span class="pn">{{ ROLE_GLYPH[role] }}</span>
             </div>
@@ -1129,6 +1143,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                            width: Math.max(120, gutterW - 30) + 'px' }"
                  :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
                            clamped: (n.note || '').length > 34, clampable: (n.note || '').length > 34 }"
+                 @mouseenter="hoverNote(n.id)" @mouseleave="hoverNote(null)"
                  @click="toggleNote(n)">
               <div class="mg-head">
                 <span class="mg-kind" :style="{ color: KIND_TEXT_COLOR[n.kind] }">
@@ -1139,6 +1154,8 @@ watch(() => store.marginalia.notes, (n, o) => {
               </div>
               <div class="mg-body">{{ n.note }}</div>
               <span class="mg-quote" :title="'跳到纸上这句：' + n.quote" @click.stop="jumpQuote(n)">“{{ n.quote.slice(0, 40) }}{{ n.quote.length > 40 ? '…' : '' }}”</span>
+              <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->
+              <span v-if="quoteLoose(n)" class="mg-loose" title="模型抄回的引文与原文略有出入，纸上的划线只盖对得上的那一段">≈</span>
             </div>
           </div>
         </div>
