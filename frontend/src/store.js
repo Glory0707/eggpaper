@@ -1,8 +1,8 @@
 import { reactive, watch } from 'vue'
 import { api } from './api'
 
-export { api, askStream, ROLE_ZH, ROLE_GLYPH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR,
-         ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from './api'
+export { api, askStream, ROLE_ZH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR,
+         ROLE_TEXT_COLOR, KIND_TEXT_COLOR } from './api'
 
 const LS = 'eggpaper:'
 
@@ -27,7 +27,7 @@ export const store = reactive({
   viewer: {
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
-    layers: lsGet('layers', { skeleton: true, marginalia: true, skim: false }),
+    layers: lsGet('layers', { marginalia: true, skim: false }),
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
@@ -94,6 +94,8 @@ watch(() => store.viewer.fs, k => {
 
 // 旧版本在 <html> 上留过 data-skin（皮肤已删）：留着只会让 devtools 里多一个没用的属性
 delete document.documentElement.dataset.skin
+// 同理：layers 里留过 skeleton（页边角色书签已删），清掉免得它继续被存回去
+delete store.viewer.layers.skeleton
 
 export async function refreshPapers() {
   store.papers = await api.papers()

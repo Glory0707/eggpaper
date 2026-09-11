@@ -282,6 +282,12 @@ def analysis(pid: str):
 
 @app.post("/api/papers/{pid}/override-role")
 def override_role(pid: str, body: dict):
+    """人工改判某段的角色。
+
+    界面上原来的入口是"点页边书签 → 角色卡里的下拉框"，那套 UI 已经删了（角色不再
+    需要一套空间导航）；接口与数据留着——角色现在只影响略读蒙纱，万一模型把该读的
+    段落蒙掉了，这是唯一的补救口径。不会误删数据，也不会有人误以为它没了。
+    """
     _paper_or_404(pid)
     role = body.get("role") or ""
     # 空串 = 回到推断（卡片上的「回到推断」），别当成非法角色拒掉
@@ -577,16 +583,8 @@ def export_md(pid: str):
             for a in c["anchors"]:
                 anno = annos.get(str(a))
                 if anno:
-                    # 不再每行写一遍角色名（原来 11 行全是"关键证据："）——角色在下一节按类汇总
                     lines.append(f"  - ¶{a}：{anno['purpose']}")
             lines.append("")
-        by_role = {}
-        for k, v in annos.items():
-            by_role.setdefault(v["role"], []).append(int(k))
-        lines += ["## 段落角色", ""]
-        for role, idxs in sorted(by_role.items(), key=lambda x: -len(x[1])):
-            lines.append(f"- **{llm.ROLE_ZH.get(role, role)}（{len(idxs)}）**：¶" + "、¶".join(str(i) for i in sorted(idxs)))
-        lines.append("")
     notes = db.get_marginalia(pid)
     if notes:
         lines += ["## 眉批与查译", ""]

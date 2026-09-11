@@ -119,11 +119,6 @@ export const ROLE_ZH = {
   background: '背景铺垫', gap: '缺口转折', claim: '核心主张', evidence: '关键证据',
   control: '对照参比', boilerplate: '标准流程', extension: '优化拓展', limitation: '让步局限',
 }
-// 页边书签上只放一个字：色标 + 首字，扫一眼就知道这段是什么
-export const ROLE_GLYPH = {
-  background: '背', gap: '缺', claim: '主', evidence: '证',
-  control: '对', boilerplate: '流', extension: '拓', limitation: '限',
-}
 export const KIND_ZH = {
   hedge: '妥协让步', padding: '凑字数', stiff: '生硬别扭', redundant: '多余重复',
   hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑',
@@ -139,10 +134,6 @@ export const ROLE_COLOR = {
   control: '#8e8a80', extension: '#8e8a80', limitation: '#8e8a80',      // 中灰：外围与让步
   background: '#c9c4ba', boilerplate: '#c9c4ba',                       // 浅灰：铺垫与标准流程
 }
-// 色块上的字色：四档各自对白字/深字的对比度都过了 4.5:1
-export const ROLE_INK = { claim: '#ffffff', control: '#26231e', extension: '#26231e',
-                          limitation: '#26231e', background: '#26231e', boilerplate: '#26231e' }
-export const roleInk = (role) => ROLE_INK[role] || '#ffffff'
 // 用作文字色时不能用浅灰（白底上看不见），另给一档正文可读的阶梯
 export const ROLE_TEXT_COLOR = {
   claim: '#123a47', evidence: '#1d1b17', gap: '#1d1b17',

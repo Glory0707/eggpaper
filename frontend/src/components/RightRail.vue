@@ -1,12 +1,12 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH, ROLE_COLOR, ROLE_TEXT_COLOR,
-         KIND_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
+import { api, store, toast, jumpTo, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, KIND_ZH, KIND_COLOR } from '../store'
 import { lineSpanOf } from '../find'
 import AskPanel from './AskPanel.vue'
 import MdLite from './MdLite.vue'
 
-const USER_KINDS = ['lookup', 'region']   // 用户自己钉的（查译、选区问答），不算 AI 眉批
+/* 眉批只有一个家：纸面页边那些卡。右栏这里曾经还有一份「眉批速览」列表——
+   同一批句子在同一页里出现两遍（④里一遍、速览里一遍），删了。 */
 
 const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
@@ -101,11 +101,6 @@ const annoOf = idx => store.analysis.annotations[String(idx)] || {}
 const gapParas = computed(() => parasOfRole(['gap']))
 const limitParas = computed(() => parasOfRole(['limitation']))
 const warnNotes = computed(() => store.marginalia.notes.filter(n => n.kind === 'warning'))
-// 眉批速览＝④之外的那些。①「有坑」归④，②用户自己钉的（查译/选区问答）不算眉批
-const digestNotes = computed(() =>
-  store.marginalia.status === 'done'
-    ? store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind) && n.kind !== 'warning')
-    : [])
 // 待解那一行：只报有的那一边。"作者承认 0 处"这种话没人爱看
 const todoLine = computed(() => {
   const a = limitParas.value.length, b = warnNotes.value.length
@@ -481,21 +476,17 @@ watch(() => store.currentId, () => {
             </div>
           </section>
 
-          <!-- 眉批速览：只收④没管的那些。标着「有坑」的批注已经在④里逐条列过一遍，
-               同一句话在同一页出现两次，读起来就是噪音。 -->
-          <div v-if="digestNotes.length" style="margin-top:16px">
-            <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ digestNotes.length }} 条</div>
-            <div v-for="n in digestNotes.slice(0, 8)" :key="n.id" class="ev-row" @click="jumpNote(n)">
-              <span class="e-dot"></span>
-              <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] }"></span>
-              <span class="e-note">
-                <span class="mono-label">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}
-                <button class="ev-ask" title="就这条批注追问模型" @click.stop="askNote(n)">问 ↗</button>
-              </span>
+          <!-- 眉批的家在纸面页边：这里只给"它们在哪儿"和生成入口，不再复述内容 -->
+          <div class="blk" v-if="store.marginalia.status !== 'done'">
+            <div class="blk-head">
+              <span class="mono-label">眉批</span>
+              <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')">
+                让师兄写眉批
+              </button>
+              <span v-else class="blk-busy">写批注中<span class="r-dots">…</span></span>
             </div>
+            <div class="six-note">批注钉在纸面页边，紧挨着它引的那句话。</div>
           </div>
-          <button v-else-if="store.marginalia.status !== 'done' && store.marginalia.status !== 'running'"
-                  style="margin-top:16px" @click="emit('marginalia')">让师兄写眉批</button>
         </template>
       </template>
 

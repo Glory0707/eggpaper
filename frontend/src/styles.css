@@ -407,49 +407,6 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   margin-left: 12px; border-radius: 0 2px 2px 0;
 }
 
-/* 角色书签：左侧一条色标，标签是角色首字（背/缺/主/证/对/流/拓/限） */
-.role-tab {
-  position: absolute; left: 0; width: 16px; height: 22px;
-  border-radius: 0 3px 3px 0; cursor: pointer;
-  box-shadow: inset -2px 0 rgba(0, 0, 0, 0.2);
-  display: flex; align-items: center; justify-content: center;
-  transition: width var(--t-fast) var(--ease-out), filter var(--t-fast) var(--ease-smooth),
-              box-shadow var(--t-fast) var(--ease-out);
-}
-.role-tab:hover { width: 21px; filter: brightness(1.1); }
-.role-tab.on { width: 21px; box-shadow: inset -2px 0 rgba(0, 0, 0, 0.2), 0 0 0 1.5px var(--card-2); }
-.role-tab .pn {
-  font-family: var(--sans); font-weight: 600; font-size: var(--fs-xs);
-  color: rgba(255, 253, 246, 0.96); user-select: none; line-height: 1;
-}
-
-/* 角色卡：fixed 定位，不再被滚动容器裁切；只由点击开关 */
-.role-card {
-  position: fixed; z-index: 320; width: 226px;
-  background: var(--card-2); border: 1px solid var(--hairline); border-radius: 5px;
-  box-shadow: var(--shadow-pop); padding: 10px 12px 12px;
-}
-.role-card .rc-top { display: flex; align-items: center; gap: 6px; }
-.role-card .rc-role { font-family: var(--sans); font-weight: 650; font-size: var(--fs-md); }
-.role-card .rc-num {
-  font-family: var(--mono); font-size: var(--fs-xs);
-  color: var(--ink-3); margin-left: auto;
-}
-.role-card .rc-x {
-  border: none; background: none; color: var(--ink-3); font-size: var(--fs-md);
-  line-height: 1; padding: 0 1px; margin-left: 2px;
-}
-.role-card .rc-x:hover { color: var(--ink); box-shadow: none; transform: none; }
-.role-card .rc-purpose {
-  font-size: var(--fs-md); margin: 7px 0; line-height: 1.6; color: var(--ink);
-  padding-left: 8px; border-left: 2px solid var(--hairline);
-}
-.role-card select { width: 100%; font-size: var(--fs-sm); padding: 5px 6px; }
-.role-card .rc-flag {
-  font-size: var(--fs-xs); color: var(--ink-2);
-  border: 1px solid var(--hairline); border-radius: 2px; padding: 1px 4px;
-}
-
 /* 旁批卡：单一左色规 + 素色标签，不用满色块，避免页边花 */
 .mg-note {
   position: absolute; left: 24px; width: 154px; z-index: 55;
@@ -559,27 +516,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .ev-row .e-dot { width: calc(22px * var(--fs-scale)); font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
 .ev-row .e-bar { width: 4px; height: 13px; border-radius: 1.5px; flex-shrink: 0; transform: translateY(2px); }
 .ev-row .e-note { font-size: var(--fs-read); color: var(--ink-2); line-height: 1.6; }
-
-/* 角色图例：解释页边那条色标上的字 */
-/* 角色图例：就是页边那些色块的样本。两列素排，不加边框——边框会让 8 项看起来像 8 个按钮 */
-.role-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin: 0 0 14px; }
-.role-legend .rl {
-  display: flex; align-items: center; gap: 6px; min-width: 0;
-  font-size: var(--fs-xs); color: var(--ink-2); cursor: pointer;
-  border-radius: 3px; padding: 1px 4px 1px 1px;
-  transition: background var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth);
-}
-.role-legend .rl:hover { color: var(--ink); background: var(--accent-soft); }
-.role-legend .rl > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.role-legend .rl i {
-  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
-  width: calc(16px * var(--fs-scale)); height: calc(16px * var(--fs-scale));
-  border-radius: 3px; font-style: normal;
-  font-family: var(--sans); font-size: calc(10px * var(--fs-scale)); font-weight: 600;
-}
-.role-legend .rl b {
-  margin-left: auto; font-family: var(--mono); font-size: var(--fs-xs); font-weight: 400; color: var(--ink-3);
-}
 
 /* 右栏里的小字角色/类型标签（正文色，不用色块色） */
 .rg-kind { font-size: var(--fs-xs); font-weight: 600; }
@@ -808,14 +744,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .claim-item .c-head { display: flex; gap: 7px; align-items: flex-start; }
 .claim-item .c-id { font-family: var(--mono); font-size: var(--fs-xs); color: #fff; background: var(--r-claim); padding: 2px 6px; border-radius: 2px; flex-shrink: 0; letter-spacing: 0.08em; margin-top: 2px; }
 .claim-item .c-txt { font-family: var(--sans); font-weight: 650; font-size: var(--fs-read); line-height: 1.55; letter-spacing: -0.005em; flex: 1; }
-/* 点开一类角色：摊开它落在哪几段 */
-.role-legend .rl.on { background: var(--accent-soft); color: var(--ink); }
-.role-hits { display: flex; flex-wrap: wrap; gap: 5px; margin: -8px 0 14px; }
-.role-hits .rh-chip {
-  font-family: var(--mono); font-size: var(--fs-xs); padding: 2px 8px;
-  border: 1px solid var(--hairline); border-radius: 3px; background: var(--card-2); color: var(--ink-2);
-}
-.role-hits .rh-chip:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
+/* 图例与命中芯片随段落角色一起删了（M3.21） */
 
 /* 图表速览 */
 .fig-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }

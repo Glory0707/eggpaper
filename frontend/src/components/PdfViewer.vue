@@ -3,8 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, KIND_ZH, ROLE_ZH, ROLE_GLYPH, CORE_ROLES, KIND_COLOR, ROLE_COLOR,
-         ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
+import { api, store, toast, KIND_ZH, CORE_ROLES, KIND_COLOR, KIND_TEXT_COLOR } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
 import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
@@ -12,10 +11,8 @@ import { vDrag } from '../drag'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
-defineEmits(['override'])
 
-const GUTTER_FULL = 184   // 有批注时的整条页边（184 的批注带 + 12 的左边距）
-const GUTTER_TAB = 24      // 只挂角色书签：留一条窄边就够，宽度全还给论文
+const GUTTER_FULL = 184   // 页边批注带（184 宽 + 12 的左边距）
 const LS_POS = 'eggpaper:pos:'
 
 const deskEl = ref(null)
@@ -34,7 +31,6 @@ const searchBusy = ref(false)
 const midX = ref(0)              // 书桌中线：缩放条/提示贴它，而不是视口中线
 const deskRightX = ref(0)        // 书桌右缘：阅读进度细线贴它
 const sheets = ref([])
-const roleCard = ref(null)       // { idx, x, y } 点开的角色卡，只有点击能开关
 const noteHeights = ref({})      // 旁批实测高度，摊平用
 const expandedNote = ref(null)   // 展开的批注卡
 const pendingPara = ref(null)    // 段译进行中
@@ -67,25 +63,17 @@ const parasByPage = computed(() => {
 })
 const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
 const notesShown = computed(() => (store.viewer.layers.marginalia ? store.marginalia.notes : []))
-/* 页边要多宽，取决于"上面真有东西要放吗"：
-   有批注 → 整条 184；只有骨架书签 → 24 的窄边；两层都关 → 干脆不留，
+/* 页边要多宽，取决于"上面真有东西要放吗"：有批注 → 整条 184，没有 → 一点都不留，
    论文因此能多出近 200px 的宽度。这条宽度是 measure() 的输入，图层一变就得重排。 */
-const gutterW = computed(() => {
-  if (store.viewer.layers.marginalia && notesShown.value.length) return GUTTER_FULL
-  if (store.viewer.layers.skeleton) return GUTTER_TAB
-  return 0
-})
-// 页边和纸之间留多少：整条批注带留 12，一条窄书签带留 6，没有页边就不留
-const gutterPad = computed(() => (gutterW.value >= GUTTER_FULL ? 12 : gutterW.value ? 6 : 0))
+const gutterW = computed(() => (store.viewer.layers.marginalia && notesShown.value.length ? GUTTER_FULL : 0))
+const gutterPad = computed(() => (gutterW.value ? 12 : 0))
 const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 const tranReady = computed(() => store.paper?.translate_status === 'done')
 const isSpread = computed(() => store.viewer.variant === 'dual' && store.viewer.spread === 'spread')
 
-function annoPurpose(idx) {
-  return store.analysis.annotations[String(idx)]?.purpose || ''
-}
+// 角色（8 类）现在只服务于一件事：略读时该把哪几段蒙掉。界面上不再有它的位置
 function roleOf(p) {
-  return store.viewer.layers.skeleton ? store.analysis.annotations[String(p.idx)]?.role : null
+  return store.analysis.annotations[String(p.idx)]?.role || null
 }
 function isCore(p) { return CORE_ROLES.includes(roleOf(p) || 'background') }
 
@@ -376,39 +364,6 @@ function rectStyle(p) {
            width: (b.x1 - b.x0) * scale.value + 'px', height: (b.y1 - b.y0) * scale.value + 'px' }
 }
 
-/* 页边书签的排布：每个书签贴着自己那一段，挤在一起就往下让。
-   难点是"让出去"没有上限——一段话密的地方能堆二十来个书签，一路让下去就伸到
-   下一页的页边上了。所以让完之后量一次越界：越了就整体压缩间距（宁可贴住，
-   也不许翻页），压到极限还放不下才允许重叠。 */
-const TAB_H = 22, TAB_GAP = 5
-const tabLayouts = computed(() => {
-  const out = {}
-  for (const it of flatItems.value) {
-    const pno = it.origPage
-    if (pno == null || pno < 0) continue
-    const rows = (parasByPage.value[pno] || []).filter(p => roleOf(p))
-    if (!rows.length) continue
-    const pageH = it.h * scale.value
-    const tops = rows.map(p => p.bbox.y0 * scale.value)
-    const place = (gap) => {
-      const arr = []
-      let prev = -1e9
-      for (const y of tops) { const t = Math.round(Math.max(y, prev + TAB_H + gap)); arr.push(t); prev = t }
-      return arr
-    }
-    let arr = place(TAB_GAP)
-    const over = arr[arr.length - 1] + TAB_H - (pageH - 2)
-    if (over > 0) {
-      const room = pageH - 2 - TAB_H - tops[0]
-      const need = room / Math.max(1, rows.length - 1) - TAB_H
-      arr = place(Math.max(3 - TAB_H, Math.min(TAB_GAP, need)))
-    }
-    out[pno] = rows.map((p, i) => ({ p, role: roleOf(p), top: Math.max(0, arr[i]) }))
-  }
-  return out
-})
-function tabsOnPage(pno) { return tabLayouts.value[pno] || [] }
-
 // 旁批高度靠实测：先按估算摆一遍，渲染后量真实高度再摆第二遍。
 // 这样长批注展开后只会把下面的推开，不会压在别人身上。
 function noteHeight(n) {
@@ -544,56 +499,6 @@ function updateProg() {
   const total = sc.scrollHeight - sc.clientHeight
   progPct.value = total > 40 ? Math.min(1, Math.max(0, sc.scrollTop / total)) : 0
 }
-
-/* ---------------- 角色卡：点击开，Esc/点外/×关 ---------------- */
-
-let roleCardAnchor = null        // 打开卡片的那个书签元素
-let roleCardRaf = 0
-const roleCardEl = ref(null)
-let roleCardDragged = false      // 用户把它拖走了：就别再粘回书签旁边（抢不过人手）
-
-// 卡片跟着书签走：页面一滚就重新贴回书签旁边，而不是被滚没了
-function placeRoleCard() {
-  if (roleCard.value == null || !roleCardAnchor || roleCardDragged) return
-  const r = roleCardAnchor.getBoundingClientRect()
-  const desk = (deskEl.value?.closest('.desk') || deskEl.value)?.getBoundingClientRect()
-  if (desk && (r.bottom < desk.top - 40 || r.top > desk.bottom + 40)) { closeRoleCard(); return }
-  const h = roleCardEl.value?.offsetHeight || 170
-  roleCard.value = {
-    idx: roleCard.value.idx,
-    x: Math.max(12, r.left - 226 - 8),
-    y: Math.min(Math.max(desk ? desk.top + 10 : 64, r.top - 10), window.innerHeight - h - 14),
-  }
-}
-function followRoleCard() {
-  if (roleCard.value == null) return
-  cancelAnimationFrame(roleCardRaf)
-  roleCardRaf = requestAnimationFrame(placeRoleCard)
-}
-
-async function openRoleCard(e, p) {
-  if (roleCard.value?.idx === p.idx) { closeRoleCard(); return }
-  roleCardAnchor = e.currentTarget
-  roleCardDragged = false
-  roleCard.value = { idx: p.idx, x: 0, y: 0 }
-  expandedNote.value = null
-  await nextTick()
-  placeRoleCard()
-}
-function closeRoleCard() {
-  roleCard.value = null
-  roleCardAnchor = null
-  roleCardDragged = false
-}
-
-const roleCardData = computed(() => {
-  const idx = roleCard.value?.idx
-  if (idx == null) return null
-  const p = paraByIdx.value[idx]
-  const anno = store.analysis.annotations[String(idx)]
-  if (!p || !anno) return null
-  return { p, anno, role: anno.role }
-})
 
 function toggleNote(n) {
   if ((n.note || '').length <= 34) return
@@ -869,7 +774,6 @@ function openSearch() { searchOpen.value = true }
 
 let spyT = null, saveT = null
 function onScroll() {
-  followRoleCard()          // 卡片跟着书签走，不再一滚就消失
   updateProg()
   const sc = scroller()
   const top = sc.scrollTop + 8
@@ -938,7 +842,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   selStream?.abort()
   ro?.disconnect()
-  cancelAnimationFrame(roleCardRaf)
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('mousedown', onDocDown)
   window.removeEventListener('resize', updateMid)
@@ -1037,7 +940,6 @@ watch(() => store.visPrefill, pf => {
 function onDocDown(e) {
   const t = e.target
   if (!t?.closest) return
-  if (roleCard.value != null && !t.closest('.role-card') && !t.closest('.role-tab')) roleCard.value = null
   if (vis.visible && !t.closest('.vis-pop')) closeVis()
   // 划词气泡：点它以外任何地方都收（包括纸面本身）。
   // 原来把 .textLayer 排除在外，本意是"别把正在划的词弄丢"，结果是在纸上点哪儿都不关，
@@ -1047,7 +949,6 @@ function onDocDown(e) {
 watch(() => store.escTick, () => {
   closeSel()
   if (vis.visible) closeVis()
-  roleCard.value = null
   if (searchOpen.value) closeSearch()
 })
 // 聚焦要用 preventScroll：查找框挂在书桌内容的末尾，浏览器为了"把焦点滚进视野"
@@ -1130,13 +1031,6 @@ watch(() => store.marginalia.notes, (n, o) => {
           <div class="gutter" v-if="it.margin && gutterW > 0"
                :style="{ height: (pageLayouts[it.origPage]?.height || it.h * scale) + 'px',
                          width: gutterW + 'px', marginLeft: gutterPad + 'px' }">
-            <div v-for="{ p, role, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx"
-                 class="role-tab" :class="{ on: roleCard?.idx === p.idx }"
-                 :style="{ top: top + 'px', background: ROLE_COLOR[role], color: roleInk(role) }"
-                 :title="`¶${p.idx} · ${ROLE_ZH[role]}`"
-                 @click.stop="openRoleCard($event, p)">
-              <span class="pn">{{ ROLE_GLYPH[role] }}</span>
-            </div>
             <div v-for="{ n, top, pending } in notesOnPage(it.origPage)" :key="'mg' + n.id"
                  class="mg-note" :data-nid="n.id"
                  :style="{ top: top + 'px', borderLeftColor: KIND_COLOR[n.kind],
@@ -1263,25 +1157,6 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div class="sp-actions" v-if="vis.answer">
         <button class="primary" style="padding:4px 10px" @click="pinVisual">钉在页边</button>
       </div>
-    </div>
-    </Transition>
-
-    <!-- 角色卡：点页边书签打开 -->
-    <Transition name="pop">
-    <div class="role-card" v-if="roleCard && roleCardData" ref="roleCardEl"
-         :style="{ left: roleCard.x + 'px', top: roleCard.y + 'px' }"
-         v-drag="{ onStart: () => (roleCardDragged = true) }" @mousedown.stop>
-      <div class="rc-top" data-drag>
-        <span class="rc-role" :style="{ color: ROLE_TEXT_COLOR[roleCardData.role] }">{{ ROLE_ZH[roleCardData.role] }}</span>
-        <span v-if="roleCardData.anno.user_override" class="rc-flag">已改判</span>
-        <span class="rc-num">¶{{ roleCard.idx }} · 第 {{ roleCardData.p.page + 1 }} 页</span>
-        <button class="rc-x" title="关闭（Esc）" @click="closeRoleCard">×</button>
-      </div>
-      <div class="rc-purpose">{{ roleCardData.anno.purpose || '推断中' }}</div>
-      <select :value="roleCardData.role" @change="e => $emit('override', { idx: roleCard.idx, role: e.target.value })">
-        <option value="">回到推断</option>
-        <option v-for="(zh, k) in ROLE_ZH" :key="k" :value="k">{{ zh }}</option>
-      </select>
     </div>
     </Transition>
 
