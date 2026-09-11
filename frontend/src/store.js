@@ -12,6 +12,7 @@ function lsGet(k, d) {
 function lsSet(k, v) { localStorage.setItem(LS + k, JSON.stringify(v)) }
 
 export const store = reactive({
+  vw: window.innerWidth,     // 视口宽度：窄窗要换一套排布（右栏改浮层、栏位让给论文）
   papers: [],
   currentId: null,
   paper: null,
@@ -39,14 +40,18 @@ export const store = reactive({
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   toast: '',
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
-  tourStop: null,
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答        // 论证漫游停止器（RightRail 注册）
 
   get mock() { return this.settings?.mock },
+  // 窄窗（半屏、竖屏、小笔记本）：右栏不再占版面，改成浮在书桌上的抽屉
+  get narrow() { return this.vw < 1180 },
   get railRight() {
-    return this.viewer.variant === 'dual' && this.viewer.spread === 'spread' ? false : this.viewer.railUser
+    if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
+    return this.viewer.railUser
   },
 })
+
+window.addEventListener('resize', () => { store.vw = window.innerWidth })
 
 export function toast(msg) {
   store.toast = msg

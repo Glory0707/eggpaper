@@ -62,6 +62,10 @@ async function poll() {
   }
 }
 
+/* 窄窗：右栏改浮层，进窄窗时自动收起一次，把宽度还给论文
+   （只在跨过门槛那一拍动手，否则用户手动展开会被反复关掉） */
+watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
+
 watch(() => store.analysis.status, (n, o) => {
   if (o === 'running' && n === 'done') {
     wobble.value = true
@@ -122,15 +126,15 @@ const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.
 function onKey(e) {
   const t = e.target
   if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) return
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
   if (e.key === 'Escape') {
     store.viewer.libOpen = false
     store.shortcutCard = false
     showSettings.value = false
-    store.tourStop?.()
     dragOver.value = false
     store.viewer.frame = false     // 框选模式永远能一键退出
-    store.escTick++                // PDF 侧的划词/框选/角色卡浮层收起
+    store.escTick++                // PDF 侧的划词/框选/角色卡/查找浮层收起
     return
   }
   if (gPending.value) {
@@ -142,6 +146,8 @@ function onKey(e) {
   switch (e.key) {
     case 'j': e.preventDefault(); store.viewerApi?.step(1); break
     case 'k': e.preventDefault(); store.viewerApi?.step(-1); break
+    case 'PageDown': e.preventDefault(); store.viewerApi?.stepPage(1); break
+    case 'PageUp': e.preventDefault(); store.viewerApi?.stepPage(-1); break
     case 't': store.viewerApi?.translateCurrent(); break
     case 's': store.viewerApi?.translateSelectionKey(); break
     case 'f': store.viewer.layers.skim = !store.viewer.layers.skim; break
@@ -163,11 +169,9 @@ function onKey(e) {
       <div class="wordmark" title="eggpaper">
         <EggMark class="egg" :class="{ wobble }" />
         <span class="name">eggpaper</span>
-        <span class="vol">v0.1</span>
       </div>
       <div class="doc-head" v-if="store.paper">
         <div class="t">{{ store.paper.title || store.paper.filename }}</div>
-        <div class="m">{{ store.paper.n_pages }} 页 · {{ store.paras.length }} 段</div>
       </div>
       <div class="doc-head" v-else>
         <div class="t">本地文献批注台</div>
@@ -190,7 +194,12 @@ function onKey(e) {
         <button class="toggle" :class="{ on: store.viewer.layers.skim }" @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
         <button class="toggle" :class="{ on: store.viewer.frame }" title="框选任意区域问 AI（r）"
                 @click="store.viewer.frame = !store.viewer.frame">框选</button>
-        <button @click="doTranslateFull" :disabled="tranSt === 'running'">整本翻译</button>
+        <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
+             译完就没必要再露出来了——留一个永远点不动的按钮只会让人猜它还能干什么。 -->
+        <button v-if="tranSt !== 'done'" @click="doTranslateFull" :disabled="tranSt === 'running'"
+                title="用 pdf2zh 把整篇译成第二份 PDF，译文/双语两个模式靠它">
+          {{ tranSt === 'running' ? '翻译中…' : '整本翻译' }}
+        </button>
         <button class="primary" @click="doAnalyze" :disabled="store.analysis.status === 'running'">
           {{ store.analysis.status === 'running' ? '通读中…' : (store.analysis.status === 'done' ? '重新析读' : '析读') }}
         </button>

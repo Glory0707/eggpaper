@@ -167,11 +167,16 @@ def extract_paragraphs(path: str) -> list:
                     size = statistics.median(l["size"] for l in ls)
                     bbox = {"x0": min(l["bbox"][0] for l in ls), "y0": min(l["bbox"][1] for l in ls),
                             "x1": max(l["bbox"][2] for l in ls), "y1": max(l["bbox"][3] for l in ls)}
+                    # 行级坐标也带上：页边引文要按句子画线，只有段落框就只能整段涂，
+                    # 划线会盖住没被引用的字。前端拿它把引文对回具体哪几行。
+                    lines = [{"text": l["text"], "bbox": {"x0": l["bbox"][0], "y0": l["bbox"][1],
+                                                          "x1": l["bbox"][2], "y1": l["bbox"][3]}}
+                             for l in ls]
                     caption = bool(CAPTION.match(first))
                     if caption:
                         if len(text.split()) < 6:
                             continue
-                        paras.append({"page": pno, "bbox": bbox, "text": _clean(text),
+                        paras.append({"page": pno, "bbox": bbox, "text": _clean(text), "lines": lines,
                                       "in_refs": False, "caption": True})
                         continue
                     if in_refs or len(text.split()) < 14 or size > body_size + 2.2:
@@ -179,7 +184,7 @@ def extract_paragraphs(path: str) -> list:
                     # 作者/机构块：机构关键词密集且不长
                     if len(AFFIL.findall(text)) >= 2 and len(text.split()) < 60:
                         continue
-                    paras.append({"page": pno, "bbox": bbox, "text": _clean(text),
+                    paras.append({"page": pno, "bbox": bbox, "text": _clean(text), "lines": lines,
                                   "in_refs": False, "caption": False})
     finally:
         doc.close()

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS papers(
   summary TEXT
 );
 CREATE TABLE IF NOT EXISTS paragraphs(
-  paper_id TEXT, idx INTEGER, page INTEGER, bbox TEXT, text TEXT, in_refs INTEGER DEFAULT 0,
+  paper_id TEXT, idx INTEGER, page INTEGER, bbox TEXT, text TEXT, in_refs INTEGER DEFAULT 0, lines TEXT,
   PRIMARY KEY(paper_id, idx)
 );
 CREATE TABLE IF NOT EXISTS annotations(
@@ -69,6 +69,7 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE papers ADD COLUMN abbrs TEXT",
         "ALTER TABLE papers ADD COLUMN evidence_qs TEXT",
         "ALTER TABLE papers ADD COLUMN advisor TEXT",
+        "ALTER TABLE paragraphs ADD COLUMN lines TEXT",   # 行级坐标：页边引文要按行画
     ):
         try:
             c.execute(stmt)
@@ -118,14 +119,22 @@ def replace_paragraphs(pid: str, paras: list):
     q("DELETE FROM paragraphs WHERE paper_id=?", (pid,), commit=True)
     with _lock:
         _get().executemany(
-            "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs) VALUES(?,?,?,?,?,?)",
-            [(pid, p["idx"], p["page"], json.dumps(p["bbox"]), p["text"], 1 if p.get("in_refs") else 0) for p in paras])
+            "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs, lines) VALUES(?,?,?,?,?,?,?)",
+            [(pid, p["idx"], p["page"], json.dumps(p["bbox"]), p["text"], 1 if p.get("in_refs") else 0,
+              json.dumps(p.get("lines") or [])) for p in paras])
         _get().commit()
 
 
 def get_paragraphs(pid: str):
-    rows = q("SELECT idx, page, bbox, text, in_refs FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,))
-    return [dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"])) for r in rows]
+    rows = q("SELECT idx, page, bbox, text, in_refs, lines FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,))
+    return [dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
+                 lines=json.loads(r["lines"]) if r["lines"] else []) for r in rows]
+
+
+def paragraphs_need_lines(pid: str) -> bool:
+    """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。"""
+    rows = q("SELECT lines FROM paragraphs WHERE paper_id=?", (pid,))
+    return bool(rows) and all(not r["lines"] for r in rows)
 
 
 # ---------- skeleton ----------

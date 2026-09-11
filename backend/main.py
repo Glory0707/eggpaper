@@ -147,6 +147,16 @@ def paper_pdf(pid: str, variant: str = "original"):
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
+    # 旧库的段落只有段落框、没有行级坐标，页边引文就只能整段涂。
+    # 惰性补一次：重解析同一份 PDF，重新分组的结果是确定的，idx 不变，批注不会错位。
+    if db.paragraphs_need_lines(pid):
+        p = db.get_paper(pid)
+        path = p.get("path") or os.path.join(PDF_DIR, f"{pid}.pdf")
+        try:
+            if os.path.exists(path):
+                db.replace_paragraphs(pid, pdfparse.extract_paragraphs(path))
+        except Exception as e:
+            print(f"[eggpaper] 行级坐标补解析失败 {pid}: {e}")
     return db.get_paragraphs(pid)
 
 
@@ -206,23 +216,28 @@ def override_role(pid: str, body: dict):
 # ---------------- 眉批（句级批注） ----------------
 
 def _resolve_rects(pid: str):
-    """把 quote 定位为页面矩形（惰性：只解析尚未定位的批注）。"""
+    """把 quote 定位成页面矩形。
+
+    只作为**退路**：这里的搜索会跨不过换行和连字符，所以只能拿引文开头的一小段去搜，
+    搜到的也只是那一行。真正的逐行精确划线在前端做（引文对回字符 → 取字符矩形）。
+    框选钉子（kind=region）自带矩形，不参与。
+    """
     import pymupdf
     p = db.get_paper(pid)
     if not p:
         return
     doc = None
     for n in db.get_marginalia(pid):
-        if n["rect"]:
+        if n["rect"] or n["kind"] == "region":
             continue
         if doc is None:
             doc = pymupdf.open(p["path"])
         rects = []
-        for cut in (60, 36, 20):
-            probe = n["quote"][:cut].strip()
+        for cut in (0, 60, 36, 20):
+            probe = n["quote"] if cut == 0 else n["quote"][:cut].strip()
             if len(probe) < 8:
                 continue
-            rects = doc[n["page"]].search_for(probe, quads=False)
+            rects = doc[n["page"]].search_for(probe, quads=True)
             if rects:
                 break
         if rects:
@@ -271,22 +286,26 @@ def pin_lookup(pid: str, body: dict):
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
     para_idx = int(body.get("para_idx") or 0)
-    # 框选答疑自带区域矩形：锚点就是那块区域，也不和别的钉子挤同一段
+    # 框选答疑自带区域矩形：锚点就是那块区域，也不和别的钉子挤同一段。
+    # 用 kind=region 单独标记：前端据此知道"这个矩形就是唯一真相"，
+    # 而不是像引文钉子那样要回原文重新把引文对回字符。
     rect = body.get("rect") or None
     if rect:
         try:
             rect = {k: float(rect[k]) for k in ("x0", "y0", "x1", "y1")}
         except (KeyError, TypeError, ValueError):
             rect = None
-    if not rect:
-        # 同段重钉 = 更新而非新增
-        dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
-                   (pid, para_idx))
-        if dup:
-            db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
-            return {"id": dup[0]["id"]}
+    if rect:
+        return {"id": db.marginalia_add(pid, para_idx, int(body.get("page") or 0), quote[:200],
+                                        note[:600], kind="region", rect=rect)}
+    # 同段重钉 = 更新而非新增
+    dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
+               (pid, para_idx))
+    if dup:
+        db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
+        return {"id": dup[0]["id"]}
     mid = db.marginalia_add(pid, para_idx, int(body.get("page") or 0), quote[:200], note[:600],
-                            kind="lookup", rect=rect)
+                            kind="lookup")
     return {"id": mid}
 
 

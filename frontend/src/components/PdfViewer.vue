@@ -5,6 +5,8 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, KIND_ZH, ROLE_ZH, ROLE_GLYPH, CORE_ROLES, KIND_COLOR, ROLE_COLOR,
          ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
+import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
+import { vDrag } from '../drag'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -15,8 +17,17 @@ const LS_POS = 'eggpaper:pos:'
 
 const deskEl = ref(null)
 const ready = ref(false)
-const zoom = ref(1)
-const fitScale = ref(1)
+const zoom = ref(1)              // 在"适宽/适页"之上的微调倍率
+const fit = ref('width')         // width 适宽 / page 适页 / none 固定百分比
+const fitScale = ref(1)          // 适宽比例：容器宽 ÷ 纸宽
+const pageFitScale = ref(1)      // 适页比例：容器高 ÷ 纸高
+const pageNum = ref(1)           // 当前页（1 起，跟着滚动更新）
+const pageIn = ref('1')          // 页码输入框里的字
+const searchOpen = ref(false)
+const searchQ = ref('')
+const searchHits = ref([])       // [{page, gi, y, rects}]
+const searchAt = ref(-1)
+const searchBusy = ref(false)
 const midX = ref(0)              // 书桌中线：缩放条/提示贴它，而不是视口中线
 const sheets = ref([])
 const roleCard = ref(null)       // { idx, x, y } 点开的角色卡，只有点击能开关
@@ -26,7 +37,9 @@ const pendingPara = ref(null)    // 段译进行中
 const freshNotes = ref(false)
 const backChip = ref(false)
 const rendering = ref(false)     // 正在出图：顶部一条细线，不遮内容
-const flash = ref(null)
+const flash = ref(null)          // { idx, gi } 标出整段；或 { boxes, gi } 精确标出引文
+const pageInputEl = ref(null)
+const searchInputEl = ref(null)
 
 const canvases = ref([]), textLayers = ref([]), pageEls = ref([])
 const doneKeys = new Set()
@@ -36,7 +49,13 @@ const scroller = () => deskEl.value?.closest('.desk') || deskEl.value
 let docs = { orig: null, dual: null, mono: null }
 let ro = null
 
-const scale = computed(() => Math.min(2.2, Math.max(0.4, fitScale.value * zoom.value)))
+const scale = computed(() => {
+  const base = fit.value === 'page' ? Math.min(fitScale.value, pageFitScale.value)
+             : fit.value === 'none' ? 1
+             : fitScale.value
+  return Math.min(3, Math.max(0.2, base * zoom.value))
+})
+const zoomPct = computed(() => Math.round(scale.value * 100))
 const parasByPage = computed(() => {
   const m = {}
   for (const p of store.paras) (m[p.page] ||= []).push(p)
@@ -201,10 +220,15 @@ function onUserScroll() { anchorCancel = true }
 function measure() {
   const first = sheets.value[0]?.items?.[0]
   updateMid()
-  if (!deskEl.value || !first) return
+  const sc = scroller()
+  if (!sc || !first) return
   const perRow = sheets.value[0].items.length
   const gutterW = store.viewer.variant === 'original' ? GUTTER : 6
-  fitScale.value = (deskEl.value.clientWidth - 60 - gutterW - (perRow === 2 ? 20 : 0)) / (first.w * perRow)
+  // 量的是滚动容器（书桌）的宽度，不是 .desk-inner——后者是 max-content，
+  // 会随排版自己长大，拿它算"适宽"就成了正反馈：纸越大 → 容器越宽 → 纸更大。
+  fitScale.value = (sc.clientWidth - 60 - gutterW - (perRow === 2 ? 20 : 0)) / (first.w * perRow)
+  // 适页：把一整页塞进书桌高度（留出上下内边距）
+  pageFitScale.value = (sc.clientHeight - 56) / first.h
 }
 
 function updateMid() {
@@ -268,6 +292,7 @@ function doRenderItem(it) {
       await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise
       if (tlEl && it.text) {
         tlEl.innerHTML = ''
+        clearTextIndex(tlEl)          // 节点全换了，旧的引文索引作废
         const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
         await tl.render()
       }
@@ -321,6 +346,7 @@ function noteHeight(n) {
 
 async function measureNotes() {
   await nextTick()
+  computeQuoteMarks()
   const next = { ...noteHeights.value }
   let changed = false
   for (const el of document.querySelectorAll('.mg-note[data-nid]')) {
@@ -342,7 +368,7 @@ const pageLayouts = computed(() => {
     const baseH = it.h * scale.value
     const cands = notesShown.value
       .filter(n => n.page === it.origPage)
-      .map(n => ({ n, anchor: (n.rect ? n.rect.y0 : paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value }))
+      .map(n => ({ n, anchor: quoteY(n) }))
     if (pendingPara.value != null) {
       const p = paraByIdx.value[pendingPara.value]
       if (p && p.page === it.origPage)
@@ -364,15 +390,77 @@ const pageLayouts = computed(() => {
 
 function notesOnPage(pno) { return pageLayouts.value[pno]?.notes || [] }
 
+/* ---------------- 引文落位：划线精确到行 ---------------- */
+
+// 一条引文落到哪几行——用段落自带的行级坐标算，不依赖渲染，页边排序和跳转都用它
+// （缓存放组件里，不往 store 的批注对象上挂字段：那是数据，别被排布逻辑污染）
+const spanCache = new Map()
+function quoteSpan(n) {
+  if (!n) return null
+  const k = n.id + '|' + n.para_idx
+  if (!spanCache.has(k)) {
+    const p = paraByIdx.value[n.para_idx]
+    spanCache.set(k, n.quote && p ? lineSpanOf(p, n.quote) : null)
+  }
+  return spanCache.get(k)
+}
+// 框选钉子和引文钉子是两回事：前者锚在用户圈的那块矩形上（rect 就是唯一真相），
+// 后者要在原文里重新找引文。旧数据只有靠 quote 的前缀分辨，新数据看 kind。
+function isRegion(n) { return n.kind === 'region' || (n.quote || '').startsWith('[选区]') }
+function regionBox(n) {
+  const s = scale.value
+  return n.rect ? [{ x: n.rect.x0 * s, y: n.rect.y0 * s, w: (n.rect.x1 - n.rect.x0) * s, h: (n.rect.y1 - n.rect.y0) * s }] : []
+}
+
+// 纸面上那段引文的精确矩形（逐行，DOM 量出来的），只给当前已渲染的页算
+const quoteMarks = ref({})          // noteId -> [{x,y,w,h}]
+function computeQuoteMarks() {
+  const out = {}
+  for (const n of notesShown.value) {
+    if (isRegion(n) || !n.quote) continue
+    const it = pageItem(n.page)
+    const el = it && pageEls.value[it.gi]
+    if (!el) continue
+    const r = findQuoteRects(el, n.quote)
+    if (r) out[n.id] = r.rects
+  }
+  quoteMarks.value = out
+}
+// 没有 DOM 时的退路：按行级坐标画整行框（行数准，行内不裁）
+function spanBoxes(n) {
+  const span = quoteSpan(n)
+  if (!span) return null
+  return span.lines.map(l => ({
+    x: l.bbox.x0 * scale.value, y: l.bbox.y0 * scale.value,
+    w: (l.bbox.x1 - l.bbox.x0) * scale.value, h: (l.bbox.y1 - l.bbox.y0) * scale.value,
+  }))
+}
+function markBoxes(n) {
+  if (isRegion(n)) return regionBox(n)
+  return quoteMarks.value[n.id] || spanBoxes(n) || []
+}
+// 引文的第一个字在纸上的 y（用来排序/跳转），拿不到就退回段落首行
+function quoteY(n) {
+  if (isRegion(n)) return (n.rect?.y0 || 0) * scale.value
+  const m = quoteMarks.value[n.id]
+  if (m?.length) return m[0].y
+  const span = quoteSpan(n)
+  if (span) return span.bbox.y0 * scale.value
+  return (paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value
+}
+const currentHit = computed(() => searchHits.value[searchAt.value] || null)
+function searchHitsOnPage(pno) { return searchHits.value.filter(h => h.page === pno) }
+
 /* ---------------- 角色卡：点击开，Esc/点外/×关 ---------------- */
 
 let roleCardAnchor = null        // 打开卡片的那个书签元素
 let roleCardRaf = 0
 const roleCardEl = ref(null)
+let roleCardDragged = false      // 用户把它拖走了：就别再粘回书签旁边（抢不过人手）
 
 // 卡片跟着书签走：页面一滚就重新贴回书签旁边，而不是被滚没了
 function placeRoleCard() {
-  if (roleCard.value == null || !roleCardAnchor) return
+  if (roleCard.value == null || !roleCardAnchor || roleCardDragged) return
   const r = roleCardAnchor.getBoundingClientRect()
   const desk = (deskEl.value?.closest('.desk') || deskEl.value)?.getBoundingClientRect()
   if (desk && (r.bottom < desk.top - 40 || r.top > desk.bottom + 40)) { closeRoleCard(); return }
@@ -392,6 +480,7 @@ function followRoleCard() {
 async function openRoleCard(e, p) {
   if (roleCard.value?.idx === p.idx) { closeRoleCard(); return }
   roleCardAnchor = e.currentTarget
+  roleCardDragged = false
   roleCard.value = { idx: p.idx, x: 0, y: 0 }
   expandedNote.value = null
   await nextTick()
@@ -400,6 +489,7 @@ async function openRoleCard(e, p) {
 function closeRoleCard() {
   roleCard.value = null
   roleCardAnchor = null
+  roleCardDragged = false
 }
 
 const roleCardData = computed(() => {
@@ -502,6 +592,76 @@ async function unpin(mid) {
   await refreshM()
 }
 
+/* ---------------- 阅读器基本功能：缩放 / 页码 / 搜索 ---------------- */
+
+function setFit(m) { fit.value = m; zoom.value = 1; saveLater() }
+function stepZoom(d) {
+  // 在"适宽/适页"之上微调；已经是固定比例就在当前比例上乘
+  const next = scale.value * (d > 0 ? 1.15 : 1 / 1.15)
+  fit.value = 'none'
+  zoom.value = Math.min(3, Math.max(0.2, next))
+  saveLater()
+}
+function gotoPage(p) {
+  const pno = Math.min(store.paper?.n_pages || 1, Math.max(1, Math.round(p)))
+  pageIn.value = String(pno)
+  const it = pageItem(pno - 1)
+  const el = it && pageEls.value[it.gi]
+  if (!el) return
+  backStack.push(scroller().scrollTop)
+  scrollToY(el.offsetTop - 8, true)
+  pageNum.value = pno
+  backChip.value = true
+  clearTimeout(applyJump._t)
+  applyJump._t = setTimeout(() => (backChip.value = false), 5000)
+}
+function stepPage(d) { gotoPage(pageNum.value + d) }
+
+// 近处滑过去、远处直接切：跨好几页的"平滑"滚动要滚一两秒，翻页就成了等动画。
+// 翻页/跳页一律即时；同页内的微调（查找命中）才滑。
+function scrollToY(y, instant = false) {
+  const sc = scroller()
+  if (!sc) return
+  const far = Math.abs(y - sc.scrollTop) > sc.clientHeight * 1.5
+  sc.scrollTo({ top: y, behavior: instant || far ? 'auto' : 'smooth' })
+}
+
+// 文档内搜索：在已渲染的文本层里找，命中位置用和引文划线同一套办法量，
+// 所以跳过去落在哪、亮多长，都跟原文对得上。
+async function runSearch() {
+  const q = searchQ.value.trim()
+  if (q.length < 2) { searchHits.value = []; searchAt.value = -1; return }
+  searchBusy.value = true
+  const hits = []
+  for (const it of flatItems.value) {
+    if (it.origPage < 0) continue
+    const el = pageEls.value[it.gi]
+    if (!el?.querySelector('.textLayer')) continue
+    for (const h of findAllRects(el, q)) hits.push({ ...h, page: it.origPage, gi: it.gi })
+  }
+  hits.sort((a, b) => (a.page - b.page) || (a.y - b.y))
+  searchHits.value = hits
+  searchAt.value = hits.length ? 0 : -1
+  searchBusy.value = false
+  if (hits.length) gotoHit(0)
+  else toast('没找到「' + q + '」')
+}
+function gotoHit(i) {
+  const hits = searchHits.value
+  if (!hits.length) return
+  searchAt.value = (i + hits.length) % hits.length
+  const h = hits[searchAt.value]
+  const it = pageItem(h.page)
+  const el = it && pageEls.value[it.gi]
+  if (!el) return
+  // 查找命中一律即时落位：平滑滚动在长距离上要滚一两秒，而且落位不准就没法核对了
+  scrollToY(el.offsetTop + h.rects[0].y - scroller().clientHeight * 0.3, true)
+}
+// 命中的高亮：给当前搜到的那条一个更大的底
+function hitBoxes(h) { return h?.rects || [] }
+function searchStep(d) { if (searchHits.value.length) gotoHit(searchAt.value + d) }
+function closeSearch() { searchOpen.value = false; searchQ.value = ''; searchHits.value = []; searchAt.value = -1 }
+
 function translateSelectionKey() {
   const s = window.getSelection()
   if (s && !s.isCollapsed && s.toString().trim()) onMouseUp({})
@@ -521,17 +681,32 @@ async function applyJump() {
   const it = pageItem(j.page)
   const el = it && pageEls.value[it.gi]
   if (!el) return
-  scroller().scrollTo({ top: el.offsetTop + j.y0 * scale.value - scroller().clientHeight * 0.28, behavior: 'smooth' })
+  // 落点就是引文首行：跳过去的第一眼应该正好看见被引用的那句话
+  scrollToY(el.offsetTop + j.y0 * scale.value - scroller().clientHeight * 0.28)
   flash.value = null
-  for (const p of parasByPage.value[j.page] || []) {
-    if (p.bbox.y0 * scale.value <= j.y0 * scale.value && p.bbox.y1 * scale.value >= j.y0 * scale.value - 6) {
-      flash.value = p.idx; break
+  if (j.rects?.length) {
+    flash.value = { gi: it.gi, boxes: j.rects }
+  } else {
+    // 只给了 y：标出所在的那一段（用行级坐标兜底，别整段乱涂的时候多）
+    for (const p of parasByPage.value[j.page] || []) {
+      const y0 = (p.lines?.[0]?.bbox.y0 ?? p.bbox.y0) * scale.value
+      const y1 = (p.lines?.[p.lines.length - 1]?.bbox.y1 ?? p.bbox.y1) * scale.value
+      if (y0 <= j.y0 * scale.value + 6 && y1 >= j.y0 * scale.value - 6) { flash.value = { idx: p.idx, gi: it.gi }; break }
     }
   }
   setTimeout(() => (flash.value = null), 2200)
   backChip.value = true
   clearTimeout(applyJump._t)
   applyJump._t = setTimeout(() => (backChip.value = false), 5000)
+}
+
+/* 眉批卡片上的引文：点一下跳到纸上那句话，位置就是划线的位置 */
+function jumpQuote(n) {
+  const boxes = markBoxes(n)
+  const it = pageItem(n.page)
+  if (!it) return
+  const y = boxes.length ? boxes[0].y / scale.value : (n.rect?.y0 ?? paraByIdx.value[n.para_idx]?.bbox.y0 ?? 0)
+  store.jump = { page: n.page, y0: y, y1: y + 1, rects: boxes, at: Date.now() }
 }
 
 function jumpBack() {
@@ -574,16 +749,30 @@ async function translateCurrent() {
   else toast('滚动一下，告诉我你在读哪段')
 }
 
-store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey }
+store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch }
+
+function openSearch() { searchOpen.value = true }
 
 /* ---------------- 滚动：scroll-spy + 位置记忆 ---------------- */
 
 let spyT = null, saveT = null
 function onScroll() {
   followRoleCard()          // 卡片跟着书签走，不再一滚就消失
+  const sc = scroller()
+  const top = sc.scrollTop + 8
+  let cur = 1
+  for (const it of flatItems.value) {
+    const el = pageEls.value[it.gi]
+    if (el && el.offsetTop <= top) cur = origPageOf(it) + 1
+    else if (el) break
+  }
+  if (cur !== pageNum.value) {
+    pageNum.value = cur
+    if (document.activeElement !== pageInputEl.value) pageIn.value = String(cur)
+  }
   clearTimeout(spyT)
   spyT = setTimeout(() => {
-    const focusY = scroller().scrollTop + scroller().clientHeight * 0.4
+    const focusY = sc.scrollTop + sc.clientHeight * 0.4
     let best = null, bestD = 1e9
     for (const p of store.paras) {
       const y = paraAbsY(p.idx)
@@ -601,7 +790,7 @@ function savePos() {
   if (!store.currentId || !scroller()) return
   localStorage.setItem(LS_POS + store.currentId, JSON.stringify({
     scroll: scroller().scrollTop, variant: store.viewer.variant,
-    spread: store.viewer.spread, zoom: zoom.value,
+    spread: store.viewer.spread, zoom: zoom.value, fit: fit.value,
   }))
 }
 // 换了姿势也要记住：不能只在滚动时才存
@@ -612,6 +801,7 @@ onMounted(async () => {
   await nextTick()
   try {
     const saved = JSON.parse(localStorage.getItem(LS_POS + store.currentId) || '{}')
+    if (saved.fit) fit.value = saved.fit
     if (saved.zoom) zoom.value = saved.zoom
   } catch { /* */ }
   await measureNotes()
@@ -733,13 +923,21 @@ watch(() => store.escTick, () => {
   sel.visible = false
   if (vis.visible) closeVis()
   roleCard.value = null
+  if (searchOpen.value) closeSearch()
 })
+// 聚焦要用 preventScroll：查找框挂在书桌内容的末尾，浏览器为了"把焦点滚进视野"
+// 会把整个书桌滚到底，把刚跳好的命中位置冲掉。
+watch(searchOpen, v => { if (v) nextTick(() => searchInputEl.value?.focus({ preventScroll: true })) })
+let searchT = null
+watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 320) })
 
 watch(() => store.viewer.variant, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
 watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
+watch(() => store.paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
 watch(() => store.marginalia.notes, (n, o) => {
+  spanCache.clear()
   if (n.length && (!o || n.length > o.length)) {
     freshNotes.value = true
     setTimeout(() => (freshNotes.value = false), 1600)
@@ -772,17 +970,27 @@ watch(() => store.marginalia.notes, (n, o) => {
             <div class="para-zone">
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
                 <div v-if="store.viewer.layers.skim && it.origPage >= 0 && roleOf(p) && !isCore(p)"
-                     class="para-fade" :class="{ hot: flash === p.idx }"
+                     class="para-fade"
                      :style="{ ...rectStyle(p), transitionDelay: Math.min(400, pi * 12) + 'ms' }"></div>
                 <div v-else-if="store.viewer.layers.skim && it.origPage >= 0 && roleOf(p) && isCore(p)"
                      class="para-core-bar"
                      :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"></div>
-                <div v-if="flash === p.idx" class="para-fade hot" :style="rectStyle(p)"></div>
+                <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
               </template>
+
+              <!-- 跳转/查找命中：精确到字符的矩形，落在哪就亮在哪 -->
+              <div v-for="(b, bi) in flash?.gi === it.gi ? flash.boxes || [] : []" :key="'fb' + bi"
+                   class="para-fade hot" :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
+              <template v-for="(h, hi) in searchHitsOnPage(it.origPage)" :key="'s' + hi">
+                <div v-for="(b, bi) in h.rects" :key="bi" class="find-hit" :class="{ cur: h === currentHit }"
+                     :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
+              </template>
+
+              <!-- 眉批引文：按句子落行，划了几行就是几个块；框选钉子按区域画 -->
               <template v-for="{ n } in notesOnPage(it.origPage)" :key="'n' + n.id">
-                <div v-if="n.rect" class="mg-mark" :class="{ draw: freshNotes }"
-                     :style="{ left: n.rect.x0 * scale + 'px', top: n.rect.y0 * scale + 'px',
-                               width: (n.rect.x1 - n.rect.x0) * scale + 'px', height: (n.rect.y1 - n.rect.y0) * scale + 'px',
+                <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark" :data-nid="n.id"
+                     :class="{ draw: freshNotes }"
+                     :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px',
                                background: KIND_COLOR[n.kind] + '2e',
                                borderBottom: '2px solid ' + KIND_COLOR[n.kind] + '99' }"></div>
               </template>
@@ -807,13 +1015,13 @@ watch(() => store.marginalia.notes, (n, o) => {
                  @click="toggleNote(n)">
               <div class="mg-head">
                 <span class="mg-kind" :style="{ color: KIND_TEXT_COLOR[n.kind] }">
-                  {{ n.kind === 'lookup' ? (pending ? '翻译中' : '你 · 查译') : KIND_ZH[n.kind] }}
+                  {{ pending ? '翻译中' : (KIND_ZH[n.kind] ? (n.kind === 'lookup' || n.kind === 'region' ? '你 · ' : '') + KIND_ZH[n.kind] : '') }}
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
                 <button v-if="!pending" class="mg-del" title="移除这条批注" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ n.note }}</div>
-              <span class="mg-quote" :title="n.quote">“{{ n.quote.slice(0, 40) }}{{ n.quote.length > 40 ? '…' : '' }}”</span>
+              <span class="mg-quote" :title="'跳到纸上这句：' + n.quote" @click.stop="jumpQuote(n)">“{{ n.quote.slice(0, 40) }}{{ n.quote.length > 40 ? '…' : '' }}”</span>
             </div>
           </div>
         </div>
@@ -823,12 +1031,40 @@ watch(() => store.marginalia.notes, (n, o) => {
     <!-- 出图进度：一条不挡路的细线，比"遮住论文的加载器"诚实 -->
     <div class="stage-line" v-if="ready && rendering"><i /></div>
 
-    <!-- 缩放 -->
+    <!-- 阅读器控件：翻页 / 缩放 / 查找。整条可拖走，别压在论文中间 -->
     <Transition name="fade">
-    <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px' }">
-      <button @click="zoom = Math.max(0.5, zoom - 0.15)">－</button>
-      <button class="zb-num" @click="zoom = 1">{{ Math.round(zoom * 100) }}%</button>
-      <button @click="zoom = Math.min(2.5, zoom + 0.15)">＋</button>
+    <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px' }"
+         v-drag="{ key: 'zoombar' }" data-drag>
+      <button title="上一页（PageUp）" @click="stepPage(-1)">‹</button>
+      <span class="zb-page">
+        <input ref="pageInputEl" v-model="pageIn" class="zb-input" title="跳到第几页"
+               @keydown.enter="gotoPage(Number(pageIn))" @blur="pageIn = String(pageNum)" />
+        <em>/ {{ store.paper?.n_pages || 0 }}</em>
+      </span>
+      <button title="下一页（PageDown）" @click="stepPage(1)">›</button>
+      <span class="zb-sep"></span>
+      <button title="适应宽度" :class="{ on: fit === 'width' }" @click="setFit('width')">适宽</button>
+      <button title="适应页面" :class="{ on: fit === 'page' }" @click="setFit('page')">适页</button>
+      <button class="zb-num" title="实际大小" @click="setFit('none')">{{ zoomPct }}%</button>
+      <button title="缩小" @click="stepZoom(-1)">－</button>
+      <button title="放大" @click="stepZoom(1)">＋</button>
+      <span class="zb-sep"></span>
+      <button title="在论文里查找（Ctrl+F）" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">查找</button>
+    </div>
+    </Transition>
+
+    <!-- 文档内查找：结果条数与位置都来自真实字符矩形 -->
+    <Transition name="pop">
+    <div v-if="ready && searchOpen" class="desk-float find-bar" :style="{ left: midX + 'px' }"
+         v-drag="{ key: 'findbar' }" data-drag>
+      <input ref="searchInputEl" v-model="searchQ" class="fb-input" placeholder="在论文里找…"
+             @keydown.enter="searchStep(1)" @keydown.escape="closeSearch" />
+      <span class="fb-count">
+        {{ searchHits.length ? (searchAt + 1) + ' / ' + searchHits.length : (searchBusy ? '…' : '无结果') }}
+      </span>
+      <button :disabled="!searchHits.length" title="上一个（Enter）" @click="searchStep(-1)">‹</button>
+      <button :disabled="!searchHits.length" title="下一个（Enter）" @click="searchStep(1)">›</button>
+      <button class="ghost" title="关闭（Esc）" @click="closeSearch">×</button>
     </div>
     </Transition>
 
@@ -836,15 +1072,14 @@ watch(() => store.marginalia.notes, (n, o) => {
     <Transition name="pop">
     <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
       <span class="fh-tag">框选</span>
-      <span>在页面上拖一块区域，松手就问</span>
-      <kbd>Esc</kbd>
       <button @click="store.viewer.frame = false">退出</button>
     </div>
     </Transition>
 
     <!-- 划词气泡 -->
     <Transition name="pop">
-    <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }" @mouseup.stop>
+    <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }"
+         v-drag="{ key: 'selpop' }" data-drag @mouseup.stop>
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
         已选 {{ sel.text.length }} 字符
       </div>
@@ -867,7 +1102,8 @@ watch(() => store.marginalia.notes, (n, o) => {
     <!-- 返回原位 -->
     <!-- 框选视觉问答 -->
     <Transition name="pop">
-    <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }" @mouseup.stop>
+    <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }"
+         v-drag="{ key: 'vispop' }" data-drag @mouseup.stop>
       <div class="vp-head">
         <span class="mono-label">选区问 AI</span>
         <button class="vp-x" title="关闭（Esc）" @click="closeVis">×</button>
@@ -893,8 +1129,9 @@ watch(() => store.marginalia.notes, (n, o) => {
     <!-- 角色卡：点页边书签打开 -->
     <Transition name="pop">
     <div class="role-card" v-if="roleCard && roleCardData" ref="roleCardEl"
-         :style="{ left: roleCard.x + 'px', top: roleCard.y + 'px' }" @mousedown.stop>
-      <div class="rc-top">
+         :style="{ left: roleCard.x + 'px', top: roleCard.y + 'px' }"
+         v-drag="{ onStart: () => (roleCardDragged = true) }" @mousedown.stop>
+      <div class="rc-top" data-drag>
         <span class="rc-role" :style="{ color: ROLE_TEXT_COLOR[roleCardData.role] }">{{ ROLE_ZH[roleCardData.role] }}</span>
         <span v-if="roleCardData.anno.user_override" class="rc-flag">已改判</span>
         <span class="rc-num">¶{{ roleCard.idx }} · 第 {{ roleCardData.p.page + 1 }} 页</span>

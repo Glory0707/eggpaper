@@ -213,17 +213,11 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .wordmark .egg.wobble { animation: wobble 0.45s var(--ease-spring); transform-origin: 50% 90%; }
 @keyframes wobble { 0% {rotate: 0deg} 30% {rotate: 3deg} 60% {rotate: -2.4deg} 100% {rotate: 0deg} }
 .wordmark .name { font-family: var(--brand); font-style: italic; font-weight: 600; font-size: var(--fs-display); }
-.wordmark .vol {
-  font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.16em;
-  color: var(--ink-3); border: 1px solid var(--hairline);
-  padding: 2px 6px; border-radius: 2px; transform: translateY(2px);
-}
 .doc-head { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .doc-head .t {
   font-family: var(--sans); font-weight: 650; font-size: var(--fs-xl); letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.doc-head .m { font-family: var(--sans); font-size: var(--fs-xs); color: var(--ink-3); margin-top: 2px; }
 .topbar .actions { display: flex; align-items: center; gap: 8px; }
 
 .segmented {
@@ -337,7 +331,13 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   flex: 1; min-width: 0; overflow: auto; position: relative;
   background: var(--paper);
 }
-.desk-inner { padding: 26px 20px 80px; display: flex; flex-direction: column; align-items: center; gap: 26px; }
+/* 桌内容用 max-content + auto 边距居中，不能用 align-items:center 居中：
+   flex 居中在内容比容器宽时会把左半边推到滚动区之外，放大后论文左边就再也滚不回来了。
+   max-content 让容器随内容长宽，两边都留得住。 */
+.desk-inner {
+  padding: 26px 20px 80px;
+  width: max-content; min-width: 100%; margin: 0 auto;
+}
 .sheet-stage { display: flex; flex-direction: column; align-items: center; gap: 26px; }
 
 /* 出图进度线：贴书桌顶部，细到几乎看不见，但你在换模式时知道它在干活 */
@@ -542,8 +542,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .card-eye { border: 1px solid var(--hairline); background: var(--card-2); border-radius: 4px; overflow: hidden; }
 .card-eye .ce-one {
   font-family: var(--sans); font-size: var(--fs-xl); font-weight: 550; line-height: 1.7; letter-spacing: -0.005em;
-  padding: 14px 16px;
-  background: linear-gradient(transparent 62%, var(--yolk-soft) 62%);
+  padding: 14px 16px 6px;
 }
 .card-eye .ce-row { display: flex; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--hairline-soft); }
 .card-eye .ce-k { font-family: var(--sans); font-weight: 600; font-size: var(--fs-xs); color: var(--ink-3); width: 58px; flex-shrink: 0; padding-top: 3px; }
@@ -575,8 +574,12 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .term-row .t-zh { font-size: var(--fs-sm); font-weight: 600; flex: 1; min-width: 0; }
 .term-row .t-del { border: none; background: none; color: var(--ink-3); font-size: var(--fs-md); padding: 0 3px; }
 .term-row .t-del:hover { color: var(--vermilion); box-shadow: none; transform: none; }
+/* 术语：flex 子项默认 min-width:auto，输入框的"默认宽度"会撑破整行，
+   必须显式 min-width:0 才肯收缩 */
 .term-form { display: flex; gap: 6px; margin-bottom: 10px; }
-.term-form input { font-size: var(--fs-sm); }
+.term-form input { font-size: var(--fs-sm); min-width: 0; flex: 1 1 0; }
+.term-form button { flex: 0 0 auto; padding: 6px 10px; }
+.term-filter { width: 100%; margin-bottom: 8px; font-size: var(--fs-sm); }
 
 /* 本文缩写：论文自带的，往往几十条，圈在固定高度里，别把术语表挤到屏幕外 */
 .abbr-list { max-height: 200px; overflow-y: auto; margin-top: 2px; }
@@ -700,11 +703,14 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .claim-item .c-head { display: flex; gap: 7px; align-items: flex-start; }
 .claim-item .c-id { font-family: var(--mono); font-size: var(--fs-xs); color: #fff; background: var(--r-claim); padding: 2px 6px; border-radius: 2px; flex-shrink: 0; letter-spacing: 0.08em; margin-top: 2px; }
 .claim-item .c-txt { font-family: var(--sans); font-weight: 650; font-size: var(--fs-md); line-height: 1.55; letter-spacing: -0.005em; flex: 1; }
-.claim-item .ci-tour {
-  font-size: var(--fs-xs); padding: 2px 6px; flex-shrink: 0;
-  background: transparent; border: 1px solid var(--hairline); color: var(--ink-3); border-radius: 2px;
+/* 点开一类角色：摊开它落在哪几段 */
+.role-legend .rl.on { background: var(--yolk-soft); color: var(--ink); }
+.role-hits { display: flex; flex-wrap: wrap; gap: 5px; margin: -8px 0 14px; }
+.role-hits .rh-chip {
+  font-family: var(--mono); font-size: var(--fs-xs); padding: 2px 8px;
+  border: 1px solid var(--hairline); border-radius: 3px; background: var(--card-2); color: var(--ink-2);
 }
-.claim-item .ci-tour:hover { color: var(--yolk-deep); border-color: rgba(150, 98, 10, 0.4); background: var(--yolk-soft); }
+.role-hits .rh-chip:hover { border-color: var(--yolk-deep); color: var(--yolk-deep); background: var(--yolk-soft); }
 
 /* 图表速览 */
 .fig-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
@@ -714,8 +720,18 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   position: fixed; inset: 0; z-index: 520; background: rgba(38, 32, 21, 0.72);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
 }
+.lb-stage { display: flex; align-items: center; gap: 10px; }
+.lb-nav {
+  width: 34px; height: 74px; flex-shrink: 0;
+  font-size: 26px; line-height: 1; color: #fff;
+  background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 4px; padding: 0 0 4px;
+}
+.lb-nav:hover { background: rgba(255, 255, 255, 0.24); box-shadow: none; transform: none; }
+.lb-nav:disabled { visibility: hidden; }
 .lightbox img { max-width: 86vw; max-height: 78vh; background: #fff; box-shadow: var(--shadow-pop); border-radius: 3px; }
-.lb-actions { display: flex; gap: 8px; }
+.lb-actions { display: flex; gap: 8px; align-items: center; }
+.lb-actions .mono-label { color: rgba(255, 255, 255, 0.75); margin-right: 4px; }
 
 /* 框选模式 */
 .page.frameable { cursor: crosshair; }
@@ -727,13 +743,39 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
    用 translate 而不是 transform 来居中，这样 pop 之类的动画仍能叠加，不会把居中的偏移冲掉 */
 .desk-float { position: fixed; translate: -50% 0; z-index: 88; }
 .zoom-bar {
-  bottom: 18px; display: flex; gap: 6px; align-items: stretch;
+  bottom: 18px; display: flex; gap: 3px; align-items: stretch;
   background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 3px; box-shadow: var(--shadow-page);
+  opacity: 0.72; transition: opacity var(--t-base) var(--ease-smooth);
 }
-.zoom-bar button { padding: 3px 10px; border-color: transparent; background: transparent; font-size: var(--fs-sm); }
+/* 平时半透，别跟论文抢注意力；鼠标过去或拖动时实心 */
+.zoom-bar:hover, .zoom-bar.dragging { opacity: 1; }
+.zoom-bar button { padding: 3px 9px; border-color: transparent; background: transparent; font-size: var(--fs-sm); color: var(--ink-2); }
 .zoom-bar button:hover { background: var(--yolk-soft); transform: none; box-shadow: none; }
-.zoom-bar .zb-num { font-family: var(--mono); font-size: var(--fs-xs); min-width: 52px; color: var(--ink-2); }
+.zoom-bar button.on { background: var(--ink); color: var(--card); }
+.zoom-bar .zb-num { font-family: var(--mono); font-size: var(--fs-xs); min-width: 48px; color: var(--ink-2); }
+.zoom-bar .zb-sep { width: 1px; background: var(--hairline); margin: 3px 2px; }
+.zoom-bar .zb-page { display: flex; align-items: center; gap: 3px; padding: 0 2px; }
+.zoom-bar .zb-input {
+  width: 34px; padding: 3px 4px; text-align: center;
+  font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink);
+}
+.zoom-bar .zb-page em { font-family: var(--mono); font-size: var(--fs-xs); font-style: normal; color: var(--ink-3); }
+
+/* 文档内查找 */
+.find-bar {
+  bottom: 62px; display: flex; align-items: center; gap: 6px;
+  background: var(--card); border: 1px solid var(--hairline);
+  border-radius: 4px; padding: 4px; box-shadow: var(--shadow-pop);
+}
+.find-bar .fb-input { width: 190px; padding: 4px 8px; font-size: var(--fs-sm); }
+.find-bar .fb-count { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); min-width: 52px; text-align: center; }
+.find-bar button { padding: 3px 9px; font-size: var(--fs-sm); }
+.find-hit {
+  position: absolute; background: rgba(208, 138, 28, 0.38);
+  border-radius: 1px; pointer-events: none; z-index: 3;
+}
+.find-hit.cur { background: rgba(208, 138, 28, 0.62); box-shadow: 0 0 0 1.5px var(--yolk-deep); }
 
 /* 框选中：常驻提示 + 退出口，绝不让人找不到怎么取消 */
 .frame-hint {
@@ -746,10 +788,6 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .frame-hint .fh-tag {
   font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.14em;
   color: #2b1d05; background: var(--yolk); border-radius: 10px; padding: 2px 7px;
-}
-.frame-hint kbd {
-  font-family: var(--mono); font-size: var(--fs-xs); background: rgba(255, 253, 246, 0.14);
-  border-radius: 3px; padding: 1px 5px;
 }
 .frame-hint button {
   background: var(--card-2); border: none; border-radius: 14px;
@@ -774,3 +812,49 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .adv-item { border-top: 1px solid var(--hairline-soft); padding: 9px 2px; }
 .adv-q { font-weight: 600; font-size: var(--fs-md); line-height: 1.55; }
 .adv-outline { margin: 5px 0 0; padding-left: 16px; color: var(--ink-2); font-size: var(--fs-sm); line-height: 1.6; }
+
+/* ============================================================
+   浮窗：可以拖走
+   加 .draggable 的元素（或它的 [data-drag] 子元素）按住即可拖动，
+   位移写在 transform 上，不和既有的 left/top/translate 打架。
+   ============================================================ */
+.draggable { will-change: transform; }
+.draggable [data-drag], .draggable[data-drag] { cursor: grab; }
+.draggable.dragging, .draggable.dragging [data-drag] { cursor: grabbing; }
+.draggable.dragging { transition: none !important; user-select: none; }
+
+/* ============================================================
+   窄窗（半屏 / 竖屏 / 小笔记本）
+   右栏不再占版面，变成浮在书桌上的抽屉；论文因此能占满整个书桌宽度。
+   ============================================================ */
+@media (max-width: 1179px) {
+  .rail-wrap {
+    position: fixed; right: 0; top: 56px; bottom: 0; z-index: 210;
+    box-shadow: -10px 0 30px -14px rgba(29, 27, 23, 0.32);
+  }
+  .rail-wrap.collapsed { box-shadow: none; }
+  .rail-tab { position: fixed; top: 50%; }
+  .topbar { gap: 10px; }
+  .wordmark .name { font-size: var(--fs-xl); }
+}
+@media (max-width: 1000px) {
+  /* 顶栏太挤时先让出论文标题：纸面上本来就写着它 */
+  .doc-head { display: none; }
+  .segmented button { padding: 6px 9px; }
+}
+
+/* 弹窗标题行：可拖 + 右上角一个叉 */
+.modal .modal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.modal .modal-head h3 { margin: 0; flex: 1; }
+.modal .modal-x {
+  border: none; background: none; color: var(--ink-3); font-size: var(--fs-xl);
+  line-height: 1; padding: 0 2px;
+}
+.modal .modal-x:hover { color: var(--ink); box-shadow: none; transform: none; }
+
+/* 一行里塞标签 + 若干个勾选（图层、演示模式） */
+.modal .f-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.modal .f-line .ck {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--fs-sm); color: var(--ink-2); cursor: pointer; white-space: nowrap;
+}

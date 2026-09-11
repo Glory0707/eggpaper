@@ -2,6 +2,9 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH, ROLE_COLOR, ROLE_TEXT_COLOR,
          KIND_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
+import { lineSpanOf } from '../find'
+
+const USER_KINDS = ['lookup', 'region']   // 用户自己钉的（查译、选区问答），不算 AI 眉批
 
 const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
@@ -12,6 +15,14 @@ function jumpPara(idx) {
   const p = paraByIdx.value[idx]
   if (p) jumpTo(p.page, p.bbox.y0, p.bbox.y1)
 }
+// 眉批跳转：跳到这条批注引用的那句话，而不是它所在段的开头
+function jumpNote(n) {
+  const p = paraByIdx.value[n.para_idx]
+  const span = p ? lineSpanOf(p, n.quote) : null
+  if (span) return jumpTo(n.page, span.bbox.y0, span.bbox.y1)
+  if (n.rect) return jumpTo(n.page, n.rect.y0, n.rect.y1)
+  jumpPara(n.para_idx)
+}
 
 const gapParas = computed(() =>
   store.paras.filter(p => store.analysis.annotations[String(p.idx)]?.role === 'gap'))
@@ -21,14 +32,19 @@ const roleCounts = computed(() => {
   for (const v of Object.values(store.analysis.annotations)) c[v.role] = (c[v.role] || 0) + 1
   return c
 })
+// 每个角色到底落在哪几段。一个角色往往有十几段，"点一下跳第一个"等于把
+// 其余位置全藏了——所以点开是摊开这一类的全部 ¶ 号，自己挑一个去。
+const roleParas = computed(() => {
+  const m = {}
+  for (const [k, a] of Object.entries(store.analysis.annotations)) (m[a.role] ||= []).push(parseInt(k))
+  for (const k of Object.keys(m)) m[k].sort((a, b) => a - b)
+  return m
+})
+const openRole = ref(null)
+function toggleRole(k) { openRole.value = openRole.value === k ? null : k }
 // 排序本身就是信息：主干在前，铺垫在后
 const ROLE_ORDER = ['claim', 'evidence', 'gap', 'limitation', 'control', 'extension', 'background', 'boilerplate']
 const legendRoles = computed(() => ROLE_ORDER.filter(k => roleCounts.value[k]))
-
-function jumpFirst(k) {
-  const hit = Object.keys(store.analysis.annotations).find(x => store.analysis.annotations[x].role === k)
-  if (hit != null) jumpPara(parseInt(hit))
-}
 
 function anchorsOf(claim) {
   return claim.anchors
@@ -130,8 +146,12 @@ function onPrefill() {
 onMounted(() => {
   loadTerms()
   window.addEventListener('eggpaper:terms-prefill', onPrefill)
+  window.addEventListener('keydown', onFigKey)
 })
-onUnmounted(() => window.removeEventListener('eggpaper:terms-prefill', onPrefill))
+onUnmounted(() => {
+  window.removeEventListener('eggpaper:terms-prefill', onPrefill)
+  window.removeEventListener('keydown', onFigKey)
+})
 watch(tab, t => { if (t === 'ask') loadSuggest(); if (t === 'eye') loadFigures() })
 watch(() => store.analysis.status, s => { if (s === 'done') loadSuggest() })
 
@@ -175,30 +195,6 @@ const currentClaim = computed(() => {
   return best
 })
 
-// ---------- 论证漫游：沿证据链自动巡航 ----------
-const tourActive = ref(false)
-let tourTimer = null
-function tourClaim(c) {
-  stopTour()
-  const steps = c.anchors
-  if (!steps.length) { toast('这条主张没有登记证据段'); return }
-  tourActive.value = true
-  let i = 0
-  jumpPara(steps[0])
-  tourTimer = setInterval(() => {
-    i += 1
-    if (i >= steps.length) { stopTour(); return }
-    jumpPara(steps[i])
-  }, 2600)
-  store.tourStop = stopTour
-}
-function stopTour() {
-  if (tourTimer) { clearInterval(tourTimer); tourTimer = null }
-  tourActive.value = false
-  store.tourStop = null
-}
-onUnmounted(() => stopTour())
-
 // ---------- 导师三问 ----------
 const advisor = ref([])
 const advBusy = ref(false)
@@ -213,7 +209,19 @@ watch(() => store.analysis.status, s => { if (s === 'done') loadAdvisor() })
 
 // ---------- 图表速览 ----------
 const figures = ref([])
-const lightbox = ref(null)
+// 灯箱用序号而不是对象：这样能左右翻图，像看图片一样一张张过
+const figIdx = ref(-1)
+const lightbox = computed(() => (figIdx.value >= 0 ? figures.value[figIdx.value] || null : null))
+function figStep(d) {
+  if (figures.value.length < 2) return
+  figIdx.value = (figIdx.value + d + figures.value.length) % figures.value.length
+}
+function onFigKey(e) {
+  if (figIdx.value < 0) return
+  if (e.key === 'ArrowLeft') { figStep(-1); e.preventDefault() }
+  else if (e.key === 'ArrowRight') { figStep(1); e.preventDefault() }
+  else if (e.key === 'Escape') figIdx.value = -1
+}
 async function loadFigures() {
   if (!store.currentId || figures.value.length) return
   try {
@@ -226,7 +234,7 @@ async function askFigure(f) {
     const url = api.figureUrl(store.currentId, f, 150)
     const blob = await (await fetch(url)).blob()
     const img = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob) })
-    lightbox.value = null
+    figIdx.value = -1
     const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
     store.visPrefill = {
       img, question: '讲解这张图：画了什么、支持论文的哪个结论、有什么可疑之处。',
@@ -236,7 +244,7 @@ async function askFigure(f) {
 }
 function figJump(f) {
   jumpTo(f.page, f.y0, f.y1)
-  lightbox.value = null
+  figIdx.value = -1
 }
 
 const termsFiltered = computed(() => {
@@ -276,20 +284,23 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         </div>
 
         <template v-else>
-          <!-- 点一下跳到该角色首段 -->
+          <!-- 图例就是页边那些色块的样本；点一类摊开它的全部位置 -->
           <div class="mono-label" style="margin:0 0 7px; display:flex; justify-content:space-between">
             <span>段落角色</span>
-            <span v-if="store.readingPara">读至 ¶{{ store.readingPara }}</span>
+            <span v-if="store.readingPara">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
           </div>
           <div class="role-legend">
-            <span class="rl" v-for="k in legendRoles" :key="k" @click="jumpFirst(k)">
+            <span class="rl" v-for="k in legendRoles" :key="k" :class="{ on: openRole === k }" @click="toggleRole(k)">
               <i :style="{ background: ROLE_COLOR[k], color: roleInk(k) }">{{ ROLE_GLYPH[k] }}</i>
               {{ ROLE_ZH[k] }}
               <b>{{ roleCounts[k] }}</b>
             </span>
           </div>
+          <div class="role-hits" v-if="openRole && roleParas[openRole]">
+            <button v-for="idx in roleParas[openRole]" :key="idx" class="rh-chip" @click="jumpPara(idx)">¶{{ idx }}</button>
+          </div>
 
-          <div class="mono-label" style="margin-bottom:8px">GAP</div>
+          <div class="mono-label" style="margin-bottom:8px">研究缺口</div>
           <div class="gap-node" v-for="p in gapParas" :key="p.idx">
             <div class="gap-row" @click="jumpPara(p.idx)">
               <span class="g-tag">¶{{ p.idx }}</span>
@@ -297,14 +308,12 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             </div>
           </div>
 
-          <div class="mono-label" style="margin:14px 0 8px">CLAIMS → EVIDENCE</div>
+          <div class="mono-label" style="margin:14px 0 8px">论点与证据 · {{ store.analysis.claims.length }} 条</div>
           <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id"
                :class="{ now: currentClaim === c.id }">
             <div class="c-head">
               <span class="c-id">{{ c.id }}</span>
               <span class="c-txt">{{ c.text }}</span>
-              <button class="ci-tour" :title="'论证漫游（' + c.anchors.length + ' 站）'"
-                      @click.stop="tourClaim(c)">▶</button>
             </div>
             <div class="ev-row" v-for="a in anchorsOf(c)" :key="a.idx" @click="jumpPara(a.idx)">
               <span class="e-dot">¶{{ a.idx }}</span>
@@ -318,10 +327,10 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             <div v-if="!anchorsOf(c).length" style="font-size:var(--fs-sm);color:var(--ink-3);margin-top:6px">未找到直接证据段</div>
           </div>
 
-          <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.some(n => n.kind !== 'lookup')"
+          <div v-if="store.marginalia.status === 'done' && store.marginalia.notes.some(n => !USER_KINDS.includes(n.kind))"
                style="margin-top:16px">
-            <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ store.marginalia.notes.filter(n => n.kind !== 'lookup').length }} 条</div>
-            <div v-for="n in store.marginalia.notes.filter(n => n.kind !== 'lookup').slice(0, 8)" :key="n.id" class="ev-row" @click="n.rect && jumpTo(n.page, n.rect.y0, n.rect.y1)">
+            <div class="mono-label" style="margin-bottom:8px">眉批速览 · {{ store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind)).length }} 条</div>
+            <div v-for="n in store.marginalia.notes.filter(n => !USER_KINDS.includes(n.kind)).slice(0, 8)" :key="n.id" class="ev-row" @click="jumpNote(n)">
               <span class="e-dot"></span>
               <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] }"></span>
               <span class="e-note"><span class="mono-label">{{ KIND_ZH[n.kind] }}</span> {{ n.note }}</span>
@@ -374,7 +383,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           <div class="mono-label" style="margin-bottom:8px">图表速览 · {{ figures.length }}</div>
           <div class="fig-strip">
             <img v-for="(f, i) in figures" :key="i" class="fig-thumb" :src="api.figureUrl(store.currentId, f)"
-                 :title="`第 ${f.page + 1} 页`" @click="lightbox = f" />
+                 :title="`第 ${f.page + 1} 页`" @click="figIdx = i" />
           </div>
         </div>
 
@@ -448,30 +457,34 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
 
         <div class="mono-label" style="margin-bottom:6px">术语表 · {{ terms.length }}</div>
         <div class="term-form">
-          <input type="text" v-model="termForm.term_en" placeholder="英文" style="flex:1.2" />
-          <input type="text" v-model="termForm.term_zh" placeholder="中文" style="flex:1" />
-          <button @click="addTerm">＋</button>
+          <input type="text" v-model="termForm.term_en" placeholder="英文" />
+          <input type="text" v-model="termForm.term_zh" placeholder="中文" />
+          <button title="添加" @click="addTerm">＋</button>
         </div>
-        <input type="text" v-model="termFilter" placeholder="筛选…" style="width:100%; margin-bottom:8px; font-size:var(--fs-sm)" />
+        <input type="text" v-model="termFilter" placeholder="筛选…" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl" download>导出 CSV</a></div>
         <div v-for="t in termsFiltered" :key="t.id" class="term-row">
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
-          <span v-if="t.source === 'seed'" class="mono-label">SEED</span>
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>
     </div>
 
-    <!-- 图表灯箱 -->
+    <!-- 图表灯箱：像看图片一样左右翻 -->
     <Transition name="fade">
-    <div class="lightbox" v-if="lightbox" @click="lightbox = null">
-      <img :src="api.figureUrl(store.currentId, lightbox, 200)" @click.stop />
+    <div class="lightbox" v-if="lightbox" @click="figIdx = -1">
+      <div class="lb-stage" @click.stop>
+        <button class="lb-nav" :disabled="figures.length < 2" title="上一张（←）" @click="figStep(-1)">‹</button>
+        <img :src="api.figureUrl(store.currentId, lightbox, 200)" />
+        <button class="lb-nav" :disabled="figures.length < 2" title="下一张（→）" @click="figStep(1)">›</button>
+      </div>
       <div class="lb-actions" @click.stop>
+        <span class="mono-label">{{ figIdx + 1 }} / {{ figures.length }} · 第 {{ lightbox.page + 1 }} 页</span>
         <button @click="figJump(lightbox)">在原文查看</button>
         <button @click="askFigure(lightbox)">问这张图</button>
-        <button @click="lightbox = null">关闭</button>
+        <button @click="figIdx = -1">关闭</button>
       </div>
     </div>
     </Transition>
