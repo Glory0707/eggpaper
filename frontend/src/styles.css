@@ -716,26 +716,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .sel-pop .sp-hits { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
 .sel-pop .sp-hits .chip { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-deep); font-size: var(--fs-xs); }
 
-/* 读段提示：纸下缘轻轻一句"这是什么"，并给两个真动作。
-   平时半透、悬停实心，和缩放条一个脾气 */
-.read-hint {
-  bottom: 62px;
-  display: flex; align-items: center; gap: 7px;
-  background: var(--card); border: 1px solid var(--hairline); border-radius: 20px;
-  padding: 4px 6px 4px 6px; box-shadow: var(--shadow-page);
-  opacity: 0.92; transition: opacity var(--t-base) var(--ease-smooth);
-}
-.read-hint:hover { opacity: 1; }
-.read-hint .rh-tag {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border-radius: 5px; font-size: var(--fs-xs); font-weight: 600;
-}
-.read-hint .rh-idx { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); }
-.read-hint .rh-role { font-size: var(--fs-sm); color: var(--ink); font-weight: 600; }
-.read-hint .rh-sep { width: 1px; align-self: stretch; background: var(--hairline); margin: 2px 1px; }
-.read-hint button { border-color: transparent; background: transparent; font-size: var(--fs-sm); padding: 3px 9px; color: var(--ink-2); }
-.read-hint button:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
-
 /* 阅读进度：贴书桌右缘的一根发丝，读到哪长到哪。不写字，不抢注意力 */
 .read-prog {
   position: fixed; top: 56px; bottom: 0; width: 3px; z-index: 87;

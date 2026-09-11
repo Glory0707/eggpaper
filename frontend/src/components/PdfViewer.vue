@@ -154,8 +154,7 @@ async function load({ keepPlace = false } = {}) {
   if (anchor) applyAnchor(anchor)
   else if (store.viewer.restorePos) { scroller().scrollTop = store.viewer.restorePos; store.viewer.restorePos = 0 }
   updateProg()
-  // 打开一篇也露一次读段提示：进门就告诉你在读的是哪一段、它算不算重点。
-  // 得先让 scroll-spy 跑一拍——"当前这一段"是它算出来的，不滚一下它还是空的。
+  // 让 scroll-spy 先跑一拍：不进滚动也要把页码、"读至 ¶n"、进度线初始化好
   if (veryFirst) setTimeout(onScroll, 800)
   loading = false
 }
@@ -520,33 +519,6 @@ function quoteY(n) {
 const currentHit = computed(() => searchHits.value[searchAt.value] || null)
 function searchHitsOnPage(pno) { return searchHits.value.filter(h => h.page === pno) }
 
-/* ---------------- 读段提示：读到哪一段，就说一句它是什么 ----------------
-   这是"让科研人真的能读进去"的那一下：原文再好看，一个人读 PDF 时最缺的也是
-   "我现在读的这句重要吗、能不能马上问一句"。所以视口中心那一段一变，纸下缘就轻轻
-   报一句它的角色，并给两个真动作（译这段 / 问这段）——它自己会走，不占地方。 */
-const hintRole = computed(() => {
-  const idx = store.readingPara
-  if (idx == null || !ready.value) return null
-  const role = store.viewer.layers.skeleton ? store.analysis.annotations[String(idx)]?.role : null
-  if (!role) return null
-  return { idx, role }
-})
-const hintOn = ref(false)
-let hintT = null
-let hintShown = null
-// 只在"读到另一段"时露一次：同一段里来回滚不再弹，否则它会变成一直跟着你的小广告。
-// 想看它回来，往下读一段就有；或者直接按 t / 斜杠，效果一样。
-function pokeHint() {
-  const idx = hintRole.value?.idx
-  if (idx == null) { hintOn.value = false; return }
-  if (idx !== hintShown) { hintShown = idx; hintOn.value = true }
-  clearTimeout(hintT)
-  hintT = setTimeout(() => (hintOn.value = false), 4200)
-}
-function askPara(idx) {
-  store.askPrefill = { paraIdx: idx }
-  store.viewer.railUser = true
-}
 // 阅读进度：一根贴书桌右缘的细线，读到哪长到哪。
 // 用 ref 在 onScroll 里更新，不用 computed——computed 的依赖里没有"滚动位置"，
 // 它只会在别的东西变化时重算，等于永远停在 0%。
@@ -889,7 +861,6 @@ function onScroll() {
       if (d < bestD) { bestD = d; best = p.idx }
     }
     store.readingPara = best
-    pokeHint()
     clearTimeout(saveT)
     saveT = setTimeout(savePos, 600)
   }, 220)
@@ -1160,20 +1131,6 @@ watch(() => store.marginalia.notes, (n, o) => {
     <!-- 阅读进度：贴书桌右缘的一根细线，读到哪长到哪 -->
     <div class="read-prog" v-if="ready" :style="{ left: deskRightX + 'px' }"><i :style="{ height: progPct * 100 + '%' }" /></div>
 
-    <!-- 读到哪一段：它是什么 + 两个真动作。自己会走，不占地方 -->
-    <Transition name="pop">
-    <div v-if="ready && hintOn && hintRole && !backChip && !searchOpen" class="read-hint desk-float"
-         :style="{ left: midX + 'px' }" @mouseenter="clearTimeout(hintT)" @mouseleave="pokeHint">
-      <span class="rh-tag" :style="{ background: ROLE_COLOR[hintRole.role], color: roleInk(hintRole.role) }">
-        {{ ROLE_GLYPH[hintRole.role] }}
-      </span>
-      <span class="rh-idx">¶{{ hintRole.idx }}</span>
-      <span class="rh-role">{{ ROLE_ZH[hintRole.role] }}</span>
-      <span class="rh-sep"></span>
-      <button @click="translateParaAndPin(hintRole.idx)">译这段</button>
-      <button @click="askPara(hintRole.idx)">问这段</button>
-    </div>
-    </Transition>
 
     <!-- 阅读器控件：翻页 / 缩放 / 查找。整条可拖走，别压在论文中间 -->
     <Transition name="fade">
