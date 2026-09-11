@@ -92,6 +92,7 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE papers ADD COLUMN authors TEXT",           # 第一作者（文库列表上就显示这一条）
         "ALTER TABLE conversations ADD COLUMN summary TEXT",    # 较早对话压缩成的摘要（不丢关键信息）
         "ALTER TABLE conversations ADD COLUMN summary_upto INTEGER DEFAULT 0",  # 摘要已折到哪一条
+        "ALTER TABLE papers ADD COLUMN citation TEXT",          # 引用信息：首页抄下来的作者/刊名/卷期页/DOI
     ):
         try:
             c.execute(stmt)

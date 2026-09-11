@@ -32,6 +32,9 @@ export const api = {
   summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
   // cached=1：只读缓存，没有就返回空——进速览页要把算过的显示出来，但不该顺手花一次模型调用
   methodCard: (pid, cached = false) => req('GET', `/api/papers/${pid}/method-card${cached ? '?cached=1' : ''}`),
+  // 引用信息：cached 只读缓存（打开浮层不该顺手花一次模型调用），refresh 是「重新识别」
+  citation: (pid, cached = false, refresh = false) =>
+    req('GET', `/api/papers/${pid}/citation?${[cached && 'cached=1', refresh && 'refresh=1'].filter(Boolean).join('&')}`),
   suggest: (pid) => req('GET', `/api/papers/${pid}/suggest`),
   sixAnswers: (pid) => req('GET', `/api/papers/${pid}/six-answers`),
   sixAnswer: (pid, key) => req('GET', `/api/papers/${pid}/six-answers/${key}`),

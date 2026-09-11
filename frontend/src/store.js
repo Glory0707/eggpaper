@@ -36,6 +36,7 @@ export const store = reactive({
     libOpen: false,
   },
   jump: null,            // {page, y0, y1, at}
+  cite: { open: false }, // 「引用」浮层：开在顶栏标题旁，内容由 CiteCard 自己拉
   askPrefill: null,      // {paraIdx} 或 {text}
   glossaryPrefill: null,
   shortcutCard: false,

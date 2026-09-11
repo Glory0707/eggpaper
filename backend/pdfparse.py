@@ -116,6 +116,33 @@ def extract_authors(path: str) -> str:
         doc.close()
 
 
+def citation_source(path: str) -> str:
+    """给"识别引用信息"用的首页原文：不筛选、不去重，连页眉页脚一起交出去。
+
+    为什么不能直接拿 extract_paragraphs 的结果：引用信息藏的那几个地方，恰好都是
+    段落抽取**故意丢掉**的——页眉页脚的刊名/卷期页（按 y 坐标裁掉了）、题目作者块
+    （按机构关键词滤掉了）、DOI 行（跟在页脚里）。所以这里另取一次原始行。
+    第二页只给头尾几行：期刊的 running head 和 DOI 在那儿，正文没必要喂。
+    """
+    doc = pymupdf.open(path)
+    try:
+        out = []
+        for pno in range(min(2, len(doc))):
+            # 这里**不滤水印**：arXiv 预印本没有刊名卷期页，页边那行 "arXiv:2609.06350v1"
+            # 就是它唯一的出处，正是引用时要抄的东西（段落抽取里那行仍是照旧滤掉的）
+            lines = [ln["text"] for ln in _page_lines(doc[pno])]
+            out += lines[:110] if pno == 0 else lines[:6] + lines[-6:]
+        md = doc.metadata or {}
+        head = [f"{k}: {md[k]}" for k in ("title", "author", "subject", "keywords") if md.get(k)]
+        body = "[首页原文]\n" + "\n".join(out)
+        if head:
+            # 有些出版社把整条引文塞进 Subject（ACS 就是这么干的），值得给模型看一眼
+            body += "\n\n[PDF 元数据]\n" + "\n".join(head)
+        return body[:6000]
+    finally:
+        doc.close()
+
+
 def _page_lines(page: pymupdf.Page):
     lines = []
     for b in page.get_text("dict")["blocks"]:

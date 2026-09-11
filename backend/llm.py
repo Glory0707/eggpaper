@@ -539,6 +539,38 @@ def method_card(title: str, paras: list) -> dict:
     return parse_json(out)
 
 
+# ---------------- 引用信息 ----------------
+
+CITATION_SYSTEM = """研究者要引用这篇论文，请你从首页上把"怎么引用它"那几个字段抄下来。他会把首页原始行（含刊头、页脚、DOI 行）和 PDF 自带元数据交给你。
+
+这是一次**抄写**，不是一次推断。只有纸上印出来的才算数，没印的字段留空字符串——空白他还能自己补，
+编出来的卷号页码会被原样粘进他的参考文献表，而且没人会去核，所以宁可空着。
+
+- 不要从 DOI、URL、文件名、版权行里推年份。
+- 年份要抄印出来的那一处：期刊论文看刊头/页脚的引文行（形如 J. Am. Chem. Soc. 2023, 145, 6789），
+  预印本看日期戳（Dated: September 9, 2026，或页边的 6 Sep 2026）——那就是它的年份，不算猜。
+- 不要按惯例把页码写成起止范围；不要"顺便"把刊名补全称。
+- authors 按印刷顺序；family=姓，given=名，两条都要原始拼写；去掉上标数字、星号、十字、邮箱、机构名。
+- title 用首页印的题目（跨行就拼成一行），不要用文件名，不要翻译，不要改写大小写。
+- journal 是首页印的期刊全称，journal_abbr 是刊头/页脚印的缩写（形如 J. Am. Chem. Soc.）。
+- pages 抄印出来的那串（6789-6795 或 6789−6795）；只印了起始页就写那一页。
+- 预印本（arXiv 这类）：页边水印上那串编号就是它唯一的出处，抄进 preprint，
+  形如 arXiv:2609.06350——版本号 v1/v2 去掉。它是水印不是正文，别当噪音跳过。
+
+只输出 JSON：{"authors":[{"family":"","given":""}],"title":"","journal":"","journal_abbr":"",
+"year":"","volume":"","issue":"","pages":"","doi":"","preprint":""}
+不要 markdown 代码块，不要解释。"""
+
+
+def extract_citation(title: str, src: str) -> dict:
+    """从首页原文里抄出参考文献字段。排版不归它管（见 citation.py）。"""
+    out = chat([
+        {"role": "system", "content": CITATION_SYSTEM},
+        {"role": "user", "content": f"[论文标题（版面分析抽的，可能不全）]\n{title or '（无）'}\n\n{src}"},
+    ], max_tokens=2000, temperature=0, no_think=True)
+    return parse_json(out)
+
+
 # ---------------- 导师三问 ----------------
 
 def advisor_questions(title: str, claims: list, warnings: list) -> dict:

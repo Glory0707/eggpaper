@@ -9,6 +9,7 @@ from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+import citation
 import config
 import db
 import llm
@@ -574,6 +575,36 @@ def method_card(pid: str, cached: bool = False):
         data = llm.method_card(p["title"], db.get_paragraphs(pid))
     db.update_paper(pid, method_card=json.dumps(data, ensure_ascii=False))
     return data
+
+
+@app.get("/api/papers/{pid}/citation")
+def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
+    """引用信息：作者/刊名/卷期页/DOI，抄一次存下来，之后所有格式都是本地排版。
+
+    和 method-card 同一套规矩：cached=1 只读缓存，没有就明说没有——打开浮层
+    不该悄悄花掉一次模型调用。refresh=1 是「重新识别」：认错了要能重认一次。
+    排版在 citation.py 里做（模型只负责抄字段）。
+    """
+    p = _paper_or_404(pid)
+    if p["citation"] and not refresh:
+        meta = json.loads(p["citation"])
+        return {"meta": meta, "groups": citation.groups(meta)}
+    if cached:
+        return {"meta": None, "groups": []}
+    if config.load()["mock"]:
+        meta = {"authors": [{"family": "Zhang", "given": "Wei"}, {"family": "Li", "given": "Na"}],
+                "title": "〔演示〕一篇论文的标题", "journal": "Journal of Demo Chemistry",
+                "journal_abbr": "J. Demo Chem.", "year": "2024", "volume": "12",
+                "issue": "3", "pages": "345-352", "doi": "10.0000/demo.2024.12345"}
+    else:
+        src = pdfparse.citation_source(p["path"])
+        raw = llm.extract_citation(p["title"], src)
+        # 抄完先过一遍筛：源文里没出现过的字段一律清空（防的是"看起来很合理的假卷号"）
+        meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
+    if not (meta.get("title") or meta.get("authors")):
+        raise HTTPException(503, "首页没认出文献信息，这份 PDF 可能没印刊头刊脚，只能手工补了")
+    db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
+    return {"meta": meta, "groups": citation.groups(meta)}
 
 
 @app.get("/api/papers/{pid}/export.md")

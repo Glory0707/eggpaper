@@ -7,6 +7,7 @@ import LibPanel from './components/LeftRail.vue'
 import RightRail from './components/RightRail.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import Dialog from './components/Dialog.vue'
+import CiteCard from './components/CiteCard.vue'
 import { dlg, dlgCancel } from './dialog'
 import EggMark from './components/EggMark.vue'
 
@@ -150,6 +151,7 @@ function onKey(e) {
   if (e.key === 'Escape') {
     store.viewer.libOpen = false
     store.shortcutCard = false
+    store.cite.open = false
     showSettings.value = false
     dragOver.value = false
     store.viewer.frame = false     // 框选模式永远能一键退出
@@ -190,7 +192,12 @@ function onKey(e) {
         <span class="name">eggpaper</span>
       </div>
       <div class="doc-head" v-if="store.paper">
-        <div class="t">{{ store.paper.title || store.paper.filename }}</div>
+        <div class="t-row">
+          <div class="t">{{ store.paper.title || store.paper.filename }}</div>
+          <!-- 引用格式是这篇的身份信息，跟标题同一族数据 → 就挂在标题旁边。
+               任何页签下都够得着，不占右栏那四栏的版面 -->
+          <button class="cite-btn" title="参考文献格式 · 点开就能复制" @click="store.cite.open = true">引用</button>
+        </div>
       </div>
       <div class="doc-head" v-else>
         <div class="t">本地文献批注台</div>
@@ -276,6 +283,7 @@ function onKey(e) {
     <!-- 全局唯一的应用内对话框：别处 await confirmBox / inputBox 就行。
          别放进上面那个 Transition——Transition 只允许一个子节点，多一个就编译不过 -->
     <Dialog />
+    <CiteCard />
 
     <!-- 键盘卡 -->
     <Transition name="pop">

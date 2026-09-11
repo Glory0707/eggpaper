@@ -229,6 +229,16 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   font-family: var(--sans); font-weight: 650; font-size: var(--fs-xl); letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* 标题 + 「引用」：引用格式是这篇的身份信息，就挂在标题旁边（见 CiteCard.vue 顶部注释）。
+   标题照旧可以缩到省略号，chip 不许被挤走 */
+.doc-head .t-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.doc-head .t-row .t { flex: 0 1 auto; }
+.cite-btn {
+  flex: 0 0 auto; font-size: var(--fs-xs); color: var(--ink-3);
+  background: transparent; border: 1px solid var(--hairline); border-radius: 3px;
+  padding: 2px 7px; letter-spacing: 0.02em;
+}
+.cite-btn:hover { color: var(--ink); border-color: var(--ink-3); background: var(--card-2); }
 .topbar .actions { display: flex; align-items: center; gap: 8px; }
 
 .segmented {
@@ -680,6 +690,49 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .primary.danger { background: var(--vermilion); border-color: #9d3a25; }
 .modal .primary.danger:hover { background: #9d3a25; }
 .modal .test-reply { font-size: var(--fs-sm); color: var(--ink-3); margin-right: auto; max-width: 210px; }
+
+/* ---------- 引用这篇（.modal.cite） ----------
+   一张卡片装九种格式，所以比设置宽：长条目要能整条换行读完，不截断。
+   （这里踩过坑：<button> 上的 overflow/line-clamp 会把句子硬切在半句上，
+   条目一律 white-space: normal + pre-wrap，不设任何截断。） */
+.modal.cite { width: 640px; max-height: 80vh; overflow-y: auto; }
+.cite-note { font-size: var(--fs-md); color: var(--vermilion); line-height: 1.7; margin-bottom: 12px; }
+.cite-empty { font-size: var(--fs-md); color: var(--ink-2); line-height: 1.75; }
+/* 字段核对行：认出来的给实底，没认出来的虚着——一眼就看得出缺什么 */
+.cite-fields { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 15px; }
+.cite-fields .cf {
+  font-size: var(--fs-xs); color: var(--ink-3);
+  background: var(--card-2); border: 1px solid var(--hairline); border-radius: 2px; padding: 2px 7px;
+}
+.cite-fields .cf b { color: var(--ink-2); font-weight: 600; }
+.cite-fields .cf.miss { background: transparent; border-style: dashed; }
+.cite-fields .cf.miss b { color: var(--ink-3); font-weight: 400; }
+.cite-group { margin-bottom: 13px; }
+.cite-group .mono-label { display: block; margin-bottom: 4px; }
+.cite-row {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  text-align: left; white-space: normal; background: transparent;
+  border: none; border-radius: 3px; padding: 6px 8px; cursor: pointer;
+}
+.cite-row:hover { background: var(--card-2); }
+.cite-row .cr-k { flex: 0 0 104px; font-size: var(--fs-xs); font-weight: 600; color: var(--ink-2); }
+.cite-row .cr-k i {
+  display: block; font-style: normal; font-weight: 400;
+  color: var(--ink-3); font-size: var(--fs-xs); line-height: 1.5;
+}
+.cite-row .cr-v {
+  flex: 1; min-width: 0; font-size: var(--fs-sm); line-height: 1.6; color: var(--ink);
+  white-space: pre-wrap; word-break: break-word;
+}
+.cite-row .cr-cp { flex: 0 0 auto; opacity: 0; font-size: var(--fs-xs); color: var(--ink-3); }
+.cite-row:hover .cr-cp { opacity: 1; color: var(--accent); }
+.cite-foot {
+  display: flex; align-items: center; gap: 10px; margin-top: 15px; padding-top: 12px;
+  border-top: 1px solid var(--hairline); font-size: var(--fs-xs); color: var(--ink-3);
+}
+.cite-foot span { flex: 1; }
+.cite-foot a { color: var(--accent); text-decoration: none; }
+.cite-foot a:hover { text-decoration: underline; }
 
 /* 护眼底纹：小色片 + 名，选中的那档套一圈墨环 */
 .modal .care-row { display: flex; gap: 6px; }
