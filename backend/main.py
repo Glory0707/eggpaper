@@ -313,12 +313,16 @@ def _band(n: dict) -> str:
     return n.get("band") or llm.BAND_OF.get(n["kind"], "")
 
 
-
+def _resolve_rects(pid: str):
     """把 quote 定位成页面矩形。
 
     只作为**退路**：这里的搜索会跨不过换行和连字符，所以只能拿引文开头的一小段去搜，
     搜到的也只是那一行。真正的逐行精确划线在前端做（引文对回字符 → 取字符矩形）。
     框选钉子（kind=region）自带矩形，不参与。
+
+    每条钉子只试一次（`_rect_tried`）：搜不到的钉子（引文跨栏、被截断、模型抄错了）
+    永远搜不到，而每试一次就要开一次 PDF。原来 GET /marginalia 每次都把所有没 rect 的
+    钉子重试一遍——页边留一条搜不到的钉子，之后每次打开这篇论文都白开一次 PDF。
     """
     import pymupdf
     p = db.get_paper(pid)
@@ -326,8 +330,9 @@ def _band(n: dict) -> str:
         return
     doc = None
     for n in db.get_marginalia(pid):
-        if n["rect"] or n["kind"] == "region":
+        if n["rect"] or n["kind"] == "region" or n["id"] in _rect_tried:
             continue
+        _rect_tried.add(n["id"])       # 成功失败都算试过，失败的不再重复开 PDF
         if doc is None:
             doc = pymupdf.open(p["path"])
         rects = []
@@ -346,6 +351,9 @@ def _band(n: dict) -> str:
             db.marginalia_set_rect(n["id"], {"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1})
     if doc:
         doc.close()
+
+
+_rect_tried = set()      # 试过定位的钉子 id（失败的不再重复开 PDF）
 
 
 def _run_marginalia(pid: str, paras: list):
@@ -676,8 +684,20 @@ def glossary_export():
 
 @app.get("/api/papers/{pid}/figures")
 def figures(pid: str):
+    """图的位置是**这份 PDF 的纯函数**：同一份文件算一次就够。
+
+    原来每次请求都重开一次 PDF 扫全篇（实测 23 页要 50~72ms，返回的却只有 499 字节），
+    而速览页一进来就问一次、切回页签还可能再问一次；上百页的学位论文只会更慢。
+    缓存按 (路径, 修改时间) 认，文件被换掉自动失效；只留最近几篇，不把整库记住。
+    """
     import pymupdf
     p = _paper_or_404(pid)
+    try:
+        key = (p["path"], os.path.getmtime(p["path"]))
+    except OSError:
+        key = (p["path"], 0)
+    if key in _fig_cache:
+        return {"figures": _fig_cache[key]}
     out = []
     doc = pymupdf.open(p["path"])
     try:
@@ -697,7 +717,13 @@ def figures(pid: str):
                             "x1": round(r.x1, 1), "y1": round(r.y1, 1)})
     finally:
         doc.close()
+    _fig_cache[key] = out
+    while len(_fig_cache) > 8:                    # 最近八篇够了，别把整库图的位置都留在内存里
+        _fig_cache.pop(next(iter(_fig_cache)))
     return {"figures": out}
+
+
+_fig_cache = {}
 
 
 @app.get("/api/papers/{pid}/figure.png")

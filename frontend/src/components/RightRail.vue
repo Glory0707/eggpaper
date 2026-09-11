@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf } from '../store'
+import { api, store, toast, jumpTo, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf } from '../store'
 import { lineSpanOf } from '../find'
 import { prettyChem } from '../chem'
 import AskPanel from './AskPanel.vue'
@@ -13,7 +13,6 @@ const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
 const rbodyEl = ref(null)      // 「↗」指针要滚到指定那一问，得能问到滚动容器
 
-const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
 
 // 摘一段原文：断在句末更体面，断不了就按字数切
 function excerpt(text, cap = 132) {
@@ -108,7 +107,6 @@ function askIt(q) {
 const parasOfRole = roles => store.paras.filter(p => roles.includes(annoRole(p.idx)))
 const annoRole = idx => store.analysis.annotations[String(idx)]?.role
 const annoOf = idx => store.analysis.annotations[String(idx)] || {}
-const gapParas = computed(() => parasOfRole(['gap']))
 const limitParas = computed(() => parasOfRole(['limitation']))
 /* ④「还有什么没解决」里"眉批标出的可疑之处"：按**档位**收，不按类型名收。
    类型现在是开放词表——模型可以自造「参考态不一」这种 warn 档的批注，

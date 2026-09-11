@@ -1,8 +1,9 @@
-import { reactive, watch } from 'vue'
+import { reactive, watch, computed } from 'vue'
 import { api } from './api'
 
-export { api, askStream, ROLE_ZH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR,
-         ROLE_TEXT_COLOR, KIND_TEXT_COLOR, BAND_COLOR, BAND_TEXT, BAND_ZH,
+/* 只转出组件真的会 import 的那些。颜色/标签的字典（KIND_*、BAND_*）不再对外——
+   它们只该通过下面这三个解析口被读到，散出去就又会有人绕过口径直接取色。 */
+export { api, askStream, ROLE_ZH, CORE_ROLES, ROLE_COLOR, ROLE_TEXT_COLOR,
          bandOf, kindColor, kindText, kindZH } from './api'
 
 const LS = 'eggpaper:'
@@ -42,7 +43,7 @@ export const store = reactive({
   glossaryPrefill: null,
   shortcutCard: false,
   askFocusTick: 0,
-  escTick: 0,            // 按 Esc 递增：PDF 侧的浮层（划词/框选/角色卡）据此全部收起
+  escTick: 0,            // 按 Esc 递增：PDF 侧的浮层（划词/框选/查找）据此全部收起
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   reflowTick: 0,          // 栏宽拖完递增一次：论文据此重新定标（拖的过程中不重排）
   toast: '',
@@ -103,6 +104,10 @@ export async function refreshPapers() {
   store.papers = await api.papers()
 }
 
+/* idx → 段落 的表。三个组件（纸面 / 右栏 / 提问）都要按 ¶n 找段落，
+   原来各建一份——同一份数据在一篇论文里被 entries 三遍。收成一处，换篇只算一次。 */
+export const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
+
 export async function refreshCollections() {
   const r = await api.collections()
   store.lib.colls = r.collections
@@ -118,8 +123,8 @@ export async function openPaper(pid) {
   if (pos.variant) store.viewer.variant = pos.variant
   if (pos.spread) store.viewer.spread = pos.spread
   store.paper = await api.paper(pid)
-  // 换篇先清干净再装新的：上一章的骨架和眉批在新论文上闪一下，比慢半拍难看得多
-  // （症状：新论文的页面上短暂出现别人家的划线和角色书签）
+  // 换篇先清干净再装新的：上一章的划线和眉批在新论文上闪一下，比慢半拍难看得多
+  // （症状：新论文的页面上短暂出现别人家的划线和批注卡）
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
   store.marginalia = { status: 'none', notes: [] }
@@ -151,7 +156,7 @@ export async function refreshMarginalia() {
 
 /* 重新析读会把一眼卡一并作废（它是旧主张的产物），所以析读完成后要重新取一次。
    取的过程本身会触发生成，页面上就是"正在写一眼卡…"再转一圈——这是对的，
-   总比留一张对不上新骨架的卡片好。 */
+   总比留一张对不上新主张的卡片好。 */
 export async function reloadSummary() {
   if (!store.currentId) return
   store.summary = null

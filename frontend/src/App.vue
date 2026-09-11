@@ -155,7 +155,7 @@ function onKey(e) {
     showSettings.value = false
     dragOver.value = false
     store.viewer.frame = false     // 框选模式永远能一键退出
-    store.escTick++                // PDF 侧的划词/框选/角色卡/查找浮层收起
+    store.escTick++                // PDF 侧的划词/框选/查找浮层收起
     return
   }
   if (gPending.value) {

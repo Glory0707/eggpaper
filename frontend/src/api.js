@@ -64,8 +64,8 @@ export const api = {
   collDelete: (cid) => req('DELETE', `/api/collections/${cid}`),
   paperColls: (pid, ids) => req('PUT', `/api/papers/${pid}/collections`, { ids }),
 
-  translateSelection: (pid, text, context) => req('POST', `/api/papers/${pid}/translate-selection`, { text, context }),
-  translatePara: (pid, idx) => req('POST', `/api/papers/${pid}/translate-para`, { idx }),
+  // 划词/段译只有流式一条路（translateStream）：这两个非流式包装没人用，而且后端
+  // 那两个接口返回的是 SSE，真被调也会炸——删掉，别再钓着一个错的东西
   translateFull: (pid) => req('POST', `/api/papers/${pid}/translate-full`),
   translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
   glossary: () => req('GET', '/api/glossary'),
@@ -77,8 +77,9 @@ export const api = {
 }
 
 /* SSE 流式回答。EventSource 不能 POST，所以用 fetch + ReadableStream 自己拆帧。
-   onEvent 收到 {type:'delta'|'done'|'error'}；返回一个 abort() 用来"停止生成"。 */
-export function sseStream(url, body, onEvent) {
+   onEvent 收到 {type:'delta'|'done'|'error'}；返回一个 abort() 用来"停止生成"。
+   只给本文件的 askStream / translateStream 用，不对外导出。 */
+function sseStream(url, body, onEvent) {
   const ctrl = new AbortController()
   const done = (async () => {
     const r = await fetch(url, {
@@ -122,14 +123,14 @@ export const ROLE_ZH = {
   background: '背景铺垫', gap: '缺口转折', claim: '核心主张', evidence: '关键证据',
   control: '对照参比', boilerplate: '标准流程', extension: '优化拓展', limitation: '让步局限',
 }
-export const KIND_ZH = {
+const KIND_ZH = {
   hedge: '妥协让步', padding: '凑字数', stiff: '生硬别扭', redundant: '多余重复',
   hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑',
   conflict: '前后打架', lookup: '查译', region: '选区问答', note: '批注',
 }
 // 色标只表达一件事：读的时候该给多少注意力。
 // 八个色相谁也记不住（人能一眼解码的上限是 3–4 个），所以颜色不该再区分
-// "对照参比 vs 优化拓展"这种细类——那是点开角色卡才需要知道的。
+// "对照参比 vs 优化拓展"这种细类——读的时候本来也分不出来。
 // 一个暖色 = 全文的芯；三级墨由深到浅 = 论证主干 → 让步 → 铺垫与流程。
 export const ROLE_COLOR = {
   claim: '#1d4e5f',                                                    // 唯一彩色：核心主张
@@ -145,7 +146,7 @@ export const ROLE_TEXT_COLOR = {
 }
 
 // 眉批用同一套逻辑：值得读 / 要当心 / 是噪音 / 你自己写的
-export const KIND_COLOR = {
+const KIND_COLOR = {
   insight: '#1d4e5f',                                                          // 值得读
   warning: '#b8462e', hype: '#b8462e', ai: '#b8462e', conflict: '#b8462e',       // 要当心
   padding: '#c9c4ba', redundant: '#c9c4ba', stiff: '#c9c4ba', hedge: '#c9c4ba', // 噪音／可跳过
@@ -153,7 +154,7 @@ export const KIND_COLOR = {
   note: '#57534a',                                        // 你自己写的批注
 }
 // 眉批标签的文字色（浅灰在白卡上看不清，另给可读的一档）
-export const KIND_TEXT_COLOR = {
+const KIND_TEXT_COLOR = {
   insight: '#123a47', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25', conflict: '#9d3a25',
   padding: '#6f6b62', redundant: '#6f6b62', stiff: '#6f6b62', hedge: '#6f6b62',
   lookup: '#3f3230', region: '#3f3230', note: '#3f3230',
@@ -162,9 +163,8 @@ export const KIND_TEXT_COLOR = {
 /* 眉批的档位：三档，就三档。
    九种常用款各自落在一档里；模型自造的类型（kind='custom'）必须自己声明档位，
    颜色按档位走——页边只有三种笔触，读者也只需要分清三种。 */
-export const BAND_COLOR = { good: '#1d4e5f', warn: '#b8462e', noise: '#8e8a80', mine: '#57534a' }
-export const BAND_TEXT = { good: '#123a47', warn: '#9d3a25', noise: '#6f6b62', mine: '#3f3230' }
-export const BAND_ZH = { good: '值得读', warn: '要当心', noise: '可跳过', mine: '你自己的' }
+const BAND_COLOR = { good: '#1d4e5f', warn: '#b8462e', noise: '#8e8a80', mine: '#57534a' }
+const BAND_TEXT = { good: '#123a47', warn: '#9d3a25', noise: '#6f6b62', mine: '#3f3230' }
 const BAND_OF_KIND = {
   insight: 'good',
   warning: 'warn', hype: 'warn', ai: 'warn', conflict: 'warn',

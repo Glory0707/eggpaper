@@ -9,14 +9,13 @@
  * 这些都不加文案、不加颜色，符合本子自己的调子。
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, store, toast, jumpTo } from '../store'
+import { api, askStream, store, toast, jumpTo, paraByIdx } from '../store'
 import { confirmBox, inputBox } from '../dialog'
 import MdLite from './MdLite.vue'
 
 const props = defineProps({ quick: { type: Array, default: () => [] } })
 
 const pid = computed(() => store.currentId)
-const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
 
 function jumpPara(idx) {
   const p = paraByIdx.value[idx]

@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, CORE_ROLES, bandOf, kindColor, kindText, kindZH } from '../store'
+import { api, store, toast, paraByIdx, CORE_ROLES, bandOf, kindColor, kindText, kindZH } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
@@ -66,15 +66,12 @@ const parasByPage = computed(() => {
   for (const p of store.paras) (m[p.page] ||= []).push(p)
   return m
 })
-const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))
 const notesShown = computed(() => (store.viewer.layers.marginalia ? store.marginalia.notes : []))
 /* 页边要多宽，取决于"上面真有东西要放吗"：有批注 → 整条 184，没有 → 一点都不留，
    论文因此能多出近 200px 的宽度。这条宽度是 measure() 的输入，图层一变就得重排。 */
 const gutterW = computed(() => (store.viewer.layers.marginalia && notesShown.value.length ? GUTTER_FULL : 0))
 const gutterPad = computed(() => (gutterW.value ? 12 : 0))
 const flatItems = computed(() => sheets.value.flatMap(s => s.items))
-const tranReady = computed(() => store.paper?.translate_status === 'done')
-const isSpread = computed(() => store.viewer.variant === 'dual' && store.viewer.spread === 'spread')
 
 // 角色（8 类）现在只服务于一件事：略读时该把哪几段蒙掉。界面上不再有它的位置
 function roleOf(p) {
@@ -742,7 +739,6 @@ function gotoHit(i) {
   scrollToY(el.offsetTop + h.rects[0].y - scroller().clientHeight * 0.3, true)
 }
 // 命中的高亮：给当前搜到的那条一个更大的底
-function hitBoxes(h) { return h?.rects || [] }
 function searchStep(d) { if (searchHits.value.length) gotoHit(searchAt.value + d) }
 function closeSearch() { searchOpen.value = false; searchQ.value = ''; searchHits.value = []; searchAt.value = -1 }
 
@@ -1030,7 +1026,7 @@ watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: tru
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
 watch(() => store.paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
-// 图层开关（骨架/眉批/略读）会改页边宽度和标注的密度，换完要重新定标落回原处
+// 图层开关（眉批/略读）会改页边宽度和标注的密度，换完要重新定标落回原处
 watch(() => store.viewer.layers, () => reflow(), { deep: true })
 // 右栏/文库拖宽结束时不需要 ResizeObserver 的延迟：直接重排一次
 watch(() => store.reflowTick, () => reflow())

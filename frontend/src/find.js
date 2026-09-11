@@ -17,7 +17,7 @@
 
 const KEEP = /[0-9a-z\u4e00-\u9fff]/
 
-export function normText(s) {
+function normText(s) {
   let out = ''
   for (const ch of (s || '').toLowerCase()) if (KEEP.test(ch)) out += ch
   return out
