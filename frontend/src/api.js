@@ -125,7 +125,7 @@ export const ROLE_ZH = {
 export const KIND_ZH = {
   hedge: '妥协让步', padding: '凑字数', stiff: '生硬别扭', redundant: '多余重复',
   hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑',
-  conflict: '前后打架', lookup: '查译', region: '选区问答',
+  conflict: '前后打架', lookup: '查译', region: '选区问答', note: '批注',
 }
 // 色标只表达一件事：读的时候该给多少注意力。
 // 八个色相谁也记不住（人能一眼解码的上限是 3–4 个），所以颜色不该再区分
@@ -149,12 +149,52 @@ export const KIND_COLOR = {
   insight: '#1d4e5f',                                                          // 值得读
   warning: '#b8462e', hype: '#b8462e', ai: '#b8462e', conflict: '#b8462e',       // 要当心
   padding: '#c9c4ba', redundant: '#c9c4ba', stiff: '#c9c4ba', hedge: '#c9c4ba', // 噪音／可跳过
-  lookup: '#57534a', region: '#57534a',                                        // 你自己钉的
+  lookup: '#57534a', region: '#57534a',                    // 你自己钉的
+  note: '#57534a',                                        // 你自己写的批注
 }
 // 眉批标签的文字色（浅灰在白卡上看不清，另给可读的一档）
 export const KIND_TEXT_COLOR = {
   insight: '#123a47', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25', conflict: '#9d3a25',
   padding: '#6f6b62', redundant: '#6f6b62', stiff: '#6f6b62', hedge: '#6f6b62',
-  lookup: '#3f3230', region: '#3f3230',
+  lookup: '#3f3230', region: '#3f3230', note: '#3f3230',
+}
+
+/* 眉批的档位：三档，就三档。
+   九种常用款各自落在一档里；模型自造的类型（kind='custom'）必须自己声明档位，
+   颜色按档位走——页边只有三种笔触，读者也只需要分清三种。 */
+export const BAND_COLOR = { good: '#1d4e5f', warn: '#b8462e', noise: '#8e8a80', mine: '#57534a' }
+export const BAND_TEXT = { good: '#123a47', warn: '#9d3a25', noise: '#6f6b62', mine: '#3f3230' }
+export const BAND_ZH = { good: '值得读', warn: '要当心', noise: '可跳过', mine: '你自己的' }
+const BAND_OF_KIND = {
+  insight: 'good',
+  warning: 'warn', hype: 'warn', ai: 'warn', conflict: 'warn',
+  padding: 'noise', redundant: 'noise', stiff: 'noise', hedge: 'noise',
+  lookup: 'mine', region: 'mine', note: 'mine',
+}
+
+/* 以下是**唯一的**解析口：给一条批注，回答它属于哪一档、什么颜色、标签写什么。
+   kind 是开放词表，散落着判断的话，加一种新类型就要改五个地方。 */
+export function bandOf(n) {
+  if (!n) return 'noise'
+  if (n.band) return n.band                      // 后端已经算好档位（含自造款）
+  return BAND_OF_KIND[n.kind] || 'noise'
+}
+export function kindColor(n) {
+  const k = typeof n === 'string' ? n : n?.kind
+  const c = KIND_COLOR[k]
+  if (c) return c
+  return BAND_COLOR[typeof n === 'string' ? 'noise' : bandOf(n)] || BAND_COLOR.noise
+}
+export function kindText(n) {
+  const k = typeof n === 'string' ? n : n?.kind
+  const c = KIND_TEXT_COLOR[k]
+  if (c) return c
+  return BAND_TEXT[typeof n === 'string' ? 'noise' : bandOf(n)] || BAND_TEXT.noise
+}
+export function kindZH(n) {
+  if (typeof n === 'string') return KIND_ZH[n] || ''
+  if (!n) return ''
+  if (n.kind === 'custom') return n.label || '新批注'   // 模型自造的：用它自己起的那个短标签
+  return KIND_ZH[n.kind] || ''
 }
 export const CORE_ROLES = ['gap', 'claim', 'evidence', 'limitation']

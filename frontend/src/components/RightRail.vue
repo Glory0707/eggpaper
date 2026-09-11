@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, KIND_ZH, KIND_COLOR } from '../store'
+import { api, store, toast, jumpTo, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH } from '../store'
 import { lineSpanOf } from '../find'
 import { prettyChem } from '../chem'
 import AskPanel from './AskPanel.vue'
@@ -91,7 +91,7 @@ function gotoSix(k) {
 }
 // 就一条批注追问：把批注和它引的原话一起交给模型，问题才问得准
 function askNote(n) {
-  const kind = KIND_ZH[n.kind] || n.kind
+  const kind = kindZH(n) || '批注'
   store.askPrefill = {
     question: `眉批标了「${kind}」：「${n.note}」——引文是“${(n.quote || '').slice(0, 60)}”。`
       + `这条判断站得住吗？依据在哪几段？[¶${n.para_idx}]`,
@@ -374,6 +374,10 @@ watch(() => store.currentId, () => {
       <button class="rt-collapse" title="收起右栏（x）" @click="store.viewer.railUser = false">»</button>
     </div>
     <div class="rbody" ref="rbodyEl" :class="{ flush: tab === 'ask' }">
+      <!-- 页签切换：三个静态页共用一层过渡（出去快、进来稍慢），换页时内容是"落定"而不是"啪一下换掉"。
+           提问页不在这层里——它必须常驻（切走不能掐断正在生成的回答），单独用下面那个 v-show 层。 -->
+      <Transition name="rt" mode="out-in">
+      <div class="rt-pane" v-if="tab !== 'ask'" :key="tab">
       <!-- ============ 问题 ============ -->
       <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
@@ -408,7 +412,10 @@ watch(() => store.currentId, () => {
               <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
             </button>
 
-            <div class="six-a" v-show="openSix[s.k]">
+            <!-- 展开是"长出来"的，不是"跳出来"的：0fr→1fr 的 grid 过渡才真的在动高度 -->
+            <div class="six-fold" :class="{ open: openSix[s.k] }">
+             <div class="six-fold-in">
+            <div class="six-a">
               <!-- ① 要解决什么：**直接说出来**。原文里没有哪一句现成写着"我们要解决什么"，
                    那是要从引言里综合出来的——所以这一问的答案是模型的一句话，段落只作为依据
                    标在句尾（原文在纸上，点 ¶ 就到，不必在这里再抄一遍）。 -->
@@ -461,7 +468,7 @@ watch(() => store.currentId, () => {
                 </div>
                 <div v-for="n in warnNotes" :key="'w' + n.id" class="ev-row" @click="jumpNote(n)">
                   <span class="e-dot">¶{{ n.para_idx }}</span>
-                  <span class="e-bar" :style="{ background: KIND_COLOR[n.kind] || KIND_COLOR.warning }"></span>
+                  <span class="e-bar" :style="{ background: kindColor(n) }"></span>
                   <span class="e-note">
                     {{ prettyChem(n.note) }}
                     <button class="ev-ask" title="就这条批注追问模型" @click.stop="askNote(n)">问 ↗</button>
@@ -484,6 +491,8 @@ watch(() => store.currentId, () => {
                   {{ sixBusy[s.gen] ? '正在想' : '获取' }}
                 </button>
               </template>
+            </div>
+             </div>
             </div>
           </section>
 
@@ -547,7 +556,9 @@ watch(() => store.currentId, () => {
             <div class="ce-row"><span class="ce-k">条件</span><span class="ce-v">{{ prettyChem(methodCard.conditions) }}</span></div>
             <div class="ce-row"><span class="ce-k">步骤</span>
               <span class="ce-v">
-                <div class="mc-step" v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ prettyChem(s) }}</div>
+                <div class="mc-step" :class="{ unfold: mcMore && i >= MC_STEPS }"
+                     :style="mcMore && i >= MC_STEPS ? { animationDelay: (i - MC_STEPS) * 45 + 'ms' } : null"
+                     v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ prettyChem(s) }}</div>
               </span>
             </div>
             <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">注意</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
@@ -611,6 +622,8 @@ watch(() => store.currentId, () => {
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>
+      </div>
+      </Transition>
 
       <!-- ============ 提问 ============ -->
       <!-- 常驻不卸载：切去看原文时，正在生成的回答不该被掐掉。unmount 会 abort 掉这条流，

@@ -93,6 +93,9 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE conversations ADD COLUMN summary TEXT",    # 较早对话压缩成的摘要（不丢关键信息）
         "ALTER TABLE conversations ADD COLUMN summary_upto INTEGER DEFAULT 0",  # 摘要已折到哪一条
         "ALTER TABLE papers ADD COLUMN citation TEXT",          # 引用信息：首页抄下来的作者/刊名/卷期页/DOI
+        # 眉批类型从"九选一"放开成开放词表：label 是自造的短标签，band 决定它的笔触档位
+        "ALTER TABLE marginalia ADD COLUMN label TEXT",
+        "ALTER TABLE marginalia ADD COLUMN band TEXT",
     ):
         try:
             c.execute(stmt)
@@ -442,14 +445,21 @@ def qa_clear(pid: str):
 # ---------- 眉批（句级人性化批注） ----------
 
 def set_marginalia(pid: str, notes: list, status: str = "done", error: str = None):
+    """写入 AI 眉批（整篇重写）。
+
+    只删 AI 写的那几种，**用户自己钉的（lookup/region/note）一根都不动**——
+    这张表里住着两种人写的东西，前者可以重算，后者是读者的资产，重算眉批不该顺手把它抹了。
+    """
     if not get_paper(pid):
         return
     with _lock:
         c = _get()
-        c.execute("DELETE FROM marginalia WHERE paper_id=?", (pid,))
+        c.execute("DELETE FROM marginalia WHERE paper_id=? AND kind NOT IN ('lookup','region','note')", (pid,))
         c.executemany(
-            "INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note) VALUES(?,?,?,?,?,?)",
-            [(pid, n["para_idx"], n["page"], n["quote"], n["kind"], n["note"]) for n in notes])
+            "INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, label, band) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            [(pid, n["para_idx"], n["page"], n["quote"], n["kind"], n["note"],
+              n.get("label", ""), n.get("band", "")) for n in notes])
         c.execute("UPDATE papers SET marginalia_status=? WHERE id=?", (status, pid))
         c.commit()
     if error:
@@ -458,8 +468,8 @@ def set_marginalia(pid: str, notes: list, status: str = "done", error: str = Non
 
 def get_marginalia(pid: str):
     return [dict(r) for r in q(
-        "SELECT id, para_idx, page, quote, kind, note, rect FROM marginalia WHERE paper_id=? ORDER BY page, para_idx",
-        (pid,))]
+        "SELECT id, para_idx, page, quote, kind, note, label, band, rect FROM marginalia "
+        "WHERE paper_id=? ORDER BY page, para_idx", (pid,))]
 
 
 def marginalia_set_rect(mid: int, rect: dict):
@@ -467,9 +477,11 @@ def marginalia_set_rect(mid: int, rect: dict):
 
 
 def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, kind: str = "lookup",
-                   rect: dict = None) -> int:
-    q("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect) VALUES(?,?,?,?,?,?,?)",
-      (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None), commit=True)
+                   rect: dict = None, label: str = "", band: str = "") -> int:
+    q("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect, label, band) "
+      "VALUES(?,?,?,?,?,?,?,?,?)",
+      (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None, label, band),
+      commit=True)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
 
 

@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, KIND_ZH, CORE_ROLES, KIND_COLOR, KIND_TEXT_COLOR } from '../store'
+import { api, store, toast, CORE_ROLES, bandOf, kindColor, kindText, kindZH } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
@@ -491,6 +491,24 @@ function quoteLoose(n) {
 // 卡片和纸上那条线是一条命：鼠标停在卡片上，对应的划线跟着亮起来
 const hotNote = ref(null)
 function hoverNote(id) { hotNote.value = id }
+
+/* 批注的标签：九种常用款用它自己的名字；模型自造的类型（kind='custom'）用模型起的标签；
+   你自己钉的那些前面加"你 · "——一眼分得清哪句是别人说的、哪句是你自己写的。 */
+const MINE = new Set(['lookup', 'region', 'note'])
+function kindLabel(n) {
+  const zh = kindZH(n)
+  return MINE.has(n.kind) && zh ? '你 · ' + zh : zh
+}
+
+/* 引文默认只看开头，想看全句点「全句」。
+   不硬切：切口带省略号，而且有明确的展开出口——页边只有 154px 宽，
+   一条 200 字的引文全铺出来会把整页的批注挤下去。 */
+const openQuote = ref(null)
+function toggleQuote(n) { openQuote.value = openQuote.value === n.id ? null : n.id }
+function quoteShown(n) {
+  const q = n.quote || ''
+  return openQuote.value === n.id || q.length <= 44 ? q : q.slice(0, 44) + '…'
+}
 // 没有 DOM 时的退路：按行级坐标画整行框（行数准，行内不裁）
 function spanBoxes(n) {
   const span = quoteSpan(n)
@@ -588,6 +606,7 @@ let selStream = null       // 进行中的划词翻译：换选区/关气泡时�
 function closeSel() {
   selStream?.abort()
   sel.visible = false
+  mine.open = false        // 手写批注的草稿框跟着气泡一起收，下次划词不该还开着
 }
 
 async function doTranslateSel() {
@@ -624,6 +643,27 @@ function sendToGlossary() {
 function askAboutSel() {
   store.askPrefill = { text: sel.text.slice(0, 80) }
   closeSel()
+}
+
+/* 自己写一条批注：页边不只是"看批注的地方"，也是读者自己的本子。
+   查译/段译是"AI 给你的"，这条是你自己的话——所以 kind='note'，颜色归"你自己的"那一档。 */
+const mine = reactive({ open: false, text: '' })
+const mineEl = ref(null)
+function openMine() {
+  mine.open = true
+  mine.text = ''
+  // 划完词接着就能写：不聚焦的话，用户得先在气泡里点一下输入框才打得出字
+  nextTick(() => mineEl.value?.focus({ preventScroll: true }))
+}
+async function saveMine() {
+  const t = mine.text.trim()
+  if (!t) return
+  await api.pin(store.currentId, { quote: sel.text.slice(0, 150), note: t, para_idx: sel.paraIdx,
+                                   page: sel.page, kind: 'note' })
+  mine.open = false; mine.text = ''
+  await refreshM()
+  closeSel()
+  toast('已写在页边')
 }
 
 async function refreshM() {
@@ -1046,13 +1086,13 @@ watch(() => store.marginalia.notes, (n, o) => {
                      :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
               </template>
 
-              <!-- 眉批引文：按句子落行，划了几行就是几个块；框选钉子按区域画 -->
+              <!-- 眉批引文：按句子落行，划了几行就是几个块；框选钉子按区域画。
+                   笔法分三档（见 styles.css）：值得读是马克笔、要当心是波浪线、可跳过只有一条点线。
+                   块本身不吃鼠标事件——它盖在正文上，吃了就没法选字了。 -->
               <template v-for="{ n } in notesOnPage(it.origPage)" :key="'n' + n.id">
                 <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark" :data-nid="n.id"
-                     :class="{ draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }"
-                     :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px',
-                               background: KIND_COLOR[n.kind] + '2e',
-                               borderBottom: '2px solid ' + KIND_COLOR[n.kind] + '99' }"></div>
+                     :class="['b-' + bandOf(n), { draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }]"
+                     :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
               </template>
             </div>
           </div>
@@ -1063,23 +1103,31 @@ watch(() => store.marginalia.notes, (n, o) => {
                          width: gutterW + 'px', marginLeft: gutterPad + 'px' }">
             <div v-for="{ n, top, pending } in notesOnPage(it.origPage)" :key="'mg' + n.id"
                  class="mg-note" :data-nid="n.id"
-                 :style="{ top: top + 'px', borderLeftColor: KIND_COLOR[n.kind],
+                 :style="{ top: top + 'px', borderLeftColor: kindColor(n),
                            width: Math.max(120, gutterW - 30) + 'px' }"
                  :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
                            clamped: (n.note || '').length > 34, clampable: (n.note || '').length > 34 }"
                  @mouseenter="hoverNote(n.id)" @mouseleave="hoverNote(null)"
                  @click="toggleNote(n)">
               <div class="mg-head">
-                <span class="mg-kind" :style="{ color: KIND_TEXT_COLOR[n.kind] }">
-                  {{ pending ? '翻译中' : (KIND_ZH[n.kind] ? (n.kind === 'lookup' || n.kind === 'region' ? '你 · ' : '') + KIND_ZH[n.kind] : '') }}
+                <span class="mg-dot" :style="{ background: kindColor(n) }"></span>
+                <span class="mg-kind" :style="{ color: kindText(n) }">
+                  {{ pending ? '翻译中' : kindLabel(n) }}
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
                 <button v-if="!pending" class="mg-del" title="移除这条批注" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ prettyChem(n.note) }}</div>
-              <span class="mg-quote" :title="'跳到纸上这句：' + n.quote" @click.stop="jumpQuote(n)">“{{ n.quote.slice(0, 40) }}{{ n.quote.length > 40 ? '…' : '' }}”</span>
-              <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->
-              <span v-if="quoteLoose(n)" class="mg-loose" title="模型抄回的引文与原文略有出入，纸上的划线只盖对得上的那一段">≈</span>
+              <!-- 引文：默认看开头，点「全句」摊开；引文本身点了是跳回纸上那句 -->
+              <div class="mg-quote-row">
+                <span class="mg-quote" :class="{ all: openQuote === n.id }"
+                      :title="'跳到纸上这句：' + n.quote" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
+                <button v-if="(n.quote || '').length > 44" class="mg-qall" @click.stop="toggleQuote(n)">
+                  {{ openQuote === n.id ? '收起' : '全句' }}
+                </button>
+                <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->
+                <span v-if="quoteLoose(n)" class="mg-loose" title="模型抄回的引文与原文略有出入，纸上的划线只盖对得上的那一段">≈</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1151,14 +1199,26 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div class="sp-hits" v-if="sel.hits.length">
         <span class="chip" v-for="h in sel.hits" :key="h.en">📌 {{ h.en }} → {{ h.zh }}</span>
       </div>
+      <!-- 自己写一条：页边也是你的本子，不只是 AI 说话的地方 -->
+      <div class="sp-mine" v-if="mine.open">
+        <textarea ref="mineEl" v-model="mine.text" rows="3" placeholder="就这句写点什么…（Ctrl+Enter 保存）"
+                  @mouseup.stop @keydown.enter.ctrl="saveMine"></textarea>
+      </div>
       <div class="sp-actions">
-        <button class="primary" style="padding:4px 10px" @click="doTranslateSel" :disabled="sel.busy">
-          {{ sel.busy ? '翻译中' : (sel.zh ? '重译' : '翻译') }}
-        </button>
-        <button style="padding:4px 10px" @click="pinSel">钉在页边</button>
-        <button style="padding:4px 10px" @click="sendToGlossary">收进术语</button>
-        <button style="padding:4px 10px" @click="askAboutSel">提问</button>
-        <button class="ghost" style="padding:4px 8px" @click="closeSel()">×</button>
+        <template v-if="mine.open">
+          <button class="primary" style="padding:4px 10px" :disabled="!mine.text.trim()" @click="saveMine">写到页边</button>
+          <button style="padding:4px 10px" @click="mine.open = false">取消</button>
+        </template>
+        <template v-else>
+          <button class="primary" style="padding:4px 10px" @click="doTranslateSel" :disabled="sel.busy">
+            {{ sel.busy ? '翻译中' : (sel.zh ? '重译' : '翻译') }}
+          </button>
+          <button style="padding:4px 10px" @click="pinSel">钉在页边</button>
+          <button style="padding:4px 10px" @click="openMine">写批注</button>
+          <button style="padding:4px 10px" @click="sendToGlossary">收进术语</button>
+          <button style="padding:4px 10px" @click="askAboutSel">提问</button>
+          <button class="ghost" style="padding:4px 8px" @click="closeSel()">×</button>
+        </template>
       </div>
     </div>
     </Transition>

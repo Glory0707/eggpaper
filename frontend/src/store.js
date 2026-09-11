@@ -2,7 +2,8 @@ import { reactive, watch } from 'vue'
 import { api } from './api'
 
 export { api, askStream, ROLE_ZH, KIND_ZH, CORE_ROLES, ROLE_COLOR, KIND_COLOR,
-         ROLE_TEXT_COLOR, KIND_TEXT_COLOR } from './api'
+         ROLE_TEXT_COLOR, KIND_TEXT_COLOR, BAND_COLOR, BAND_TEXT, BAND_ZH,
+         bandOf, kindColor, kindText, kindZH } from './api'
 
 const LS = 'eggpaper:'
 

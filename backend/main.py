@@ -325,7 +325,10 @@ def _resolve_rects(pid: str):
             probe = n["quote"] if cut == 0 else n["quote"][:cut].strip()
             if len(probe) < 8:
                 continue
-            rects = doc[n["page"]].search_for(probe, quads=True)
+            # 不用 quads=True：它返回的是 Quad（四个角点），没有 x0/y0/x1/y1。
+            # 之前这里拿 Quad 当 Rect 取属性，只要页边出现一条**没有矩形**的钉子
+            # （比如自己写的那条批注），GET /marginalia 就整个 500——整页眉批打不开。
+            rects = doc[n["page"]].search_for(probe)
             if rects:
                 break
         if rects:
@@ -370,13 +373,19 @@ def marginalia_get(pid: str):
 
 @app.post("/api/papers/{pid}/pin")
 def pin_lookup(pid: str, body: dict):
-    """把查译/段译/框选答疑钉到页边（用户资产，持久化）。"""
+    """把查译/段译/框选答疑/自己写的批注钉到页边（用户资产，持久化）。"""
     p = _paper_or_404(pid)
     quote = (body.get("quote") or "").strip()
     note = (body.get("note") or "").strip()
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
     para_idx = int(body.get("para_idx") or 0)
+    page = int(body.get("page") or 0)
+    # 自己写的批注：锚点还是选中的那句话，内容是用户的原话。
+    # 不比"同段重钉"——同一段里想写两条就写两条，页边是读者的本子，不是去重器。
+    if (body.get("kind") or "").strip() == "note":
+        return {"id": db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
+                                        kind="note", band="mine")}
     # 框选答疑自带区域矩形：锚点就是那块区域，也不和别的钉子挤同一段。
     # 用 kind=region 单独标记：前端据此知道"这个矩形就是唯一真相"，
     # 而不是像引文钉子那样要回原文重新把引文对回字符。
@@ -387,16 +396,16 @@ def pin_lookup(pid: str, body: dict):
         except (KeyError, TypeError, ValueError):
             rect = None
     if rect:
-        return {"id": db.marginalia_add(pid, para_idx, int(body.get("page") or 0), quote[:200],
-                                        note[:600], kind="region", rect=rect)}
+        return {"id": db.marginalia_add(pid, para_idx, page, quote[:200],
+                                        note[:600], kind="region", rect=rect, band="mine")}
     # 同段重钉 = 更新而非新增
     dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
                (pid, para_idx))
     if dup:
         db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
         return {"id": dup[0]["id"]}
-    mid = db.marginalia_add(pid, para_idx, int(body.get("page") or 0), quote[:200], note[:600],
-                            kind="lookup")
+    mid = db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
+                            kind="lookup", band="mine")
     return {"id": mid}
 
 

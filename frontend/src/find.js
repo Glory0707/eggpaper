@@ -100,9 +100,30 @@ function rectsOf(idx, from, to, base) {
     } catch { /* 边界异常就跳过这一段 */ }
     i = j
   }
-  return out
+  return mergeRow(out)
 }
 
+/** 同一行里断开的矩形合成一条。
+ *
+ * 为什么会有断口：归一化匹配只留字母数字，标点和**空格被吃掉了**，而 pdf.js 的文本层
+ * 会把空格单独成节点——于是引文跨过空格时，一行上会得到两个矩形，中间留一道几像素到
+ * 十几像素的缝，画出来就是一条中间开洞的高亮（实测有一处 8px）。
+ * 断在行之间不管：那是真的换行，本该分段。 */
+function mergeRow(rects) {
+  const out = []
+  for (const r of rects.sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const last = out[out.length - 1]
+    const sameRow = last && Math.abs(last.y - r.y) < Math.max(2, r.h * 0.4)
+    if (sameRow && r.x - (last.x + last.w) < r.h * 0.9) {     // 缝小于一个字高：接上
+      const x1 = Math.max(last.x + last.w, r.x + r.w)
+      last.w = x1 - last.x
+      last.h = Math.max(last.h, r.h)
+      continue
+    }
+    out.push({ ...r })
+  }
+  return out
+}
 /** 引文在归一化文本里能对上多长（入参是**原文引文**，不是归一化后的串——
  *  归一化已经把空格吃掉了，再按词切就只剩一个词）。 */
 function matchLen(norm, quote) {

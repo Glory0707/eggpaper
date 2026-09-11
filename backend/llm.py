@@ -403,9 +403,9 @@ def translate_stream(text: str, context: str = "", hits: list = None):
 
 # ---------------- 眉批（句级人性化批注） ----------------
 
-MARGINALIA_SYSTEM = """你是实验室里最会读论文的师兄，正在一篇论文的打印稿上给师弟/师妹写眉批。你的批注从两个角度出发：穿透"作者写作时的心思"，减轻"读者的阅读负担"。只对值得说的句子下手——宁缺毋滥，绝大多数句子不值得批。
+MARGINALIA_SYSTEM = """你是实验室里最会读论文的师兄，正在一篇论文的打印稿上给师弟/师妹写眉批。你的批注从两个角度出发：穿透"作者写作时的心思"，减轻"读者的阅读负担"。只对值得说的句子下手。
 
-批注类型（kind 只能取以下九种）：
+批注类型 kind：优先用下面这些常用款——口径一致，读者不用重新认颜色：
 - hedge     妥协让步：作者在给不足找台阶、留后路（"虽然在…条件下"、"相对较高"这类含糊话）
 - padding   凑字数：套话、正确的废话，整句删掉信息量不变
 - stiff     生硬别扭：翻译腔、拗口、为严谨而硬拗的句式
@@ -416,19 +416,40 @@ MARGINALIA_SYSTEM = """你是实验室里最会读论文的师兄，正在一篇
 - warning   有坑：数据或方法的可疑之处，读者要小心
 - conflict  前后打架：这一处和本文别处的说法/数字对不上（摘要与结果、正文与图注、结论与数据）
 
+这九种都是**常用**款，不是**全部**款。真遇到装不下的东西（比如"引用过时""坐标系没交代"
+"图表看不清""术语前后不统一"），就自造一条：kind 填 custom，label 填你那个短标签（≤6 字），
+band 填 good / warn / noise 之一。band 只有一个作用——决定它在纸上怎么被划、页边是什么颜色，
+所以只有三档：读者一眼能分清的也就是三档，再细分颜色等于没有颜色。
+
 只输出 JSON，不要 markdown 代码块，不要解释：
-{"notes":[{"para":<¶编号>, "quote":"<原句片段，逐字复制，≤80字符>", "kind":"<类型>", "note":"<批注，≤30字>"}]}
+{"notes":[{"para":<¶编号>, "quote":"<原句片段，逐字复制，≤80字符>", "kind":"<类型或 custom>",
+"label":"<自造类型的短标签，用常用款时留空>", "band":"<good|warn|noise，自造时必填>",
+"note":"<批注，≤40字>"}]}
 
 要求：
 1. quote 必须逐字来自原文（可以只截句子的前半段），程序要靠它定位——绝对不要改写、翻译或加省略号
-2. 每段最多 2 条；这一批总共 ≤10 条；没有值得批的段落就不批
+2. 一段最多 3 条。该说的都写上，别为了凑数硬找，也别把真正该提的漏掉
 3. note 要像人说话："这句纯凑字数，跳过""作者自己都没底""典型 AI 腔，删了不疼""这句是全文最硬的证据"
-4. 九种类型都可能，别只盯一种；insight / warning / conflict 比吐槽更有价值
-5. conflict 要指得出和哪里对不上（"和摘要说的 0.1 eV 不一致""图注写五段、正文写四段"），别只说"矛盾"""
+4. insight / warning / conflict 比吐槽更有价值，但别为了显得有用而只挑刺或只夸
+5. conflict 要指得出和哪里对不上（"和摘要说的 0.1 eV 不一致""图注写五段、正文写四段"），别只说"矛盾"
+
+例：{"para":12,"quote":"the barrier is relatively high","kind":"custom","label":"口径含糊",
+"band":"warn","note":"多高才算高？全文没给这个数"}
+
+"""
+
+
+# 九种常用款 + 它们的档位。档位只有三档：值得读 / 要当心 / 可跳过——
+# 页边颜色、纸上笔触都按它来。自造类型也必须落进这三档，否则页面上没有它的位置。
+KINDS = ("hedge", "padding", "stiff", "redundant", "hype", "ai", "insight", "warning", "conflict")
+BANDS = ("good", "warn", "noise")
+BAND_OF = {"insight": "good",
+           "warning": "warn", "hype": "warn", "ai": "warn", "conflict": "warn",
+           "padding": "noise", "redundant": "noise", "stiff": "noise", "hedge": "noise"}
 
 
 def analyze_marginalia(title: str, paras: list) -> list:
-    """分块细读，返回 [{para_idx, page, quote, kind, note}]"""
+    """分块细读，返回 [{para_idx, page, quote, kind, label, band, note}]"""
     from concurrent.futures import ThreadPoolExecutor
     page_of = {p["idx"]: p["page"] for p in paras}
     chunks = [paras[i:i + 12] for i in range(0, len(paras), 12)]
@@ -441,29 +462,39 @@ def analyze_marginalia(title: str, paras: list) -> list:
         ]
         out = ""
         for attempt in range(2):   # 推理模型可能把 token 花在思考上，空结果重试一次
-            out = chat(msgs, max_tokens=12000, temperature=0.3)
+            out = chat(msgs, max_tokens=16000, temperature=0.3)
             if out.strip():
                 break
         data = parse_json(out)
         return data.get("notes", []) if isinstance(data, dict) else []
 
-    notes, seen = [], set()
+    notes, seen, per_para = [], set(), {}
     with ThreadPoolExecutor(max_workers=3) as ex:
         for batch in ex.map(run, chunks):
             for n in batch:
                 try:
-                    para_idx, quote, kind = int(n.get("para")), str(n.get("quote", "")).strip(), str(n.get("kind", ""))
-                    note = str(n.get("note", "")).strip()[:60]
+                    para_idx, quote = int(n.get("para")), str(n.get("quote", "")).strip()
+                    note = str(n.get("note", "")).strip()[:80]
                 except (TypeError, ValueError):
                     continue
-                if not quote or kind not in ("hedge", "padding", "stiff", "redundant", "hype", "ai",
-                                              "insight", "warning", "conflict"):
+                kind = str(n.get("kind", "")).strip().lower()
+                label, band = str(n.get("label", "")).strip()[:8], str(n.get("band", "")).strip().lower()
+                if kind in KINDS:
+                    band, label = BAND_OF[kind], ""
+                elif label and band in BANDS:
+                    kind = "custom"          # 自造款：标签 + 档位齐了才收，否则页面不知道把它画成什么
+                else:
                     continue
-                if para_idx not in page_of or quote[:40] in seen:
+                # 一段最多三条：模型偶尔会对着同一句反复批，截胡在入口比让页边堆满好
+                if not quote or quote[:40] in seen or per_para.get(para_idx, 0) >= 3:
+                    continue
+                if para_idx not in page_of:
                     continue
                 seen.add(quote[:40])
-                notes.append({"para_idx": para_idx, "page": page_of[para_idx], "quote": quote, "kind": kind, "note": note})
-    return notes[:30]
+                per_para[para_idx] = per_para.get(para_idx, 0) + 1
+                notes.append({"para_idx": para_idx, "page": page_of[para_idx], "quote": quote,
+                              "kind": kind, "label": label, "band": band, "note": note})
+    return notes[:48]
 
 
 
@@ -476,11 +507,12 @@ _MOCK_PURPOSE = {
 
 
 def mock_marginalia(paras: list) -> list:
-    kinds = ["gap-note"] * 0 + ["insight", "padding", "hedge", "ai", "warning", "redundant"]
+    kinds = ["insight", "padding", "hedge", "ai", "warning", "redundant"]
     notes = []
     for i, p in enumerate([p for p in paras if not p["in_refs"]][:6]):
-        notes.append({"para_idx": p["idx"], "page": p["page"], "quote": p["text"][:60],
-                      "kind": kinds[i % len(kinds)], "note": "〔演示〕" + _MOCK_PURPOSE.get(kinds[i % len(kinds)], "演示批注")})
+        k = kinds[i % len(kinds)]
+        notes.append({"para_idx": p["idx"], "page": p["page"], "quote": p["text"][:60], "kind": k,
+                      "label": "", "band": BAND_OF[k], "note": "〔演示〕" + _MOCK_PURPOSE.get(k, "演示批注")})
     return notes
 
 
