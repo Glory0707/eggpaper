@@ -54,12 +54,12 @@ const SIX = [
 const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false, q6: false })
 function toggleSix(k) { openSix[k] = !openSix[k] }
 
-const six = reactive({ why: null, next: null, lens: null })
-const sixBusy = reactive({ why: false, next: false, lens: false })
-const Q_OF = { why: 'q2', next: 'q5', lens: 'q6' }
+const six = reactive({ problem: null, why: null, next: null, lens: null })
+const sixBusy = reactive({ problem: false, why: false, next: false, lens: false })
+const Q_OF = { problem: 'q1', why: 'q2', next: 'q5', lens: 'q6' }
 
 async function loadSix() {
-  Object.assign(six, { why: null, next: null, lens: null })
+  Object.assign(six, { problem: null, why: null, next: null, lens: null })
   Object.keys(openSix).forEach(k => (openSix[k] = false))   // 换篇回到"只有问题"的样子
   if (!store.currentId) return
   try { Object.assign(six, await api.sixAnswers(store.currentId)) } catch { /* 没缓存很正常 */ }
@@ -404,26 +404,19 @@ watch(() => store.currentId, () => {
           <section class="six" v-for="s in SIX" :key="s.k" :class="{ open: openSix[s.k] }">
             <button class="six-q" @click="toggleSix(s.k)">
               <i>{{ s.n }}</i><span class="qt">{{ s.q }}</span>
-              <b v-if="s.k === 'q1' && gapParas.length">{{ gapParas.length }}</b>
-              <b v-else-if="s.k === 'q3' && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
+              <b v-if="s.k === 'q3' && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
               <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
             </button>
 
             <div class="six-a" v-show="openSix[s.k]">
-              <!-- ① 要解决什么：缺口段（作者自己点出的问题），没有就退回最大的一条主张 -->
+              <!-- ① 要解决什么：**直接说出来**。原文里没有哪一句现成写着"我们要解决什么"，
+                   那是要从引言里综合出来的——所以这一问的答案是模型的一句话，段落只作为依据
+                   标在句尾（原文在纸上，点 ¶ 就到，不必在这里再抄一遍）。 -->
               <template v-if="s.k === 'q1'">
-                <div v-for="p in gapParas" :key="p.idx" class="gap-node">
-                  <div class="gap-row" @click="jumpPara(p.idx)">
-                    <span class="g-tag">¶{{ p.idx }}</span>
-                    <span class="g-txt">{{ annoOf(p.idx).purpose }}</span>
-                  </div>
-                  <!-- 目的句只说"这段在干嘛"，问题到底是什么得看原文自己怎么说的 -->
-                  <div class="gap-quote" @click="jumpPara(p.idx)">{{ excerpt(p.text) }}</div>
-                </div>
-                <div class="six-note" v-if="!gapParas.length && store.analysis.claims.length">
-                  原文没有单独点出缺口段。它要解决的问题，就是第一条主张要回答的那个：
-                  <b>{{ store.analysis.claims[0].text }}</b>
-                </div>
+                <MdLite v-if="six.problem?.text" class="six-txt" :text="six.problem.text" @cite="jumpPara" />
+                <button v-else class="six-get" :disabled="sixBusy.problem" @click="genSix('problem')">
+                  {{ sixBusy.problem ? '正在想' : '获取' }}
+                </button>
               </template>
 
               <!-- ② 为什么要解决：生成一句（含依据段号），点右侧获取 -->

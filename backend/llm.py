@@ -135,7 +135,8 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 只输出 JSON，不要 markdown 代码块，不要任何解释：
 {"claims":[{"id":"C1","text":"<主张的中文概括，≤30字>","anchors":[<支撑该主张的关键证据段编号>]}],
  "roles":{"<¶编号>":"<角色>"},
- "purposes":{"<¶编号>":"<作者写这段的目的，≤22字，说人话>"}
+ "purposes":{"<¶编号>":"<作者写这段的目的，≤22字，说人话>"},
+ "problem":"<这篇论文要解决的问题：直接说清楚，一到两句，见要求 7>"}
 
 要求：
 1. claims 取 2~5 条，按论文叙事顺序；anchors 只能填 evidence 或 control 角色、且真实支撑该主张的段落编号
@@ -145,7 +146,10 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 4b. 图注（以 FIG./Figure/Table/Scheme 开头的段落）是**结果的一部分**，按它描述的内容给
     evidence 或 extension，绝不要标 boilerplate——读者正要看图注
 5. 顺便抽取本文的缩写表 abbrs：{"abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}，没有就给空对象
-6. 每条关键证据都要给出它直接回答的问题：{"evidence_qs":{"<¶编号>":"<该实验/数据直接回答的问题，≤22字>"}}"""
+6. 每条关键证据都要给出它直接回答的问题：{"evidence_qs":{"<¶编号>":"<该实验/数据直接回答的问题，≤22字>"}}
+7. problem 是给读者看的**一句话答案**，不是摘抄：原文通常没有哪一句直接写着"我们要解决什么"，
+   所以要用你自己的话把引言里的缺口综合成一句明确的陈述——谁在什么条件下没做到什么、
+   因此这篇要回答什么；句尾用 [¶n] 标出它是从哪几段看出来的"""
 
 PURPOSE_FALLBACK = {
     "background": "领域铺垫，可跳过", "gap": "作者真正的出发点", "claim": "论文要证明的核心",
@@ -497,7 +501,8 @@ def mock_analyze(paras: list) -> dict:
         int(k) for k, v in roles.items() if v == "evidence"][:2]} for i, ci in enumerate(claim_idx[:3])]
     if not claims:
         claims = [{"id": "C1", "text": "（演示模式：未识别到明确主张）", "anchors": []}]
-    return {"claims": claims, "roles": roles, "purposes": purposes}
+    return {"claims": claims, "roles": roles, "purposes": purposes,
+            "problem": "（演示模式）这篇论文要解决的问题是：演示用的占位陈述 [¶2]。"}
 
 
 # ---------------- 方法卡（可复现 protocol） ----------------
@@ -594,6 +599,31 @@ def _items(raw) -> dict:
                       "ask": str(it.get("ask") or "").strip()[:80],
                       "cites": cites_of(text)})
     return {"items": items[:3]}
+
+
+def answer_problem(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
+    """要解决什么：**直接说出来**，不摘抄原文。
+
+    ① 原来是"列出缺口段"，读者看到的是段落号加一截原文——可原文里根本没有哪一句写着
+    "我们要解决什么"，那是要从引言里综合出来的。所以这一问现在由模型给一句明确的陈述，
+    段落只作为依据标在句尾（读者要的原文在纸上，点 ¶ 就到）。
+    给旧论文补这一问时走这条；重新析读之后，骨架提示词已经把 problem 一起产出了。
+    """
+    out = chat([
+        {"role": "system", "content":
+            "你在帮一位研究生说清一篇论文'要解决什么'。看下面给出的缺口段、背景段与主张，"
+            "用你自己的话给出一句明确的陈述：谁在什么条件下还没做到什么，因此这篇论文要回答什么。"
+            "要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；一到两句；"
+            "句尾用 [¶n] 标出你是从哪几段看出来的。"
+            '只输出 JSON：{"text":"<一两句话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
+        {"role": "user", "content":
+            f"论文标题：{title or ''}\n\n"
+            f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
+            f"[背景]\n{_paras_block(backgrounds, 400)}\n\n"
+            "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
+    ], max_tokens=3000, temperature=0.3, no_think=True)
+    text = str(parse_json(out).get("text") or "").strip()[:400]
+    return {"text": text, "cites": cites_of(text)}
 
 
 def answer_why(title: str, gaps: list, backgrounds: list, claims: list) -> dict:

@@ -253,6 +253,9 @@ def _run_analysis(pid: str, paras: list):
         # 推荐问题、导师三问、方法卡。只清其中一半是最难看的——一眼卡说 A，骨架里
         # 已经没有 A 了，或者三问还在问一个被删掉的主张。宁可再生一次。
         db.answers_clear(pid)
+        prob = str(data.get("problem") or "").strip()
+        if prob:
+            db.answer_put(pid, "problem", {"text": prob, "cites": llm.cites_of(prob)})
         db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
                         abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
@@ -482,7 +485,8 @@ def ask_visual(body: dict):
 # 免费的两问（要解决什么 / 怎么解决的 / 还没解决什么）直接用骨架数据，不花 token；
 # 这三问按需生成、按篇缓存，和「获取」同一个纪律。语料只喂相关的几类段落。
 
-SIX_KEYS = ("why", "next", "lens")
+# problem 也走这条：析读时会顺带产出（骨架提示词的 problem 字段），没有缓存时现生成
+SIX_KEYS = ("problem", "why", "next", "lens")
 
 
 def _paras_of_role(pid: str, roles: set, cap: int = 8):
@@ -495,6 +499,11 @@ def _paras_of_role(pid: str, roles: set, cap: int = 8):
 def _gen_six(p: dict, key: str):
     pid = p["id"]
     _, claims, annos = db.get_analysis(pid)
+    if key == "problem":
+        return llm.answer_problem(p["title"],
+                                  _paras_of_role(pid, {"gap"}),
+                                  _paras_of_role(pid, {"background"}, 6),
+                                  claims)
     if key == "why":
         return llm.answer_why(p["title"],
                               _paras_of_role(pid, {"gap"}),
@@ -511,6 +520,9 @@ def _gen_six(p: dict, key: str):
 
 
 def _mock_six(key: str) -> dict:
+    if key == "problem":
+        return {"text": "〔演示模式〕现有做法依赖随机、不可控的缺陷位点，因此这篇论文要用本征有序的"
+                        "结构位点来实现可控的高活性 [¶3]。", "cites": [3]}
     if key == "why":
         return {"text": "〔演示模式〕这件事之所以重要，是因为它卡住了下游一整类应用 [¶2]；"
                         "而到现在没解决，是因为常规做法要引入不可控的缺陷 [¶3]。", "cites": [2, 3]}
