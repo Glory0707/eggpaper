@@ -224,7 +224,7 @@ function onKey(e) {
     <!-- 键盘卡 -->
     <Transition name="pop">
     <div class="keys-card" v-if="store.shortcutCard" @click="store.shortcutCard = false">
-      <div class="mono-label" style="margin-bottom:8px">键盘 · 按 ? 收起</div>
+      <div class="mono-label" style="margin-bottom:8px">键盘</div>
       <div class="k-row"><span>下一段 / 上一段（略读时仅核心段）</span><kbd>j / k</kbd></div>
       <div class="k-row"><span>译当前段并钉页边</span><kbd>t</kbd></div>
       <div class="k-row"><span>翻译划选</span><kbd>s</kbd></div>

@@ -386,10 +386,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 }
 .role-card .rc-x:hover { color: var(--ink); box-shadow: none; transform: none; }
 .role-card .rc-purpose {
-  font-size: var(--fs-md); margin: 7px 0 6px; line-height: 1.6; color: var(--ink);
+  font-size: var(--fs-md); margin: 7px 0; line-height: 1.6; color: var(--ink);
   padding-left: 8px; border-left: 2px solid var(--hairline);
 }
-.role-card .rc-hint { font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 7px; }
 .role-card select { width: 100%; font-size: var(--fs-sm); padding: 5px 6px; }
 .role-card .rc-flag {
   font-size: var(--fs-xs); color: var(--ink-2);

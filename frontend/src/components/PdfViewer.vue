@@ -794,7 +794,7 @@ watch(() => store.marginalia.notes, (n, o) => {
             <div v-for="{ p, role, top } in tabsOnPage(it.origPage)" :key="'t' + p.idx"
                  class="role-tab" :class="{ on: roleCard?.idx === p.idx }"
                  :style="{ top: top + 'px', background: ROLE_COLOR[role], color: roleInk(role) }"
-                 :title="`¶${p.idx} · ${ROLE_ZH[role]}（点开可改判）`"
+                 :title="`¶${p.idx} · ${ROLE_ZH[role]}`"
                  @click.stop="openRoleCard($event, p)">
               <span class="pn">{{ ROLE_GLYPH[role] }}</span>
             </div>
@@ -900,7 +900,6 @@ watch(() => store.marginalia.notes, (n, o) => {
         <button class="rc-x" title="关闭（Esc）" @click="closeRoleCard">×</button>
       </div>
       <div class="rc-purpose">{{ roleCardData.anno.purpose || '推断中' }}</div>
-      <div class="rc-hint">AI 按写法推断的角色 · 你可以改判</div>
       <select :value="roleCardData.role" @change="e => $emit('override', { idx: roleCard.idx, role: e.target.value })">
         <option value="">回到推断</option>
         <option v-for="(zh, k) in ROLE_ZH" :key="k" :value="k">{{ zh }}</option>

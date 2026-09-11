@@ -270,15 +270,15 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         </div>
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            还没有析读。<br />「析读全文」会站在作者的视角，把主张、证据、对照和样板段都翻出来。
+            还没有析读。
           </div>
           <button class="primary" style="margin-top:12px" @click="emit('analyze')">析读全文</button>
         </div>
 
         <template v-else>
-          <!-- 一张表说清两件事：段落构成 + 页边那些字是什么意思。点一下跳到该角色首段 -->
+          <!-- 点一下跳到该角色首段 -->
           <div class="mono-label" style="margin:0 0 7px; display:flex; justify-content:space-between">
-            <span>段落角色 · 色越深越靠近论证主干</span>
+            <span>段落角色</span>
             <span v-if="store.readingPara">读至 ¶{{ store.readingPara }}</span>
           </div>
           <div class="role-legend">
@@ -288,9 +288,8 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
               <b>{{ roleCounts[k] }}</b>
             </span>
           </div>
-          <div class="mono-label" style="margin:0 0 14px">{{ store.paras.length }} 段</div>
 
-          <div class="mono-label" style="margin-bottom:8px">GAP · 作者的出发点</div>
+          <div class="mono-label" style="margin-bottom:8px">GAP</div>
           <div class="gap-node" v-for="p in gapParas" :key="p.idx">
             <div class="gap-row" @click="jumpPara(p.idx)">
               <span class="g-tag">¶{{ p.idx }}</span>
@@ -298,7 +297,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             </div>
           </div>
 
-          <div class="mono-label" style="margin:14px 0 8px">CLAIMS → EVIDENCE · 论证链</div>
+          <div class="mono-label" style="margin:14px 0 8px">CLAIMS → EVIDENCE</div>
           <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id"
                :class="{ now: currentClaim === c.id }">
             <div class="c-head">
@@ -329,7 +328,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
             </div>
           </div>
           <button v-else-if="store.marginalia.status !== 'done' && store.marginalia.status !== 'running'"
-                  style="margin-top:16px" @click="emit('marginalia')">让师兄写眉批（逐句吐槽）</button>
+                  style="margin-top:16px" @click="emit('marginalia')">让师兄写眉批</button>
         </template>
       </template>
 
@@ -350,7 +349,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         <!-- 方法卡 -->
         <div style="margin-top:16px">
           <div class="mono-label" style="margin-bottom:8px;display:flex;justify-content:space-between">
-            <span>方法卡 · PROTOCOL</span>
+            <span>方法卡</span>
           </div>
           <div v-if="!methodCard">
             <button style="width:100%" @click="genMethodCard" :disabled="mcBusy">
@@ -381,7 +380,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
 
         <!-- 导师三问 -->
         <div style="margin-top:16px">
-          <div class="mono-label" style="margin-bottom:8px">导师三问 · 组会预案</div>
+          <div class="mono-label" style="margin-bottom:8px">导师三问</div>
           <div v-if="!advisor.length">
             <button style="width:100%" @click="loadAdvisor" :disabled="advBusy">
               {{ advBusy ? '推演中…' : '生成最可能被问住的 3 个问题' }}
@@ -434,10 +433,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
       <template v-if="tab === 'terms'">
         <!-- 本文用到的缩写：论文自带的，一键收进术语表 -->
         <div style="margin-bottom:14px" v-if="abbrList.length">
-          <div class="mono-label" style="margin-bottom:6px; display:flex; justify-content:space-between">
-            <span>本文缩写 · {{ abbrList.length }}</span>
-            <span style="letter-spacing:0">点 ＋ 收入术语表</span>
-          </div>
+          <div class="mono-label" style="margin-bottom:6px">本文缩写 · {{ abbrList.length }}</div>
           <div class="abbr-list">
             <div class="term-row" v-for="a in abbrList" :key="a.en">
               <span class="t-en" :title="a.en">{{ a.en }}</span>
