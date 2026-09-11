@@ -100,12 +100,17 @@ async function delColl(c) {
 }
 
 /* ---------- 归入分类：勾选 + 拖拽两条路 ---------- */
+// 行上只有一个"＋"，归没归进去不看行（那会变成一串看不懂的数字），
+// 归的动作即时回一句 toast——反馈要给，但不留在界面上占地方
 async function toggleIn(pid, cid) {
   const cur = collOf(pid)
-  const next = cur.includes(cid) ? cur.filter(x => x !== cid) : [...cur, cid]
+  const c = colls.value.find(x => x.id === cid)
+  const on = cur.includes(cid)
+  const next = on ? cur.filter(x => x !== cid) : [...cur, cid]
   try {
     await api.paperColls(pid, next)
     await refreshCollections()
+    if (c) toast(on ? `已移出「${c.name}」` : `已归入「${c.name}」`)
   } catch (e) { toast(e.message) }
 }
 const dragPid = ref(null)
@@ -115,7 +120,13 @@ async function dropOn(cid) {
   if (!pid) return
   const cur = collOf(pid)
   if (cur.includes(cid)) return
-  try { await api.paperColls(pid, [...cur, cid]); await refreshCollections() } catch (e) { toast(e.message) }
+  const c = colls.value.find(x => x.id === cid)
+  try {
+    await api.paperColls(pid, [...cur, cid])
+    await refreshCollections()
+    if (c) toast(`已归入「${c.name}」`)
+  } catch (e) { toast(e.message) }
+  menuFor.value = null
 }
 
 /* ---------- 导入 / 删除 ---------- */
@@ -155,7 +166,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 
     <div class="rail-head">
       <span class="mono-label">文库 · {{ store.papers.length }} 篇</span>
-      <button class="ghost" style="padding:2px 8px" @click="emit('close')">esc</button>
+      <button class="ghost head-x" title="收起文库" @click="emit('close')">‹</button>
     </div>
 
     <div class="lib-tools">
@@ -196,25 +207,10 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
       <div v-for="p in shown" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId }"
            draggable="true" @dragstart="dragPid = p.id" @dragend="dragPid = null" @click="touch(p)">
         <button class="p-del" title="删除" @click.stop="del(p.id, p.title || p.filename)">×</button>
-        <button class="p-tag" :title="collOf(p.id).length ? '归入分类' : '还没归类 · 点这里归入'"
-                @click.stop="menuFor = menuFor === p.id ? null : p.id">
-          {{ collOf(p.id).length || '＋' }}
-        </button>
+        <button class="p-tag" title="归入分类"
+                @click.stop="menuFor = menuFor === p.id ? null : p.id">＋</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
-        <div class="p-meta">
-          <span class="mono-num">{{ p.n_pages }}p</span>
-          <span v-for="cid in collOf(p.id).slice(0, 2)" :key="cid" class="p-coll">
-            {{ colls.find(c => c.id === cid)?.name }}
-          </span>
-        </div>
-        <div class="st">
-          <i :class="p.analysis_status === 'done' ? 'done' : p.analysis_status === 'error' ? 'err' : ''"
-             :title="'骨架 ' + p.analysis_status"></i>
-          <i :class="p.marginalia_status === 'done' ? 'done' : p.marginalia_status === 'error' ? 'err' : ''"
-             :title="'眉批 ' + p.marginalia_status"></i>
-          <i :class="p.translate_status === 'done' ? 'done' : p.translate_status === 'error' ? 'err' : ''"
-             :title="'双语 ' + p.translate_status"></i>
-        </div>
+        <div class="p-author" v-if="p.authors">{{ p.authors }}</div>
 
         <!-- 归入分类：勾选即存，不用"确定" -->
         <div class="coll-menu" v-if="menuFor === p.id" @click.stop>
@@ -231,7 +227,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
         <template v-if="!store.papers.length">文库是空的。拖一份 PDF 进来就开始。</template>
         <template v-else-if="q.trim()">没有匹配「{{ q.trim() }}」的文献。</template>
         <template v-else-if="typeof SEL === 'number'">
-          这个分类下还没有文献。切到「全部」，把条目拖到左边的「{{ colls.find(c => c.id === SEL)?.name }}」，或者点条目右上角的数字勾选。
+          这个分类下还没有文献。切到「全部」，把条目拖到左边的「{{ colls.find(c => c.id === SEL)?.name }}」，或者点条目左边的 ＋ 勾选。
         </template>
         <template v-else-if="SEL === 'none'">每一篇都归类了。</template>
         <template v-else>没有符合条件的文献。</template>

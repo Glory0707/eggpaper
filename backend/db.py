@@ -84,6 +84,9 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE paragraphs ADD COLUMN lines TEXT",   # 行级坐标：页边引文要按行画
         "ALTER TABLE qa_messages ADD COLUMN conv_id INTEGER",   # 旧问答没有会话，迁移到默认会话
         "ALTER TABLE papers ADD COLUMN last_read_at TEXT",      # 上次读到什么时候（文库排序用）
+        "ALTER TABLE papers ADD COLUMN authors TEXT",           # 第一作者（文库列表上就显示这一条）
+        "ALTER TABLE conversations ADD COLUMN summary TEXT",    # 较早对话压缩成的摘要（不丢关键信息）
+        "ALTER TABLE conversations ADD COLUMN summary_upto INTEGER DEFAULT 0",  # 摘要已折到哪一条
     ):
         try:
             c.execute(stmt)
@@ -106,15 +109,15 @@ def new_id() -> str:
 
 # ---------- papers ----------
 
-def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int) -> str:
-    q("INSERT INTO papers(id, filename, title, path, n_pages, created_at) VALUES(?,?,?,?,?,?)",
-      (pid, filename, title, path, n_pages, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
+def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int, authors: str = "") -> str:
+    q("INSERT INTO papers(id, filename, title, path, n_pages, authors, created_at) VALUES(?,?,?,?,?,?,?)",
+      (pid, filename, title, path, n_pages, authors, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
     return pid
 
 
 def list_papers():
     return [dict(r) for r in q(
-        "SELECT id, filename, title, n_pages, created_at, last_read_at, analysis_status, "
+        "SELECT id, filename, title, authors, n_pages, created_at, last_read_at, analysis_status, "
         "marginalia_status, translate_status FROM papers ORDER BY created_at DESC")]
 
 
@@ -291,7 +294,7 @@ def conv_list(pid: str):
         conv_create(pid, "新对话")
     _adopt_orphan_qa(pid)
     return [dict(r) for r in q(
-        "SELECT c.id, c.title, c.updated_at, "
+        "SELECT c.id, c.title, c.updated_at, c.summary, c.summary_upto, "
         "  (SELECT COUNT(*) FROM qa_messages m WHERE m.conv_id=c.id) AS n "
         "FROM conversations c WHERE c.paper_id=? ORDER BY c.updated_at DESC, c.id DESC", (pid,))]
 
@@ -311,6 +314,18 @@ def conv_rename(cid: int, title: str):
 def conv_delete(cid: int):
     q("DELETE FROM qa_messages WHERE conv_id=?", (cid,), commit=True)
     q("DELETE FROM conversations WHERE id=?", (cid,), commit=True)
+
+
+def conv_set_summary(cid: int, summary: str, upto: int):
+    q("UPDATE conversations SET summary=?, summary_upto=? WHERE id=?", (summary, int(upto), cid), commit=True)
+
+
+def conv_touch_summary(cid: int):
+    """删过一条已经被折进摘要的消息：摘要就不算数了，清掉让它按剩下的原文重建。
+    "删掉的那条不进上下文"这条规矩，对摘要同样成立。"""
+    c = conv_get(cid)
+    if c and c.get("summary"):
+        q("UPDATE conversations SET summary='', summary_upto=0 WHERE id=?", (cid,), commit=True)
 
 
 def conv_get(cid: int):
@@ -360,11 +375,20 @@ def qa_drop_last_assistant(pid: str, conv_id: int):
     prev = next((r for r in rows if r["role"] == "user" and (not last or r["id"] < last["id"])), None)
     if prev:
         q("DELETE FROM qa_messages WHERE id=?", (prev["id"],), commit=True)
+    # 撤掉的两条如果已经折进摘要，摘要同样要作废（否则撤掉的内容还在上下文里）
+    c = conv_get(conv_id)
+    if c and (c.get("summary_upto") or 0) >= (last["id"] if last else 0):
+        conv_touch_summary(conv_id)
     return prev["content"] if prev else None
 
 
 def qa_delete(mid: int):
+    rows = q("SELECT conv_id FROM qa_messages WHERE id=?", (mid,))
     q("DELETE FROM qa_messages WHERE id=?", (mid,), commit=True)
+    if rows and rows[0]["conv_id"]:
+        c = conv_get(rows[0]["conv_id"])
+        if c and (c.get("summary_upto") or 0) >= mid:
+            conv_touch_summary(c["id"])
 
 
 def qa_clear(pid: str):

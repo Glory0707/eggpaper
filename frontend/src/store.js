@@ -105,13 +105,19 @@ export async function openPaper(pid) {
   if (pos.variant) store.viewer.variant = pos.variant
   if (pos.spread) store.viewer.spread = pos.spread
   store.paper = await api.paper(pid)
+  // 换篇先清干净再装新的：上一章的骨架和眉批在新论文上闪一下，比慢半拍难看得多
+  // （症状：新论文的页面上短暂出现别人家的划线和角色书签）
+  store.paras = []
+  store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
+  store.marginalia = { status: 'none', notes: [] }
+  store.readingPara = null
   store.paras = await api.paragraphs(pid)
   store.summary = null
   store.summaryErr = ''
   store.viewer.restorePos = pos.scroll || 0
   refreshAnalysis()
   refreshMarginalia()
-  // 一眼卡是后台压的：压不出来（比如扫描件）要说出来，别让"正在压出…"一直转
+  // 一眼卡是后台压的：压不出来（比如扫描件）要说出来，别让"正在写一眼卡…"一直转
   api.summary(pid).then(s => (store.summary = s)).catch(e => (store.summaryErr = e.message))
   api.touchPaper(pid).then(() => refreshPapers()).catch(() => {})
 }

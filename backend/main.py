@@ -119,6 +119,7 @@ async def upload(file: UploadFile = File(...)):
     # 解析失败要收拾干净：留着半篇没有段落的"论文"，用户点开只能看见一个空书架
     try:
         title = pdfparse.extract_title(path)
+        authors = pdfparse.extract_authors(path)
         paras = pdfparse.extract_paragraphs(path)
         import pymupdf
         n_pages = len(pymupdf.open(path))
@@ -128,7 +129,7 @@ async def upload(file: UploadFile = File(...)):
         except OSError:
             pass
         raise HTTPException(400, f"这份 PDF 读不了：{_human_msg(e)}")
-    db.create_paper(pid, file.filename, title, path, n_pages)
+    db.create_paper(pid, file.filename, title, path, n_pages, authors)
     db.replace_paragraphs(pid, paras)
     row = db.get_paper(pid)
     # AI 主动：导入即后台通读，打开时简报已就绪（没有文字层的扫描件没得析读，直接标完成）
@@ -603,6 +604,41 @@ def _autotitle(pid: str, conv_id: int, question: str, is_first: bool):
         db.conv_rename(conv_id, t + ("…" if len(question.strip()) > 18 else ""))
 
 
+# 上下文预算：最近几轮原样带，更早的折进摘要。
+# 保留 8 条（4 轮）原文——足够接住"你刚才说的那个""再详细点"这类指代；
+# 折到 12 条 / 6000 字以上才动手，别每问一句都去调一次压缩。
+KEEP_MSGS, FOLD_AT, FOLD_CHARS = 8, 12, 6000
+
+
+def _context(pid: str, conv_id: int, history: list):
+    """返回 (摘要, 原样带上的历史)。超预算就把较早的几条压成摘要存回会话。
+
+    压缩在提问之前同步做完，代价是每折一次多一次模型调用；但这是"宁慢不丢"的一步：
+    直接把老消息截断，用户前面确认过的结论和术语就会凭空消失，模型随即开始自相矛盾。
+    **压缩失败（限流、超时）时不许静默丢**：把老消息截短了照样带上，粗糙好过失忆。
+    """
+    c = db.conv_get(conv_id) or {}
+    upto = c.get("summary_upto") or 0
+    # tail = 还没被折进摘要的那些（删过的消息这里自然就没有了）
+    tail = [m for m in history if (m.get("id") or 0) > upto]
+    chars = sum(len(m.get("content") or "") for m in tail)
+    if len(tail) <= FOLD_AT and chars <= FOLD_CHARS:
+        return c.get("summary") or "", tail
+    head, rest = tail[:-KEEP_MSGS], tail[-KEEP_MSGS:]
+    if not head:
+        return c.get("summary") or "", tail
+    prev = c.get("summary") or ""
+    new_sum = ""
+    if not (config.load()["mock"] or not config.load()["provider"]["api_key"]):
+        new_sum = llm.summarize_dialog(prev, head)
+    if new_sum:
+        db.conv_set_summary(conv_id, new_sum, head[-1].get("id") or 0)
+        return new_sum, rest
+    # 摘要没成：截短了带上，别丢
+    short = [dict(m, content=(m.get("content") or "")[:240] + "…") for m in head[-40:]]
+    return prev, short + rest
+
+
 def _stream_answer(p: dict, conv_id: int, question: str):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
 
@@ -611,14 +647,16 @@ def _stream_answer(p: dict, conv_id: int, question: str):
     """
     pid = p["id"]
     uid = db.qa_add(pid, "user", question, conv_id=conv_id)
-    hist = db.qa_history(pid, conv_id)[:-1]
+    hist = db.qa_history(pid, conv_id)[:-1]      # 不含刚写进去的这条；删过的消息这里自然就没有了
     buf = []
     try:
         if config.load()["mock"] or not config.load()["provider"]["api_key"]:
             gen = _mock_stream(question)
         else:
+            summary, ctx = _context(pid, conv_id, hist)
             hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
-            gen = llm.chat_stream(llm.ask_messages(p["title"], db.get_paragraphs(pid), hist, question, hits))
+            gen = llm.chat_stream(llm.ask_messages(p["title"], db.get_paragraphs(pid), ctx, question,
+                                                   hits, summary))
         for piece in gen:
             buf.append(piece)
             yield _sse({"type": "delta", "text": piece})
@@ -662,7 +700,6 @@ def ask(pid: str, body: dict):
 def conversations(pid: str):
     _paper_or_404(pid)
     return db.conv_list(pid)
-
 
 @app.post("/api/papers/{pid}/conversations")
 def conversation_new(pid: str, body: dict = None):

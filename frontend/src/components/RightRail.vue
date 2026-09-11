@@ -237,7 +237,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
   <aside class="rail-right">
     <!-- 分栏拖手：贴在右栏左缘，往左拖变宽 -->
     <div class="rail-grip" :class="{ on: railDragging }" role="separator" aria-orientation="vertical"
-         tabindex="0" title="拖动改宽度 · 双击复位（←/→ 也能调）"
+         tabindex="0" title="拖动改宽度 · 双击复位 · ←→"
          @mousedown="startRailResize" @dblclick="store.viewer.railW = RAIL_DEF; store.reflowTick++"
          @keydown.left.prevent="nudgeRail(28)" @keydown.right.prevent="nudgeRail(-28)"></div>
     <div class="rtabs">
@@ -251,7 +251,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
       <!-- ============ 骨架 ============ -->
       <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
-          <div class="r-line">正在通读全文，找主张、证据与捷径<span class="r-dots">…</span></div>
+          <div class="r-line">正在拆骨架<span class="r-dots">…</span></div>
           <div class="r-bar"><i /></div>
         </div>
         <div v-else-if="store.analysis.status === 'error'" style="padding:8px 2px">
@@ -330,7 +330,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
       <template v-if="tab === 'eye'">
         <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}</div>
         <div v-else-if="!store.summary" class="reading">
-          <div class="r-line">正在压出一眼卡<span class="r-dots">…</span></div>
+          <div class="r-line">正在写一眼卡<span class="r-dots">…</span></div>
           <div class="r-bar"><i /></div>
         </div>
         <div class="card-eye" v-else>

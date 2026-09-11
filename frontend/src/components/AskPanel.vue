@@ -171,14 +171,14 @@ async function newConv() {
 async function renameConv() {
   const c = curConv.value
   if (!c) return
-  const t = prompt('这摊对话叫什么？', c.title)
+  const t = prompt('会话名称', c.title)
   if (t == null) return
   try { await api.convRename(c.id, t.trim() || '新对话'); await loadConvs(true) } catch (e) { toast(e.message) }
 }
 async function delConv() {
   const c = curConv.value
   if (!c) return
-  if (!confirm(`删掉这摊对话「${c.title}」？里面的问答会一起删掉。`)) return
+  if (!confirm(`删除会话「${c.title}」？其中的问答会一起删掉。`)) return
   try {
     stop(true)
     await api.convDelete(c.id)
@@ -223,24 +223,26 @@ onUnmounted(() => { stop(true) })
 
 <template>
   <div class="ask-panel">
-    <!-- 会话栏：切换 / 新建 / 改名 / 删掉 -->
+    <!-- 会话栏：切换 / 新建 / 改名 / 删掉。文案只有动作，没有注解 -->
     <div class="cv-bar">
-      <select class="cv-pick" :value="convId ?? ''" title="切换对话"
+      <select class="cv-pick" :value="convId ?? ''" title="切换会话"
               @change="e => (convId = Number(e.target.value))">
         <option v-for="c in convs" :key="c.id" :value="c.id">
           {{ c.title }}{{ c.n ? ` · ${c.n}` : '' }}
         </option>
         <option v-if="!convs.length" :value="''">新对话</option>
       </select>
-      <button class="cv-btn" title="新对话（新开一摊，上下文不混）" @click="newConv">＋</button>
+      <button class="cv-btn" title="新建会话" @click="newConv">＋</button>
       <button class="cv-btn" title="重命名" @click="renameConv">✎</button>
-      <button class="cv-btn" title="删掉这摊对话" :disabled="!curConv" @click="delConv">🗑</button>
+      <button class="cv-btn" title="删除会话" :disabled="!curConv" @click="delConv">🗑</button>
     </div>
 
     <div class="qa-scroll" ref="scrollEl" @scroll.passive="onScroll">
+      <!-- 较早的对话被压成摘要后，说一句"它还在"，点开能看 -->
+      <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">更早的对话已存为摘要</div>
+
       <div v-if="empty" class="qa-empty">
         <div class="qe-title">这一篇的问答</div>
-        <div class="qe-sub">回答只依据这篇论文的原文，句尾的 ¶ 号可以点回原文。</div>
         <div class="qa-quick">
           <button v-for="q in props.quick" :key="q" :title="q" @click="send(q)">{{ q }}</button>
         </div>
@@ -273,7 +275,7 @@ onUnmounted(() => { stop(true) })
     <!-- 输入区：能长高，Enter 发送 / Shift+Enter 换行 -->
     <div class="qa-input">
       <textarea ref="inputEl" v-model="text" rows="1" class="qa-ta"
-                placeholder="基于这篇论文提问…（Enter 发送，Shift+Enter 换行）"
+                placeholder="基于这篇论文提问…"
                 @keydown="onKey"></textarea>
       <button v-if="busy" class="qa-send stop" @click="stop()" title="停止生成">■</button>
       <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" title="发送（Enter）">↑</button>

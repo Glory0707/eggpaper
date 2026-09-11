@@ -204,7 +204,7 @@ function onKey(e) {
           </div>
         </Transition>
         <button class="toggle" :class="{ on: store.viewer.layers.skim }" @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
-        <button class="toggle" :class="{ on: store.viewer.frame }" title="框选任意区域问 AI（r）"
+        <button class="toggle" :class="{ on: store.viewer.frame }" title="框选问 AI（r）"
                 @click="store.viewer.frame = !store.viewer.frame">框选</button>
         <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
              译完就没必要再露出来了——留一个永远点不动的按钮只会让人猜它还能干什么。 -->

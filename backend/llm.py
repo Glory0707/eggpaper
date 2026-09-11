@@ -261,11 +261,15 @@ QA_SYSTEM = """你是论文精读助手，基于给定的论文全文回答研�
 4. 回答用中文，术语首次出现给出英文"""
 
 
-def ask_messages(title: str, paras: list, history: list, question: str, hits=None) -> list:
+def ask_messages(title: str, paras: list, history: list, question: str, hits=None, summary: str = "") -> list:
     """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))[:80000]
     msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n论文标题：{title or ''}\n\n{body}"}]
-    for h in history[-8:]:
+    if summary:
+        msgs.append({"role": "system", "content":
+                     "以下是本次对话较早部分的摘要（其中的结论、术语译法、用户的关注点都继续有效，"
+                     "不要重复已经确认过的事）：\n" + summary})
+    for h in history:
         if h.get("role") in ("user", "assistant") and h.get("content"):
             msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": question})
@@ -277,8 +281,40 @@ def cites_of(text: str) -> list:
     return sorted({int(n) for n in re.findall(r"¶\s*(\d+)", text or "")})
 
 
-def ask(title: str, paras: list, history: list, question: str, hits=None) -> dict:
-    out = chat(ask_messages(title, paras, history, question, hits), max_tokens=6000, temperature=0.3)
+# ---------- 长对话的上下文压缩 ----------
+# 一轮轮聊下去，上下文迟早会顶到上限。直接截断最早的那几轮是最坏的做法：用户
+# 在前面确认过的结论、术语译法、关注点会凭空消失，模型就开始自相矛盾。所以
+# "老的那几轮"要先压成摘要，和被删掉的消息一样——不在窗口里，但仍可追溯。
+DIALOG_SUMMARY_SYSTEM = """你在为一次论文研读对话做上下文压缩。把给出的较早对话压成一份摘要，只输出摘要正文。
+
+必须保留（这些丢了后面就全错）：
+1. 已经确认过的结论、数字、事实，以及它们的依据段号（¶n）
+2. 已经定下的术语译法与命名
+3. 用户反复关心的点、明确的要求与否定的方向
+4. 还没有解决的问题
+可以丢：寒暄、重复表述、模型的推理过程、已经被推翻的中间结论。用中文，条目式，≤400 字。"""
+
+
+def summarize_dialog(prev: str, messages: list) -> str:
+    """把"已有摘要 + 这批较早的消息"压成新摘要。失败时退回原摘要（宁可留着旧的）。"""
+    lines = []
+    for m in messages:
+        who = "用户" if m.get("role") == "user" else "助手"
+        lines.append(f"{who}：{(m.get('content') or '')[:1500]}")
+    user = ""
+    if prev:
+        user += f"[已有摘要]\n{prev}\n\n"
+    user += "[需要并入的新对话]\n" + "\n".join(lines)
+    try:
+        out = chat([{"role": "system", "content": DIALOG_SUMMARY_SYSTEM},
+                    {"role": "user", "content": user}], max_tokens=3000, temperature=0.2)
+        return out.strip()[:2000] or prev
+    except Exception:
+        return prev
+
+
+def ask(title: str, paras: list, history: list, question: str, hits=None, summary: str = "") -> dict:
+    out = chat(ask_messages(title, paras, history, question, hits, summary), max_tokens=6000, temperature=0.3)
     return {"answer": out, "citations": cites_of(out)}
 
 

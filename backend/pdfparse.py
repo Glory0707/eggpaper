@@ -65,6 +65,57 @@ def extract_title(path: str) -> str:
         doc.close()
 
 
+# 作者行里要剥掉的东西：上标数字/符号、邮箱、日期、机构
+SUP = re.compile(r"[\d*†‡§¶#{}\[\]]+")
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+")
+DATEISH = re.compile(r"\b(19|20)\d{2}\b|received|accepted|published|doi|preprint", re.I)
+
+
+def extract_authors(path: str) -> str:
+    """第一作者。只认"标题正下方那一两行里的第一个名字"——够用就行，不做完整作者解析。
+
+    刻意保守：认不出来就返回空串（界面上就不显示），绝不拿机构名或日期凑数。
+    """
+    doc = pymupdf.open(path)
+    try:
+        page = doc[0]
+        lines = []
+        for b in page.get_text("dict")["blocks"]:
+            if b["type"] != 0:
+                continue
+            for line in b["lines"]:
+                t = _clean(" ".join(s["text"] for s in line["spans"]))
+                if not t or WATERMARK.match(t):
+                    continue
+                size = max((s["size"] for s in line["spans"]), default=0)
+                lines.append({"text": t, "size": size, "y0": line["bbox"][1], "y1": line["bbox"][3]})
+        top = [l for l in lines if l["y0"] < page.rect.height * 0.5]
+        if not top:
+            return ""
+        max_size = max(l["size"] for l in top)
+        title = [l for l in top if l["size"] >= max_size - 1.6]
+        if not title:
+            return ""
+        t_bottom = max(l["y1"] for l in title)
+        # 标题下方、比标题小、且不是机构/邮箱/日期的前两行
+        below = sorted([l for l in top if l["y0"] >= t_bottom - 2 and l["size"] < max_size - 1.6],
+                       key=lambda l: l["y0"])
+        for ln in below[:3]:
+            t = ln["text"]
+            if len(t) > 200 or AFFIL.search(t) or EMAIL.search(t) or DATEISH.search(t):
+                continue
+            if t.lower().startswith(("abstract", "keywords", "摘要", "关键词")):
+                continue
+            first = t.split(",")[0].split(" and ")[0]
+            first = SUP.sub("", EMAIL.sub("", first)).strip(" .·&")
+            words = first.split()
+            if 1 <= len(words) <= 5 and 2 <= len(first) <= 40 and re.search(r"[A-Za-zÀ-ÿ\u4e00-\u9fff]", first):
+                return first
+        return ""
+    finally:
+        doc.close()
+
+
 def _page_lines(page: pymupdf.Page):
     lines = []
     for b in page.get_text("dict")["blocks"]:

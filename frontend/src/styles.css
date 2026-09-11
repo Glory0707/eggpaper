@@ -305,18 +305,14 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .paper-item:hover { background: rgba(255, 253, 246, 0.8); }
 .paper-item.on { background: var(--card-2); border-color: var(--hairline); }
-.paper-item.on::before {
-  content: ''; position: absolute; left: 9px; top: 14px;
-  width: 8px; height: 11px;
-  background: var(--accent);
-  border-radius: 50% 50% 50% 50% / 60% 60% 42% 42%;
-}
 .paper-item .fn { font-size: var(--fs-sm); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .paper-item.on .fn { color: var(--ink); font-weight: 600; }
-.paper-item .st { display: flex; gap: 4px; margin-top: 4px; height: 5px; }
-.paper-item .st i { width: 16px; height: 4px; border-radius: 1px; background: rgba(38, 32, 21, 0.12); }
-.paper-item .st i.done { background: var(--accent); }
-.paper-item .st i.err { background: var(--vermilion); }
+/* 只留第一作者：作者名是唯一能帮人认出"这是哪一篇"的短信息，
+   页数/条数/三根状态横条都是扫一眼不会看的噪音 */
+.paper-item .p-author {
+  font-size: var(--fs-xs); color: var(--ink-3); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .paper-item .p-del {
   position: absolute; right: 5px; top: 7px;
   border: none; background: none; color: var(--ink-3);
@@ -324,6 +320,8 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .paper-item:hover .p-del { display: block; }
 .paper-item .p-del:hover { color: var(--vermilion); transform: none; box-shadow: none; }
+/* 收起按钮：一个箭头，别再写"esc"——那是键盘的事，不该长在按钮上 */
+.lib-panel .head-x { padding: 0 8px; font-size: var(--fs-xl); line-height: 1; }
 
 .drop-hint {
   margin: 8px; padding: 14px 10px; text-align: center;
@@ -718,8 +716,37 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .sel-pop .sp-hits { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
 .sel-pop .sp-hits .chip { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-deep); font-size: var(--fs-xs); }
 
-/* 返回 chip */
-.back-chip {
+/* 读段提示：纸下缘轻轻一句"这是什么"，并给两个真动作。
+   平时半透、悬停实心，和缩放条一个脾气 */
+.read-hint {
+  bottom: 62px;
+  display: flex; align-items: center; gap: 7px;
+  background: var(--card); border: 1px solid var(--hairline); border-radius: 20px;
+  padding: 4px 6px 4px 6px; box-shadow: var(--shadow-page);
+  opacity: 0.92; transition: opacity var(--t-base) var(--ease-smooth);
+}
+.read-hint:hover { opacity: 1; }
+.read-hint .rh-tag {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 5px; font-size: var(--fs-xs); font-weight: 600;
+}
+.read-hint .rh-idx { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); }
+.read-hint .rh-role { font-size: var(--fs-sm); color: var(--ink); font-weight: 600; }
+.read-hint .rh-sep { width: 1px; align-self: stretch; background: var(--hairline); margin: 2px 1px; }
+.read-hint button { border-color: transparent; background: transparent; font-size: var(--fs-sm); padding: 3px 9px; color: var(--ink-2); }
+.read-hint button:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
+
+/* 阅读进度：贴书桌右缘的一根发丝，读到哪长到哪。不写字，不抢注意力 */
+.read-prog {
+  position: fixed; top: 56px; bottom: 0; width: 3px; z-index: 87;
+  pointer-events: none;
+}
+.read-prog i {
+  display: block; width: 100%; background: var(--accent); opacity: 0.4;
+  border-radius: 0 0 2px 2px; transition: height 200ms var(--ease-smooth);
+}
+
+/* 返回 chip */.back-chip {
   bottom: 62px;
   z-index: 210; display: flex; gap: 6px; align-items: center;
   background: var(--ink); color: var(--card);
@@ -951,8 +978,13 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .qa-scroll { flex: 1; overflow-y: auto; padding: 14px 14px 18px; min-height: 0; position: relative; }
 .qa-empty { padding: 6px 2px 0; }
-.qa-empty .qe-title { font-weight: 650; font-size: var(--fs-xl); letter-spacing: -0.01em; }
-.qa-empty .qe-sub { font-size: var(--fs-sm); color: var(--ink-3); margin: 6px 0 14px; line-height: 1.6; }
+.qa-empty .qe-title { font-weight: 650; font-size: var(--fs-xl); letter-spacing: -0.01em; margin-bottom: 12px; }
+/* 较早的对话被压缩过：一行字说明它还在，悬停能看全文 */
+.qa-fold {
+  font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 10px;
+  padding: 3px 8px; border-radius: 3px; background: var(--paper-deep);
+  cursor: help; display: inline-block;
+}
 
 /* 用户消息靠右一个小气泡，助手消息通栏——深浅对比只靠这一个小色块，
    整屏不用第二种背景色 */
@@ -1049,19 +1081,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 /* 条目上的分类角标：数字就是"归在几类里"，点开勾选 */
 .paper-item .p-tag {
-  position: absolute; left: 6px; top: 9px; z-index: 2;
-  font-family: var(--mono); font-size: 9px; line-height: 1;
-  padding: 2px 4px; border-radius: 3px;
+  position: absolute; left: 6px; top: 8px; z-index: 2;
+  font-size: var(--fs-sm); line-height: 1;
+  padding: 1px 5px; border-radius: 3px;
   border: 1px solid transparent; background: transparent; color: var(--ink-3);
 }
 .paper-item .p-tag:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent-line); }
-.paper-item .p-meta { display: flex; gap: 6px; align-items: center; margin-top: 3px; }
-.paper-item .p-meta .mono-num { font-size: var(--fs-xs); color: var(--ink-3); }
-.paper-item .p-coll {
-  font-size: var(--fs-xs); color: var(--ink-3); background: var(--paper-deep);
-  border-radius: 2px; padding: 0 4px; max-width: 84px; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
-}
 .coll-menu {
   position: absolute; left: 20px; right: 8px; top: 100%; z-index: 30;
   background: var(--card-2); border: 1px solid var(--hairline); border-radius: 4px;

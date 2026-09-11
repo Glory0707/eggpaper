@@ -31,6 +31,7 @@ const searchHits = ref([])       // [{page, gi, y, rects}]
 const searchAt = ref(-1)
 const searchBusy = ref(false)
 const midX = ref(0)              // 书桌中线：缩放条/提示贴它，而不是视口中线
+const deskRightX = ref(0)        // 书桌右缘：阅读进度细线贴它
 const sheets = ref([])
 const roleCard = ref(null)       // { idx, x, y } 点开的角色卡，只有点击能开关
 const noteHeights = ref({})      // 旁批实测高度，摊平用
@@ -152,6 +153,10 @@ async function load({ keepPlace = false } = {}) {
   await measureNotes()
   if (anchor) applyAnchor(anchor)
   else if (store.viewer.restorePos) { scroller().scrollTop = store.viewer.restorePos; store.viewer.restorePos = 0 }
+  updateProg()
+  // 打开一篇也露一次读段提示：进门就告诉你在读的是哪一段、它算不算重点。
+  // 得先让 scroll-spy 跑一拍——"当前这一段"是它算出来的，不滚一下它还是空的。
+  if (veryFirst) setTimeout(onScroll, 800)
   loading = false
 }
 
@@ -280,6 +285,7 @@ function updateMid() {
   if (!el) return
   const r = el.getBoundingClientRect()
   midX.value = Math.round(r.left + r.width / 2)
+  deskRightX.value = Math.round(r.right - 3)
 }
 
 // 容器宽度变了要重新定标：缩完要落回同一处，别让读者的视线跳走。
@@ -513,6 +519,44 @@ function quoteY(n) {
 }
 const currentHit = computed(() => searchHits.value[searchAt.value] || null)
 function searchHitsOnPage(pno) { return searchHits.value.filter(h => h.page === pno) }
+
+/* ---------------- 读段提示：读到哪一段，就说一句它是什么 ----------------
+   这是"让科研人真的能读进去"的那一下：原文再好看，一个人读 PDF 时最缺的也是
+   "我现在读的这句重要吗、能不能马上问一句"。所以视口中心那一段一变，纸下缘就轻轻
+   报一句它的角色，并给两个真动作（译这段 / 问这段）——它自己会走，不占地方。 */
+const hintRole = computed(() => {
+  const idx = store.readingPara
+  if (idx == null || !ready.value) return null
+  const role = store.viewer.layers.skeleton ? store.analysis.annotations[String(idx)]?.role : null
+  if (!role) return null
+  return { idx, role }
+})
+const hintOn = ref(false)
+let hintT = null
+let hintShown = null
+// 只在"读到另一段"时露一次：同一段里来回滚不再弹，否则它会变成一直跟着你的小广告。
+// 想看它回来，往下读一段就有；或者直接按 t / 斜杠，效果一样。
+function pokeHint() {
+  const idx = hintRole.value?.idx
+  if (idx == null) { hintOn.value = false; return }
+  if (idx !== hintShown) { hintShown = idx; hintOn.value = true }
+  clearTimeout(hintT)
+  hintT = setTimeout(() => (hintOn.value = false), 4200)
+}
+function askPara(idx) {
+  store.askPrefill = { paraIdx: idx }
+  store.viewer.railUser = true
+}
+// 阅读进度：一根贴书桌右缘的细线，读到哪长到哪。
+// 用 ref 在 onScroll 里更新，不用 computed——computed 的依赖里没有"滚动位置"，
+// 它只会在别的东西变化时重算，等于永远停在 0%。
+const progPct = ref(0)
+function updateProg() {
+  const sc = scroller()
+  if (!sc) return
+  const total = sc.scrollHeight - sc.clientHeight
+  progPct.value = total > 40 ? Math.min(1, Math.max(0, sc.scrollTop / total)) : 0
+}
 
 /* ---------------- 角色卡：点击开，Esc/点外/×关 ---------------- */
 
@@ -821,6 +865,7 @@ function openSearch() { searchOpen.value = true }
 let spyT = null, saveT = null
 function onScroll() {
   followRoleCard()          // 卡片跟着书签走，不再一滚就消失
+  updateProg()
   const sc = scroller()
   const top = sc.scrollTop + 8
   let cur = 1
@@ -844,6 +889,7 @@ function onScroll() {
       if (d < bestD) { bestD = d; best = p.idx }
     }
     store.readingPara = best
+    pokeHint()
     clearTimeout(saveT)
     saveT = setTimeout(savePos, 600)
   }, 220)
@@ -860,6 +906,12 @@ function savePos() {
 function saveLater() { clearTimeout(saveT); saveT = setTimeout(savePos, 250) }
 
 onMounted(async () => {
+  // 打开一篇已经有眉批的论文：让划线和批注卡自己"画"进来一次，像有人刚在纸上划过。
+  // （新生成的眉批走 store.marginalia.notes 的 watch，这里是"早就存在"的那种。）
+  if (store.marginalia.notes.length) {
+    freshNotes.value = true
+    setTimeout(() => (freshNotes.value = false), 1800)
+  }
   await load()
   await nextTick()
   try {
@@ -982,7 +1034,10 @@ function onDocDown(e) {
   if (!t?.closest) return
   if (roleCard.value != null && !t.closest('.role-card') && !t.closest('.role-tab')) roleCard.value = null
   if (vis.visible && !t.closest('.vis-pop')) closeVis()
-  if (sel.visible && !t.closest('.sel-pop') && !t.closest('.textLayer')) sel.visible = false
+  // 划词气泡：点它以外任何地方都收（包括纸面本身）。
+  // 原来把 .textLayer 排除在外，本意是"别把正在划的词弄丢"，结果是在纸上点哪儿都不关，
+  // 只能去够那个小叉。其实点下去会清掉选区、mouseup 又会按新选区重开气泡，不会丢东西。
+  if (sel.visible && !t.closest('.sel-pop')) sel.visible = false
 }
 watch(() => store.escTick, () => {
   sel.visible = false
@@ -1018,7 +1073,7 @@ watch(() => store.marginalia.notes, (n, o) => {
 <template>
   <div class="desk-inner" ref="deskEl">
     <div class="reading" v-if="!ready" style="max-width:420px;margin:60px auto">
-      <div class="r-line">正在摆上书桌<span class="r-dots">…</span></div>
+      <div class="r-line">正在破壳<span class="r-dots">…</span></div>
       <div class="r-bar"><i /></div>
     </div>
 
@@ -1101,6 +1156,24 @@ watch(() => store.marginalia.notes, (n, o) => {
 
     <!-- 出图进度：一条不挡路的细线，比"遮住论文的加载器"诚实 -->
     <div class="stage-line" v-if="ready && rendering"><i /></div>
+
+    <!-- 阅读进度：贴书桌右缘的一根细线，读到哪长到哪 -->
+    <div class="read-prog" v-if="ready" :style="{ left: deskRightX + 'px' }"><i :style="{ height: progPct * 100 + '%' }" /></div>
+
+    <!-- 读到哪一段：它是什么 + 两个真动作。自己会走，不占地方 -->
+    <Transition name="pop">
+    <div v-if="ready && hintOn && hintRole && !backChip && !searchOpen" class="read-hint desk-float"
+         :style="{ left: midX + 'px' }" @mouseenter="clearTimeout(hintT)" @mouseleave="pokeHint">
+      <span class="rh-tag" :style="{ background: ROLE_COLOR[hintRole.role], color: roleInk(hintRole.role) }">
+        {{ ROLE_GLYPH[hintRole.role] }}
+      </span>
+      <span class="rh-idx">¶{{ hintRole.idx }}</span>
+      <span class="rh-role">{{ ROLE_ZH[hintRole.role] }}</span>
+      <span class="rh-sep"></span>
+      <button @click="translateParaAndPin(hintRole.idx)">译这段</button>
+      <button @click="askPara(hintRole.idx)">问这段</button>
+    </div>
+    </Transition>
 
     <!-- 阅读器控件：翻页 / 缩放 / 查找。整条可拖走，别压在论文中间 -->
     <Transition name="fade">
@@ -1187,7 +1260,7 @@ watch(() => store.marginalia.notes, (n, o) => {
         <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '这个公式每一步的含义和推导逻辑'; askVisual() }">讲公式</button>
         <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '挖一下这张表里的数据：趋势、异常和可疑之处'; askVisual() }">挖表格</button>
       </div>
-      <div v-if="vis.busy" class="vp-state">看图作答中…</div>
+      <div v-if="vis.busy" class="vp-state">正在看图</div>
       <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>
       <MdLite v-if="vis.answer" class="vp-answer" :text="vis.answer" />
       <!-- 关掉的出口只有右上角那个 ×（和 Esc）：左下角再挂一个"关闭"是重复，
