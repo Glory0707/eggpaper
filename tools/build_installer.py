@@ -80,8 +80,12 @@ def main():
     run([py, os.path.join(ROOT, "tools", "make_icon.py")])
 
     step("3/5 冻结后端与界面（PyInstaller，onedir）")
-    if os.path.isdir(PYI_DIR):
-        shutil.rmtree(PYI_DIR, ignore_errors=True)
+    # **两个目录都要清**：只清输出目录（--distpath）不够——PyInstaller 在 workpath 里
+    # 缓存中间结果，图标/版本信息这类"只在 EXE 那一步用到"的输入变了它不重做。
+    # 实测代价：我换了三次图标，exe 字节数一个不差，日志里连 "Copying icon to EXE"
+    # 都没有——用户看到的还是旧图标。多花十几秒，换"构建结果真的是新的"。
+    for d in (os.path.join(ROOT, "build", "pyi"), os.path.join(ROOT, "build", "work")):
+        shutil.rmtree(d, ignore_errors=True)
     run([py, "-m", "PyInstaller", "--noconfirm", "--distpath", PYI_DIR,
          "--workpath", os.path.join(ROOT, "build", "work"),
          os.path.join(ROOT, "installer", "eggpaper.spec")])
