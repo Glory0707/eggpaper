@@ -62,6 +62,13 @@ async function checkNow() {
   toast(r?.ok ? `已经是最新的（${r.current}）` : '没读到更新源：' + (r?.reason || '地址为空'))
 }
 
+/* 在独立窗口打开：没有地址栏/标签页的一个窗口，任务栏里就是 eggpaper 自己。
+   实现是 Edge/Chrome 的应用模式——同一个引擎，不用背 WebView 运行时。 */
+async function openWindow() {
+  try { const r = await api.nativeWindow(); toast('已用' + r.how + '打开独立窗口') }
+  catch (e) { toast(e.message) }
+}
+
 /* 退出程序：打包版没有控制台窗口，用户需要一个"关掉它"的地方 */
 async function quitApp() {
   try { await api.quit(); toast('正在退出…') } catch (e) { toast(e.message) }
@@ -141,6 +148,11 @@ function save() {
         <label class="ck"><input type="checkbox" v-model="f.auto_check" />打开时自动检查</label>
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
                 @click="checkNow" :disabled="checking">{{ checking ? '检查中…' : '立即检查更新' }}</button>
+      </div>
+      <div class="f-line">
+        <span class="mono-label" style="margin:0">窗口</span>
+        <span style="font-size:var(--fs-sm);color:var(--ink-3)">托盘图标里有「打开界面 / 检查更新 / 退出」</span>
+        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openWindow">在独立窗口打开</button>
       </div>
       <div class="f-line" v-if="store.update.packaged">
         <span class="mono-label" style="margin:0">版本</span>

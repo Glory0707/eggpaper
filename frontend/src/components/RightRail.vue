@@ -502,11 +502,10 @@ watch(() => store.currentId, () => {
             <div class="blk-head">
               <span class="mono-label">眉批</span>
               <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')">
-                让师兄写眉批
+                AI 眉批
               </button>
               <span v-else class="blk-busy">写批注中<span class="r-dots">…</span></span>
             </div>
-            <div class="six-note">批注钉在纸面页边，紧挨着它引的那句话。</div>
           </div>
         </template>
       </template>

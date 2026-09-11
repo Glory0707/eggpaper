@@ -118,6 +118,34 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyExe}"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyExe}"; Tasks: desktopicon
 
+[Registry]
+; 文件关联：**只做"可选项"，不抢 .pdf 的默认程序**。
+; 一个读论文的工具把 PDF 默认程序顶掉，会把人家双击 PDF 的习惯整个改掉（Edge/Acrobat
+; 在前），这不是加分项而是冒犯。所以走三条不改默认的路：
+;   ① OpenWithProgids →「打开方式」列表里有它；
+;   ② SystemFileAssociations 的 verb → 右键菜单多一条「用 eggpaper 打开」；
+;   ③ Applications →「选择其他应用」里能找到它（且只对 .pdf 生效，见 SupportedTypes）。
+Root: HKCU; Subkey: "Software\Classes\eggpaper.pdf"; ValueType: string; ValueName: ""; \
+    ValueData: "PDF 论文（eggpaper）"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\eggpaper.pdf\DefaultIcon"; ValueType: string; ValueName: ""; \
+    ValueData: "{app}\{#MyExe},0"
+Root: HKCU; Subkey: "Software\Classes\eggpaper.pdf\shell\open\command"; ValueType: string; ValueName: ""; \
+    ValueData: """{app}\{#MyExe}"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\.pdf\OpenWithProgids"; ValueType: string; \
+    ValueName: "eggpaper.pdf"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\eggpaper"; \
+    ValueType: string; ValueName: ""; ValueData: "用 eggpaper 打开"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\eggpaper"; \
+    ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyExe},0"
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\eggpaper\command"; \
+    ValueType: string; ValueName: ""; ValueData: """{app}\{#MyExe}"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyExe}\SupportedTypes"; \
+    ValueType: string; ValueName: ".pdf"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyExe}\shell\open\command"; \
+    ValueType: string; ValueName: ""; ValueData: """{app}\{#MyExe}"" ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyExe}"; ValueType: string; \
+    ValueName: "FriendlyAppName"; ValueData: "eggpaper"
+
 [Run]
 ; 交互安装：装完问一句要不要现在打开
 Filename: "{app}\{#MyExe}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent

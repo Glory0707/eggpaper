@@ -1,6 +1,7 @@
 """eggpaper 本地服务。唯一出网：用户配置的 LLM API 与 pdf2zh 翻译服务。"""
 import json
 import os
+import shutil
 import threading
 import time
 
@@ -152,6 +153,17 @@ def update_reveal(body: dict):
     return {"ok": True}
 
 
+@app.post("/api/window")
+def open_native_window():
+    """把界面开成一个没有浏览器边框的独立窗口（界面里点一下就多一个"应用窗口"）。
+    开发模式下返回失败原因即可，不必假装成功。"""
+    import window as winmod
+    how = winmod.open_window(f"http://127.0.0.1:8430/")
+    if not how:
+        raise HTTPException(503, "没找到可用的浏览器（Edge/Chrome），用当前这个窗口看就行")
+    return {"ok": True, "how": how}
+
+
 @app.post("/api/quit")
 def quit_app():
     """退出整个程序（打包版：没有控制台窗口，用户需要一个"关掉它"的地方）。"""
@@ -173,17 +185,11 @@ def papers():
 
 
 @app.post("/api/papers")
-async def upload(file: UploadFile = File(...)):
-    raw = await file.read()
-    if raw[:4] != b"%PDF":
-        raise HTTPException(400, "不是 PDF 文件")
-    if len(raw) < 256:
-        raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
-    pid = db.new_id()
-    path = os.path.join(PDF_DIR, f"{pid}.pdf")
-    with open(path, "wb") as f:
-        f.write(raw)
-    # 解析失败要收拾干净：留着半篇没有段落的"论文"，用户点开只能看见一个空书架
+def _ingest(pid: str, filename: str, path: str) -> dict:
+    """把已经落在 PDF_DIR 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
+
+    解析失败要收拾干净：留着半篇没有段落的"论文"，用户点开只能看见一个空书架。
+    """
     try:
         title = pdfparse.extract_title(path)
         authors = pdfparse.extract_authors(path)
@@ -196,7 +202,7 @@ async def upload(file: UploadFile = File(...)):
         except OSError:
             pass
         raise HTTPException(400, f"这份 PDF 读不了：{_human_msg(e)}")
-    db.create_paper(pid, file.filename, title, path, n_pages, authors)
+    db.create_paper(pid, filename, title, path, n_pages, authors)
     db.replace_paragraphs(pid, paras)
     row = db.get_paper(pid)
     # AI 主动：导入即后台通读，打开时简报已就绪（没有文字层的扫描件没得析读，直接标完成）
@@ -207,6 +213,62 @@ async def upload(file: UploadFile = File(...)):
     return {"paper": row, "n_paragraphs": len(paras),
             "n_captions": sum(1 for p in paras if p["caption"]),
             "no_text": not paras}
+
+
+@app.post("/api/papers")
+async def upload(file: UploadFile = File(...)):
+    raw = await file.read()
+    if raw[:4] != b"%PDF":
+        raise HTTPException(400, "不是 PDF 文件")
+    if len(raw) < 256:
+        raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
+    pid = db.new_id()
+    path = os.path.join(PDF_DIR, f"{pid}.pdf")
+    with open(path, "wb") as f:
+        f.write(raw)
+    return _ingest(pid, file.filename, path)
+
+
+@app.post("/api/papers/import-path")
+def import_path(body: dict):
+    """从本机路径导入 PDF：双击 PDF、右键「用 eggpaper 打开」走这条。
+
+    和上传的区别是**不经过浏览器**——文件已经在磁盘上，直接复制进库。
+    同一个文件双击两次不该得到两篇：同名同大小就当成同一份，直接打开它。
+    """
+    src = os.path.expanduser(((body or {}).get("path") or "").strip().strip('"'))
+    if not src or not os.path.isfile(src):
+        raise HTTPException(404, f"找不到这个文件：{src or '(空)'}")
+    if not src.lower().endswith(".pdf"):
+        raise HTTPException(400, "eggpaper 只认 PDF")
+    name, size = os.path.basename(src), os.path.getsize(src)
+    for r in db.q("SELECT id, path FROM papers WHERE filename=?", (name,)):
+        try:
+            if os.path.getsize(r["path"]) == size:
+                _pending_open["pid"] = r["id"]      # 已经在库里：让界面切过去就行
+                return {"paper": db.get_paper(r["id"]), "duplicate": True}
+        except OSError:
+            continue
+    pid = db.new_id()
+    dest = os.path.join(PDF_DIR, f"{pid}.pdf")
+    try:
+        shutil.copyfile(src, dest)
+    except OSError as e:
+        raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
+    out = _ingest(pid, name, dest)
+    _pending_open["pid"] = pid
+    return out
+
+
+# 界面每 3 秒轮询一次：拿到"要打开哪一篇"就切过去（双击 PDF 时应用已经开着的情况）
+_pending_open = {"pid": None}
+
+
+@app.get("/api/open-request")
+def open_request():
+    pid = _pending_open["pid"]
+    _pending_open["pid"] = None
+    return {"pid": pid}
 
 
 def _paper_or_404(pid: str) -> dict:

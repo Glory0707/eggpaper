@@ -17,6 +17,8 @@ datas = [
 ]
 # 后端按包名引用的东西，PyInstaller 静态分析看不到，手动点名
 hiddenimports = [
+    # 托盘（pystray 的后端是按平台动态选的，静态分析看不到）
+    "pystray._win32", "PIL.Image", "PIL.ImageDraw",
     "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.loops.asyncio",
     "uvicorn.protocols.http.auto", "uvicorn.protocols.http.h11_impl",
     "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on", "uvicorn.lifespan.off",
@@ -31,8 +33,10 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["numpy", "scipy", "pandas", "matplotlib", "tkinter", "PIL", "pytest",
-              "IPython", "notebook"],   # 瘦身：这些一个都用不到（图标是构建时生成的）
+    # 瘦身：这些一个都用不到。**注意别把 PIL 列进来**——托盘图标要用它，
+    # excludes 的优先级高于 hiddenimports，列进去就是"明明装了却说找不到"。
+    excludes=["numpy", "scipy", "pandas", "matplotlib", "tkinter", "pytest",
+              "IPython", "notebook"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

@@ -71,6 +71,16 @@ onUnmounted(() => {
 })
 
 async function poll() {
+  // "双击 PDF / 右键用它打开"：导入是在后端做的，界面这边只是被通知切过去。
+  // 挂在原来这个 3 秒轮询上——为一次打开请求新起一条轮询不值得。
+  try {
+    const r = await api.openRequest()
+    if (r?.pid && r.pid !== store.currentId) {
+      await refreshPapers()
+      await openPaper(r.pid)
+      toast('已打开：' + (store.paper?.title || '').slice(0, 30))
+    }
+  } catch { /* 轮询里的失败不打扰用户 */ }
   if (!store.currentId) return
   if (store.analysis.status === 'running') await refreshAnalysis()
   if (store.marginalia.status === 'running') await refreshMarginalia()

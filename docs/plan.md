@@ -928,3 +928,40 @@ Chromium 运行时，还得把 Python 后端当子进程养着），包 30MB 而
 地址回连自己一次做可达性自检**（连不上直接说"多半是防火墙"）、`--allow-firewall` 直接给出并执行
 入站放行命令，并明确写出"对方在外地/不想一直开机"时的替代做法（把 release/ 里两个文件传到
 对象存储 / GitHub Releases / 自己的服务器，地址一填即可）。
+
+### M4.3 · 图标真的嵌进去了 + 文件关联 + 托盘 + 独立窗口 ✅ 已完成（2026-09-12）
+
+用户："1. 桌面上快捷方式的 logo 依然很糊，不是矢量图 2.（文件关联 / 独立窗口 / 托盘）"
+
+**图标糊了三层**，前两层我在 M4.2 修了（Pillow 的 ICO 保存只写进一个尺寸；PNG 负载对小于 256 的尺寸不合法），
+用户说"依然糊"之后才挖出第三层，也是真正让它一次次修不好的那层：
+
+**PyInstaller 的 workpath 缓存**。构建脚本只删输出目录（`build/pyi`）、没删中间目录（`build/work`），
+而图标属于"只在 EXE 那一步用到的输入"——它变了 PyInstaller 也不重做。
+证据很硬：换了三次图标，exe **字节数一个不差**，日志里连 `Copying icon to EXE` 都没有。
+用纯红假图标做 A/B 才试出来：清掉 workpath 后 exe 从 8,692,652 变 8,727,980，那句日志也出现了。
+
+**验证方法也换了个更硬的**：不再靠 .NET 的 `Icon` 类（它读不了 PNG 负载的条目，会误报"图片无效"），
+而是用 `PrivateExtractIcons` + `DrawIconEx` **让 Windows 自己把图标渲染出来**（`_qa/render_exe_icon.py`），
+16/32/48/256 四档逐张取回来看。结论：exe 里的图标一直是对的，所以**用户桌面上的糊是 Windows 图标缓存**
+（那个快捷方式是第一版只有一张 16×16 时建的）。清 `iconcache*.db`、重启资源管理器、重装重建快捷方式。
+
+**文件关联**（`[Registry]` + `POST /api/papers/import-path` + 前端轮询）：
+
+- **不抢 .pdf 的默认程序**。只走三条不改默认的路：`OpenWithProgids`（进「打开方式」列表）、
+  `SystemFileAssociations\.pdf\shell\eggpaper`（右键菜单多一条）、`Applications\eggpaper.exe` +
+  `SupportedTypes`（"选择其他应用"里能找到）。实测装完 `.pdf` 的默认程序仍是原来的 WPS。
+- `eggpaper.exe "D:\x.pdf"`：应用没开就起服务再导入；**已经开着就把路径投给那个实例**
+  （`POST /api/papers/import-path`），界面下一次 3 秒轮询拿到 `open-request` 就切过去。
+- 同一个文件双击两次不重复建：同名同大小视为同一份。
+- 四种情形实测：没开→导入并起服务、开着→投递不新起进程、同文件两次→不重复、**界面真的切过去了**。
+
+**托盘 + 独立窗口**：托盘用 pystray（菜单：打开界面 / 在独立窗口打开 / 检查更新 / 退出；
+"检查更新"会弹气泡并把你带回界面）。独立窗口用 **Edge/Chrome 的应用模式**——
+Windows 上 WebView2 的运行时提供者就是 Edge，同一个引擎，不必往包里塞几十兆 WebView2；
+装了 pywebview 就优先用它。`--window` 走启动器，设置里那颗「在独立窗口打开」走 `POST /api/window`，
+两份实现合并到 `backend/window.py`。
+
+**顺手踩到的一个坑**：`excludes` 里原来写着 `PIL`（图标曾经只是构建期用），于是
+"明明装了 Pillow 却报 Hidden import not found"——**excludes 的优先级高于 hiddenimports**，
+托盘需要 Pillow，把 `PIL` 从排除表里拿掉才通。包因此从 30.8MB 涨到 34.7MB。

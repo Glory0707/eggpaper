@@ -21,6 +21,8 @@ export const api = {
   paper: (pid) => req('GET', `/api/papers/${pid}`),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
   touchPaper: (pid) => req('POST', `/api/papers/${pid}/touch`),
+  // 双击 PDF 打开：后端把文件建进库，这里问"该切到哪一篇"
+  openRequest: () => req('GET', '/api/open-request'),
   paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
   analyze: (pid) => req('POST', `/api/papers/${pid}/analyze`),
   analysis: (pid) => req('GET', `/api/papers/${pid}/analysis`),
@@ -80,6 +82,7 @@ export const api = {
   updateInstall: (path) => req('POST', '/api/update/install', { path }),
   revealUpdate: (path) => req('POST', '/api/update/reveal', { path }),
   quit: () => req('POST', '/api/quit'),
+  nativeWindow: () => req('POST', '/api/window'),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
 }
