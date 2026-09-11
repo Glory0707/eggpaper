@@ -204,9 +204,9 @@ function onKey(e) {
 }
 watch(text, () => nextTick(autoGrow))
 
-// ---------- 外部预填（划词提问 / ¶提问 / 快捷键 / / 六问的「去问」） ----------
+// ---------- 外部预填（划词提问 / ¶提问 / 快捷键 / 「问题」页签的「去问」） ----------
 function applyPrefill(pf) {
-  // 三种来源：给定问题原文（六问的"去问"）、给定段落号、给定一段原文
+  // 三种来源：给定问题原文（「问题」页签的"去问"）、给定段落号、给定一段原文
   text.value = pf.question
     || (pf.paraIdx ? `¶${pf.paraIdx} 这段在说什么？` : `这段在说什么：「${pf.text}」？`)
   nextTick(() => { autoGrow(); inputEl.value?.focus() })

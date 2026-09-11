@@ -26,7 +26,7 @@ function jumpNote(n) {
   jumpPara(n.para_idx)
 }
 
-/* ---------- 六个问题（骨架页签） ----------
+/* ---------- 六个问题（「问题」页签） ----------
    段落角色退到幕后：页边书签、略读蒙纱、点段改判、跳转定位一律照旧，
    但"图例 + 计数"那块 UI 换成读者真正会问的六个问题。
    故意不把答案摊开：问题先出现，点哪条才展开哪条。
@@ -284,7 +284,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton'; loadSix() }, { imme
          @mousedown="startRailResize" @dblclick="store.viewer.railW = RAIL_DEF; store.reflowTick++"
          @keydown.left.prevent="nudgeRail(28)" @keydown.right.prevent="nudgeRail(-28)"></div>
     <div class="rtabs">
-      <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">六问</button>
+      <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">问题</button>
       <button class="rt" :class="{ on: tab === 'eye' }" @click="tab = 'eye'">速览</button>
       <button class="rt" :class="{ on: tab === 'ask' }" @click="tab = 'ask'">提问</button>
       <button class="rt" :class="{ on: tab === 'terms' }" @click="tab = 'terms'">术语</button>

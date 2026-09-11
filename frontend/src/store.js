@@ -29,6 +29,7 @@ export const store = reactive({
     spread: lsGet('spread', 'spread'),
     layers: lsGet('layers', { skeleton: true, marginalia: true, skim: false }),
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
+    fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
     railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
     frame: false,
@@ -76,6 +77,21 @@ function paintCare(v) {
   else delete document.documentElement.dataset.care
 }
 watch(() => store.viewer.care, v => { lsSet('care', v); paintCare(v) }, { immediate: true })
+
+/* 字号：设置里四档，落成 <html> 上的一个 --fs-scale。全站的六个字号 token 都是
+   calc(基准 * var(--fs-scale))，乘一次全都跟着走；**论文正文不动**——纸上那层字是
+   pdf.js 按视口比例写死的内联 font-size，不认 CSS 变量。 */
+export const FS_SCALE = { sm: 0.93, std: 1, lg: 1.09, xl: 1.2 }
+function paintFs(k) {
+  const s = FS_SCALE[k] ?? 1
+  if (s === 1) document.documentElement.style.removeProperty('--fs-scale')
+  else document.documentElement.style.setProperty('--fs-scale', String(s))
+}
+watch(() => store.viewer.fs, k => {
+  lsSet('fs', k)
+  paintFs(k)
+  store.reflowTick++     // 页边书签、旁批、沟槽宽度是量出来的，字号一变要重新量
+}, { immediate: true })
 
 // 旧版本在 <html> 上留过 data-skin（皮肤已删）：留着只会让 devtools 里多一个没用的属性
 delete document.documentElement.dataset.skin

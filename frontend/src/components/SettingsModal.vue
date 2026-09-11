@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, ref } from 'vue'
-import { api, store } from '../store'
+import { api, store, FS_SCALE } from '../store'
 import { vDrag } from '../drag'
 
 const emit = defineEmits(['close', 'save'])
@@ -23,6 +23,17 @@ const CARES = [
   { k: 'sand', zh: '米黄', bg: '#f5f5dc' },
 ]
 function pickCare(k) { store.viewer.care = k }
+
+/* 字号：四档，乘在 <html> 的 --fs-scale 上。大小看到才知道合不合适，所以跟护眼底纹
+   一样点一下立刻生效，不进「保存」。芯片里那个 A 的大小直接取真实倍率（em），
+   不做"看起来差很多"的示意——图跟事实对不上就是骗人。 */
+const FSS = [
+  { k: 'sm', zh: '小' },
+  { k: 'std', zh: '标准' },
+  { k: 'lg', zh: '大' },
+  { k: 'xl', zh: '特大' },
+]
+function pickFs(k) { store.viewer.fs = k }
 const testing = ref(false)
 const reply = ref('')
 
@@ -80,6 +91,15 @@ function save() {
           <button v-for="c in CARES" :key="c.k" class="care-chip" :class="{ on: store.viewer.care === c.k }"
                   @click="pickCare(c.k)">
             <i :style="{ background: c.bg }"></i>{{ c.zh }}
+          </button>
+        </div>
+      </div>
+      <div class="f-row">
+        <label class="mono-label">字号（论文正文不受影响）</label>
+        <div class="care-row">
+          <button v-for="s in FSS" :key="s.k" class="care-chip fs-chip" :class="{ on: store.viewer.fs === s.k }"
+                  @click="pickFs(s.k)">
+            <i :style="{ fontSize: FS_SCALE[s.k] + 'em' }">A</i>{{ s.zh }}
           </button>
         </div>
       </div>
