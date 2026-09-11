@@ -763,6 +763,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                  @mousedown="e => startFrameDrag(e, it)">
 
             <canvas :ref="el => (canvases[it.gi] = el)"></canvas>
+            <div class="care-wash" v-if="store.viewer.care !== 'off'"></div>
             <div class="textLayer" v-if="it.text && !store.viewer.frame" :ref="el => (textLayers[it.gi] = el)"></div>
             <div v-if="frameRect && frameRect.gi === it.gi" class="frame-rect"
                  :style="{ left: Math.min(frameRect.x0, frameRect.x1) + 'px', top: Math.min(frameRect.y0, frameRect.y1) + 'px',

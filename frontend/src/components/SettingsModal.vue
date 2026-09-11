@@ -12,6 +12,16 @@ const f = reactive({
   service: store.settings.pdf2zh.service,
   layers: { ...store.viewer.layers },
 })
+
+/* 护眼底纹：豆沙绿 / 浅青绿 / 米黄是三个公认的经典护眼色。
+   点一下立刻生效（选颜色不看效果等于没选），所以不进「保存」，直接改 store。 */
+const CARES = [
+  { k: 'off', zh: '纯白', bg: '#ffffff' },
+  { k: 'mung', zh: '豆沙绿', bg: '#c7edcc' },
+  { k: 'cyan', zh: '浅青绿', bg: '#cce8e8' },
+  { k: 'sand', zh: '米黄', bg: '#f5f5dc' },
+]
+function pickCare(k) { store.viewer.care = k }
 const testing = ref(false)
 const reply = ref('')
 
@@ -62,6 +72,15 @@ function save() {
         <div class="mock-row" style="margin:0">
           <input type="checkbox" id="ly-skel" v-model="f.layers.skeleton" /><label for="ly-skel" style="margin:0">骨架标签</label>
           <input type="checkbox" id="ly-mg" v-model="f.layers.marginalia" /><label for="ly-mg" style="margin:0">眉批</label>
+        </div>
+      </div>
+      <div class="f-row">
+        <label class="mono-label">护眼底纹（立刻生效，只存本机）</label>
+        <div class="care-row">
+          <button v-for="c in CARES" :key="c.k" class="care-chip" :class="{ on: store.viewer.care === c.k }"
+                  @click="pickCare(c.k)">
+            <i :style="{ background: c.bg }"></i>{{ c.zh }}
+          </button>
         </div>
       </div>
       <div class="f-row">

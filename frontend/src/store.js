@@ -25,6 +25,7 @@ export const store = reactive({
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
     layers: lsGet('layers', { skeleton: true, marginalia: true, skim: false }),
+    care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
     frame: false,
     libOpen: false,
@@ -57,6 +58,13 @@ watch(() => store.viewer.variant, v => lsSet('variant', v))
 watch(() => store.viewer.spread, v => lsSet('spread', v))
 watch(() => store.viewer.layers, v => lsSet('layers', v), { deep: true })
 watch(() => store.viewer.railUser, v => lsSet('railUser', v))
+
+/* 护眼底纹落在 <html> 上：CSS 变量在那里改，全站（含空态、弹层）一起换 */
+function paintCare(v) {
+  if (v && v !== 'off') document.documentElement.dataset.care = v
+  else delete document.documentElement.dataset.care
+}
+watch(() => store.viewer.care, v => { lsSet('care', v); paintCare(v) }, { immediate: true })
 
 export async function refreshPapers() {
   store.papers = await api.papers()

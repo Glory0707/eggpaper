@@ -16,16 +16,38 @@ let pollTimer = null
 
 const tranReady = computed(() => store.paper?.translate_status === 'done')
 
+/* ---------------- 拖入导入 ----------------
+   之前只挂 dragover/dragleave，所以浮层「进得来、出不去」：dragleave 会为每个子元素
+   都触发一次（指针在论文上移动就疯狂开关），而真正离开窗口、或者松手落在窗口外时，
+   事件根本不落到 .app 上，没人把它清掉。三条边界都得自己补：
+   ① 只有真拖着文件才算——拖选中的文字、拖页面里的图片不该弹「放到书桌上」；
+   ② 用 relatedTarget 为空判断「真的离开窗口」，别被子元素的 dragleave 骗到；
+   ③ dragend / 窗口失焦也清，因为松手可能落在窗口之外。 */
+function hasFiles(e) { return Array.from(e.dataTransfer?.types || []).includes('Files') }
+function onDragEnter(e) { if (hasFiles(e)) dragOver.value = true }
+function onDragOver(e) { if (hasFiles(e)) e.preventDefault() }   // 不 preventDefault 就不许 drop
+function onDragLeave(e) { if (hasFiles(e) && e.relatedTarget == null) dragOver.value = false }
+function onDrop(e) {
+  e.preventDefault()
+  dragOver.value = false
+  onPickFile(e.dataTransfer?.files?.[0])
+}
+function endDrag() { dragOver.value = false }
+
 onMounted(async () => {
   store.settings = await api.settings()
   await refreshPapers()
   if (store.papers.length) openPaper(store.papers[0].id)
   pollTimer = setInterval(poll, 3000)
   window.addEventListener('keydown', onKey)
+  window.addEventListener('dragend', endDrag)
+  window.addEventListener('blur', endDrag)
 })
 onUnmounted(() => {
   clearInterval(pollTimer)
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('dragend', endDrag)
+  window.removeEventListener('blur', endDrag)
 })
 
 async function poll() {
@@ -106,6 +128,7 @@ function onKey(e) {
     store.shortcutCard = false
     showSettings.value = false
     store.tourStop?.()
+    dragOver.value = false
     store.viewer.frame = false     // 框选模式永远能一键退出
     store.escTick++                // PDF 侧的划词/框选/角色卡浮层收起
     return
@@ -135,7 +158,7 @@ function onKey(e) {
 </script>
 
 <template>
-  <div class="app" @dragover.prevent="dragOver = true" @dragleave="dragOver = false" @drop.prevent="e => { dragOver = false; onPickFile(e.dataTransfer?.files?.[0]) }">
+  <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" title="eggpaper">
         <EggMark class="egg" :class="{ wobble }" />
@@ -192,8 +215,8 @@ function onKey(e) {
         <div class="strip-sep"></div>
       </div>
 
-      <!-- 中：书桌 -->
-      <main class="desk" @drop.stop>
+      <!-- 中：书桌。drop 不拦在这里：让它冒到 .app 统一收，拖到纸上也能导入 -->
+      <main class="desk">
         <div class="empty" v-if="!store.paper">
           <EggMark class="egg-big" :class="{ open: dragOver }" />
           <div class="e-title">剥开论文的壳，读论证的芯</div>

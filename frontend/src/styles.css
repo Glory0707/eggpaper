@@ -1,20 +1,24 @@
 /* ============================================================
-   eggpaper 设计系统 v3 —— 「明亮的批注本」
-   亮灰纸 · 白内容 · 单一强调 · 发丝线 · 阴影只给悬浮
+   eggpaper 设计系统 v4 —— 「明亮的批注本」
+   纯白纸 · 单一强调 · 发丝线 · 阴影只给悬浮（分层靠线，不靠灰黄）
    字号只有四档 + 一个 display，别再加第五档
    ============================================================ */
 
 :root {
-  /* 纸层：桌面是亮灰，内容纯白。三层差要能看出来，但都不许发暗发黄 */
-  --paper: #f4f2ed;        /* 桌面（最外） */
-  --paper-deep: #eceae3;   /* 左栏、页边沟槽 */
-  --card: #fbfaf7;         /* 面板：顶栏、右栏 */
-  --card-2: #ffffff;       /* 内容与浮层：纯白，最亮 */
+  /* 底色：纯白。四个 token 不再是"四层明度"，是"四个用途"——
+     白的和白之间只靠发丝线分界，页面靠自己的阴影浮起来 */
+  --paper: #ffffff;        /* 桌面（最外） */
+  --paper-deep: #f6f6f5;   /* 左栏、页边沟槽 */
+  --card: #ffffff;         /* 面板：顶栏、右栏 */
+  --card-2: #ffffff;       /* 内容与浮层 */
+  --veil: rgba(255, 255, 255, 0.86);   /* 略读蒙纱：一层白描图纸 */
+  --care-wash: transparent;            /* 护眼底纹：洗在纸面上的那一层，默认不洗 */
 
-  /* 墨三级 */
+  /* 墨三级。第三级原来 #8a867c，在纯白/三档护眼底上只有 3.2–3.6，小字不达标；
+     压到 #6b675e 后最差 4.56（三档护眼底里最深的那条沟槽），四级台阶仍然分得开 */
   --ink: #1d1b17;
   --ink-2: #55524a;
-  --ink-3: #8a867c;
+  --ink-3: #6b675e;
   --hairline: rgba(29, 27, 23, 0.14);
   --hairline-soft: rgba(29, 27, 23, 0.075);
 
@@ -57,6 +61,34 @@
 
   --shadow-pop: 0 2px 3px rgba(29, 27, 23, 0.1), 0 14px 36px -10px rgba(29, 27, 23, 0.26);
   --shadow-page: 0 1px 2px rgba(29, 27, 23, 0.14), 0 10px 28px -12px rgba(29, 27, 23, 0.24);
+}
+
+/* ---------- 护眼底纹 ----------
+   三个档都是"浅底 + 深字"，只换底不换字。
+
+   纸面怎么上色：在纸面上盖一层 multiply 的色膜（.care-wash），不是给整屏加蒙版，
+   也不是调 filter——multiply 的性质决定了「白底变护眼色、黑字还是黑字」，
+   所以开到最绿，正文对比度也一分不减（纯白纸 17.4:1 → 豆沙绿纸 15.5:1）。
+   桌面留近白、纸面偏深，纸才浮得起来。
+
+   色值取三个公认的经典护眼色（豆沙绿 #C7EDCC / 浅青绿 #CCE8E8 / 米黄 #F5F5DC
+   或其近亲 #FFF8DC）。要说明的是：ISO/IEC、WHO、AAO 都没有认证过任何"护眼标准 RGB"，
+   这些值来自 Office 2003 浅绿底的历史惯性 + 低蓝光、低饱和的直观理由；
+   真正管用的是亮度、色温、看远处休息，别把颜色当药。 */
+html[data-care='mung'] {
+  --paper: #e4f2e6; --paper-deep: #daedde; --card: #eaf6ec; --card-2: #f5fbf6;
+  --veil: rgba(230, 245, 232, 0.88);
+  --care-wash: rgba(199, 237, 204, 0.9);
+}
+html[data-care='cyan'] {
+  --paper: #e2f2f2; --paper-deep: #d8ebeb; --card: #e9f6f6; --card-2: #f5fbfb;
+  --veil: rgba(228, 244, 244, 0.88);
+  --care-wash: rgba(204, 232, 232, 0.9);
+}
+html[data-care='sand'] {
+  --paper: #f6f6ea; --paper-deep: #efefe0; --card: #fafaf2; --card-2: #fdfef9;
+  --veil: rgba(246, 246, 230, 0.88);
+  --care-wash: rgba(245, 245, 220, 0.9);
 }
 
 * { box-sizing: border-box; }
@@ -303,9 +335,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 /* ---------- 中栏：书桌 ---------- */
 .desk {
   flex: 1; min-width: 0; overflow: auto; position: relative;
-  background:
-    radial-gradient(1200px 500px at 50% -200px, rgba(255, 252, 240, 0.65), transparent 70%),
-    var(--paper);
+  background: var(--paper);
 }
 .desk-inner { padding: 26px 20px 80px; display: flex; flex-direction: column; align-items: center; gap: 26px; }
 .sheet-stage { display: flex; flex-direction: column; align-items: center; gap: 26px; }
@@ -327,14 +357,21 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .page {
   position: relative; background: #fff;
   box-shadow: var(--shadow-page);
+  isolation: isolate;    /* 把 multiply 的洗色层圈在纸内，别渗到桌面 */
   flex-shrink: 0;
 }
 .page canvas { display: block; }
 .page .textLayer { z-index: 5; }
 
+/* 护眼底纹：盖在画布上、正文下面的一层色膜。multiply 只乘"底"，黑字乘完还是黑字 */
+.care-wash {
+  position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: var(--care-wash); mix-blend-mode: multiply;
+}
+
 .para-zone { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .para-fade {
-  position: absolute; background: rgba(239, 232, 216, 0.9);
+  position: absolute; background: var(--veil);
   transition: opacity 260ms var(--ease-smooth);
 }
 .para-core-bar { position: absolute; left: -7px; width: 3px; background: var(--yolk); opacity: 0.85; border-radius: 1px; }
@@ -589,6 +626,20 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .modal .f-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; align-items: center; }
 .modal .test-reply { font-size: var(--fs-sm); color: var(--ink-3); margin-right: auto; max-width: 210px; }
 .modal .mock-row { display: flex; align-items: center; gap: 7px; font-size: var(--fs-sm); color: var(--ink-2); margin: 6px 0; }
+/* 上面那条 .f-row label{display:block} 会把复选框旁边的字顶成竖排，这里拉回行内 */
+.modal .mock-row label { display: inline; margin: 0; }
+
+/* 护眼底纹：小色片 + 名，选中的那档套一圈墨环 */
+.modal .care-row { display: flex; gap: 6px; }
+.modal .care-chip {
+  flex: 1; display: flex; align-items: center; gap: 6px; justify-content: center;
+  font-size: var(--fs-sm); padding: 5px 6px;
+}
+.modal .care-chip i {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 1px solid var(--hairline); flex-shrink: 0;
+}
+.modal .care-chip.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 
 /* 键盘卡 */
 .keys-card {
