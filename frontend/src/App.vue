@@ -111,6 +111,7 @@ function onKey(e) {
     case 't': store.viewerApi?.translateCurrent(); break
     case 's': store.viewerApi?.translateSelectionKey(); break
     case 'f': store.viewer.layers.skim = !store.viewer.layers.skim; break
+    case 'r': store.viewer.frame = !store.viewer.frame; break
     case '1': store.viewer.variant = 'original'; break
     case '2': if (tranSt.value === 'done') store.viewer.variant = 'mono'; break
     case '3': if (tranSt.value === 'done') store.viewer.variant = 'dual'; break
@@ -148,6 +149,8 @@ function onKey(e) {
           <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">交替</button>
         </div>
         <button class="toggle" :class="{ on: store.viewer.layers.skim }" @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
+        <button class="toggle" :class="{ on: store.viewer.frame }" title="框选任意区域问 AI（r）"
+                @click="store.viewer.frame = !store.viewer.frame">框选</button>
         <button @click="doTranslateFull" :disabled="tranSt === 'running'">整本翻译</button>
         <button class="primary" @click="doAnalyze" :disabled="store.analysis.status === 'running'">
           {{ store.analysis.status === 'running' ? '通读中…' : (store.analysis.status === 'done' ? '重新析读' : '析读') }}

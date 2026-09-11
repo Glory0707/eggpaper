@@ -15,7 +15,7 @@ export const store = reactive({
   currentId: null,
   paper: null,
   paras: [],
-  analysis: { status: 'none', claims: [], annotations: {}, error: '' },
+  analysis: { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' },
   marginalia: { status: 'none', notes: [] },
   summary: null,
   qa: [],
@@ -25,6 +25,7 @@ export const store = reactive({
     spread: lsGet('spread', 'spread'),
     layers: lsGet('layers', { skeleton: true, marginalia: true, skim: false }),
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
+    frame: false,
     libOpen: false,
   },
   jump: null,            // {page, y0, y1, at}
@@ -35,7 +36,8 @@ export const store = reactive({
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   toast: '',
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
-  tourStop: null,        // 论证漫游停止器（RightRail 注册）
+  tourStop: null,
+  visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答        // 论证漫游停止器（RightRail 注册）
 
   get mock() { return this.settings?.mock },
   get railRight() {

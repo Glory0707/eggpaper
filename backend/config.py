@@ -12,6 +12,7 @@ DEFAULTS = {
         "base_url": "https://api.deepseek.com/v1",
         "api_key": "",
         "model": "deepseek-chat",
+        "vision_model": "",  # 视觉问答用的多模态模型，留空则该功能不可用
     },
     "mock": True,          # 演示模式：不调 LLM，用启发式假数据跑通全流程
     "pdf2zh": {

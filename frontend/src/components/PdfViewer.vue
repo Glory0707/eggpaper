@@ -442,6 +442,72 @@ onBeforeUnmount(() => {
   docs = { orig: null, dual: null, mono: null }
 })
 
+// ---------- 框选视觉问答 ----------
+const frameRect = ref(null)
+
+function cropItem(it, r) {
+  const canvas = canvases.value[it.gi]
+  const dpr = canvas.width / parseFloat(canvas.style.width)
+  const sx = r.x0 * dpr, sy = r.y0 * dpr, sw = (r.x1 - r.x0) * dpr, sh = (r.y1 - r.y0) * dpr
+  const off = document.createElement('canvas')
+  off.width = Math.max(2, sw); off.height = Math.max(2, sh)
+  off.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, off.width, off.height)
+  return off.toDataURL('image/jpeg', 0.85)
+}
+
+const vis = reactive({ visible: false, x: 0, y: 0, img: '', question: '', answer: '', busy: false, err: '' })
+
+function startFrameDrag(e, it) {
+  if (!store.viewer.frame || e.button !== 0) return
+  e.preventDefault()
+  const el = pageEls.value[it.gi]
+  const base = el.getBoundingClientRect()
+  const pt = ev => ({ x: ev.clientX - base.left, y: ev.clientY - base.top })
+  const p0 = pt(e)
+  const move = ev => { const p = pt(ev); frameRect.value = { x0: p0.x, y0: p0.y, x1: p.x, y1: p.y, gi: it.gi } }
+  const up = ev => {
+    document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up)
+    const rr = frameRect.value
+    frameRect.value = null
+    if (!rr) return
+    const x0 = Math.min(rr.x0, rr.x1), y0 = Math.min(rr.y0, rr.y1)
+    const x1 = Math.max(rr.x0, rr.x1), y1 = Math.max(rr.y0, rr.y1)
+    if (x1 - x0 < 24 || y1 - y0 < 24) return
+    const img = cropItem(it, { x0, y0, x1, y1 })
+    Object.assign(vis, { visible: true, x: Math.min(window.innerWidth - 410, ev.clientX + 12),
+                         y: Math.min(window.innerHeight - 320, Math.max(64, ev.clientY - 60)),
+                         img, question: '解释选区里的内容。', answer: '', busy: false, err: '' })
+  }
+  frameRect.value = { x0: p0.x, y0: p0.y, x1: p0.x, y1: p0.y }
+  document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
+}
+
+async function askVisual() {
+  if (!vis.question.trim() || vis.busy) return
+  vis.busy = true; vis.err = ''
+  try {
+    const r = await api.askVisual({ image: vis.img, question: vis.question })
+    vis.answer = r.answer
+  } catch (e) { vis.err = e.message }
+  vis.busy = false
+}
+
+async function pinVisual() {
+  if (!vis.answer) await askVisual()
+  if (!vis.answer) return
+  await api.pin(store.currentId, { quote: '[选区] ' + vis.question.slice(0, 60), note: vis.answer.slice(0, 560), para_idx: 0, page: 0 })
+  await refreshM()
+  toast('已钉在页边')
+}
+
+watch(() => store.visPrefill, pf => {
+  if (!pf) return
+  Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(window.innerWidth / 2) - 260), y: 90,
+                       img: pf.img, question: pf.question || '讲解这张图。', answer: '', busy: false, err: '' })
+  store.visPrefill = null
+  askVisual()
+})
+
 watch(() => store.viewer.variant, () => { doneKeys.clear(); load() })
 watch(() => store.viewer.spread, () => { doneKeys.clear(); buildSheets().then(() => { measure(); renderAll() }) })
 watch(scale, () => { doneKeys.clear(); scheduleRender() })
@@ -466,10 +532,14 @@ watch(() => store.marginalia.notes, (n, o) => {
         <div class="page-wrap" v-for="it in s.items" :key="it.key">
           <div class="page" :ref="el => (pageEls[it.gi] = el)"
                :style="{ width: it.w * scale + 'px', height: it.h * scale + 'px' }"
-               @mousemove="e => onPageMove(e, it)"
+               @mousemove="e => { if (store.viewer.frame) return; onPageMove(e, it) }"
+               @mousedown="e => startFrameDrag(e, it)"
                @mouseleave="() => { if (!handleHold) hoverPara = null }">
             <canvas :ref="el => (canvases[it.gi] = el)"></canvas>
-            <div class="textLayer" v-if="it.text" :ref="el => (textLayers[it.gi] = el)"></div>
+            <div class="textLayer" v-if="it.text && !store.viewer.frame" :ref="el => (textLayers[it.gi] = el)"></div>
+            <div v-if="frameRect && frameRect.gi === it.gi" class="frame-rect"
+                 :style="{ left: Math.min(frameRect.x0, frameRect.x1) + 'px', top: Math.min(frameRect.y0, frameRect.y1) + 'px',
+                           width: Math.abs(frameRect.x1 - frameRect.x0) + 'px', height: Math.abs(frameRect.y1 - frameRect.y0) + 'px' }"></div>
 
             <div class="para-zone">
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
@@ -571,6 +641,25 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
 
     <!-- 返回原位 -->
+    <!-- 框选视觉问答 -->
+    <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }" @mouseup.stop>
+      <img class="vis-img" :src="vis.img" />
+      <input type="text" v-model="vis.question" style="width:100%; margin-top:8px"
+             @keydown.enter="askVisual" placeholder="问这个选区…" />
+      <div class="sp-actions">
+        <button style="padding:3px 8px; font-size:11px" @click="() => { vis.question = '讲解这张图：画了什么、支持什么结论'; askVisual() }">讲解此图</button>
+        <button style="padding:3px 8px; font-size:11px" @click="() => { vis.question = '这个公式每一步的含义和推导逻辑'; askVisual() }">讲公式</button>
+        <button style="padding:3px 8px; font-size:11px" @click="() => { vis.question = '挖一下这张表里的数据：趋势、异常和可疑之处'; askVisual() }">挖表格</button>
+      </div>
+      <div v-if="vis.busy" style="font-size:12px;color:var(--ink-3);margin-top:8px">看图作答中…</div>
+      <div v-if="vis.err" style="font-size:12px;color:var(--vermilion);margin-top:8px">{{ vis.err }}</div>
+      <div class="sp-zh" v-if="vis.answer" style="margin-top:8px">{{ vis.answer }}</div>
+      <div class="sp-actions" v-if="vis.answer">
+        <button style="padding:4px 10px" @click="pinVisual">钉在页边</button>
+        <button class="ghost" style="padding:4px 8px" @click="vis.visible = false">×</button>
+      </div>
+    </div>
+
     <button class="back-chip" v-if="backChip" @click="jumpBack">返回原位 · Alt+←</button>
   </div>
 </template>

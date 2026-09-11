@@ -28,7 +28,7 @@ async function test() {
 
 function save() {
   Object.assign(store.viewer.layers, f.layers)
-  emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key }, mock: f.mock, pdf2zh: { service: f.service } })
+  emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key, vision_model: f.vision_model }, mock: f.mock, pdf2zh: { service: f.service } })
 }
 </script>
 
@@ -47,6 +47,10 @@ function save() {
       <div class="f-row">
         <label class="mono-label">API KEY（写入本地 config.yaml，不入库不外传）</label>
         <input type="text" v-model="f.api_key" placeholder="sk-…" />
+      </div>
+      <div class="f-row">
+        <label class="mono-label">视觉模型（框选问答/图表讲解用，留空禁用）</label>
+        <input type="text" v-model="f.vision_model" placeholder="glm-4.6v / gpt-4o-mini / ..." />
       </div>
       <label class="mock-row">
         <input type="checkbox" v-model="f.mock" />

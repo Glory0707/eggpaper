@@ -30,7 +30,9 @@ export const api = {
   summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
   methodCard: (pid) => req('GET', `/api/papers/${pid}/method-card`),
   suggest: (pid) => req('GET', `/api/papers/${pid}/suggest`),
+  advisor: (pid) => req('GET', `/api/papers/${pid}/advisor`),
   figures: (pid) => req('GET', `/api/papers/${pid}/figures`),
+  askVisual: (body) => req('POST', '/api/ask-visual', body),
   figureUrl: (pid, f, dpi = 130) =>
     `/api/papers/${pid}/figure.png?page=${f.page}&x0=${f.x0}&y0=${f.y0}&x1=${f.x1}&y1=${f.y1}&dpi=${dpi}`,
   exportMdUrl: (pid) => `/api/papers/${pid}/export.md`,

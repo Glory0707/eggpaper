@@ -149,6 +149,11 @@ async function saveAbbr(a) {
   loadTerms()
   toast(`「${a.en}」已收进术语表`)
 }
+function eqq(idx) {
+  const m = store.analysis.evidence_qs || {}
+  return m[String(idx)] || ''
+}
+
 const currentClaim = computed(() => {
   const cur = store.readingPara
   if (cur == null) return null
@@ -186,6 +191,18 @@ function stopTour() {
 }
 onUnmounted(() => stopTour())
 
+// ---------- 导师三问 ----------
+const advisor = ref([])
+const advBusy = ref(false)
+async function loadAdvisor() {
+  if (advBusy.value || advisor.value.length) return
+  advBusy.value = true
+  try { const r = await api.advisor(store.currentId); advisor.value = r.questions || [] }
+  catch (e) { toast('生成失败：' + e.message) }
+  advBusy.value = false
+}
+watch(() => store.analysis.status, s => { if (s === 'done') loadAdvisor() })
+
 // ---------- 图表速览 ----------
 const figures = ref([])
 const lightbox = ref(null)
@@ -195,6 +212,15 @@ async function loadFigures() {
     const r = await api.figures(store.currentId)
     figures.value = r.figures || []
   } catch { /* 无图论文静默 */ }
+}
+async function askFigure(f) {
+  try {
+    const url = api.figureUrl(store.currentId, f, 150)
+    const blob = await (await fetch(url)).blob()
+    const img = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob) })
+    lightbox.value = null
+    store.visPrefill = { img, question: '讲解这张图：画了什么、支持论文的哪个结论、有什么可疑之处。' }
+  } catch (e) { toast('取图失败：' + e.message) }
 }
 function figJump(f) {
   jumpTo(f.page, f.y0, f.y1)
@@ -271,6 +297,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
               <span class="e-note">
                 <span class="mono-label" style="font-size:9px">{{ ROLE_ZH[a.anno.role] }}</span>
                 {{ a.anno.purpose }}
+                <div class="ev-q" v-if="eqq(a.idx)">该实验回答：{{ eqq(a.idx) }}</div>
               </span>
             </div>
             <div v-if="!anchorsOf(c).length" style="font-size:11.5px;color:var(--ink-3);margin-top:6px">未找到直接证据段</div>
@@ -349,6 +376,22 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           </div>
         </div>
 
+        <!-- 导师三问 -->
+        <div style="margin-top:16px">
+          <div class="mono-label" style="margin-bottom:8px">导师三问 · 组会预案</div>
+          <div v-if="!advisor.length">
+            <button style="width:100%" @click="loadAdvisor" :disabled="advBusy">
+              {{ advBusy ? '推演中…' : '生成最可能被问住的 3 个问题' }}
+            </button>
+          </div>
+          <div v-else>
+            <div class="adv-item" v-for="(q, i) in advisor" :key="i">
+              <div class="adv-q">Q{{ i + 1 }} · {{ q.q }}</div>
+              <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ o }}</li></ul>
+            </div>
+          </div>
+        </div>
+
         <!-- 导出 -->
         <div style="margin-top:16px;display:flex;gap:8px">
           <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>导出笔记 .md</a>
@@ -408,6 +451,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
       <img :src="api.figureUrl(store.currentId, lightbox, 200)" @click.stop />
       <div class="lb-actions" @click.stop>
         <button @click="figJump(lightbox)">在原文查看</button>
+        <button @click="askFigure(lightbox)">问这张图</button>
         <button @click="lightbox = null">关闭</button>
       </div>
     </div>

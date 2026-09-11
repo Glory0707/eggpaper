@@ -37,6 +37,7 @@ def get_settings():
     cfg = config.load()
     p = cfg["provider"]
     return {"provider": {"base_url": p["base_url"], "model": p["model"],
+                         "vision_model": p.get("vision_model", ""),
                          "has_key": bool(p["api_key"]), "key_masked": (p["api_key"][:6] + "…") if p["api_key"] else ""},
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"]}
 
@@ -45,7 +46,7 @@ def get_settings():
 def put_settings(body: dict):
     cfg = config.load()
     if "provider" in body:
-        for k in ("base_url", "model"):
+        for k in ("base_url", "model", "vision_model"):
             if k in body["provider"]:
                 cfg["provider"][k] = body["provider"][k].strip()
         if isinstance(body["provider"].get("api_key"), str) and "…" not in body["provider"]["api_key"]:
@@ -166,7 +167,8 @@ def _run_analysis(pid: str, paras: list):
                 data["purposes"][str(p["idx"])] = "参考文献"
         db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
                                               for k, v in data["roles"].items()})
-        db.update_paper(pid, abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False))
+        db.update_paper(pid, abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
+                        evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
     except Exception as e:
         db.set_analysis(pid, [], {}, status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
 
@@ -185,7 +187,9 @@ def analyze(pid: str):
 def analysis(pid: str):
     _paper_or_404(pid)
     status, claims, annos = db.get_analysis(pid)
-    return {"status": status, "error": _paper_or_404(pid)["analysis_error"], "claims": claims, "annotations": annos}
+    p = _paper_or_404(pid)
+    eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
+    return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos, "evidence_qs": eqs}
 
 
 @app.post("/api/papers/{pid}/override-role")
@@ -320,6 +324,37 @@ KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别�
            "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑", "lookup": "查译"}
 
 
+@app.get("/api/papers/{pid}/advisor")
+def advisor(pid: str):
+    p = _paper_or_404(pid)
+    if p["advisor"]:
+        return JSONResponse(json.loads(p["advisor"]))
+    if p["analysis_status"] != "done":
+        return {"questions": []}
+    if config.load()["mock"]:
+        data = {"questions": [{"q": "〔演示〕证据够硬吗？", "outline": ["演示要点"]}]}
+    else:
+        _, claims, annos = db.get_analysis(pid)
+        warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if n["kind"] == "warning"]
+        data = llm.advisor_questions(p["title"], claims, warns)
+    db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
+    return data
+
+
+@app.post("/api/ask-visual")
+def ask_visual(body: dict):
+    image = body.get("image") or ""
+    if not image.startswith("data:image"):
+        raise HTTPException(400, "缺少图像数据")
+    question = (body.get("question") or "").strip() or "解释这张图/公式。"
+    if config.load()["mock"]:
+        return {"answer": "〔演示模式〕视觉问答需要配置视觉模型。"}
+    ans = llm.vision_ask(image, question)
+    if not ans.strip():
+        raise HTTPException(503, "模型这次没返回内容，请重试")
+    return {"answer": ans}
+
+
 @app.get("/api/papers/{pid}/method-card")
 def method_card(pid: str):
     p = _paper_or_404(pid)
@@ -385,6 +420,16 @@ def glossary_export():
         w.writerow([r["term_en"], r["term_zh"], r["domain"], r["note"], r["source"]])
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=eggpaper-glossary.csv"})
+
+
+@app.get("/api/glossary/export.txt")
+def glossary_export_anki():
+    """Anki 可直接导入的 TSV（正面=英文，背面=中文）。"""
+    lines = ["#separator:tab", "#html:false"]
+    for r in db.glossary_list():
+        lines.append(r["term_en"] + "\t" + r["term_zh"])
+    return Response(content="\n".join(lines), media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=eggpaper-anki.txt"})
 
 
 # ---------------- 图表速览 ----------------

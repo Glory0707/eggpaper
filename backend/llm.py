@@ -85,7 +85,8 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 2. 每一个给出的段落都必须有 role 和 purpose，role 不得虚构枚举之外的值
 3. purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照样品的必要性""交代测试条件，可跳过"
 4. 不要虚构不存在的段落编号；参考文献部分（若有）一律标 boilerplate
-5. 顺便抽取本文的缩写表 abbrs：{"abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}，没有就给空对象"""
+5. 顺便抽取本文的缩写表 abbrs：{"abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}，没有就给空对象
+6. 每条关键证据都要给出它直接回答的问题：{"evidence_qs":{"<¶编号>":"<该实验/数据直接回答的问题，≤22字>"}}"""
 
 PURPOSE_FALLBACK = {
     "background": "领域铺垫，可跳过", "gap": "作者真正的出发点", "claim": "论文要证明的核心",
@@ -134,9 +135,14 @@ def analyze_skeleton(title: str, paras: list) -> dict:
         anchors = c.get("anchors") or c.get("evidence") or []
         if isinstance(anchors, str):
             anchors = re.findall(r"\d+", anchors)
+        clean = []
+        for a in anchors:
+            n = _key_num(a)
+            if n is not None and n in valid:
+                clean.append(n)
         claims.append({"id": str(c.get("id") or c.get("cid") or f"C{i}"),
                        "text": str(c["text"])[:60],
-                       "anchors": [int(a) for a in anchors if int(a) in valid]})
+                       "anchors": clean})
 
     # roles：键提取数字；值兼容英文大小写与中文别名
     roles_raw = data.get("roles") or {}
@@ -159,10 +165,17 @@ def analyze_skeleton(title: str, paras: list) -> dict:
 
     abbrs_raw = data.get("abbrs") or {}
     abbrs = {str(k)[:24]: str(v)[:80] for k, v in abbrs_raw.items() if isinstance(v, str) and v.strip()}         if isinstance(abbrs_raw, dict) else {}
+    eqs_raw = data.get("evidence_qs") or {}
+    eqs = {}
+    if isinstance(eqs_raw, dict):
+        for k, v in eqs_raw.items():
+            num = _key_num(k)
+            if num in valid and isinstance(v, str) and v.strip():
+                eqs[str(num)] = v.strip()[:36]
 
     if not roles:
         raise ValueError(f"骨架解析失败（roles 为空），原始输出: {out[:160]}")
-    return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs}
+    return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs, "evidence_qs": eqs}
 
 
 # ---------------- 论文专属推荐问题 ----------------
@@ -375,3 +388,47 @@ def method_card(title: str, paras: list) -> dict:
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
     return parse_json(out)
+
+
+# ---------------- 导师三问 ----------------
+
+def advisor_questions(title: str, claims: list, warnings: list) -> dict:
+    claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
+    warn_txt = "\n".join(f"- {w}" for w in warnings) or "（无）"
+    out = chat([
+        {"role": "system", "content":
+            "你是苛刻但建设性的导师。学生要拿这篇论文去组会汇报/答辩，"
+            "请站在导师和答辩委员会的角度，出 3 个最可能把学生问住的问题"
+            "（直指证据强度、方法选择、结论推广性的软肋），每个问题配一份过关要点提纲。"
+            '只输出 JSON：{"questions":[{"q":"<问题，≤50字>","outline":["<要点1，≤30字>","<要点2>"]}]}，不要代码块。'},
+        {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n已知的薄弱点：\n{warn_txt}"},
+    ], max_tokens=6000, temperature=0.5)
+    data = parse_json(out)
+    qs = []
+    for q in data.get("questions", []):
+        if isinstance(q, dict) and q.get("q"):
+            qs.append({"q": str(q["q"])[:80], "outline": [str(o)[:44] for o in (q.get("outline") or [])[:3]]})
+    return {"questions": qs[:3]}
+
+
+# ---------------- 视觉问答（框选/图表） ----------------
+
+def vision_ask(image_dataurl: str, question: str) -> str:
+    cfg = config.load()
+    vm = cfg["provider"].get("vision_model", "").strip()
+    if cfg["mock"]:
+        return "〔演示模式〕视觉问答需要配置视觉模型。"
+    if not vm:
+        raise RuntimeError("未配置视觉模型（设置 → 视觉模型）")
+    r = httpx.post(
+        f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
+        json={"model": vm, "max_tokens": 6000, "temperature": 0.3,
+              "messages": [{"role": "user", "content": [
+                  {"type": "image_url", "image_url": {"url": image_dataurl}},
+                  {"type": "text", "text": question},
+              ]}]},
+        timeout=600,
+    )
+    r.raise_for_status()
+    return (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
