@@ -18,6 +18,31 @@ from glossary_seed import SEED
 app = FastAPI(title="eggpaper", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+
+@app.exception_handler(Exception)
+async def _any_error(request, exc):
+    """别让异常裸奔——前端只会拿到一个"500"，用户看到的就是这个数字。
+    模型服务最常见的几种失败（限流、欠费、超时、模型名写错）在这里翻译成人话，
+    其余按类型给出原始信息，至少能定位。"""
+    msg = str(exc) or exc.__class__.__name__
+    low = msg.lower()
+    if "429" in msg or "too many requests" in low:
+        hint = "模型服务限流了（429），等一会儿再试"
+    elif "401" in msg or "unauthorized" in low or "invalid api key" in low:
+        hint = "API KEY 无效或过期（401），去设置里检查"
+    elif "402" in msg or "insufficient" in low or "quota" in low:
+        hint = "账户余额/额度不足，模型服务拒绝了请求"
+    elif "timeout" in low or "timed out" in low:
+        hint = "模型服务超时了，重试一次通常就好"
+    elif "404" in msg and "model" in low:
+        hint = "模型名不对（404），去设置里核对"
+    elif isinstance(exc, HTTPException):
+        hint = exc.detail
+    else:
+        hint = f"{exc.__class__.__name__}: {msg[:160]}"
+    print(f"[eggpaper] {request.url.path} 出错 → {hint}")
+    return JSONResponse({"detail": hint}, status_code=500)
+
 PDF_DIR = os.path.join(config.DATA_DIR, "library")
 TRANSLATED_DIR = os.path.join(config.DATA_DIR, "translated")
 

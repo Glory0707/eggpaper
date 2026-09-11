@@ -64,3 +64,15 @@ for name in ('off 纯白', 'mung 豆沙绿'):
     if w:
         pc = wash('#ffffff', *w)
         print(f'    纸面 {pc}: 正文黑 {ratio("#000000", pc):.2f}')
+
+
+# ---------- 强调色 ----------
+# 主按钮是白字压在强调色上，标记是强调色压在白纸/三档护眼纸上——两头都得过线。
+# 换色先看这一段：旧的琥珀 #d08a1c 白字压上去只有 2.86:1，主按钮一直是不达标的。
+ACCENT, ACCENT_DEEP = '#1d4e5f', '#123a47'
+print('\n强调色（靛青）：')
+for name, bg in (('白纸', '#ffffff'), ('沟槽', '#f6f6f5'), ('豆沙绿纸', '#cdefd1'),
+                 ('浅青绿纸', '#d1eaea'), ('米黄纸', '#f6f6e0')):
+    print(f'  {name:<9} 强调色 {ratio(ACCENT, bg):>5.2f}   深档 {ratio(ACCENT_DEEP, bg):>5.2f}')
+print(f'  白字压强调色 {ratio("#ffffff", ACCENT):.2f}（主按钮）')
+print(f'  参照：白字压旧琥珀 #d08a1c 只有 {ratio("#ffffff", "#d08a1c"):.2f}——这是换色的硬理由')

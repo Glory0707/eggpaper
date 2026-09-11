@@ -7,8 +7,9 @@ async function req(method, url, body) {
   }
   const r = await fetch(url, opt)
   if (!r.ok) {
-    let msg = `${r.status}`
-    try { msg = (await r.json()).detail || msg } catch { /* ignore */ }
+    // 后端会把失败翻译成人话放进 detail；拿不到（比如请求根本没到服务）才退回状态码 + 短语
+    let msg = `${r.status} ${r.statusText || ''}`.trim()
+    try { msg = (await r.json()).detail || msg } catch { /* 不是 JSON，就用上面的兜底 */ }
     throw new Error(msg)
   }
   return r.json()
@@ -70,32 +71,32 @@ export const KIND_ZH = {
 // "对照参比 vs 优化拓展"这种细类——那是点开角色卡才需要知道的。
 // 一个暖色 = 全文的芯；三级墨由深到浅 = 论证主干 → 让步 → 铺垫与流程。
 export const ROLE_COLOR = {
-  claim: '#d08a1c',                                                    // 唯一暖色：核心主张
+  claim: '#1d4e5f',                                                    // 唯一彩色：核心主张
   evidence: '#57534a', gap: '#57534a',                                 // 深灰：论证主干
   control: '#8e8a80', extension: '#8e8a80', limitation: '#8e8a80',      // 中灰：外围与让步
   background: '#c9c4ba', boilerplate: '#c9c4ba',                       // 浅灰：铺垫与标准流程
 }
 // 色块上的字色：四档各自对白字/深字的对比度都过了 4.5:1
-export const ROLE_INK = { claim: '#2b1d05', control: '#26231e', extension: '#26231e',
+export const ROLE_INK = { claim: '#ffffff', control: '#26231e', extension: '#26231e',
                           limitation: '#26231e', background: '#26231e', boilerplate: '#26231e' }
 export const roleInk = (role) => ROLE_INK[role] || '#ffffff'
 // 用作文字色时不能用浅灰（白底上看不见），另给一档正文可读的阶梯
 export const ROLE_TEXT_COLOR = {
-  claim: '#96620a', evidence: '#1d1b17', gap: '#1d1b17',
+  claim: '#123a47', evidence: '#1d1b17', gap: '#1d1b17',
   control: '#55524a', extension: '#55524a', limitation: '#55524a',
   background: '#6f6b62', boilerplate: '#6f6b62',
 }
 
 // 眉批用同一套逻辑：值得读 / 要当心 / 是噪音 / 你自己写的
 export const KIND_COLOR = {
-  insight: '#c8811a',                                                          // 值得读
+  insight: '#1d4e5f',                                                          // 值得读
   warning: '#b8462e', hype: '#b8462e', ai: '#b8462e',                          // 要当心
   padding: '#c9c4ba', redundant: '#c9c4ba', stiff: '#c9c4ba', hedge: '#c9c4ba', // 噪音／可跳过
   lookup: '#57534a', region: '#57534a',                                        // 你自己钉的
 }
 // 眉批标签的文字色（浅灰在白卡上看不清，另给可读的一档）
 export const KIND_TEXT_COLOR = {
-  insight: '#96620a', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25',
+  insight: '#123a47', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25',
   padding: '#6f6b62', redundant: '#6f6b62', stiff: '#6f6b62', hedge: '#6f6b62',
   lookup: '#3f3230', region: '#3f3230',
 }

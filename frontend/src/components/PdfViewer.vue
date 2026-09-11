@@ -6,6 +6,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { api, store, toast, KIND_ZH, ROLE_ZH, ROLE_GLYPH, CORE_ROLES, KIND_COLOR, ROLE_COLOR,
          ROLE_TEXT_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
+import MdLite from './MdLite.vue'
 import { vDrag } from '../drag'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
@@ -183,11 +184,11 @@ function currentAnchor() {
   }
 }
 
-function restoreAnchor(a) {
+function restoreAnchor(a, viewOff = 0) {
   const it = pageItem(a.page)
   const el = it && pageEls.value[it.gi]
   if (!el) return false
-  scroller().scrollTop = el.offsetTop + a.frac * (el.offsetHeight || 0)
+  scroller().scrollTop = el.offsetTop + a.frac * (el.offsetHeight || 0) - viewOff
   return true
 }
 
@@ -195,7 +196,7 @@ function restoreAnchor(a) {
    谁先谁后说不准，所以不赌一次成功：落完量一次，偏了就再落一次，
    最多四五拍收敛；用户一旦自己滚动就立刻撒手。 */
 let anchorCancel = false
-function applyAnchor(a) {
+function applyAnchor(a, viewOff = 0) {
   if (!a || !scroller()) return
   anchorCancel = false
   let tries = 4
@@ -205,15 +206,47 @@ function applyAnchor(a) {
     const el = it && pageEls.value[it.gi]
     if (!el) return
     const h = el.offsetHeight || 1
-    const got = (scroller().scrollTop - el.offsetTop) / h
+    const got = (scroller().scrollTop + viewOff - el.offsetTop) / h
     if (Math.abs(got - a.frac) <= 0.03) return          // 已经落对，收工
-    restoreAnchor(a)
+    restoreAnchor(a, viewOff)
     setTimeout(check, 110)
   }
-  restoreAnchor(a)
+  restoreAnchor(a, viewOff)
   setTimeout(check, 110)
 }
 function onUserScroll() { anchorCancel = true }
+
+/* 视口里某个绝对高度落在"哪一页、页内几分之几" */
+function anchorAt(absY) {
+  const items = flatItems.value
+  if (!items.length) return null
+  let cur = null
+  for (const it of items) {
+    const el = pageEls.value[it.gi]
+    if (!el) continue
+    if (el.offsetTop <= absY) cur = it
+    else break
+  }
+  if (!cur) return { page: origPageOf(items[0]), frac: 0 }
+  const el = pageEls.value[cur.gi]
+  return { page: origPageOf(cur),
+           frac: Math.min(1, Math.max(0, (absY - el.offsetTop) / (el.offsetHeight || 1))) }
+}
+
+/* Ctrl+滚轮 = 缩放论文，不是浏览器缩放。这是读 PDF 的人肌肉记忆里的动作，
+   也正好是"论文缩放"与"界面缩放"该分开的地方：Ctrl+± 交给浏览器缩整个界面，
+   光标在纸上的 Ctrl+滚轮只缩这张纸。
+   关键是锚点：光标底下那个字要留在原地，不能缩完就跑到别处去。 */
+function onWheelZoom(e) {
+  if (!e.ctrlKey && !e.metaKey) return
+  const sc = scroller()
+  if (!sc) return
+  e.preventDefault()
+  const viewOff = e.clientY - sc.getBoundingClientRect().top
+  const a = anchorAt(sc.scrollTop + viewOff)
+  stepZoom(e.deltaY < 0 ? 1 : -1)
+  applyAnchor(a, viewOff)
+}
 
 /* ---------------- 渲染 ---------------- */
 
@@ -812,6 +845,7 @@ onMounted(async () => {
   window.addEventListener('resize', updateMid)
   scroller().addEventListener('scroll', onScroll, { passive: true })
   scroller().addEventListener('wheel', onUserScroll, { passive: true })
+  scroller().addEventListener('wheel', onWheelZoom, { passive: false })   // Ctrl+滚轮要 preventDefault，不能 passive
   scroller().addEventListener('touchstart', onUserScroll, { passive: true })
 })
 
@@ -823,6 +857,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateMid)
   scroller()?.removeEventListener('scroll', onScroll)
   scroller()?.removeEventListener('wheel', onUserScroll)
+  scroller()?.removeEventListener('wheel', onWheelZoom)
   scroller()?.removeEventListener('touchstart', onUserScroll)
   for (const d of Object.values(docs)) { try { d?.destroy() } catch { /* */ } }
   docs = { orig: null, dual: null, mono: null }
@@ -1116,12 +1151,13 @@ watch(() => store.marginalia.notes, (n, o) => {
         <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '这个公式每一步的含义和推导逻辑'; askVisual() }">讲公式</button>
         <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '挖一下这张表里的数据：趋势、异常和可疑之处'; askVisual() }">挖表格</button>
       </div>
-      <div v-if="vis.busy" style="font-size:var(--fs-sm);color:var(--ink-3);margin-top:8px">看图作答中…</div>
-      <div v-if="vis.err" style="font-size:var(--fs-sm);color:var(--vermilion);margin-top:8px">{{ vis.err }}</div>
-      <div class="sp-zh" v-if="vis.answer" style="margin-top:8px">{{ vis.answer }}</div>
-      <div class="sp-actions">
-        <button v-if="vis.answer" style="padding:4px 10px" @click="pinVisual">钉在页边</button>
-        <button class="ghost" style="padding:4px 10px" @click="closeVis">关闭</button>
+      <div v-if="vis.busy" class="vp-state">看图作答中…</div>
+      <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>
+      <MdLite v-if="vis.answer" class="vp-answer" :text="vis.answer" />
+      <!-- 关掉的出口只有右上角那个 ×（和 Esc）：左下角再挂一个"关闭"是重复，
+           底部只留真正要做的动作 -->
+      <div class="sp-actions" v-if="vis.answer">
+        <button class="primary" style="padding:4px 10px" @click="pinVisual">钉在页边</button>
       </div>
     </div>
     </Transition>

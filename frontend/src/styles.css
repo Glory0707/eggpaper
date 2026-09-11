@@ -22,14 +22,20 @@
   --hairline: rgba(29, 27, 23, 0.14);
   --hairline-soft: rgba(29, 27, 23, 0.075);
 
-  /* 蛋黄：唯一强调色 */
-  --yolk: #d08a1c;
-  --yolk-deep: #96620a;
-  --yolk-soft: rgba(208, 138, 28, 0.15);
+  /* 强调色：唯一的彩色。靛青（藏青偏青），墨水的颜色，不是网页蓝。
+     调研过的"高级感"配方就是这一条——低饱和、中性主导、彩色只留一个（60-30-10），
+     深蓝/藏青配中性灰是公认最稳的一组。原先的琥珀 #d08a1c 有两个问题：
+     一是大面积铺开就是用户说的"屎黄"，二是**白字压在上面只有 2.86:1**（主按钮一直没达标）。
+     靛青 #1d4e5f 白字 9.1:1、它在白底上 9.1:1，深浅两头都富余。 */
+  --accent: #1d4e5f;
+  --accent-deep: #123a47;
+  --accent-soft: rgba(29, 78, 95, 0.12);
+  --accent-line: rgba(29, 78, 95, 0.34);
   --vermilion: #b8462e;
+  --code-bg: rgba(29, 78, 95, 0.07);
 
   /* 角色色标：不是八个色相，是"该给多少注意力"的四个档 */
-  --r-claim: #d08a1c;        /* 唯一暖色：核心主张 */
+  --r-claim: #1d4e5f;        /* 唯一彩色：核心主张（= 强调色，全文的芯就该是它） */
   --r-evidence: #57534a;     /* 深灰：论证主干 */
   --r-gap: #57534a;
   --r-control: #8e8a80;      /* 中灰：外围与让步 */
@@ -103,7 +109,7 @@ body {
   overflow: hidden;
 }
 
-::selection { background: rgba(208, 138, 28, 0.28); }
+::selection { background: var(--accent-soft); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: rgba(29, 27, 23, 0.16); border: 3px solid var(--paper); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(29, 27, 23, 0.3); }
@@ -169,8 +175,8 @@ button {
 }
 button:hover { background: #f2efe8; border-color: rgba(29, 27, 23, 0.22); box-shadow: none; }
 button:active { background: #e9e5dc; border-color: rgba(29, 27, 23, 0.26); }
-button.primary { background: var(--yolk); border-color: var(--yolk-deep); color: #2b1d05; font-weight: 600; }
-button.primary:hover { background: #da962a; border-color: var(--yolk-deep); }
+button.primary { background: var(--accent); border-color: var(--accent-deep); color: #fff; font-weight: 600; }
+button.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
 button.primary:active { background: #c07d13; }
 button.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
 button.ghost:hover { background: rgba(29, 27, 23, 0.06); border-color: transparent; }
@@ -187,7 +193,7 @@ input[type='text'], textarea, select {
   outline: none;
   transition: border-color var(--t-fast) var(--ease-smooth), box-shadow var(--t-fast) var(--ease-smooth);
 }
-input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow: 0 0 0 3px var(--yolk-soft); }
+input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 .chip {
   display: inline-flex; align-items: center; gap: 5px;
@@ -209,7 +215,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   flex-shrink: 0;
 }
 .wordmark { display: flex; align-items: center; gap: 9px; user-select: none; }
-.wordmark .egg { width: 26px; height: 33px; }
+.wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
 .wordmark .egg.wobble { animation: wobble 0.45s var(--ease-spring); transform-origin: 50% 90%; }
 @keyframes wobble { 0% {rotate: 0deg} 30% {rotate: 3deg} 60% {rotate: -2.4deg} 100% {rotate: 0deg} }
 .wordmark .name { font-family: var(--brand); font-style: italic; font-weight: 600; font-size: var(--fs-display); }
@@ -245,12 +251,12 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   padding: 5px 10px; border: 1px solid var(--hairline); border-radius: 3px;
   background: transparent; color: var(--ink-2);
 }
-.toggle.on { color: var(--ink); background: var(--yolk-soft); border-color: rgba(150, 98, 10, 0.4); }
-.toggle.on::before { content: '● '; font-size: var(--fs-xs); vertical-align: 1px; color: var(--yolk-deep); }
+.toggle.on { color: var(--ink); background: var(--accent-soft); border-color: var(--accent-line); }
+.toggle.on::before { content: '● '; font-size: var(--fs-xs); vertical-align: 1px; color: var(--accent-deep); }
 
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-dot.ok { background: #58884f; }
-.status-dot.warn { background: var(--yolk); }
+.status-dot.warn { background: var(--accent); }
 .status-dot.bad { background: var(--vermilion); }
 
 /* ---------- 左栏：图标条 + 浮出文库 ---------- */
@@ -268,13 +274,13 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   border: 1px solid transparent; background: transparent; border-radius: 4px;
   color: var(--ink-2);
 }
-.strip-btn:hover { background: rgba(38, 32, 21, 0.07); box-shadow: none; transform: none; }
+.strip-btn:hover { background: rgba(29, 27, 23, 0.07); box-shadow: none; transform: none; }
 .strip-btn.on { background: var(--card-2); border-color: var(--hairline); color: var(--ink); }
 .strip-btn svg { width: 17px; height: 17px; }
 .strip-btn .badge {
   position: absolute; top: -3px; right: -4px;
   font-family: var(--mono); font-size: var(--fs-xs);
-  background: var(--yolk); color: #2b1d05;
+  background: var(--accent); color: #fff;
   border-radius: 6px; padding: 0.5px 4px; font-weight: 600;
 }
 .strip-sep { width: 18px; height: 1px; background: var(--hairline); margin: 2px 0; }
@@ -301,14 +307,14 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .paper-item.on::before {
   content: ''; position: absolute; left: 9px; top: 14px;
   width: 8px; height: 11px;
-  background: var(--yolk);
+  background: var(--accent);
   border-radius: 50% 50% 50% 50% / 60% 60% 42% 42%;
 }
 .paper-item .fn { font-size: var(--fs-sm); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .paper-item.on .fn { color: var(--ink); font-weight: 600; }
 .paper-item .st { display: flex; gap: 4px; margin-top: 4px; height: 5px; }
 .paper-item .st i { width: 16px; height: 4px; border-radius: 1px; background: rgba(38, 32, 21, 0.12); }
-.paper-item .st i.done { background: var(--yolk); }
+.paper-item .st i.done { background: var(--accent); }
 .paper-item .st i.err { background: var(--vermilion); }
 .paper-item .p-del {
   position: absolute; right: 5px; top: 7px;
@@ -324,7 +330,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   color: var(--ink-3); font-size: var(--fs-sm); cursor: pointer;
   transition: border-color var(--t-fast), background var(--t-fast);
 }
-.drop-hint:hover, .drop-hint.over { border-color: var(--yolk-deep); background: var(--yolk-soft); color: var(--yolk-deep); }
+.drop-hint:hover, .drop-hint.over { border-color: var(--accent-deep); background: var(--accent-soft); color: var(--accent-deep); }
 
 /* ---------- 中栏：书桌 ---------- */
 .desk {
@@ -347,7 +353,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 }
 .stage-line i {
   display: block; height: 100%; width: 28%;
-  background: var(--yolk); opacity: 0.85;
+  background: var(--accent); opacity: 0.85;
   animation: stageSlide 1.5s var(--ease-smooth) infinite;
 }
 @keyframes stageSlide { 0% { transform: translateX(-110%); } 100% { transform: translateX(460%); } }
@@ -374,7 +380,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   position: absolute; background: var(--veil);
   transition: opacity 260ms var(--ease-smooth);
 }
-.para-core-bar { position: absolute; left: -7px; width: 3px; background: var(--yolk); opacity: 0.85; border-radius: 1px; }
+.para-core-bar { position: absolute; left: -7px; width: 3px; background: var(--accent); opacity: 0.85; border-radius: 1px; }
 
 /* 眉批高亮 + 描画 */
 .mg-mark { position: absolute; mix-blend-mode: multiply; border-radius: 1px; z-index: 4; pointer-events: none; }
@@ -500,7 +506,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   border-bottom: 2px solid transparent;
 }
 .rtabs .rt:hover { transform: none; box-shadow: none; background: rgba(38, 32, 21, 0.04); }
-.rtabs .rt.on { color: var(--ink); border-bottom-color: var(--yolk); font-weight: 600; }
+.rtabs .rt.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .rbody { flex: 1; overflow-y: auto; padding: 14px 16px 30px; min-height: 0; }
 
 /* 骨架 */
@@ -524,7 +530,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
   border-radius: 3px; padding: 1px 4px 1px 1px;
   transition: background var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth);
 }
-.role-legend .rl:hover { color: var(--ink); background: var(--yolk-soft); }
+.role-legend .rl:hover { color: var(--ink); background: var(--accent-soft); }
 .role-legend .rl > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .role-legend .rl i {
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
@@ -552,13 +558,11 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 /* 提问 */
 .qa-msg { margin-bottom: 14px; }
 .qa-msg .q-role { font-family: var(--sans); font-weight: 600; font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 4px; }
-.qa-msg.user .q-body { font-size: var(--fs-md); background: var(--yolk-soft); border: 1px solid rgba(150, 98, 10, 0.25); border-radius: 4px; padding: 8px 11px; }
+.qa-msg.user .q-body { font-size: var(--fs-md); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 4px; padding: 8px 11px; }
 .qa-msg.assistant .q-body { font-size: var(--fs-md); line-height: 1.7; }
-.qa-head { font-weight: 700; margin: 10px 0 4px; font-size: var(--fs-md); }
-.qa-bullet { padding-left: 14px; text-indent: -10px; }
-.qa-cite {
+.md .md-cite, .qa-cite {
   font-family: var(--mono); font-size: var(--fs-xs); padding: 0 4px; margin: 0 1px;
-  background: var(--yolk-soft); border: 1px solid rgba(150, 98, 10, 0.3); color: var(--yolk-deep);
+  background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-deep);
 }
 .qa-cites { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .qa-cites button { font-family: var(--mono); font-size: var(--fs-xs); padding: 1.5px 7px; background: var(--card-2); color: var(--ink-2); border-radius: 2px; }
@@ -588,9 +592,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 
 /* 空状态 */
 .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); }
-.empty .egg-big { width: 116px; height: 148px; opacity: 0.92; color: var(--ink-3); transition: transform var(--t-slow) var(--ease-spring); }
+.empty .egg-big { width: 112px; height: 112px; opacity: 0.94; color: var(--accent); transition: transform var(--t-slow) var(--ease-spring); }
 .empty .egg-big.open { transform: translateY(-4px) rotate(-2deg); }
-.empty .egg-big.open .crack { stroke: var(--vermilion); }
+.empty .egg-big.open { opacity: 1; }
 .empty .egg-big .crack { transition: stroke var(--t-base) var(--ease-smooth); }
 .empty .e-title { font-family: var(--sans); font-size: var(--fs-display); font-weight: 700; letter-spacing: -0.01em; }
 .empty .e-sub { font-size: var(--fs-md); color: var(--ink-3); }
@@ -606,7 +610,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .reading .r-dots { display: inline-block; animation: dots 1.4s steps(4) infinite; width: 18px; text-align: left; }
 .reading .r-bar { height: 2px; background: var(--hairline-soft); margin-top: 10px; overflow: hidden; }
 .reading .r-bar i {
-  display: block; height: 100%; width: 30%; background: var(--yolk);
+  display: block; height: 100%; width: 30%; background: var(--accent);
   animation: slide 1.8s var(--ease-smooth) infinite;
 }
 @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(430%); } }
@@ -668,8 +672,29 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 }
 .sel-pop .sp-actions { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
 .sel-pop .sp-zh { font-size: var(--fs-md); line-height: 1.65; white-space: pre-wrap; }
+
+/* ============================================================
+   模型答案的排版（.md，问答面板与框选问答共用）
+   模型吐的是 markdown，之前按纯文本贴出来：一段一句挤成大块、列表没有层次。
+   这里只做最基础的三件事——给段落留呼吸、把标题拉开层级、把列表真的排成列表。
+   ============================================================ */
+.md { font-size: var(--fs-md); line-height: 1.78; color: var(--ink); }
+.md .md-line { margin: 0; }
+.md .md-line + .md-line { margin-top: 2px; }
+.md .md-gap { height: 8px; }
+.md .md-h { font-weight: 650; letter-spacing: -0.005em; margin-top: 12px; }
+.md .md-l1 { font-size: var(--fs-xl); margin-top: 14px; }
+.md .md-l2 { font-size: var(--fs-md); }
+.md .md-h:first-child { margin-top: 0; }
+.md .md-li { padding-left: 15px; text-indent: -11px; margin-top: 3px; }
+.md .md-li::before { content: '·'; color: var(--ink-3); margin-right: 6px; }
+.md code {
+  font-family: var(--mono); font-size: 0.92em; padding: 1px 4px; border-radius: 2px;
+  background: var(--code-bg); color: var(--ink);
+}
+.md b { font-weight: 650; }
 .sel-pop .sp-hits { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
-.sel-pop .sp-hits .chip { background: var(--yolk-soft); border-color: rgba(150, 98, 10, 0.35); color: var(--yolk-deep); font-size: var(--fs-xs); }
+.sel-pop .sp-hits .chip { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-deep); font-size: var(--fs-xs); }
 
 /* 返回 chip */
 .back-chip {
@@ -699,18 +724,17 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .claim-item { padding: 12px 2px 10px; border-top: 1px solid var(--hairline-soft); }
 .claim-item:first-of-type { border-top: none; }
 .claim-item { transition: background var(--t-base) var(--ease-smooth); }
-.claim-item.now { background: linear-gradient(90deg, var(--yolk-soft), transparent 70%); border-radius: 3px; }
 .claim-item .c-head { display: flex; gap: 7px; align-items: flex-start; }
 .claim-item .c-id { font-family: var(--mono); font-size: var(--fs-xs); color: #fff; background: var(--r-claim); padding: 2px 6px; border-radius: 2px; flex-shrink: 0; letter-spacing: 0.08em; margin-top: 2px; }
 .claim-item .c-txt { font-family: var(--sans); font-weight: 650; font-size: var(--fs-md); line-height: 1.55; letter-spacing: -0.005em; flex: 1; }
 /* 点开一类角色：摊开它落在哪几段 */
-.role-legend .rl.on { background: var(--yolk-soft); color: var(--ink); }
+.role-legend .rl.on { background: var(--accent-soft); color: var(--ink); }
 .role-hits { display: flex; flex-wrap: wrap; gap: 5px; margin: -8px 0 14px; }
 .role-hits .rh-chip {
   font-family: var(--mono); font-size: var(--fs-xs); padding: 2px 8px;
   border: 1px solid var(--hairline); border-radius: 3px; background: var(--card-2); color: var(--ink-2);
 }
-.role-hits .rh-chip:hover { border-color: var(--yolk-deep); color: var(--yolk-deep); background: var(--yolk-soft); }
+.role-hits .rh-chip:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
 
 /* 图表速览 */
 .fig-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
@@ -751,7 +775,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 /* 平时半透，别跟论文抢注意力；鼠标过去或拖动时实心 */
 .zoom-bar:hover, .zoom-bar.dragging { opacity: 1; }
 .zoom-bar button { padding: 3px 9px; border-color: transparent; background: transparent; font-size: var(--fs-sm); color: var(--ink-2); }
-.zoom-bar button:hover { background: var(--yolk-soft); transform: none; box-shadow: none; }
+.zoom-bar button:hover { background: var(--accent-soft); transform: none; box-shadow: none; }
 .zoom-bar button.on { background: var(--ink); color: var(--card); }
 .zoom-bar .zb-num { font-family: var(--mono); font-size: var(--fs-xs); min-width: 48px; color: var(--ink-2); }
 .zoom-bar .zb-sep { width: 1px; background: var(--hairline); margin: 3px 2px; }
@@ -772,10 +796,10 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 .find-bar .fb-count { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); min-width: 52px; text-align: center; }
 .find-bar button { padding: 3px 9px; font-size: var(--fs-sm); }
 .find-hit {
-  position: absolute; background: rgba(208, 138, 28, 0.38);
+  position: absolute; background: var(--accent-soft);
   border-radius: 1px; pointer-events: none; z-index: 3;
 }
-.find-hit.cur { background: rgba(208, 138, 28, 0.62); box-shadow: 0 0 0 1.5px var(--yolk-deep); }
+.find-hit.cur { background: rgba(29, 78, 95, 0.3); box-shadow: 0 0 0 1.5px var(--accent-deep); }
 
 /* 框选中：常驻提示 + 退出口，绝不让人找不到怎么取消 */
 .frame-hint {
@@ -787,7 +811,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 }
 .frame-hint .fh-tag {
   font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.14em;
-  color: #2b1d05; background: var(--yolk); border-radius: 10px; padding: 2px 7px;
+  color: #fff; background: var(--accent); border-radius: 10px; padding: 2px 7px;
 }
 .frame-hint button {
   background: var(--card-2); border: none; border-radius: 14px;
@@ -795,7 +819,6 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 }
 .frame-hint button:hover { transform: none; box-shadow: none; background: #fff; }
 
-.vis-pop { width: 380px; }
 .vis-pop .vp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
 .vis-pop .vp-x {
   border: none; background: none; color: var(--ink-3); font-size: var(--fs-xl);
@@ -803,10 +826,20 @@ input[type='text']:focus, textarea:focus { border-color: var(--yolk); box-shadow
 }
 .vis-pop .vp-x:hover { color: var(--ink); box-shadow: none; transform: none; }
 .vis-img { width: 100%; max-height: 180px; object-fit: contain; background: #fff; border: 1px solid var(--hairline-soft); border-radius: 2px; }
+/* 框选问答的回答区：给个上限，长回答在框内滚，别把气泡撑到屏幕外 */
+.vis-pop { width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 110px); display: flex; flex-direction: column; }
+.vis-pop .vp-state { font-size: var(--fs-sm); color: var(--ink-3); margin-top: 8px; }
+.vis-pop .vp-state.err { color: var(--vermilion); }
+.vis-pop .vp-answer {
+  margin-top: 9px; max-height: 268px; overflow-y: auto;
+  padding: 9px 11px; border-radius: 4px;
+  background: var(--card-2); border: 1px solid var(--hairline-soft);
+}
+.vis-pop .vp-answer .md { font-size: var(--fs-sm); line-height: 1.74; }
 .lightbox .lb-actions button { background: var(--card-2); }
 
 /* 键盘可达性：只给键盘用户画焦点环 */
-:focus-visible { outline: 2px solid var(--yolk-deep); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 2px; }
 
 .ev-q { font-size: var(--fs-sm); color: var(--ink-3); margin-top: 3px; }
 .adv-item { border-top: 1px solid var(--hairline-soft); padding: 9px 2px; }

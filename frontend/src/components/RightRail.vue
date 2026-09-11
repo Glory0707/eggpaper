@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, KIND_ZH, ROLE_ZH, ROLE_GLYPH, ROLE_COLOR, ROLE_TEXT_COLOR,
          KIND_COLOR, KIND_TEXT_COLOR, roleInk } from '../store'
 import { lineSpanOf } from '../find'
+import MdLite from './MdLite.vue'
 
 const USER_KINDS = ['lookup', 'region']   // 用户自己钉的（查译、选区问答），不算 AI 眉批
 
@@ -59,7 +60,6 @@ const asking = ref(false)
 const GENERIC = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？', '作者承认了哪些局限？']
 const suggest = ref([])
 const qaInput = ref(null)
-
 async function loadSuggest() {
   if (!store.currentId || suggest.value.length) return
   try {
@@ -97,26 +97,7 @@ function scrollQa() {
 }
 const qaEnd = ref(null)
 
-// 问答轻量 markdown：# 标题、**加粗**、- 列表，¶n 变成可点的引用
-const qaSegs = computed(() => store.qa.map(m => {
-  if (m.role !== 'assistant') return m
-  const lines = []
-  for (const raw of m.content.split('\n')) {
-    let t = raw, head = false, bullet = false
-    const hm = t.match(/^#{1,4}\s*(.*)$/)
-    if (hm) { head = true; t = hm[1] }
-    if (/^\s*[-*]\s+/.test(t)) { bullet = true; t = t.replace(/^\s*[-*]\s+/, '') }
-    const runs = []
-    for (const seg of t.split(/(\*\*[^*]+\*\*|¶\s*\d+)/)) {
-      if (!seg) continue
-      if (seg.startsWith('**') && seg.endsWith('**')) runs.push({ text: seg.slice(2, -2), bold: true })
-      else if (/^¶\s*\d+$/.test(seg)) runs.push({ text: seg, cite: parseInt(seg.replace(/[^\d]/g, '')) })
-      else runs.push({ text: seg })
-    }
-    lines.push({ head, bullet, runs })
-  }
-  return { ...m, lines }
-}))
+// 问答里的 ¶n 引用点击跳回原文（解析与排版在 MdLite 里）
 
 // ---------- 术语 ----------
 const terms = ref([])
@@ -181,19 +162,6 @@ function eqq(idx) {
   const m = store.analysis.evidence_qs || {}
   return m[String(idx)] || ''
 }
-
-const currentClaim = computed(() => {
-  const cur = store.readingPara
-  if (cur == null) return null
-  let best = null, bestD = 1e9
-  for (const c of store.analysis.claims) {
-    for (const a of c.anchors) {
-      const d = cur - a
-      if (d >= 0 && d < bestD) { bestD = d; best = c.id }
-    }
-  }
-  return best
-})
 
 // ---------- 导师三问 ----------
 const advisor = ref([])
@@ -309,8 +277,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
           </div>
 
           <div class="mono-label" style="margin:14px 0 8px">论点与证据 · {{ store.analysis.claims.length }} 条</div>
-          <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id"
-               :class="{ now: currentClaim === c.id }">
+          <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id">
             <div class="c-head">
               <span class="c-id">{{ c.id }}</span>
               <span class="c-txt">{{ c.text }}</span>
@@ -414,21 +381,9 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         <div class="qa-quick">
           <button v-for="q in quickList" :key="q" @click="ask(q)">{{ q }}</button>
         </div>
-        <div class="qa-msg" v-for="(m, i) in qaSegs" :key="i" :class="m.role">
+        <div class="qa-msg" v-for="(m, i) in store.qa" :key="i" :class="m.role">
           <div class="q-role">{{ m.role === 'user' ? '你' : 'EGGPAPER' }}</div>
-          <template v-if="m.lines">
-            <div class="q-body">
-              <template v-for="(ln, li) in m.lines" :key="li">
-                <div :class="{ 'qa-head': ln.head, 'qa-bullet': ln.bullet }">
-                  <template v-for="(r, ri) in ln.runs" :key="ri">
-                    <button v-if="r.cite" class="qa-cite" @click="jumpPara(r.cite)">{{ r.text }}</button>
-                    <b v-else-if="r.bold">{{ r.text }}</b>
-                    <template v-else>{{ r.text }}</template>
-                  </template>
-                </div>
-              </template>
-            </div>
-          </template>
+          <MdLite v-if="m.role === 'assistant'" class="q-body" :text="m.content" @cite="jumpPara" />
           <div class="q-body" v-else>{{ m.content }}</div>
         </div>
         <div ref="qaEnd"></div>
@@ -481,7 +436,7 @@ watch(() => store.currentId, () => { tab.value = 'skeleton' })
         <button class="lb-nav" :disabled="figures.length < 2" title="下一张（→）" @click="figStep(1)">›</button>
       </div>
       <div class="lb-actions" @click.stop>
-        <span class="mono-label">{{ figIdx + 1 }} / {{ figures.length }} · 第 {{ lightbox.page + 1 }} 页</span>
+        <span class="mono-label">{{ figIdx + 1 }} / {{ figures.length }}</span>
         <button @click="figJump(lightbox)">在原文查看</button>
         <button @click="askFigure(lightbox)">问这张图</button>
         <button @click="figIdx = -1">关闭</button>
