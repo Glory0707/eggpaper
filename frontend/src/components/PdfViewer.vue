@@ -501,7 +501,14 @@ function kindLabel(n) {
    不硬切：切口带省略号，而且有明确的展开出口——页边只有 154px 宽，
    一条 200 字的引文全铺出来会把整页的批注挤下去。 */
 const openQuote = ref(null)
-function toggleQuote(n) { openQuote.value = openQuote.value === n.id ? null : n.id }
+// 摊开全句：卡片会变高，必须**跟着重新排版**——页边是按"上一条的下沿 + 8px"往下摆的，
+// 不重量一次，下面的卡就不会让位，展开的引文会被它们盖住（用户报的就是这个）。
+// 量两次：一次在 DOM 更新后，一次等字折行/滚动条落定之后。
+function toggleQuote(n) {
+  openQuote.value = openQuote.value === n.id ? null : n.id
+  measureNotes()
+  setTimeout(measureNotes, 280)
+}
 function quoteShown(n) {
   const q = n.quote || ''
   return openQuote.value === n.id || q.length <= 44 ? q : q.slice(0, 44) + '…'
@@ -1102,6 +1109,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                  :style="{ top: top + 'px', borderLeftColor: kindColor(n),
                            width: Math.max(120, gutterW - 30) + 'px' }"
                  :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
+                           allq: openQuote === n.id,
                            clamped: (n.note || '').length > 34, clampable: (n.note || '').length > 34 }"
                  @mouseenter="hoverNote(n.id)" @mouseleave="hoverNote(null)"
                  @click="toggleNote(n)">

@@ -477,6 +477,10 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
               border-color var(--t-fast) var(--ease-smooth);
 }
 .mg-note:hover { box-shadow: var(--shadow-pop); transform: translateX(1px); }
+/* 展开态要压在同页其他卡之上。原来所有卡都是同一个 z-index，靠 DOM 顺序决定谁在上面，
+   于是「上面的卡展开、下面的卡盖住它」——页边是绝对定位的，重叠必然发生，只能靠层级裁决。
+   同时给展开/悬停的卡一样的浮起阴影：重叠时才看得出是"一张盖在另一张上"，而不是糊在一起。 */
+.mg-note:hover, .mg-note.expanded, .mg-note.allq { z-index: 60; box-shadow: var(--shadow-pop); }
 .mg-note.pending { border-style: dashed; border-left-style: solid; color: var(--ink-3); }
 .mg-note.fresh { animation: notein 380ms var(--ease-out) backwards; }
 @keyframes notein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
