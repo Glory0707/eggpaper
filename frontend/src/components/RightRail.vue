@@ -259,11 +259,15 @@ watch(() => store.analysis.status, s => {
   if (s !== 'done') return
   methodCard.value = null; advisor.value = []; suggest.value = []
   loadSuggest(); loadCachedBlocks()
+  loadSix()          // 服务端重算析读时把六问的答案一并清了（answers_clear），
+                     // 前端留着旧的就会显示上一个世代的内容，而"已有答案"又把
+                     // 「获取 / 补全」按钮全藏起来 —— 只能换篇才能再取一次
 })
 watch(() => store.marginalia.status, s => {
   if (s !== 'done') return
   advisor.value = []
   loadCachedBlocks()
+  loadSix()          // ⑤「还能做什么」是从"有坑"的批注长出来的，眉批一换就得重取
 })
 
 /* ---------- 右栏宽度：拖动改，双击复位 ----------

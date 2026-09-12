@@ -69,7 +69,8 @@ def art(px: int) -> str:
 
 
 def audit_asset(path: str):
-    """查一件真产物：四角必须是透明的（白底得是蛋形），中心列上必须是"环 + 三条线"。"""
+    """查一件真产物：四角必须是透明的（白底是"方形 + 圆角"，四角自然透明），
+    中心列上必须是"环 + 三条线"。"""
     img = Image.open(path)
     try:
         img.size = (48, 48)          # ICO：挑 48 那一帧（PNG 会抛 AttributeError）
@@ -94,6 +95,48 @@ def audit_asset(path: str):
     return ok, (f"{path}: 四角不透明 {opaque}/4（须 0 = 圆角生效）"
                 f"  上沿白底 {'在' if edge else '**没有**'}"
                 f"  中间墨段 {len(bars)}（须 3 = 三条线）  {'ok' if ok else '**不合格**'}")
+
+
+def audit_center(px: int):
+    """徽标在垫子里的位置：上下白边必须一样宽。
+
+    曾经把"蛋心"当成画布正中（EggMark.vue 的 viewBox 是 "6 10 84 84"，蛋心 (48,48)
+    落在画布的 (42,38)）→ 整个标记偏低 4/84，环贴着垫子下边缘，而当时的闸门只量缝与条数。
+    """
+    im = mark.draw(px, tile=True).convert("RGB")
+    w, h = im.size
+    p = im.load()
+    A = mark.ACCENT
+
+    def ink(c):
+        return abs(c[0] - A[0]) < 40 and abs(c[1] - A[1]) < 40 and abs(c[2] - A[2]) < 40
+
+    rows = [y for y in range(h) if any(ink(p[x, y]) for x in range(w))]
+    if not rows:
+        return False, f"{px:>3}px 居中：**一点墨都找不到**"
+    top, bot = rows[0], h - 1 - rows[-1]
+    ok = top > 0 and abs(top - bot) <= 1
+    return ok, (f"{px:>3}px 居中：上 {top}px / 下 {bot}px"
+                f"  {'ok' if ok else '**不等距（标记在垫子里偏低/贴边）**'}")
+
+
+def audit_tray(px: int = 24):
+    """托盘那条路（desktop.py 的 tray_image）也要"白垫 + 墨"。
+
+    托盘是四条管线里唯一直接压在深色任务栏上的那条，漏了白垫就是用户报的
+    "深色任务栏上看不清"。
+    """
+    im = mark.draw(px, tile=True).convert("RGBA")
+    p = im.load()
+    corners = [p[0, 0][3], p[px - 1, 0][3], p[0, px - 1][3], p[px - 1, px - 1][3]]
+    # 白垫取"左右两侧齐腰"那两点：小尺寸上蛋几乎顶到上沿，中上那一列是环不是垫子
+    mid = [p[1, px // 2], p[px - 2, px // 2]]
+    pad = all(a == 0 for a in corners) and all(c[3] > 250 and min(c[:3]) > 240 for c in mid)
+    ink = any(sum(p[x, y][:3]) < 500 and p[x, y][3] > 128 for y in range(px) for x in range(px))
+    ok = bool(pad and ink)
+    return ok, (f"托盘 {px}px：四角透明 {sum(a == 0 for a in corners)}/4 · 两侧白垫 "
+                f"{'在' if all(c[3] > 250 and min(c[:3]) > 240 for c in mid) else '**不在**'} · 有墨 {ink}"
+                f"  {'ok' if ok else '**不合格（会看不清）**'}")
 
 
 def main():
@@ -126,9 +169,22 @@ def main():
         if not ok:
             bad.append(rel)
 
+    # 徽标在垫子里的位置：上下白边要一样宽（这条曾经漏过：标记整体偏低、环贴着下边缘）
+    for s in (16, 48, 128):
+        ok, msg = audit_center(s)
+        print(msg)
+        if not ok:
+            bad.append(f"{s}px 居中")
+
+    # 托盘位图也要白垫（四条管线里唯一直接压在深色任务栏上的那条）
+    ok, msg = audit_tray(24)
+    print(msg)
+    if not ok:
+        bad.append("托盘位图")
+
     shots = os.path.join(here, "..", "_qa", "shots")
     os.makedirs(shots, exist_ok=True)
-    imgs = [mark.draw(s, tile=True) for s in SIZES]     # 与真实产物一致：蛋形白底
+    imgs = [mark.draw(s, tile=True) for s in SIZES]     # 与真实产物一致：方形圆角白底
     Z = 10
     W = sum(i.width * Z + 12 for i in imgs) + 12
     H = max(i.height for i in imgs) * Z + 24

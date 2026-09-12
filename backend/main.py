@@ -582,7 +582,7 @@ def override_role(pid: str, body: dict):
     """人工改判某段的角色。
 
     界面上没有入口（角色现在只影响略读蒙纱），接口与数据留着：万一模型把该读的段落
-    蒙掉了，这是唯一的补救口径。
+    蒙掉了，可以用它改判；读者那边还有一个"这段也要读"的手选（PdfViewer 的 skimKeep）。
     """
     _paper_or_404(pid)
     role = body.get("role") or ""

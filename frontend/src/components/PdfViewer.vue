@@ -106,6 +106,16 @@ function toggleKeep(idx) {
   skimKeep.value = s
   try { localStorage.setItem(LS_KEEP + store.currentId, JSON.stringify([...s])) } catch { /* 存不下就只管这一次会话 */ }
 }
+/* 点蒙纱 = "这段也要读"，但**拖选**（想复制那几个字）不该改状态：
+   位移超过 4px、或者真的选出了东西，就当成一次没选上的选字，什么都不做。 */
+const veilDown = ref(null)
+function onVeilClick(e, idx) {
+  const d = veilDown.value
+  veilDown.value = null
+  if (d && (Math.abs(e.clientX - d.x) > 4 || Math.abs(e.clientY - d.y) > 4)) return
+  if (window.getSelection()?.isCollapsed === false) return
+  toggleKeep(idx)
+}
 function clearKeep() {
   skimKeep.value = new Set()
   try { localStorage.removeItem(LS_KEEP + store.currentId) } catch { /* 同上 */ }
@@ -115,7 +125,9 @@ function clearKeep() {
    不是**有批注的段**。（"你写的"那两条不算：那是你自己划的，你记得住。） */
 const protectedIdx = computed(() => {
   const s = new Set()
-  for (const n of notesShown.value) {
+  // 用**全部**批注而不是过滤后的那一份：这条规则说的是"那段有东西要看"，
+  // 跟用户此刻收起了哪一档（纯粹是显示偏好）无关
+  for (const n of store.marginalia.notes) {
     const b = bandOf(n)
     if (b === 'good' || b === 'warn') s.add(n.para_idx)
   }
@@ -191,7 +203,10 @@ async function buildSheets() {
     } else {
       for (let j = 0; j < tm.count; j++) {
         const isOrig = j % 2 === 0
-        push([{ key: `di${j}`, doc: 'dual', page: j, origPage: isOrig ? j : -1, w: tm.w, h: tm.h, margin: isOrig, text: isOrig }])
+        // 交替模式下双语文档的第 j 页：偶数页是**原文第 j/2 页**（不是第 j 页）。
+        // 写成 j 的话所有按"原文页号"索引的东西都会错一倍——段落蒙纱、批注卡、
+        // 页码读数、查找命中、跳转全落错页（0 基 2i 当成了 i）。
+        push([{ key: `di${j}`, doc: 'dual', page: j, origPage: isOrig ? j / 2 : -1, w: tm.w, h: tm.h, margin: isOrig, text: isOrig }])
       }
     }
   }
@@ -246,6 +261,11 @@ async function load({ keepPlace = false } = {}) {
   updateProg()
   // 让 scroll-spy 先跑一拍：不进滚动也要把页码、"读至 ¶n"、进度线初始化好
   if (veryFirst) setTimeout(onScroll, 800)
+  if (pendingFind) {                      // 「文中」等在切回原文之后的那一次搜索
+    const q = pendingFind
+    pendingFind = null
+    nextTick(() => { searchQ.value = q; searchOpen.value = true })
+  }
   loading = false
 }
 
@@ -984,7 +1004,25 @@ store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey, ste
 function openSearch() { searchOpen.value = true }
 /* 别的面板（术语表）说"去原文里找这个词"：预填 + 打开 + 自动搜（searchQ 的 watch 会跑）。
    术语和原文本来是两个各自翻的地方，连起来之后"这个词在这篇里怎么用的"才问得出口。 */
-function findInPaper(q) { searchQ.value = q; searchOpen.value = true }
+let pendingFind = null       // 等这一轮渲染完再搜（换模式要重新出图、建文字层）
+function findInPaper(q) {
+  if (!q) return
+  // 查找只在原文的文字层里找，而译文页与框选模式下**没有** .textLayer：
+  // 直接搜必然"没找到"，用户会以为这个词不在这篇里
+  if (store.viewer.variant !== 'original') {
+    store.viewer.variant = 'original'
+    toast('已切回原文再找')
+    pendingFind = q          // 换模式要重新出图、重建文字层：等 load() 收尾再搜
+    return
+  }
+  if (store.viewer.frame) {
+    store.viewer.frame = false        // 文字层是 v-if 挂的：退出框选这一拍就回来了
+    nextTick(() => { searchQ.value = q; searchOpen.value = true; runSearch() })
+    return
+  }
+  searchQ.value = q
+  searchOpen.value = true
+}
 
 /* ---------------- 滚动：scroll-spy + 位置记忆 ---------------- */
 
@@ -992,6 +1030,7 @@ let spyT = null, saveT = null
 function onScroll() {
   updateProg()
   const sc = scroller()
+  if (!sc) return          // 卸载后残留的定时器（setTimeout(onScroll, 800) / spyT）还会打一枪
   const top = sc.scrollTop + 8
   let cur = 1
   for (const it of flatItems.value) {
@@ -1061,6 +1100,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   selStream?.abort()
+  clearTimeout(spyT); clearTimeout(saveT); clearTimeout(scheduleRender._t)
+  clearTimeout(focusNote._t); clearTimeout(applyJump._t)
   ro?.disconnect()
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('mousedown', onDocDown)
@@ -1197,6 +1238,9 @@ watch(() => store.jump, applyJump)
 watch(() => store.viewer.layers, () => reflow(), { deep: true })
 // 右栏/文库拖宽结束时不需要 ResizeObserver 的延迟：直接重排一次
 watch(() => store.reflowTick, () => reflow())
+// 档位筛选会改"页边要不要留"（四档全关 = 整条页边消失），而页宽是按这个定标的：
+// 不重排的话论文不会变宽，只是整块往右挪，白白空掉两百像素
+watch(() => store.viewer.noteBands, () => reflow(), { deep: true })
 watch(() => store.marginalia.notes, (n, o) => {
   spanCache.clear()
   if (n.length && (!o || n.length > o.length)) {
@@ -1225,7 +1269,11 @@ watch(() => store.marginalia.notes, (n, o) => {
 
             <canvas :ref="el => (canvases[it.gi] = el)"></canvas>
             <div class="care-wash" v-if="store.viewer.care !== 'off'"></div>
-            <div class="textLayer" v-if="it.text && !store.viewer.frame" :ref="el => (textLayers[it.gi] = el)"></div>
+            <!-- 文字层**不随框选卸载**（只关掉它的鼠标/可见性）：v-if 一摘一挂，
+                 新元素是空的，而 doneKeys 还记着"这一档渲染过了"→ 再也不会重画，
+                 退掉框选之后划词、查找、引文划线全哑（元素在、里面一个字都没有）。 -->
+            <div class="textLayer" v-if="it.text" :class="{ 'tl-off': store.viewer.frame }"
+                 :ref="el => (textLayers[it.gi] = el)"></div>
             <div v-if="frameRect && frameRect.gi === it.gi" class="frame-rect"
                  :style="{ left: Math.min(frameRect.x0, frameRect.x1) + 'px', top: Math.min(frameRect.y0, frameRect.y1) + 'px',
                            width: Math.abs(frameRect.x1 - frameRect.x0) + 'px', height: Math.abs(frameRect.y1 - frameRect.y0) + 'px' }"></div>
@@ -1237,12 +1285,20 @@ watch(() => store.marginalia.notes, (n, o) => {
                      class="para-fade veil"
                      :title="`略读把这一段蒙掉了（判为「${roleTag(p)}」）· 点一下：这段也要读`"
                      :style="{ ...rectStyle(p), animationDelay: Math.min(400, pi * 12) + 'ms' }"
-                     @click="toggleKeep(p.idx)"></div>
-                <!-- 留下来的段落：左侧一道芯线 + 纸边一行角色名，说清"为什么留它" -->
-                <template v-else-if="store.viewer.layers.skim && it.origPage >= 0 && (isCore(p) || kept(p.idx))">
+                     @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
+                     @click="onVeilClick($event, p.idx)"></div>
+                <!-- 留下来的段落：左侧一道芯线 + 一行角色名，说清"为什么留它"。
+                     受保护的段（有值得读/要当心批注）也算"留下来"，它同样需要那个记号，
+                     否则纸上跟"压根没判过角色"的段落长得一模一样。 -->
+                <template v-else-if="store.viewer.layers.skim && it.origPage >= 0
+                                    && (isCore(p) || kept(p.idx) || protectedIdx.has(p.idx))">
                   <div class="para-core-bar"
                        :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"></div>
-                  <span class="para-tag" :style="{ top: p.bbox.y0 * scale + 'px' }">{{ roleTag(p) }}</span>
+                  <!-- 标签写在纸**内**、贴着段落文字起点的左侧：纸外那点空白只有 ~25px
+                       （适宽模式下纸正好占满书桌），写在纸外会被滚动容器裁掉半个字 -->
+                  <span class="para-tag"
+                        :style="{ top: p.bbox.y0 * scale + 'px',
+                                  left: Math.max(2, p.bbox.x0 * scale - 58) + 'px' }">{{ roleTag(p) }}</span>
                 </template>
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
               </template>
@@ -1375,6 +1431,7 @@ watch(() => store.marginalia.notes, (n, o) => {
         <button v-if="skimStats.mine" title="取消你手选的「这段也要读」" @click="clearKeep">手选 {{ skimStats.mine }} 段 ✕</button>
         <span class="sh-tip">点蒙掉的段 = 这段也要读</span>
       </template>
+      <span v-else-if="!store.paras.length">这份 PDF 没有文字层（扫描件），略读用不了</span>
       <span v-else>略读要按角色蒙纱，先点顶栏「析读」</span>
       <button @click="store.viewer.layers.skim = false">退出略读</button>
     </div>

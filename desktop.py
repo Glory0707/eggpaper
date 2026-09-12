@@ -76,6 +76,10 @@ def start_tray(url: str, port: int, log) -> bool:
     "后台服务"只能进设置里点，或者去任务管理器。"""
     try:
         import pystray
+        # 这一句同时是 Pillow 的探针：mark.draw / pystray 的后端都要用它，而 pystray
+        # 自己**不** import PIL——缺了 Pillow 时若只 import pystray，会在画托盘图时才炸，
+        # 那就不是"托盘不可用"，是软件打不开
+        from PIL import Image  # noqa: F401
     except ImportError as e:
         log(f"托盘不可用（{e}）")
         return False
@@ -95,7 +99,9 @@ def start_tray(url: str, port: int, log) -> bool:
             size = 16
         size = max(16, min(64, size))            # 系统说多大就按多大画（DPI 感知之后是真值）
         log(f"托盘图标按 {size}px 原生绘制")
-        return mark.draw(size)
+        # 必须跟另外三条管线一个样子：白垫不能省，否则深色任务栏上墨色环几乎看不见
+        # （用户原话："不垫 → 深色任务栏上看不清"，别只改图标文件忘了这里）
+        return mark.draw(size, tile=True)
 
     def guard(name, fn):
         """托盘菜单的回调在托盘线程里跑，抛出去的异常没人接——**用户看到的就是"点了没反应"**。

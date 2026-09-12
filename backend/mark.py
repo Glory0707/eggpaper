@@ -52,7 +52,7 @@ def layout(px: float) -> dict:
     返回 box（蛋的外接框）、ring（环宽）、bars（每条的 中心 y / 宽 / 厚）。
     """
     s = px / VIEW
-    cx = cy = px / 2
+    cx, cy = px * CENTER[0], px * CENTER[1]
     rx, ry_up, ry_dn = RX * s, RY_UP * s, RY_DN * s
     ring = max(RING_MIN, RING * s)
     ys = [cy + (by - CY) * s for by, _ in BARS]
@@ -106,12 +106,15 @@ def _downscale_pm(img: Image.Image, w: int, h: int) -> Image.Image:
     return out
 
 
-# 垫底时两者的比例：纸底铺满画布**高度**（宽按品牌比例 0.79，左右自然留空），
-# 白底 = **方形 + 圆角**（常规应用图标那种"应用块"）。
-# 用户的口径（第三次、也是最终口径）："就要方形的白色垫，只是四个角是圆角，
-# 包括桌面快捷方式和任务栏图标"。半径取画布的 20%——iOS / Win11 应用块大概就是这个观感；
-# 徽标按正常比例（占画布 88%，见 MARGIN）画上去，四周自然留出白边。
+# 白底 = **方形 + 圆角**（常规应用图标那种"应用块"）。用户的最终口径：
+# "就要方形的白色垫，只是四个角是圆角，包括桌面快捷方式和任务栏图标"。半径取画布的 20%。
 TILE_RADIUS = 0.20
+
+# 蛋心在画布里的位置：EggMark.vue 的 viewBox 是 "6 10 84 84"，设计坐标里的蛋心 (48,48)
+# 落在画布的 (42, 38)——**不是正中**（蛋在 viewBox 里上下各留 4、左右各留 6）。
+# 按正中画会整体偏低 4/84：实测垫子里上白边 8px、下白边 0，环贴着垫子下边缘。
+VB_X, VB_Y = 6.0, 10.0
+CENTER = ((CX - VB_X) / VIEW, (CY - VB_Y) / VIEW)
 
 
 def draw(px: int, tile: bool = False) -> Image.Image:
@@ -125,7 +128,7 @@ def draw(px: int, tile: bool = False) -> Image.Image:
     size = px * ss
     # 统一用"未缩放的画布像素"算，最后一步才乘 ss 去画——混着用会把偏移量加两遍
     # （曾经这样把三条字条画到画布外面去了：蛋在、条没了）。
-    c = px / 2
+    cx, cy = px * CENTER[0], px * CENTER[1]
     base = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     if tile:
         ImageDraw.Draw(base).rounded_rectangle([0, 0, size - 1, size - 1],
@@ -137,15 +140,15 @@ def draw(px: int, tile: bool = False) -> Image.Image:
     # 上下两个不同纵向半径拼出的蛋（下半更长、钝端朝上），正圆环会把这个特征抹平。
     mask = Image.new("L", (size, size), 0)
     md = ImageDraw.Draw(mask)
-    md.polygon(_egg_poly(c * ss, c * ss, g["rx"] * ss, g["ry_up"] * ss, g["ry_dn"] * ss),
+    md.polygon(_egg_poly(cx * ss, cy * ss, g["rx"] * ss, g["ry_up"] * ss, g["ry_dn"] * ss),
                fill=255)
     rin = g["ring"] * ss
-    md.polygon(_egg_poly(c * ss, c * ss, g["rx"] * ss - rin, g["ry_up"] * ss - rin,
+    md.polygon(_egg_poly(cx * ss, cy * ss, g["rx"] * ss - rin, g["ry_up"] * ss - rin,
                          g["ry_dn"] * ss - rin), fill=0)
     # 三条字条：两端圆头（rx = 厚度/2）
     for b in g["bars"]:
         y, w, h = b["y"] * ss, b["w"] * ss, b["h"] * ss
-        md.rounded_rectangle([c * ss - w / 2, y - h / 2, c * ss + w / 2, y + h / 2],
+        md.rounded_rectangle([cx * ss - w / 2, y - h / 2, cx * ss + w / 2, y + h / 2],
                              radius=h / 2, fill=255)
 
     layer = Image.new("RGBA", (size, size), ACCENT + (0,))

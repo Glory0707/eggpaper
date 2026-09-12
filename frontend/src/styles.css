@@ -423,6 +423,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .page canvas { display: block; }
 .page .textLayer { z-index: 5; }
+/* 框选模式：文字层只是让开鼠标（否则量框选的起点会落在文字 span 上），
+   但它必须留在 DOM 里——见 PdfViewer 里那段注释 */
+.page .textLayer.tl-off { pointer-events: none; user-select: none; visibility: hidden; }
 
 /* 护眼底纹：盖在画布上、正文下面的一层色膜。multiply 只乘"底"，黑字乘完还是黑字 */
 .care-wash {
@@ -449,12 +452,14 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 @keyframes flashIn  { from { opacity: 0 } to { opacity: 1 } }
 @keyframes flashOut { to { opacity: 0 } }
 .para-core-bar { position: absolute; left: -7px; width: 3px; background: var(--accent); opacity: 0.85; border-radius: 1px; }
-/* 略读留在纸边的那行小字（角色名 / 你要读）。写在纸**外**的页边白边上：
-   纸里的左边距有多宽是 PDF 自己定的，写在纸里迟早会压到正文。 */
+/* 略读留在纸上的那行小字（角色名 / 你要读 / 有眉批）。写在纸**内**、
+   贴着段落文字起点的左侧：适宽模式下纸正好占满书桌，纸外只剩 ~25px，
+   写在纸外会被滚动容器裁掉半个字（实测只有末两个字看得见）。left 由模板算。 */
 .para-tag {
-  position: absolute; left: -66px; width: 56px; text-align: right;
+  position: absolute; width: 56px; text-align: right;
   font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3);
-  opacity: 0.85; pointer-events: none; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.72); padding: 0 2px; border-radius: 2px;
+  opacity: 0.9; pointer-events: none; white-space: nowrap; overflow: hidden;
 }
 
 /* 略读的蒙纱：悬停**掀开**这一块看一眼，点一下是「这段我也要读」。
@@ -1111,8 +1116,11 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 /* 略读状态行：读的时候它得在，但不该抢注意力——一根发丝线、两个字号的灰，
    想核对"它到底略掉了什么"的时候一眼能读到 */
+/* 略读状态行：位置要避开上面那条「退出框选」（frame-hint，top: 70px、高 31px）——
+   两条都是居中的 .desk-float，DOM 里后出现的压在先出现的上面，
+   靠得太近时按钮会被盖掉一半、只露出下缘 */
 .skim-hud {
-  top: 60px; display: flex; align-items: center; gap: 9px;
+  top: 108px; display: flex; align-items: center; gap: 9px;
   background: var(--card); border: 1px solid var(--hairline); border-radius: 20px;
   padding: 4px 6px 4px 13px; font-size: var(--fs-sm); color: var(--ink-2);
   box-shadow: var(--shadow-page); opacity: 0.82;
