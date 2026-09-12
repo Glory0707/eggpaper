@@ -324,7 +324,7 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" title="eggpaper">
-        <EggMark class="egg" compact :class="{ roll }" />
+        <EggMark class="egg" :class="{ roll }" />
         <span class="name">eggpaper</span>
       </div>
       <div class="doc-head" v-if="store.paper">
