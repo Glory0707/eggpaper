@@ -4,7 +4,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, paraByIdx, CORE_ROLES, bandOf, kindColor, kindText, kindZH } from '../store'
-import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex } from '../find'
+import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
@@ -446,12 +446,26 @@ function notesOnPage(pno) { return pageLayouts.value[pno]?.notes || [] }
 // 一条引文落到哪几行——用段落自带的行级坐标算，不依赖渲染，页边排序和跳转都用它
 // （缓存放组件里，不往 store 的批注对象上挂字段：那是数据，别被排布逻辑污染）
 const spanCache = new Map()
+/* 卡片上显示的、纸上划的，必须是**同一句话**。
+   模型引的半句先用段落原文补成整句（sentenceAround），补不出来就退回原引文。
+   这一步以前没有，于是纸上只有半道线、卡片上是半句话，两边都让人犯嘀咕。 */
+const anchorCache = new Map()
+function anchorText(n) {
+  if (!n) return ''
+  const k = n.id + '|' + n.para_idx
+  if (!anchorCache.has(k)) {
+    const p = paraByIdx.value[n.para_idx]
+    anchorCache.set(k, (p && n.quote && sentenceAround(p.text, n.quote)) || n.quote || '')
+  }
+  return anchorCache.get(k)
+}
 function quoteSpan(n) {
   if (!n) return null
   const k = n.id + '|' + n.para_idx
   if (!spanCache.has(k)) {
     const p = paraByIdx.value[n.para_idx]
-    spanCache.set(k, n.quote && p ? lineSpanOf(p, n.quote) : null)
+    const t = anchorText(n)
+    spanCache.set(k, t && p ? lineSpanOf(p, t) : null)
   }
   return spanCache.get(k)
 }
@@ -473,7 +487,10 @@ function computeQuoteMarks() {
     const it = pageItem(n.page)
     const el = it && pageEls.value[it.gi]
     if (!el) continue
-    const r = findQuoteRects(el, n.quote)
+    // 把这一段在纸上的纵向范围也交给它：同一句话在页面上出现两次时，挑落在这一段里的那次
+    const p = paraByIdx.value[n.para_idx]
+    const box = p ? { y0: p.bbox.y0 * scale.value, y1: p.bbox.y1 * scale.value } : null
+    const r = findQuoteRects(el, anchorText(n), box)
     if (r) { out[n.id] = r.rects; cov[n.id] = r.覆盖比 }
   }
   quoteMarks.value = out
@@ -510,7 +527,7 @@ function toggleQuote(n) {
   setTimeout(measureNotes, 280)
 }
 function quoteShown(n) {
-  const q = n.quote || ''
+  const q = anchorText(n)
   return openQuote.value === n.id || q.length <= 44 ? q : q.slice(0, 44) + '…'
 }
 // 没有 DOM 时的退路：按行级坐标画整行框（行数准，行内不裁）
@@ -1125,8 +1142,8 @@ watch(() => store.marginalia.notes, (n, o) => {
               <!-- 引文：默认看开头，点「全句」摊开；引文本身点了是跳回纸上那句 -->
               <div class="mg-quote-row">
                 <span class="mg-quote" :class="{ all: openQuote === n.id }"
-                      :title="'跳到纸上这句：' + n.quote" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
-                <button v-if="(n.quote || '').length > 44" class="mg-qall" @click.stop="toggleQuote(n)">
+                      :title="'跳到纸上这句：' + anchorText(n)" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
+                <button v-if="anchorText(n).length > 44" class="mg-qall" @click.stop="toggleQuote(n)">
                   {{ openQuote === n.id ? '收起' : '全句' }}
                 </button>
                 <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->

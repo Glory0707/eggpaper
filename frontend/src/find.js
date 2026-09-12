@@ -13,13 +13,25 @@
  *                   跳转目标）。给的是"覆盖第几行到第几行"和首行 y。
  *   findQuoteRects() —— 用已渲染的 textLayer 建 Range，range.getClientRects()
  *                   一次拿到逐行的精确矩形（该多长就多长），用来画线。
+ *   sentenceAround() —— 引文只是半句时，用段落原文补成整句（见下面那一段注释）。
  */
 
 const KEEP = /[0-9a-z\u4e00-\u9fff]/
 
+/* PDF 里的连字（ligature）是**一个**字符：ﬁ U+FB01、ﬂ U+FB02 这些。
+   不折叠的话，"scientiﬁc"（原文）和 "scientific"（模型抄回来的）归一化之后是两个不同的串——
+   于是引文"对不上"，划线只盖前半截（卡片上还会冒那个 ≈ 号）。
+   用户抱怨的"对应的不好"里有一份就是它。折叠成字母后两边自然同形。 */
+const LIG = { '\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl',
+              '\ufb03': 'ffi', '\ufb04': 'ffl', '\ufb05': 'ft', '\ufb06': 'st' }
+
 function normText(s) {
   let out = ''
-  for (const ch of (s || '').toLowerCase()) if (KEEP.test(ch)) out += ch
+  for (const ch of (s || '').toLowerCase()) {
+    const lig = LIG[ch]
+    if (lig) out += lig
+    else if (KEEP.test(ch)) out += ch
+  }
   return out
 }
 
@@ -140,18 +152,74 @@ function matchLen(norm, quote) {
   return best
 }
 
-/** 在某一页的文本层里找 quoted，返回纸面坐标下的逐行矩形（可能多块）。 */
-export function findQuoteRects(pageEl, quote) {
+/** 一个文本节点落在给定的页面矩形里吗（都相对 pageEl 的左上角）。 */
+function nodeInBox(node, pageEl, box) {
+  const el = node && node.parentElement
+  if (!el) return false
+  const base = pageEl.getBoundingClientRect()
+  const r = el.getBoundingClientRect()
+  const y0 = r.top - base.top, y1 = r.bottom - base.top
+  return y1 >= box.y0 - 2 && y0 <= box.y1 + 2
+}
+
+/** 在某一页的文本层里找 quoted，返回纸面坐标下的逐行矩形（可能多块）。
+ *
+ *  paraBox（可选，页面像素坐标、相对 pageEl）：同一句话在这一页出现两次时，
+ *  优先挑**落在这一段里**的那一次。页面上重复的句子并不少见（正文说一遍、
+ *  图注再说一遍；同一个术语的定义反复出现），只认"第一个命中"就会把线划到别处去——
+ *  用户说的"对应的不好"有一份就是这个。找不到落在段里的，就退回第一个命中。 */
+export function findQuoteRects(pageEl, quote, paraBox) {
   const tl = pageEl?.querySelector?.('.textLayer')
   const q = normText(quote)
   if (!tl || q.length < 4) return null
   const idx = indexOf(tl)
   const len = matchLen(idx.norm, quote)
   if (len < 8) return null
-  const at = idx.norm.indexOf(q.slice(0, len))
+  const head = q.slice(0, len)
+  let at = idx.norm.indexOf(head)
   if (at < 0) return null
+  if (paraBox) {
+    let probe = at
+    while (probe >= 0) {
+      if (nodeInBox(idx.map[probe * 2], pageEl, paraBox)) { at = probe; break }
+      probe = idx.norm.indexOf(head, probe + 1)
+    }
+  }
   const rects = rectsOf(idx, at, at + len, pageEl.getBoundingClientRect())
   return rects.length ? { rects, 覆盖比: len / q.length } : null
+}
+
+/* ---------- 引文扩成整句 ---------- */
+
+/* 把模型引的那一段（常常只是半句）扩成"它所在的一整句"，返回原文里的那句原话。
+
+   为什么必须做这件事：划线是按引文对回原文的字符算的——引半句，纸上就只有半句被划上，
+   读者看到的是横在行中间的一道莫名其妙的线（用户原话："勾划的位置不全面或对应的不好"）。
+   扩成整句之后，线和句子是齐的，卡片上显示的也是同一句，两边不再各说各的。
+
+   句子从**段落原文**里取（和 PDF 同源，逐字可比），所以对回去的精度不会比原来差。
+   找不到就返回空串，调用方退回原引文——退路和以前一模一样，不会更糟。 */
+export function sentenceAround(text, quote) {
+  if (!text || !quote) return ''
+  const q = normText(quote)
+  if (q.length < 6) return ''
+  const spans = []
+  const SENT = /[^.!?。！？；;]+[.!?。！？；;]+["'”’)\]]*\s*/g
+  let m, last = 0
+  while ((m = SENT.exec(text))) {
+    spans.push(m[0])
+    last = SENT.lastIndex
+  }
+  if (last < text.length) spans.push(text.slice(last))   // 段末那句可能没有句号收尾
+  for (const s of spans) {
+    const n = normText(s)
+    // 逐字命中最好；模型抄错一两个字时，用"对上的部分占八成"这种宽容口径也认
+    if (n && (n.indexOf(q) >= 0 || matchLen(n, quote) >= q.length * 0.8)) {
+      const t = s.trim()
+      return t.length <= 400 ? t : ''       // 整句过长（罕见）就算了，别划掉半页
+    }
+  }
+  return ''
 }
 
 /** 整页里所有命中（文档内搜索用）。 */

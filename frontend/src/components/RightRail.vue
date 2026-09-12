@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf } from '../store'
-import { lineSpanOf } from '../find'
+import { lineSpanOf, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import AskPanel from './AskPanel.vue'
 import MdLite from './MdLite.vue'
@@ -49,10 +49,11 @@ function jumpPara(idx) {
   const p = paraByIdx.value[idx]
   if (p) jumpTo(p.page, p.bbox.y0, p.bbox.y1)
 }
-// 眉批跳转：跳到这条批注引用的那句话，而不是它所在段的开头
+// 眉批跳转：跳到这条批注引用的那句话，而不是它所在段的开头。
+// 和纸面用同一句话（sentenceAround 补成整句），否则"跳到那句"会跳到半句上
 function jumpNote(n) {
   const p = paraByIdx.value[n.para_idx]
-  const span = p ? lineSpanOf(p, n.quote) : null
+  const span = p ? lineSpanOf(p, sentenceAround(p.text, n.quote) || n.quote) : null
   if (span) return jumpTo(n.page, span.bbox.y0, span.bbox.y1)
   if (n.rect) return jumpTo(n.page, n.rect.y0, n.rect.y1)
   jumpPara(n.para_idx)
