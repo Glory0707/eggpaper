@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, paraByIdx, CORE_ROLES, bandOf, kindColor, kindText, kindZH } from '../store'
+import { api, store, toast, paraByIdx, CORE_ROLES, ROLE_ZH, bandOf, kindColor, kindText, kindZH } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
@@ -66,7 +66,14 @@ const parasByPage = computed(() => {
   for (const p of store.paras) (m[p.page] ||= []).push(p)
   return m
 })
-const notesShown = computed(() => (store.viewer.layers.marginalia ? store.marginalia.notes : []))
+/* 页边摆哪些批注：图层开关 × 档位过滤。四档就是纸上那四种笔触，
+   一档一个开关（右栏「问题」页的眉批块里点）——批注上到三四十条时，
+   "只看要当心"是读者的第一个念头。 */
+const notesShown = computed(() => {
+  if (!store.viewer.layers.marginalia) return []
+  const on = store.viewer.noteBands || {}
+  return store.marginalia.notes.filter(n => on[bandOf(n)] !== false)
+})
 /* 页边要多宽，取决于"上面真有东西要放吗"：有批注 → 整条 184，没有 → 一点都不留，
    论文因此能多出近 200px 的宽度。这条宽度是 measure() 的输入，图层一变就得重排。 */
 const gutterW = computed(() => (store.viewer.layers.marginalia && notesShown.value.length ? GUTTER_FULL : 0))
@@ -78,6 +85,64 @@ function roleOf(p) {
   return store.analysis.annotations[String(p.idx)]?.role || null
 }
 function isCore(p) { return CORE_ROLES.includes(roleOf(p) || 'background') }
+
+/* ---------------- 略读：判得准不准，读者要看得见、也要能自己扳 ----------------
+   略读只做一件事：把"不用细读"的段落蒙掉（依据是析读判的角色）。但角色是**模型判的**，
+   它会把一段重要的前人工作判成"背景铺垫"——读者在纸上明明看得见那句话要紧。所以三件事：
+   ① 蒙纱与核心段都能看见"为什么"（纸边标角色名，只在这一层图层开着时出现）；
+   ② 悬停把这一块**掀开**看一眼，点一下是"这段我也要读"（按篇记在本地，
+      这属于读者对这篇的判断，不是全局偏好）；③ 顶部一行说清留了几段、略了几段、
+      还有几段根本没判过角色——略读的"精确度"得让人能核对，否则只是个特效。 */
+const LS_KEEP = 'eggpaper:skimKeep:'
+function loadKeep() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_KEEP + store.currentId) || '[]')) } catch { return new Set() }
+}
+const skimKeep = ref(loadKeep())
+const pingId = ref(null)                  // 刚从纸上点回来的那条批注（亮一下）
+const kept = idx => skimKeep.value.has(idx)
+function toggleKeep(idx) {
+  const s = new Set(skimKeep.value)
+  if (s.has(idx)) s.delete(idx); else s.add(idx)
+  skimKeep.value = s
+  try { localStorage.setItem(LS_KEEP + store.currentId, JSON.stringify([...s])) } catch { /* 存不下就只管这一次会话 */ }
+}
+function clearKeep() {
+  skimKeep.value = new Set()
+  try { localStorage.removeItem(LS_KEEP + store.currentId) } catch { /* 同上 */ }
+}
+/* 有「值得读 / 要当心」批注的段落不蒙。模型自己在那一段插了句话，说明那儿有东西要看——
+   把整段蒙掉等于把刚写下的提醒一起藏起来。略读该略的是没有信息量的铺垫，
+   不是**有批注的段**。（"你写的"那两条不算：那是你自己划的，你记得住。） */
+const protectedIdx = computed(() => {
+  const s = new Set()
+  for (const n of notesShown.value) {
+    const b = bandOf(n)
+    if (b === 'good' || b === 'warn') s.add(n.para_idx)
+  }
+  return s
+})
+// 此刻被蒙掉吗：略读开着 + 判过角色 + 不是核心 + 读者没手动留下 + 段上没有批注
+function veiled(p, pno) {
+  return store.viewer.layers.skim && pno >= 0 && !!roleOf(p) && !isCore(p)
+    && !kept(p.idx) && !protectedIdx.value.has(p.idx)
+}
+const skimStats = computed(() => {
+  let keepN = 0, skipN = 0, unknown = 0, mine = 0, byNote = 0
+  for (const p of store.paras) {
+    if (isCore(p)) { keepN++; continue }
+    if (kept(p.idx)) { keepN++; mine++; continue }
+    if (protectedIdx.value.has(p.idx)) { keepN++; byNote++; continue }
+    if (!roleOf(p)) { unknown++; continue }
+    skipN++
+  }
+  return { kept: keepN, skipped: skipN, unknown, mine, byNote }
+})
+// 纸边那行小字：说清"为什么留下了这一段"——角色名 / 你要读 / 有眉批
+function roleTag(p) {
+  if (kept(p.idx) && !isCore(p)) return '你要读'
+  if (protectedIdx.value.has(p.idx) && !isCore(p)) return '有眉批'
+  return ROLE_ZH[roleOf(p) || ''] || ''
+}
 
 /* ---------------- 文档装载与 sheets 构建 ---------------- */
 
@@ -607,7 +672,7 @@ const sel = reactive({ visible: false, x: 0, y: 0, text: '', context: '', paraId
 
 function onMouseUp(e) {
   const s = window.getSelection()
-  if (!s || s.isCollapsed || !s.rangeCount) return
+  if (!s || s.isCollapsed || !s.rangeCount) { onPaperClick(e); return }
   const text = s.toString().trim()
   if (text.length < 2 || text.length > 3000 || !s.anchorNode) { sel.visible = false; return }
   const node = s.anchorNode.nodeType === 1 ? s.anchorNode : s.anchorNode.parentElement
@@ -631,6 +696,53 @@ function onMouseUp(e) {
                        y: Math.min(window.innerHeight - 230, r.top),
                        text, context, paraIdx, page, zh: '', hits: [], busy: false, err: '' })
   selStream?.abort()          // 上一次的流别再往新气泡里写字
+}
+
+/* 纸上那条划线点一下要有回应。为什么不直接在 .mg-mark 上挂 click：那些块盖在正文上，
+   一旦吃鼠标事件就没法选字了（见 styles.css 里那段注释）。所以走"整页 mouseup + 命中测试"——
+   点一下（没拖动）本来也会触发 mouseup，选字、划词一条都不受影响。 */
+function onPaperClick(e) {
+  if (!store.viewer.layers.marginalia || !notesShown.value.length) return
+  const pageEl = e.target?.closest?.('.page')
+  if (!pageEl) return
+  const it = flatItems.value.find(x => pageEls.value[x.gi] === pageEl)
+  if (!it || it.origPage < 0) return
+  const r = pageEl.getBoundingClientRect()
+  const x = e.clientX - r.left, y = e.clientY - r.top
+  for (const { n } of notesOnPage(it.origPage)) {
+    if (markBoxes(n).some(b => x >= b.x - 2 && x <= b.x + b.w + 2 && y >= b.y - 2 && y <= b.y + b.h + 2)) {
+      focusNote(n)
+      return
+    }
+  }
+}
+/* 把对应的批注卡亮起来。**不滚动整页**——卡片就贴在这一行的页边，按"点一下纸"
+   把论文滚走反而把人甩出原地；只有卡片真的在视野外（长批注把后面的卡推下去了）才最小幅度地滚。 */
+function focusNote(n) {
+  hotNote.value = n.id
+  if ((n.note || '').length > 34) expandedNote.value = n.id
+  pingId.value = n.id
+  clearTimeout(focusNote._t)
+  focusNote._t = setTimeout(() => { pingId.value = null; hotNote.value = null }, 1500)
+  nextTick(async () => {
+    await measureNotes()
+    const el = document.querySelector(`.mg-note[data-nid="${n.id}"]`)
+    const box = scroller()?.getBoundingClientRect()
+    if (!el || !box) return
+    const r = el.getBoundingClientRect()
+    if (r.top >= box.top + 6 && r.bottom <= box.bottom - 6) return    // 已经在视野里：不滚
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
+}
+// 就这条批注追问模型：把批注与它引的原话一起交过去（从页边卡直接问，不必绕去右栏）
+function askNote(n) {
+  const kind = kindZH(n) || '批注'
+  store.viewer.railUser = true
+  store.askPrefill = {
+    question: `眉批标了「${kind}」：「${n.note}」——引文是“${(n.quote || '').slice(0, 60)}”。`
+      + `这条判断站得住吗？依据在哪几段？[¶${n.para_idx}]`,
+    send: true,
+  }
 }
 
 let selStream = null       // 进行中的划词翻译：换选区/关气泡时要掐掉，别让它往已关的气泡里写字
@@ -664,6 +776,13 @@ async function pinSel() {
   toast('已钉在页边')
 }
 
+// 译文的出口多一个：框选提问/钉页边之外，最常见的动作其实是"把这段译文贴到别处去"
+async function copySel() {
+  try {
+    await navigator.clipboard.writeText(sel.zh || '')
+    toast('译文已复制')
+  } catch { toast('复制失败，手动选吧') }
+}
 function sendToGlossary() {
   store.glossaryPrefill = { term_en: sel.text.slice(0, 80), term_zh: (sel.zh || '').replace('〔演示译文〕', '').slice(0, 24) }
   closeSel()
@@ -808,7 +927,7 @@ async function applyJump() {
       if (y0 <= j.y0 * scale.value + 6 && y1 >= j.y0 * scale.value - 6) { flash.value = { idx: p.idx, gi: it.gi }; break }
     }
   }
-  setTimeout(() => (flash.value = null), 2200)
+  setTimeout(() => (flash.value = null), 2400)     // 2400 > 入场 180 + 停留 1600 + 淡出 520
   backChip.value = true
   clearTimeout(applyJump._t)
   applyJump._t = setTimeout(() => (backChip.value = false), 5000)
@@ -863,9 +982,12 @@ async function translateCurrent() {
   else toast('滚动一下，告诉我你在读哪段')
 }
 
-store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch }
+store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
 
 function openSearch() { searchOpen.value = true }
+/* 别的面板（术语表）说"去原文里找这个词"：预填 + 打开 + 自动搜（searchQ 的 watch 会跑）。
+   术语和原文本来是两个各自翻的地方，连起来之后"这个词在这篇里怎么用的"才问得出口。 */
+function findInPaper(q) { searchQ.value = q; searchOpen.value = true }
 
 /* ---------------- 滚动：scroll-spy + 位置记忆 ---------------- */
 
@@ -1113,18 +1235,24 @@ watch(() => store.marginalia.notes, (n, o) => {
 
             <div class="para-zone">
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
-                <div v-if="store.viewer.layers.skim && it.origPage >= 0 && roleOf(p) && !isCore(p)"
+                <!-- 蒙掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
+                <div v-if="veiled(p, it.origPage)"
                      class="para-fade veil"
-                     :style="{ ...rectStyle(p), animationDelay: Math.min(400, pi * 12) + 'ms' }"></div>
-                <div v-else-if="store.viewer.layers.skim && it.origPage >= 0 && roleOf(p) && isCore(p)"
-                     class="para-core-bar"
-                     :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"></div>
+                     :title="`略读把这一段蒙掉了（判为「${roleTag(p)}」）· 点一下：这段也要读`"
+                     :style="{ ...rectStyle(p), animationDelay: Math.min(400, pi * 12) + 'ms' }"
+                     @click="toggleKeep(p.idx)"></div>
+                <!-- 留下来的段落：左侧一道芯线 + 纸边一行角色名，说清"为什么留它" -->
+                <template v-else-if="store.viewer.layers.skim && it.origPage >= 0 && (isCore(p) || kept(p.idx))">
+                  <div class="para-core-bar"
+                       :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"></div>
+                  <span class="para-tag" :style="{ top: p.bbox.y0 * scale + 'px' }">{{ roleTag(p) }}</span>
+                </template>
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
               </template>
 
               <!-- 跳转/查找命中：精确到字符的矩形，落在哪就亮在哪 -->
               <div v-for="(b, bi) in flash?.gi === it.gi ? flash.boxes || [] : []" :key="'fb' + bi"
-                   class="para-fade hot" :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
+                   class="para-fade hot boxed" :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
               <template v-for="(h, hi) in searchHitsOnPage(it.origPage)" :key="'s' + hi">
                 <div v-for="(b, bi) in h.rects" :key="bi" class="find-hit" :class="{ cur: h === currentHit }"
                      :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
@@ -1149,7 +1277,8 @@ watch(() => store.marginalia.notes, (n, o) => {
                  class="mg-note" :data-nid="n.id"
                  :style="{ top: top + 'px', borderLeftColor: kindColor(n),
                            width: Math.max(120, gutterW - 30) + 'px' }"
-                 :class="{ fresh: freshNotes, pending, expanded: expandedNote === n.id,
+                 :class="{ fresh: freshNotes, pending, ping: pingId === n.id,
+                           expanded: expandedNote === n.id,
                            allq: openQuote === n.id,
                            clamped: (n.note || '').length > 34, clampable: (n.note || '').length > 34 }"
                  @mouseenter="hoverNote(n.id)" @mouseleave="hoverNote(null)"
@@ -1160,6 +1289,10 @@ watch(() => store.marginalia.notes, (n, o) => {
                   {{ pending ? '翻译中' : kindLabel(n) }}
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
+                <!-- 就地追问：读到这条批注时人的第一反应是"凭什么"，
+                     追问要在这儿，而不是跳到右栏问题页去凑一句话 -->
+                <button v-if="!pending" class="mg-ask" title="就这条批注追问模型"
+                        @click.stop="askNote(n)">问 ↗</button>
                 <button v-if="!pending" class="mg-del" title="移除这条批注" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ prettyChem(n.note) }}</div>
@@ -1231,12 +1364,31 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
     </Transition>
 
+    <!-- 略读的状态行：略读是按段落角色蒙纱，读者得知道它蒙了几段、留了几段、
+         还有几段根本没判过；判错了怎么扳回来也写在这里。没析读时它直说"判不了"，
+         而不是默默什么都不做（那看起来就是"略读坏了"）。 -->
+    <Transition name="fade">
+    <div v-if="ready && store.viewer.layers.skim" class="desk-float skim-hud" :style="{ left: midX + 'px' }">
+      <template v-if="store.analysis.status === 'done'">
+        <span>保留 <b class="mono-num">{{ skimStats.kept }}</b> 段 · 略去 <b class="mono-num">{{ skimStats.skipped }}</b> 段</span>
+        <span v-if="skimStats.byNote" class="sh-note"
+              title="这些段上有「值得读 / 要当心」的眉批——有批注的段不蒙，否则刚写的提醒会被一起藏起来">含 {{ skimStats.byNote }} 段有眉批</span>
+        <span v-if="skimStats.unknown" class="sh-warn"
+              title="这些段没有角色（析读没判到，或你手工改判过），按原文显示，不会被蒙掉">未判 {{ skimStats.unknown }} 段</span>
+        <button v-if="skimStats.mine" title="取消你手选的「这段也要读」" @click="clearKeep">手选 {{ skimStats.mine }} 段 ✕</button>
+        <span class="sh-tip">点蒙掉的段 = 这段也要读</span>
+      </template>
+      <span v-else>略读要按角色蒙纱，先点顶栏「析读」</span>
+      <button @click="store.viewer.layers.skim = false">退出略读</button>
+    </div>
+    </Transition>
+
     <!-- 划词气泡 -->
     <Transition name="pop">
     <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }"
          v-drag="{ key: 'selpop' }" data-drag @mouseup.stop>
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
-        已选 {{ sel.text.length }} 字符
+        已选 {{ sel.text.length }} 字符<span v-if="sel.paraIdx >= 0" class="mono-num"> · ¶{{ sel.paraIdx }}</span>
       </div>
       <div v-if="sel.busy && !sel.zh" style="font-size:var(--fs-sm);color:var(--ink-3)">翻译中…</div>
       <div v-if="sel.err && !sel.zh" style="font-size:var(--fs-sm);color:var(--vermilion)">{{ sel.err }}</div>
@@ -1258,6 +1410,8 @@ watch(() => store.marginalia.notes, (n, o) => {
           <button class="primary" style="padding:4px 10px" @click="doTranslateSel" :disabled="sel.busy">
             {{ sel.busy ? '翻译中' : (sel.zh ? '重译' : '翻译') }}
           </button>
+          <button v-if="sel.zh" style="padding:4px 10px"
+                  @click="copySel">复制译文</button>
           <button style="padding:4px 10px" @click="pinSel">钉在页边</button>
           <button style="padding:4px 10px" @click="openMine">写批注</button>
           <button style="padding:4px 10px" @click="sendToGlossary">收进术语</button>

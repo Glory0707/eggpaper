@@ -108,11 +108,27 @@ async function send(q) {
     if (ev.user_id) um.id = ev.user_id
     if (ev.assistant_id) m.id = ev.assistant_id
   }
+  /* 流式的增量按**帧**合并再落进 DOM。每个 token 写一次响应式状态，就等于每个 token
+     重排一次整条 Markdown、再读一次 scrollHeight 决定跟不跟滚——短回答看不出来，
+     长回答（几百字以上）就是肉眼可见的卡。合并成"一帧一次"之后它只是更快，字一个不少。 */
+  let buf = '', raf = 0
+  const flush = () => {
+    raf = 0
+    if (!buf) return
+    m.content += buf
+    buf = ''
+    follow()
+  }
+  const queue = t => {
+    buf += t
+    if (!raf) raf = requestAnimationFrame(flush)
+  }
   const h = askStream(pid.value, { question: q, conv_id: id }, ev => {
-    if (ev.type === 'delta') { m.content += ev.text; follow() }
-    else if (ev.type === 'done') { gotDone = true; m.citations = ev.citations || []; applyIds(ev) }
+    if (ev.type === 'delta') queue(ev.text)
+    else if (ev.type === 'done') { flush(); gotDone = true; m.citations = ev.citations || []; applyIds(ev) }
     else if (ev.type === 'error') {
       // 出错也把已经吐出来的留着，末尾接一行提示——和服务端存下来的内容保持一致
+      flush()
       applyIds(ev)
       m.content = (m.content.trim() ? m.content + '\n\n' : '') + '⚠ ' + ev.message
       m.error = ev.message
@@ -127,6 +143,7 @@ async function send(q) {
       m.error = e.message
     }
   }
+  flush()                       // 停在中途时，最后不满一帧的那几个字也得留下
   ctl = null
   m.streaming = false
   busy.value = false

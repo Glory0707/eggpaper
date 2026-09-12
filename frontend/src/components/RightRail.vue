@@ -80,6 +80,22 @@ function toggleSix(k) { openSix[k] = !openSix[k] }
 const six = reactive({ problem: null, why: null, next: null, lens: null })
 const sixBusy = reactive({ problem: false, why: false, next: false, lens: false })
 const Q_OF = { problem: 'q1', why: 'q2', next: 'q5', lens: 'q6' }
+/* 六问各自的"答没答出来"。免费的 ③④ 看骨架，①②⑤⑥ 看有没有取过。
+   有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
+const sixHas = computed(() => ({
+  q1: !!six.problem?.text, q2: !!six.why?.text,
+  q3: !!store.analysis.claims.length, q4: !!(limitParas.value.length + warnNotes.value.length),
+  q5: !!six.next?.items?.length, q6: !!six.lens?.items?.length,
+}))
+const sixMissing = computed(() => ['problem', 'why', 'next', 'lens'].filter(k => !six[k]))
+// 六问一次补全：四条答案互不依赖，串行点四次不如一次发出去（各自的加载态还在自己那一问上）
+const sixAllBusy = ref(false)
+async function genSixAll() {
+  const keys = sixMissing.value
+  if (!keys.length || sixAllBusy.value) return
+  sixAllBusy.value = true
+  try { await Promise.all(keys.map(k => genSix(k))) } finally { sixAllBusy.value = false }
+}
 
 async function loadSix() {
   Object.assign(six, { problem: null, why: null, next: null, lens: null })
@@ -143,6 +159,27 @@ const limitParas = computed(() => parasOfRole(['limitation']))
    类型现在是开放词表——模型可以自造「参考态不一」这种 warn 档的批注，
    只认 kind==='warning' 会把它们漏在外面（第四问说的是"读者要当心的"，都属于这条）。 */
 const warnNotes = computed(() => store.marginalia.notes.filter(n => bandOf(n) === 'warn'))
+
+/* 页边批注的四个档位开关。四档不是四个色相，是"读的时候给多少注意力"——
+   它们同时是纸面上四种笔触，关了就在两边一起消失（纸上、页边各少一批）。
+   计数按**全部**批注算（不受开关影响），否则关掉一档就看不到它有几条了。 */
+const mnotes = computed(() => store.marginalia.notes)
+const BANDS = [
+  { k: 'good', zh: '值得读', color: '#1d4e5f' },
+  { k: 'warn', zh: '要当心', color: '#b8462e' },
+  { k: 'noise', zh: '可跳过', color: '#8e8a80' },
+  { k: 'mine', zh: '我写的', color: '#57534a' },
+]
+const bandCount = computed(() => {
+  const m = { good: 0, warn: 0, noise: 0, mine: 0 }
+  for (const n of mnotes.value) m[bandOf(n)] = (m[bandOf(n)] || 0) + 1
+  return m
+})
+const bandOn = k => store.viewer.noteBands[k] !== false
+const bandAny = computed(() => BANDS.some(b => bandOn(b.k)))
+function toggleBand(k) {
+  store.viewer.noteBands = { ...store.viewer.noteBands, [k]: !bandOn(k) }
+}
 // 待解那一行：只报有的那一边。"作者承认 0 处"这种话没人爱看
 const todoLine = computed(() => {
   const a = limitParas.value.length, b = warnNotes.value.length
@@ -384,6 +421,13 @@ const termsFiltered = computed(() => {
   if (!f) return list
   return list.filter(t => t.term_en.toLowerCase().includes(f) || t.term_zh.includes(f))
 })
+// 「文中」：把术语和原文连起来——搜索框预填这个英文词，第一条命中直接跳过去。
+// 从前术语表是个孤岛：知道译法，却没法回原文看它到底怎么用的。
+function findTerm(en) {
+  if (!en) return
+  store.viewerApi?.findInPaper(en)
+  toast(`在文中找「${en}」`)
+}
 
 /* 换篇：所有"按篇"的东西都要清干净。不清的症状是上一章的方法卡、导师三问、
    图表缩略图、推荐问题在新论文上继续摆着——而这些还都带 `if (已有) return` 的守卫，
@@ -442,12 +486,20 @@ watch(() => store.currentId, () => {
         <template v-else>
           <!-- 六个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
           <div class="six-head">
+            <span class="mono-num" v-if="store.analysis.status === 'done' && sixMissing.length">
+              {{ 6 - sixMissing.length }}/6 已有答案
+            </span>
+            <button v-if="store.analysis.status === 'done' && sixMissing.length > 1"
+                    class="six-allget" :disabled="sixAllBusy" title="把还没答案的几问一次取回来（各问各自的加载态）"
+                    @click="genSixAll">
+              {{ sixAllBusy ? '正在取…' : `补全其余 ${sixMissing.length} 问` }}
+            </button>
             <span v-if="store.readingPara" class="mono-num">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
           </div>
 
           <section class="six" v-for="s in SIX" :key="s.k" :class="{ open: openSix[s.k] }">
             <button class="six-q" @click="toggleSix(s.k)">
-              <i>{{ s.n }}</i><span class="qt">{{ s.q }}</span>
+              <i :class="{ on: sixHas[s.k] }" :title="sixHas[s.k] ? '这一问已经有答案' : '还没取过'">{{ s.n }}</i><span class="qt">{{ s.q }}</span>
               <b v-if="s.k === 'q3' && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
               <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
             </button>
@@ -536,14 +588,15 @@ watch(() => store.currentId, () => {
             </div>
           </section>
 
-          <!-- 眉批的家在纸面页边：这里只给"它们在哪儿"和生成入口，不再复述内容。
+          <!-- 眉批的家在纸面页边：这里只给"它们在哪儿"、生成入口，和**按档位筛**的开关。
                状态是 error 时结果**还在**（失败不抹旧结果），所以这里说的是"这次的没成"，
                不是"眉批没了"——别让用户以为页边那些批注也作废了。 -->
-          <div class="blk" v-if="store.marginalia.status !== 'done'">
+          <div class="blk">
             <div class="blk-head">
-              <span class="mono-label">眉批</span>
-              <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')">
-                AI 眉批
+              <span class="mono-label">眉批<span v-if="mnotes.length"> · {{ mnotes.length }}</span></span>
+              <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')"
+                      :title="mnotes.length ? '重写全文眉批（旧的会被替换）' : '通读全文，在页边写下批注'">
+                {{ mnotes.length ? '重写' : 'AI 眉批' }}
               </button>
               <span v-else class="blk-busy">写批注中<span class="r-dots">…</span></span>
             </div>
@@ -559,17 +612,24 @@ watch(() => store.currentId, () => {
                 <span class="blk-elapsed">{{ marginElapsed }}s</span>
               </div>
             </div>
+            <!-- 页边按档位筛：四档就是纸上四种笔触。三四十条批注的时候，
+                 "只看要当心"是读者的第一个念头；关掉的档位在纸上和页边同时消失。 -->
+            <div class="band-bar" v-if="mnotes.length">
+              <button v-for="b in BANDS" :key="b.k" class="band-chip" :class="{ off: !bandOn(b.k) }"
+                      :title="bandOn(b.k) ? `纸面上显示「${b.zh}」（点一下收起）` : `「${b.zh}」现在收起了（点一下显示）`"
+                      @click="toggleBand(b.k)">
+                <i class="bdot" :style="{ background: b.color }"></i>{{ b.zh }}<span class="n">{{ bandCount[b.k] }}</span>
+              </button>
+            </div>
+            <div class="band-alloff" v-if="mnotes.length && !bandAny">
+              四档都收起了，纸面上没有批注 ·
+              <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true, mine: true }">全开</button>
+            </div>
             <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
               {{ store.marginalia.error }}
             </p>
-          </div>
-          <!-- 完成了但有块没生成：页边少了一段，得说出来，否则用户以为那段没问题 -->
-          <div class="blk" v-else-if="store.marginalia.error">
-            <div class="blk-head">
-              <span class="mono-label">眉批</span>
-              <button class="blk-get" @click="emit('marginalia')">补齐</button>
-            </div>
-            <p class="blk-warn">{{ store.marginalia.error }}</p>
+            <!-- 完成了但有块没生成：页边少了一段，得说出来，否则用户以为那段没问题 -->
+            <p class="blk-warn" v-else-if="store.marginalia.error">{{ store.marginalia.error }}</p>
           </div>
         </template>
       </template>
@@ -646,6 +706,11 @@ watch(() => store.currentId, () => {
               <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ prettyChem(o) }}</li></ul>
             </div>
           </div>
+          <!-- 没算过 vs 算不了：这是两件事。以前两者共用一句"先析读全文"，
+               已经析读过的论文上就这么明晃晃地显示着一句和事实相反的话。 -->
+          <div v-else-if="store.analysis.status === 'done'" class="six-note">
+            还没算过——点右上「获取」，会问到作者没承认的那一层。
+          </div>
           <div v-else class="six-note">先析读全文，才有主张和薄弱点可以问。</div>
         </div>
 
@@ -683,6 +748,7 @@ watch(() => store.currentId, () => {
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
+          <button class="t-go" title="在论文里找这个词（跳过去、并高亮命中）" @click="findTerm(t.term_en)">文中</button>
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>

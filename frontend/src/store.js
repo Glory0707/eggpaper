@@ -34,6 +34,9 @@ export const store = reactive({
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
     railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
+    // 页边批注按档位过滤：一档一个开关。论文读久了页边会有三四十条，
+    // 想只看"要当心"的时候得有个开关——四档就是纸上四种笔触，不多不少。
+    noteBands: lsGet('noteBands', { good: true, warn: true, noise: true, mine: true }),
     frame: false,
     libOpen: false,
   },
@@ -78,6 +81,7 @@ watch(() => store.viewer.spread, v => lsSet('spread', v))
 watch(() => store.viewer.layers, v => lsSet('layers', v), { deep: true })
 watch(() => store.viewer.railUser, v => lsSet('railUser', v))
 watch(() => store.viewer.railW, v => lsSet('railW', v))
+watch(() => store.viewer.noteBands, v => lsSet('noteBands', v), { deep: true })
 watch(() => store.lib.sort, v => lsSet('libSort', v))
 
 /* 护眼底纹落在 <html> 上：CSS 变量在那里改，全站（含空态、弹层）一起换 */

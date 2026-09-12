@@ -431,12 +431,47 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   background: var(--care-wash); mix-blend-mode: multiply;
 }
 
-.para-zone { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+/* 标注层压在文字层**上面**：一是略读的蒙纱要能被悬停掀开、被点中（.textLayer 在 z-index 5，
+   蒙纱在它下面的话永远收不到鼠标事件），二是划线用 multiply 混色，谁在上面看着都一样。
+   除了蒙纱，这一层里没有别的东西吃鼠标事件（高亮、芯线、划线都是 pointer-events:none），
+   所以论文里的选字、划词一个字都不受影响。 */
+.para-zone { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
 .para-fade {
   position: absolute; background: var(--veil);
   transition: opacity 260ms var(--ease-smooth);
 }
+/* 跳转/查找"标出这一段"：以前**没有** .hot 的样式，于是它套用的是 .para-fade 的白纱——
+   跳过去不是亮一下，而是把要找的那一段擦白（越找越找不着）。现在是一层强调色：
+   入场快、停留、退场慢（1.6s 后开始淡出），眼睛有落在那句上的时间。 */
+.para-fade.hot {
+  background: rgba(29, 78, 95, 0.16);
+  animation: flashIn 180ms var(--ease-out), flashOut 520ms var(--ease-smooth) 1.6s forwards;
+}
+.para-fade.hot.boxed { border-radius: 2px; box-shadow: 0 0 0 1.5px var(--accent-line); }
+@keyframes flashIn  { from { opacity: 0 } to { opacity: 1 } }
+@keyframes flashOut { to { opacity: 0 } }
 .para-core-bar { position: absolute; left: -7px; width: 3px; background: var(--accent); opacity: 0.85; border-radius: 1px; }
+/* 略读留在纸边的那行小字（角色名 / 你要读）。写在纸**外**的页边白边上：
+   纸里的左边距有多宽是 PDF 自己定的，写在纸里迟早会压到正文。 */
+.para-tag {
+  position: absolute; left: -66px; width: 56px; text-align: right;
+  font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3);
+  opacity: 0.85; pointer-events: none; white-space: nowrap;
+}
+
+/* 略读的蒙纱：悬停**掀开**这一块看一眼，点一下是「这段我也要读」。
+   纱必须吃鼠标事件才掀得动——被纱盖住的本来就是"略过不读"的那批段落，
+   在那里选字的机会很少，换回来的是"你看得见自己在略掉什么"。 */
+.para-fade.veil {
+  animation: veilRoll 380ms var(--ease-out) backwards;
+  pointer-events: auto; cursor: pointer;
+}
+.para-fade.veil:hover { opacity: 0.1; }
+/* 纱按段落顺序从左往右扫下来，像有人一行行盖过去（延迟由模板按段序给） */
+@keyframes veilRoll {
+  from { opacity: 0; clip-path: inset(0 100% 0 0) }
+  to   { opacity: 1; clip-path: inset(0 0 0 0) }
+}
 
 /* 眉批高亮 + 描画 */
 /* 纸面上的划线：三档笔法，就三档。
@@ -511,6 +546,20 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.02em; line-height: 1.2;
 }
 .mg-note .mg-more { font-size: var(--fs-xs); color: var(--ink-3); margin-left: auto; letter-spacing: 0.04em; }
+/* 就地追问：悬停才露出（每条都挂一个按钮，页边会变成工具栏） */
+.mg-note .mg-ask {
+  border: none; background: none; color: var(--ink-3); font-size: var(--fs-xs);
+  padding: 0 2px; display: none; line-height: 1.2; margin-left: auto; white-space: nowrap;
+}
+.mg-note:hover .mg-ask { display: inline; }
+.mg-note .mg-ask:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
+/* 从纸上那条划线点回来的回应：卡亮一圈再散掉。没有这一下，点了划线像是没点中 */
+.mg-note.ping { animation: notePing 900ms var(--ease-out); }
+@keyframes notePing {
+  0%   { box-shadow: 0 0 0 0 rgba(29, 78, 95, 0.5) }
+  38%  { box-shadow: 0 0 0 4px rgba(29, 78, 95, 0.3) }
+  100% { box-shadow: 0 0 0 0 rgba(29, 78, 95, 0) }
+}
 .mg-note .mg-del {
   border: none; background: none; color: var(--ink-3); font-size: var(--fs-md);
   padding: 0 1px; margin-left: auto; display: none; line-height: 1;
@@ -686,6 +735,25 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .blk-more:hover { color: var(--accent-deep); background: var(--accent-soft); transform: none; box-shadow: none; }
 
+/* 眉批的档位开关（右栏「问题」页）：四枚小胶囊，关掉的一枚是虚线的。
+   色点用纸上那个笔触的颜色——页边那枚色点、纸上那道笔法、这里这个点，同一个意思。 */
+.band-bar { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 2px; }
+.band-chip {
+  display: inline-flex; align-items: center; font-size: var(--fs-xs);
+  padding: 2px 8px; border-radius: 11px;
+  color: var(--ink-2); background: var(--card-2); border: 1px solid var(--hairline);
+}
+.band-chip:hover { border-color: var(--accent-line); color: var(--accent-deep); transform: none; box-shadow: none; }
+.band-chip.off { opacity: 0.42; border-style: dashed; }
+.band-chip .bdot { width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; flex-shrink: 0; }
+.band-chip .n { font-family: var(--mono); margin-left: 5px; color: var(--ink-3); }
+.band-alloff { font-size: var(--fs-xs); color: var(--ink-3); margin-top: 4px; line-height: 1.6; }
+.lnk {
+  border: none; background: none; padding: 0; color: var(--accent-deep);
+  font-size: inherit; text-decoration: underline; text-underline-offset: 2px;
+}
+.lnk:hover { background: none; box-shadow: none; transform: none; }
+
 /* 提问：主样式在下面「提问面板」那一段（.qa-msg / .qa-input / .qa-caret 全套）。
    这里原来还留着更早的一版（14px 边距、fs-read 气泡），后来被新版逐条覆盖——
    重复的选择器是死的重量，删掉只留一处。 */
@@ -721,6 +789,14 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .term-row .t-zh { font-size: var(--fs-sm); flex: 1 1 40%; min-width: 0; }
 .term-row .t-del { flex: 0 0 auto; margin-left: auto; border: none; background: none; color: var(--ink-3); font-size: var(--fs-md); padding: 0 3px; }
 .term-row .t-del:hover { color: var(--vermilion); box-shadow: none; transform: none; }
+/* 「文中」：术语表 → 原文的出口。它比 × 常用得多，所以给一点形体（虚线下划线），
+   但仍挂在行的尾部、不抢术语本身的注意力 */
+.term-row .t-go {
+  flex: 0 0 auto; margin-left: auto; border: none; background: none; padding: 0 3px;
+  color: var(--ink-3); font-size: var(--fs-xs); text-decoration: underline;
+  text-underline-offset: 2px; text-decoration-style: dotted;
+}
+.term-row .t-go:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
 /* 术语：flex 子项默认 min-width:auto，输入框的"默认宽度"会撑破整行，
    必须显式 min-width:0 才肯收缩 */
 .term-form { display: flex; gap: 6px; margin-bottom: 10px; }
@@ -1035,6 +1111,27 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .frame-hint button:hover { transform: none; box-shadow: none; background: #fff; }
 
+/* 略读状态行：读的时候它得在，但不该抢注意力——一根发丝线、两个字号的灰，
+   想核对"它到底略掉了什么"的时候一眼能读到 */
+.skim-hud {
+  top: 60px; display: flex; align-items: center; gap: 9px;
+  background: var(--card); border: 1px solid var(--hairline); border-radius: 20px;
+  padding: 4px 6px 4px 13px; font-size: var(--fs-sm); color: var(--ink-2);
+  box-shadow: var(--shadow-page); opacity: 0.82;
+  transition: opacity var(--t-base) var(--ease-smooth);
+}
+.skim-hud:hover { opacity: 1; }
+.skim-hud b { font-weight: 600; color: var(--ink); }
+.skim-hud .mono-num { font-family: var(--mono); }
+.skim-hud .sh-warn { color: var(--ink-3); cursor: help; }
+.skim-hud .sh-note { color: var(--accent-deep); cursor: help; }
+.skim-hud .sh-tip { color: var(--ink-3); font-size: var(--fs-xs); }
+.skim-hud button {
+  padding: 2px 10px; font-size: var(--fs-sm); border-radius: 13px;
+  border-color: transparent; background: transparent; color: var(--ink-2);
+}
+.skim-hud button:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
+
 .vis-pop .vp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
 .vis-pop .vp-x {
   border: none; background: none; color: var(--ink-3); font-size: var(--fs-xl);
@@ -1173,6 +1270,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .qa-acts { display: flex; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity var(--t-fast) var(--ease-smooth); }
 .qa-msg:hover .qa-acts, .qa-acts:focus-within { opacity: 1; }
+/* 没有悬停这种东西的地方（触屏、手写笔）：一排"复制/重新生成/删除"藏起来就等于没有——
+   它们不是装饰，是这条回答唯一的出口 */
+@media (hover: none) { .qa-acts { opacity: 1; } }
 .qa-acts button {
   border: none; background: transparent; color: var(--ink-3);
   font-size: var(--fs-xs); padding: 2px 6px; border-radius: 3px;
@@ -1275,7 +1375,15 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
    问题是一行按钮、答案收起在下面——读一篇论文该带着问题进去，
    所以默认只看见问题；点哪条才摊开哪条。
    ============================================================ */
-.six-head { margin: 0 0 6px; display: flex; justify-content: flex-end; min-height: 14px; }
+.six-head { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; min-height: 16px; }
+.six-head .six-allget {
+  margin-left: auto; font-size: var(--fs-xs); padding: 2px 9px; border-radius: 11px;
+  color: var(--accent-deep); background: var(--accent-soft); border-color: var(--accent-line);
+}
+.six-head .six-allget:hover { background: var(--accent); color: #fff; border-color: var(--accent-deep); }
+/* 已有答案的那一问，编号是墨色（没答的是灰的）——扫一眼就知道还差哪几问 */
+.six-q i.on { color: var(--ink); font-weight: 600; }
+.six-q:hover i.on { color: var(--accent-deep); }
 /* 批注条目上的"问 ↗"：悬停才露，别让每条都挂个按钮 */
 .ev-ask {
   border: none; background: transparent; color: var(--ink-3);
@@ -1362,12 +1470,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   86%  { transform: translateY(-2px) scale(1, 1) }
 }
 
-/* ③ 略读蒙纱：一层纱按段落顺序从左往右扫下来，像有人一行行盖过去 */
-.para-fade.veil { animation: veilRoll 380ms var(--ease-out) backwards; }
-@keyframes veilRoll {
-  from { opacity: 0; clip-path: inset(0 100% 0 0) }
-  to   { opacity: 1; clip-path: inset(0 0 0 0) }
-}
+/* ③ 略读蒙纱的入场在 .para-fade.veil 那一处（和它的悬停掀开写在一起） */
 
 /* ④ 流式回答进来时，光标闪一下就够了——正文本身不要有入场动画，
    一边流一边重排会把每个字都推来推去 */
