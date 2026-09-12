@@ -478,8 +478,12 @@ CHUNK_PARAS = 12          # 一块多少段
 CHUNK_WORKERS = 6         # 同时几块在跑
 
 
-def analyze_marginalia(title: str, paras: list, on_chunk=None) -> list:
-    """分块细读，返回 [{para_idx, page, quote, kind, label, band, note}]。
+def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
+    """分块细读，返回 `(notes, failed_blocks)`：notes 是
+    [{para_idx, page, quote, kind, label, band, note}]，failed_blocks 是**重试之后仍没成**的块数。
+
+    为什么把失败数交出去：块级失败原来被静默吞掉——一次 429 只挂一块，界面照样显示"完成"，
+    用户以为那些段落没问题。现在调用方能把"8 块里 1 块没成"写成一条提示，让他知道这片是空的。
 
     `on_chunk(已完成块数, 总块数)` 每读完一块回调一次（总量在第 0 秒就回调一次）——
     界面上那条小进度条吃的是它。为什么报"块"而不是百分比：一次请求是一条 12 段的完整
@@ -516,31 +520,46 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> list:
             on_chunk(0, total)     # 先报总量：界面从第一秒就能说"共 N 块"，而不是干等
         except Exception:
             pass
-    batches, failed, done = [None] * total, 0, 0
-    # 用 as_completed 而不是 map：map 只在"轮到它"时才把结果交出来，第 1 块慢的时候
-    # 后面早写完的块也报不出来——进度会假滞后。顺序仍按块号回填，最终批注次序不变。
-    with ThreadPoolExecutor(max_workers=min(CHUNK_WORKERS, max(1, total))) as ex:
-        futs = {ex.submit(run, c): i for i, c in enumerate(chunks)}
-        for fut in as_completed(futs):
-            i = futs[fut]
-            try:
-                batches[i] = fut.result()
-            except Exception:
-                failed += 1
-                batches[i] = []
-            done += 1
-            if on_chunk:
+    batches = [None] * total
+    state = {}                 # 块号 -> 成功；进度按"真的拿到结果的块"算，不虚报
+    failed = []
+
+    def wave(idx_list):
+        """跑一批块（第一遍全部；第二遍只补失败的）。返回没成的块号。"""
+        bad = []
+        with ThreadPoolExecutor(max_workers=min(CHUNK_WORKERS, max(1, len(idx_list)))) as ex:
+            # 用 as_completed 而不是 map：map 只在"轮到它"时才把结果交出来，第 1 块慢的时候
+            # 后面早写完的块也报不出来——进度会假滞后。顺序仍按块号回填，最终批注次序不变。
+            futs = {ex.submit(run, chunks[i]): i for i in idx_list}
+            for fut in as_completed(futs):
+                i = futs[fut]
                 try:
-                    on_chunk(done, total)
+                    batches[i] = fut.result()
+                    state[i] = True
                 except Exception:
-                    pass
-    if total and failed == total:
+                    bad.append(i)
+                    batches[i] = []
+                if on_chunk:
+                    try:
+                        on_chunk(len(state), total)
+                    except Exception:
+                        pass
+        return bad
+
+    failed = wave(list(range(total)))
+    if failed and len(failed) < total:
+        # 补一次失败的块。为什么要补：一次 429/超时只挂一块，用户拿到的就是"这篇有一段
+        # 没有批注"，而他从界面上看不出来，只会以为那段没问题。代价只有失败块那么多。
+        failed = wave(failed)
+    if total and len(failed) == total:
         raise RuntimeError(f"{total} 块全部失败（模型或网络问题）")
 
     notes, seen, per_para = [], set(), {}
     prose_kept = 0
     for batch in batches:
         for n in batch:
+            if not isinstance(n, dict):
+                continue           # 模型偶尔把元素写成字符串/数字：跳过它，别让整篇崩在这儿
             try:
                 para_idx, quote = int(n.get("para")), str(n.get("quote", "")).strip()
                 note = str(n.get("note", "")).strip()[:80]
@@ -568,7 +587,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> list:
             per_para[para_idx] = per_para.get(para_idx, 0) + 1
             notes.append({"para_idx": para_idx, "page": page_of[para_idx], "quote": quote,
                           "kind": kind, "label": label, "band": band, "note": note})
-    return notes[:48]
+    return notes[:48], len(failed)
 
 
 

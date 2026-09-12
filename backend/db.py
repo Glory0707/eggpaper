@@ -140,6 +140,23 @@ def update_paper(pid: str, **fields):
     q(f"UPDATE papers SET {keys} WHERE id=?", (*fields.values(), pid), commit=True)
 
 
+def find_duplicate(filename: str, size: int):
+    """按"原始文件名 + 字节数"找同一份 PDF 的已有论文，返回它的 id（没有则 None）。
+
+    这条口径本来只有"双击打开"那条路有，浏览器拖入/点选导入没有——同一份 PDF 从两个入口
+    各导入一次就成了两篇（用户库里现在就有这样一对），两篇各自跑一遍通读、各写一份译文。
+    """
+    for r in q("SELECT id, path, filename FROM papers"):
+        if (r["filename"] or "") != filename:
+            continue
+        try:
+            if os.path.getsize(r["path"]) == size:
+                return r["id"]
+        except OSError:
+            continue
+    return None
+
+
 def purge_paper(pid: str):
     """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
     漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列。"""
@@ -225,13 +242,25 @@ def set_paper_collections(pid: str, cids: list):
 # ---------- paragraphs ----------
 
 def replace_paragraphs(pid: str, paras: list):
-    q("DELETE FROM paragraphs WHERE paper_id=?", (pid,), commit=True)
+    """整篇替换段落。**删与插必须在同一个事务里**。
+
+    以前是先 commit 删除、再另起一次 commit 插入——中间有一个真实的"这篇 0 段"窗口，
+    并发的读者会看到它：`GET /paragraphs` 的惰性回填、`_run_marginalia` 取语料都可能
+    落在这个窗口里，最坏的后果是拿空语料算眉批、然后以"成功"把整页批注覆盖掉。
+    """
     with _lock:
-        _get().executemany(
-            "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs, lines) VALUES(?,?,?,?,?,?,?)",
-            [(pid, p["idx"], p["page"], json.dumps(p["bbox"]), p["text"], 1 if p.get("in_refs") else 0,
-              json.dumps(p.get("lines") or [])) for p in paras])
-        _get().commit()
+        c = _get()
+        try:
+            c.execute("BEGIN")
+            c.execute("DELETE FROM paragraphs WHERE paper_id=?", (pid,))
+            c.executemany(
+                "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs, lines) VALUES(?,?,?,?,?,?,?)",
+                [(pid, p["idx"], p["page"], json.dumps(p["bbox"]), p["text"],
+                  1 if p.get("in_refs") else 0, json.dumps(p.get("lines") or [])) for p in paras])
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
 
 
 def get_paragraphs(pid: str):
@@ -244,6 +273,25 @@ def paragraphs_need_lines(pid: str) -> bool:
     """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。"""
     rows = q("SELECT lines FROM paragraphs WHERE paper_id=?", (pid,))
     return bool(rows) and all(not r["lines"] for r in rows)
+
+
+def paragraphs_match(pid: str, paras: list) -> bool:
+    """新解析出来的段落和库里存的**是不是同一批**（段数一样、每段的正文也一样）。
+
+    为什么要问这个：行级坐标是靠"重解析一次"补的，而补的动作是整表替换。批注、主张锚点、
+    略读蒙纱全是按 para_idx 指位置的——只要新解析把段落分组改了一点点（解析规则演进过、
+    或者这份 PDF 抽出来的结果本来就不稳定），替换就会把这些锚点整体挪位，而且是**静默**的。
+    对不上时宁可这次不补（页边退回按段落框画），也别把用户已有的批注挪到别的段上。
+    """
+    rows = q("SELECT idx, text FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,))
+    if len(rows) != len(paras):
+        return False
+    for r, p in zip(rows, paras):
+        if int(r["idx"]) != int(p["idx"]):
+            return False
+        if (r["text"] or "").strip() != (p["text"] or "").strip():
+            return False
+    return True
 
 
 # ---------- skeleton ----------
@@ -261,6 +309,39 @@ def set_analysis(pid: str, claims: list, annos: list, status: str = "done", erro
                       [(pid, int(k), v["role"], v["role"], v.get("purpose", "")) for k, v in annos.items()])
         c.execute("UPDATE papers SET analysis_status=?, analysis_error=? WHERE id=?", (status, error, pid))
         c.commit()
+
+
+def clear_ai_results() -> int:
+    """清掉"模型生成的、按篇缓存的"那些产物（换演示/真实模式时用）。
+
+    只清模型产物：claims/annotations/marginalia 不动（那些是用户读过的成果，
+    重算代价高、而且换个模式未必想重来一遍）；这里清的是看一眼就重算得出来的卡片。
+    """
+    cols = ("summary", "suggest", "advisor", "method_card", "citation", "abbrs", "evidence_qs")
+    n = q("SELECT COUNT(*) FROM papers")[0][0]
+    with _lock:
+        c = _get()
+        c.execute("UPDATE papers SET " + ", ".join(f"{k}=NULL" for k in cols))
+        c.execute("DELETE FROM answers")
+        c.commit()
+    return n
+
+
+def fail_analysis(pid: str, error: str):
+    """析读失败：**只记状态与原因，不动已经存在的 claims/annotations**。
+
+    为什么单独开一个：失败分支原来走的是 set_analysis(pid, [], {}, status="error")，
+    它先把两张表删空再写——一次限流/超时就把用户刚才花过 token 读出来的骨架清空了。
+    重算失败应该只是"这次没成"，不该把上次的成果一起赔进去
+    （summarize_dialog 早就是"失败退回原摘要"的写法，这里是同一个道理）。"""
+    q("UPDATE papers SET analysis_status='error', analysis_error=? WHERE id=?",
+      (error, pid), commit=True)
+
+
+def fail_marginalia(pid: str, error: str):
+    """眉批失败：同理，AI 写的那批**留着**，只把状态与原因写下来（用户自己钉的本来就留着）。"""
+    q("UPDATE papers SET marginalia_status='error', marginalia_error=? WHERE id=?",
+      (error, pid), commit=True)
 
 
 def get_analysis(pid: str):

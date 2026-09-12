@@ -53,6 +53,7 @@ export const store = reactive({
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   reflowTick: 0,          // 栏宽拖完递增一次：论文据此重新定标（拖的过程中不重排）
   toast: '',
+  epoch: 0,              // 换一篇 +1：按篇的异步请求回来时对不上就丢掉（见 openPaper）
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
 
@@ -144,12 +145,29 @@ export async function refreshCollections() {
   }
 }
 
+/* 按篇请求的统一口径：发之前记下"现在是哪一篇"（store.epoch），回来时对不上就丢掉。
+   为什么要有它：一眼卡/六问/导师三问/方法卡都是**秒级**的模型调用，用户"打开 A 看一眼
+   就点 B"时，A 的答案会落在 B 上（B 的速览页显示 A 的发现、A 的角色套到 B 的段落上），
+   而 store.openPaper 是手写清场的——漏一个字段就漏一个洞。 */
+export function paperEpoch() { return store.epoch }
+export function samePaper(mine) { return store.epoch === mine }
+
 export async function openPaper(pid) {
   store.currentId = pid
+  // "现在看的是哪一篇"的版本号：每换一篇 +1。按篇发的请求回来时对不上就丢掉——
+  // 一眼卡/析读/眉批/六问这些请求是**秒级**的，用户"打开 A 看一眼就点 B"时，
+  // A 的结果会落在 B 身上（B 的速览页显示 A 的发现、A 的角色套到 B 的段落上）。
+  store.epoch++
   const pos = lsGet(`pos:${pid}`, {})
   if (pos.variant) store.viewer.variant = pos.variant
   if (pos.spread) store.viewer.spread = pos.spread
   store.paper = await api.paper(pid)
+  // 译文/双语是**按篇**的资源，而 variant 是全局偏好（记在 localStorage 里）。
+  // 打开一篇没有译文的论文时，上次留在"双语"上会让纸面整块空白（/pdf?variant=dual 404），
+  // 而用户只能自己猜到要回去点「原文」。所以按这一篇的实际状态校正一次。
+  if (store.viewer.variant !== 'original' && store.paper.translate_status !== 'done') {
+    store.viewer.variant = 'original'
+  }
   // 换篇先清干净再装新的：上一章的划线和眉批在新论文上闪一下，比慢半拍难看得多
   // （症状：新论文的页面上短暂出现别人家的划线和批注卡）
   store.paras = []
@@ -162,14 +180,19 @@ export async function openPaper(pid) {
   store.viewer.restorePos = pos.scroll || 0
   refreshAnalysis()
   refreshMarginalia()
-  // 一眼卡是后台压的：压不出来（比如扫描件）要说出来，别让"正在写一眼卡…"一直转
-  api.summary(pid).then(s => (store.summary = s)).catch(e => (store.summaryErr = e.message))
+  // 一眼卡是后台压的：压不出来（比如扫描件）要说出来，别让"正在写一眼卡…"一直转。
+  // 这里的 `mine` 就是"发请求时看的是哪一篇"——回来时对不上说明用户已经换了篇，丢掉。
+  const mine = store.epoch
+  api.summary(pid).then(s => { if (store.epoch === mine) store.summary = s })
+    .catch(e => { if (store.epoch === mine) store.summaryErr = e.message })
   api.touchPaper(pid).then(() => refreshPapers()).catch(() => {})
 }
 
 export async function refreshAnalysis() {
   if (!store.currentId) return
+  const mine = store.epoch
   const a = await api.analysis(store.currentId)
+  if (store.epoch !== mine) return             // 回来时已经换篇：这是上一篇的骨架，丢掉
   Object.assign(store.analysis, a)
   store.paper = await api.paper(store.currentId)   // 同步 abbrs 等字段
   refreshPapers()
@@ -177,7 +200,9 @@ export async function refreshAnalysis() {
 
 export async function refreshMarginalia() {
   if (!store.currentId) return
+  const mine = store.epoch
   const m = await api.marginalia(store.currentId)
+  if (store.epoch !== mine) return             // 同上：别把上一篇的批注装到这篇上
   Object.assign(store.marginalia, m)
 }
 

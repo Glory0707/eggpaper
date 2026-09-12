@@ -661,6 +661,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .blk-get:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
 .blk-busy { margin-left: auto; font-size: var(--fs-sm); color: var(--ink-3); }
+/* 后台任务失败 / 没跑全时的提示行：说的是"这次没成"，不是"东西没了"——
+   朱红点到为止，不铺红底，免得整块看着像报错面板 */
+.blk-warn { margin: 6px 0 0; font-size: var(--fs-sm); line-height: 1.6; color: var(--vermilion); }
 /* 眉批生成中的进度（只出现在这一块里）。有真实块数时是**确定值**的一条墨线，
    拿不到块数（还没测出总量）才退回滑动动画——不假装知道进度。 */
 .blk-prog { margin: 2px 0 4px; }

@@ -24,12 +24,29 @@ import update
 from glossary_seed import SEED
 
 app = FastAPI(title="eggpaper", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# 只放行本机来源。以前是 allow_origins=["*"]：任何网页都能跨域读这个服务
+# （/api/settings、/api/papers、论文正文段落），还能 POST /api/update/install。
+# 界面自己跟服务同源，压根不需要 CORS；这条只为了让 `npm run dev`（Vite 5173）能用。
+app.add_middleware(CORSMiddleware,
+                   allow_origin_regex=r"^http://(127\.0\.0\.1|localhost)(:\d+)?$",
+                   allow_methods=["*"], allow_headers=["*"])
 
 # 服务"已经能接请求了"的信号。启动器靠它判断就绪——**故意不用"回连自己一次"那种探测**：
 # 实测有的机器上（安全软件在管链路），进程连自己 127.0.0.1 的连接会卡在 SYN_SENT（丢包而不是拒绝），
 # 于是"服务起来了但探不通"，启动器等 15 秒就把自己退掉——用户看到的就是"双击没反应"。
 READY = threading.Event()
+
+
+def _demo_mode(cfg: dict = None) -> bool:
+    """现在这几件事走不走演示数据。**只留这一个判断口。**
+
+    以前有的路由看 `mock`、有的看"有没有 key"，于是"关掉演示模式 + 清空 key"这种状态下
+    一半功能报 `RuntimeError: MOCK`、另一半悄悄给〔演示〕数据——同一屏里自相矛盾，
+    而且那句 MOCK 用户根本读不懂。口径统一成：用户勾了演示，或者压根没配 key。
+    """
+    cfg = cfg or config.load()
+    return bool(cfg["mock"]) or not (cfg.get("provider", {}).get("api_key") or "").strip()
+
 
 
 def _human_msg(exc: Exception) -> str:
@@ -75,6 +92,43 @@ def _startup():
     _clear_zombie_jobs()
 
 
+def _sweep_orphan_translations():
+    """清掉 translated/ 里没有论文指向的产物。
+
+    什么时候会有：删论文时翻译还在跑（旧版没掐它）、或者进程被硬杀留下的半截文件。
+    不清的话它们会一直占着几十 MB，而且用户"删过了"的东西还在盘上。
+    """
+    try:
+        names = os.listdir(TRANSLATED_DIR)
+    except OSError:
+        return
+    stems = set()
+    for row in db.list_papers():
+        p = db.get_paper(row["id"]) or {}
+        p2 = p.get("dual_path") or ""
+        if p2 and os.path.exists(p2):
+            stems.add(os.path.splitext(os.path.basename(p2))[0])
+            continue
+        stem = os.path.splitext(os.path.basename(p.get("path") or ""))[0]
+        if stem and (stem + "-dual.pdf") in names:
+            stems.add(stem)          # 还没落库但确实属于这篇
+    n = 0
+    for fn in names:
+        if not fn.endswith(".pdf"):
+            continue
+        stem = fn[:-len("-dual.pdf")] if fn.endswith("-dual.pdf") else (
+            fn[:-len("-mono.pdf")] if fn.endswith("-mono.pdf") else None)
+        if stem is None or stem in stems:
+            continue
+        try:
+            os.remove(os.path.join(TRANSLATED_DIR, fn))
+            n += 1
+        except OSError:
+            pass
+    if n:
+        _applog(f"启动清理：删掉 {n} 个没有论文指向的译文文件")
+
+
 def _clear_zombie_jobs():
     """把"上一次进程留下的在跑状态"清掉。
 
@@ -87,6 +141,7 @@ def _clear_zombie_jobs():
     按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
     """
     _adopt_orphan_translation()          # 先认领：上一次进程退出时 pdf2zh 可能已经把译完写好了
+    _sweep_orphan_translations()         # 再把没人认领的产物清掉
     for col in ("analysis_status", "marginalia_status", "translate_status"):
         n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col} IN ('running','queued')")[0][0]
         if n:
@@ -113,23 +168,12 @@ def _adopt_orphan_translation():
         p = db.get_paper(row["id"]) or {}
         if p.get("translate_status") == "done" and p.get("dual_path"):
             continue
-        stem = os.path.splitext(os.path.basename(p.get("path") or ""))[0]
-        if not stem or (stem + "-dual.pdf") not in names:
+        got = translate_full.adopt_existing(p["id"], p.get("path") or "", TRANSLATED_DIR)
+        if not got:
             continue
-        dual = os.path.join(TRANSLATED_DIR, stem + "-dual.pdf")
-        try:
-            size = os.path.getsize(dual)
-            with open(dual, "rb") as f:
-                f.seek(max(0, size - 2048))
-                tail = f.read()
-        except OSError:
-            continue
-        if size < 10_000 or b"%%EOF" not in tail:
-            continue
-        mono = os.path.join(TRANSLATED_DIR, stem + "-mono.pdf")
-        db.update_paper(p["id"], dual_path=dual, mono_path=mono if os.path.exists(mono) else "",
+        db.update_paper(p["id"], dual_path=got["dual"], mono_path=got["mono"],
                         translate_status="done", translate_error="")
-        _applog(f"认领上次没结算的译文：{p['id']} → {os.path.basename(dual)}")
+        _applog(f"认领上次没结算的译文：{p['id']} → {os.path.basename(got['dual'])}")
 
 
 # ---------------- 设置 ----------------
@@ -163,10 +207,20 @@ def put_settings(body: dict):
             cfg["update"]["feed_url"] = u["feed_url"].strip()
         if "auto_check" in u:
             cfg["update"]["auto_check"] = bool(u["auto_check"])
-    # 填了 key 就自动退出演示模式
-    if cfg["provider"]["api_key"] and "mock" not in body:
+    # 填了 key 就自动退出演示模式。**只在用户真的提交了 provider 时才动**：
+    # 以前只判断"body 里没有 mock"，于是「立即检查更新」那种只发 {update:{...}} 的局部保存
+    # 也会顺手把 mock 关掉——用户没碰过模型设置，却突然开始真调模型（可能立刻 401/欠费），
+    # 而弹窗里的复选框还打着勾。
+    was_demo = _demo_mode(cfg)
+    if cfg["provider"]["api_key"] and "mock" not in body and "provider" in body:
         cfg["mock"] = False
     config.save(cfg)
+    if was_demo != _demo_mode(cfg):
+        # 演示↔真实 切换了：把上一模式留下的模型产物清掉。
+        # 不清的话，演示模式点过一次的引用卡/一眼卡会一直顶着"已缓存"显示假数据
+        # （J. Demo Chem. 那种），换了真 key 也不会自己变。
+        n = db.clear_ai_results()
+        _applog(f"模型模式切换（演示→{'演示' if _demo_mode(cfg) else '真实'}）：清了 {n} 篇的缓存产物")
     return get_settings()
 
 
@@ -220,12 +274,26 @@ def update_reveal(body: dict):
     return {"ok": True}
 
 
+def _my_port() -> int:
+    """本进程到底在哪个端口上。桌面入口会按 8430→8431→8432 找第一个空闲的，
+    而"在独立窗口打开"以前写死 8430——服务落在 8431 时，那个按钮开出的是别人家的页面。
+    instance.json 里记着真实端口（desktop.py 写的），读不到再退回 8430。"""
+    try:
+        with open(os.path.join(os.path.dirname(config.DATA_DIR), "instance.json"), encoding="utf-8") as f:
+            p = int(json.load(f).get("port") or 0)
+        if p:
+            return p
+    except Exception:
+        pass
+    return 8430
+
+
 @app.post("/api/window")
 def open_native_window():
     """把界面开成一个没有浏览器边框的独立窗口（界面里点一下就多一个"应用窗口"）。
     开发模式下返回失败原因即可，不必假装成功。"""
     import window as winmod
-    how = winmod.open_window(f"http://127.0.0.1:8430/")
+    how = winmod.open_window(f"http://127.0.0.1:{_my_port()}/")
     if not how:
         raise HTTPException(503, "没找到可用的浏览器（Edge/Chrome），用当前这个窗口看就行")
     return {"ok": True, "how": how}
@@ -294,13 +362,20 @@ async def upload(file: UploadFile = File(...)):
         raise HTTPException(400, "不是 PDF 文件")
     if len(raw) < 256:
         raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
+    name = (file.filename or "paper.pdf").split("/")[-1].split("\\")[-1]
+    dup = db.find_duplicate(name, len(raw))
+    if dup:
+        # 同一份文件（同名同大小）已经在库里：不建第二篇，直接把它交出去。
+        # 以前只有"双击打开"那条路判重，浏览器拖入/点选会把同一篇导入两遍。
+        return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
+                "duplicate": True}
     pid = db.new_id()
     path = os.path.join(PDF_DIR, f"{pid}.pdf")
     with open(path, "wb") as f:
         f.write(raw)
     # 解析（抽标题/段落）是**同步阻塞**的活，几秒钟起步。直接在 async 路由里做会卡住整个
     # 事件循环——界面那几条轮询全部停摆，用户看到的是"导入时界面死了"。丢进线程池。
-    return await run_in_threadpool(_ingest, pid, file.filename, path)
+    return await run_in_threadpool(_ingest, pid, name, path)
 
 
 @app.post("/api/papers/import-path")
@@ -316,13 +391,10 @@ def import_path(body: dict):
     if not src.lower().endswith(".pdf"):
         raise HTTPException(400, "eggpaper 只认 PDF")
     name, size = os.path.basename(src), os.path.getsize(src)
-    for r in db.q("SELECT id, path FROM papers WHERE filename=?", (name,)):
-        try:
-            if os.path.getsize(r["path"]) == size:
-                _pending_open["pid"] = r["id"]      # 已经在库里：让界面切过去就行
-                return {"paper": db.get_paper(r["id"]), "duplicate": True}
-        except OSError:
-            continue
+    dup = db.find_duplicate(name, size)          # 判重口径与上传那条路共用一份
+    if dup:
+        _pending_open["pid"] = dup               # 已经在库里：让界面切过去就行
+        return {"paper": db.get_paper(dup), "duplicate": True}
     pid = db.new_id()
     dest = os.path.join(PDF_DIR, f"{pid}.pdf")
     try:
@@ -392,6 +464,10 @@ def delete_paper(pid: str):
     db.purge_paper(pid)          # 段落/骨架/眉批/问答会话/分类归属，一张表都不留
     # 文件也要走干净：原 PDF、双语版、译文版。双语文档是按 pid 命名的，
     # 万一 mono_path 没记上（翻译中途失败），按文件名把残留的一起扫掉。
+    # 先掐掉还在跑的整本翻译：pdf2zh 是独立进程，不掐的话它会把 <pid>-dual.pdf
+    # 写回 translated/——用户以为"删掉 = 痕迹全消失"，盘上却留着一份孤立的译文。
+    if translate_full.cancel(pid):
+        _applog(f"删论文 {pid}：同时终止了还在跑的整本翻译")
     _rm(p["path"]); _rm(p["dual_path"]); _rm(p.get("mono_path"))
     try:
         for fn in os.listdir(TRANSLATED_DIR):
@@ -416,20 +492,31 @@ def paper_pdf(pid: str, variant: str = "original"):
         if not mono or not os.path.exists(mono):
             raise HTTPException(404, "译文版尚未生成")
         return FileResponse(mono, media_type="application/pdf")
+    if not os.path.exists(p["path"]):
+        # 用户在资源管理器里挪走/删掉库里的 PDF 了。以前这里交给 FileResponse，
+        # 它抛 RuntimeError("File at path ... does not exist") → 500 + 一句英文黑话。
+        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。"
+                                 "把它拖回来重新导入一次即可，批注不会丢。")
     return FileResponse(p["path"], media_type="application/pdf")
 
 
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
-    # 旧库的段落只有段落框、没有行级坐标，页边引文就只能整段涂。
-    # 惰性补一次：重解析同一份 PDF，重新分组的结果是确定的，idx 不变，批注不会错位。
+    # 旧库的段落只有段落框、没有行级坐标，页边引文就只能整段涂。惰性补一次，但**先核对**：
+    # 新解析的结果必须与库里那批段落逐段一致才敢整表替换——批注/主张锚点/略读都按 para_idx
+    # 指位置，分组一变就会整体错位，而且是静默的。核对不过就这次不补（页边退回段落框），
+    # 至少不动用户已有的东西。
     if db.paragraphs_need_lines(pid):
         p = db.get_paper(pid)
         path = p.get("path") or os.path.join(PDF_DIR, f"{pid}.pdf")
         try:
             if os.path.exists(path):
-                db.replace_paragraphs(pid, pdfparse.extract_paragraphs(path))
+                fresh = pdfparse.extract_paragraphs(path)
+                if db.paragraphs_match(pid, fresh):
+                    db.replace_paragraphs(pid, fresh)
+                else:
+                    _applog(f"行级坐标补解析 {pid}: 新解析的段落与库里那批对不上，这次不补（避免批注错位）")
         except Exception as e:
             print(f"[eggpaper] 行级坐标补解析失败 {pid}: {e}")
     return db.get_paragraphs(pid)
@@ -441,7 +528,7 @@ def _run_analysis(pid: str, paras: list):
     try:
         title = db.get_paper(pid)["title"]
         use = [p for p in paras if not p.get("in_refs")]
-        if config.load()["mock"]:
+        if _demo_mode():
             data = llm.mock_analyze(paras)
         else:
             data = llm.analyze_skeleton(title, use)
@@ -463,7 +550,8 @@ def _run_analysis(pid: str, paras: list):
                         abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
     except Exception as e:
-        db.set_analysis(pid, [], {}, status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
+        # 人话 + **不清空**已有结果：一次限流不该让上次读出来的骨架陪葬
+        db.fail_analysis(pid, _human_msg(e))
     finally:
         _job_done("analysis", pid)
 
@@ -472,7 +560,7 @@ def _run_analysis(pid: str, paras: list):
 def analyze(pid: str):
     p = _paper_or_404(pid)
     _require_paras(pid)
-    if p["analysis_status"] in ("running", "queued") and _job_live("analysis", pid):
+    if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
         return {"status": p["analysis_status"]}
     if p["analysis_status"] in ("running", "queued"):
         _applog(f"析读 {pid}: 数据库里是 {p['analysis_status']} 但本进程没有这个任务（上次被中断），重来")
@@ -486,7 +574,7 @@ def analysis(pid: str):
     _paper_or_404(pid)
     status, claims, annos = db.get_analysis(pid)
     p = _paper_or_404(pid)
-    if status in ("running", "queued") and not _job_live("analysis", pid):
+    if status in ("running", "queued") and not _analysis_inflight(pid):
         db.update_paper(pid, analysis_status="none")        # 僵尸状态：归零
         status = "none"
     eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
@@ -506,7 +594,11 @@ def override_role(pid: str, body: dict):
     # 空串 = 回到推断（卡片上的「回到推断」），别当成非法角色拒掉
     if role and role not in llm.ROLES:
         raise HTTPException(400, "角色不合法")
-    db.override_annotation(pid, int(body["para_idx"]), role)
+    try:
+        ridx = int(body["para_idx"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "缺 para_idx（要改哪一段）")
+    db.override_annotation(pid, ridx, role)
     return {"ok": True}
 
 
@@ -569,6 +661,7 @@ _rect_tried = set()      # 试过定位的钉子 id（失败的不再重复开 P
 # 只看这个集合。路由里登记、线程的 finally 里注销——所以"status=running 但不在集合里"
 # 就是僵尸状态，可以放心重来（见 _clear_zombie_jobs 的注释）。
 _live_jobs = set()
+_live_lock = threading.Lock()      # "检查是否在跑 + 占位"要原子（见 marginalia_start）
 
 # 眉批生成的实时进度：pid -> {"done": 已完成块数, "total": 总块数, "t0": 起始时刻}
 # 只活在内存里——它是"这一次运行"的状态，进程重启后没有意义（也没必要进数据库）。
@@ -590,11 +683,24 @@ def _job_done(kind: str, pid: str):
 _q_lock = threading.Lock()
 _analysis_q = queue.Queue()
 _analysis_worker = [None]        # 装线程；列表是为了在闭包里能改
+# 队列里**等着**的那些 pid。必须单独记一份：`_live_jobs` 是"正在跑"的登记，
+# 而排队的论文要等出队那一刻才登记——于是"排队中"曾经既不算在跑、也不在队列里可查，
+# 造成两个真 bug：① GET /analysis 把自己的排队当僵尸归零，界面从"排队通读中"退回
+# "还没析读"；② 这时再点一次「析读」会**第二次入队**，同一篇被完整通读两遍（双倍 token）。
+_analysis_pending = set()
+
+
+def _analysis_inflight(pid: str) -> bool:
+    """这篇是不是"在跑或排队中"（两个真相源合起来看，别再漏一个）。"""
+    return _job_live("analysis", pid) or pid in _analysis_pending
 
 
 def _enqueue_analysis(pid: str, paras: list):
-    db.update_paper(pid, analysis_status="queued", analysis_error=None)
     with _q_lock:
+        if pid in _analysis_pending:
+            return                      # 已经排着了：再点一次不排队，也不重复烧钱
+        _analysis_pending.add(pid)
+        db.update_paper(pid, analysis_status="queued", analysis_error=None)
         _analysis_q.put((pid, paras))
         w = _analysis_worker[0]
         if w is None or not w.is_alive():
@@ -611,6 +717,8 @@ def _analysis_loop():
                 _analysis_worker[0] = None
                 return
             pid, paras = _analysis_q.get_nowait()
+        with _q_lock:
+            _analysis_pending.discard(pid)
         _live_jobs.add(("analysis", pid))
         db.update_paper(pid, analysis_status="running", analysis_error=None)
         try:
@@ -646,13 +754,19 @@ def _run_marginalia(pid: str):
         title = db.get_paper(pid)["title"]
         paras = db.get_paragraphs(pid)
         use = [p for p in paras if not p.get("in_refs")]
-        if config.load()["mock"]:
-            notes = llm.mock_marginalia(paras)
+        if _demo_mode():
+            notes, misses = llm.mock_marginalia(paras), 0
             on_chunk(1, 1)
         else:
-            notes = llm.analyze_marginalia(title, use, on_chunk=on_chunk)
+            notes, misses = llm.analyze_marginalia(title, use, on_chunk=on_chunk)
         t_llm = _t.time() - t0
+        # 有块没成要说出来：状态仍是 done（有效的批注都写进去了），但把缺口写成一条提示
         db.set_marginalia(pid, notes)
+        if misses:
+            db.update_paper(pid, marginalia_error=(
+                f"{misses} 段块没能生成批注（模型限流或超时，已重试过一遍）。"
+                f"这些段落现在是空的——想补齐可以再点一次「重新生成」。"))
+            _applog(f"眉批 {pid}: {misses} 块重试后仍失败")
         # "还能做什么"吃眉批里的"有坑"，导师三问的输入也是这批 warning——重写眉批要一起作废
         db.answers_clear(pid)
         db.update_paper(pid, advisor=None)
@@ -669,7 +783,7 @@ def _run_marginalia(pid: str):
         print(f"[eggpaper] 眉批 {pid}: {len(notes)} 条 · 模型 {t_llm:.1f}s · 定位 {t_all - t_llm:.1f}s")
     except Exception as e:
         _applog(f"眉批失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
-        db.set_marginalia(pid, [], status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
+        db.fail_marginalia(pid, _human_msg(e))
     finally:
         _margin_progress.pop(pid, None)
         _job_done("marginalia", pid)
@@ -678,12 +792,13 @@ def _run_marginalia(pid: str):
 @app.post("/api/papers/{pid}/marginalia")
 def marginalia_start(pid: str):
     p = _paper_or_404(pid)
-    # 只有**本进程真在跑**才算"在跑"；重启留下的 running 是僵尸，直接重来一遍
-    if p["marginalia_status"] == "running" and _job_live("marginalia", pid):
-        return {"status": "running"}
-    if p["marginalia_status"] == "running":
-        _applog(f"眉批 {pid}: 数据库里是 running 但本进程没有这个任务（上次被中断），重来")
-    _live_jobs.add(("marginalia", pid))
+    # 检查与占位必须在**同一把锁**里：路由跑在线程池里是真并发，连点两下（或双击）时
+    # 两条请求会都读到"没在跑"，然后各自起一条线程——整篇眉批的模型调用花两遍，
+    # 而且先结束的那条会把还在跑的那条的进度抹掉（进度条中途消失）。
+    with _live_lock:
+        if _job_live("marginalia", pid):
+            return {"status": "running"}
+        _live_jobs.add(("marginalia", pid))
     _margin_progress[pid] = {"done": 0, "total": 0, "t0": time.time()}
     db.update_paper(pid, marginalia_status="running", marginalia_error=None)
     threading.Thread(target=_run_marginalia, args=(pid,), daemon=True).start()
@@ -711,7 +826,10 @@ def pin_lookup(pid: str, body: dict):
     note = (body.get("note") or "").strip()
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
-    para_idx = int(body.get("para_idx") or 0)
+    try:
+        para_idx = int(body.get("para_idx") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "para_idx 得是整数")
     page = int(body.get("page") or 0)
     # 自己写的批注：锚点还是选中的那句话，内容是用户的原话。
     # 不比"同段重钉"——同一段里想写两条就写两条，页边是读者的本子，不是去重器。
@@ -756,12 +874,13 @@ def summary(pid: str):
     _require_paras(pid)
     if p["summary"]:
         return JSONResponse(json.loads(p["summary"]))
-    if config.load()["mock"]:
+    if _demo_mode():
         data = {"one_line": "〔演示模式〕这是一篇测试论文的一眼卡摘要。", "contributions": "演示贡献", "methods": "演示方法",
                 "findings": "演示发现", "keywords": ["演示"]}
     else:
         hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
         data = llm.summarize(p["title"], db.get_paragraphs(pid), hits)
+        _require_shape(data, ("one_line", "findings", "keywords"), "一眼卡")
     db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
     return data
 
@@ -774,17 +893,31 @@ def suggest(pid: str):
         return JSONResponse(json.loads(p["suggest"]))
     if p["analysis_status"] != "done":
         return {"questions": []}
-    if config.load()["mock"]:
+    if _demo_mode():
         data = {"questions": ["〔演示〕核心证据的强度如何？", "〔演示〕方法上有什么可挑剔的？"]}
     else:
         _, claims, annos = db.get_analysis(pid)
         data = llm.suggest_questions(p["title"], claims, annos)
+        _require_shape(data, ("questions",), "提问建议")
     db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
     return data
 
 
+def _require_shape(data, keys: tuple, what: str):
+    """模型返回的形状不对/是空的，就别把它当成功缓存下来。
+
+    为什么：`parse_json` 取"第一个 { 到最后一个 }"，模型把结果包成 `[{...}]` 时能解析成
+    里面那个对象，于是 `data.get("questions", [])` 得到 `[]`——而路由会把这个空壳
+    `json.dumps` 存进 papers，从此永远命中缓存（速览页空着、而且不会自愈，因为"重新析读"
+    也不一定清得到它）。六问与引用早就做了这个判断，这里是把它补成统一的一道闸。
+    """
+    if not isinstance(data, dict) or not any(data.get(k) for k in keys):
+        raise HTTPException(503, f"{what}没生成出来（模型这次返回的是空的），过一会儿再点一次")
+
+
 KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别扭", "redundant": "多余重复",
-           "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑", "lookup": "查译"}
+           "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑",
+           "conflict": "前后打架", "lookup": "查译", "region": "选区问答", "note": "批注"}
 
 
 @app.get("/api/papers/{pid}/advisor")
@@ -797,7 +930,7 @@ def advisor(pid: str, cached: bool = False):
         return {"questions": []}
     if p["analysis_status"] != "done":
         return {"questions": []}
-    if config.load()["mock"]:
+    if _demo_mode():
         data = {"questions": [{"q": "〔演示〕证据够硬吗？", "outline": ["演示要点"]}]}
     else:
         _, claims, annos = db.get_analysis(pid)
@@ -805,6 +938,7 @@ def advisor(pid: str, cached: bool = False):
         # 在它们之上再狠一层，而不是把同一批话说第二遍（「问题」页④已经说过一遍了）
         warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
         data = llm.advisor_questions(p["title"], claims, warns)
+        _require_shape(data, ("questions",), "导师三问")
     db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
     return data
 
@@ -815,7 +949,7 @@ def ask_visual(body: dict):
     if not image.startswith("data:image"):
         raise HTTPException(400, "缺少图像数据")
     question = (body.get("question") or "").strip() or "解释这张图/公式。"
-    if config.load()["mock"]:
+    if _demo_mode():
         return {"answer": "〔演示模式〕视觉问答需要配置视觉模型。"}
     ans = llm.vision_ask(image, question)
     if not ans.strip():
@@ -892,7 +1026,7 @@ def six_answer(pid: str, key: str):
     if cached:
         return cached
     _require_paras(pid)
-    data = _mock_six(key) if config.load()["mock"] else _gen_six(p, key)
+    data = _mock_six(key) if _demo_mode() else _gen_six(p, key)
     if not (data.get("text") or data.get("items")):
         raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
     db.answer_put(pid, key, data)
@@ -909,11 +1043,12 @@ def method_card(pid: str, cached: bool = False):
     # 但"读缓存"和"花一次模型调用"是两件事，不能让前者偷偷变成后者。
     if cached:
         return {}
-    if config.load()["mock"]:
+    if _demo_mode():
         data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
                 "steps": ["步骤一", "步骤二"], "notes": ""}
     else:
         data = llm.method_card(p["title"], db.get_paragraphs(pid))
+        _require_shape(data, ("goal", "steps"), "方法卡")
     db.update_paper(pid, method_card=json.dumps(data, ensure_ascii=False))
     return data
 
@@ -932,7 +1067,7 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         return {"meta": meta, "groups": citation.groups(meta)}
     if cached:
         return {"meta": None, "groups": []}
-    if config.load()["mock"]:
+    if _demo_mode():
         meta = {"authors": [{"family": "Zhang", "given": "Wei"}, {"family": "Li", "given": "Na"}],
                 "title": "〔演示〕一篇论文的标题", "journal": "Journal of Demo Chemistry",
                 "journal_abbr": "J. Demo Chem.", "year": "2024", "volume": "12",
@@ -973,7 +1108,11 @@ def export_md(pid: str):
     if notes:
         lines += ["## 眉批与查译", ""]
         for n in notes:
-            who = "你" if n["kind"] == "lookup" else KIND_ZH.get(n["kind"], n["kind"])
+            # 类型名与界面口径一致：自造款用模型起的短标签，自己钉的三种算"你 ·"，
+            # 其余查同一张表。以前 conflict/region/note 都不在表里，导出写成
+            # [conflict]/[region]/[lookup]，跟界面上看到的"前后打架 / 你 · 选区问答"对不上。
+            zh = (n.get("label") or "").strip() or KIND_ZH.get(n["kind"], n["kind"])
+            who = "你 · " + zh if n["kind"] in ("lookup", "region", "note") else zh
             lines.append(f"- **[{who}] {n['note']}** — “{n['quote'][:48]}”")
         lines.append("")
     md = "\n".join(lines)
@@ -986,6 +1125,7 @@ def glossary_export():
     import csv
     import io
     buf = io.StringIO()
+    buf.write("﻿")     # BOM：中文 Windows 上 Excel/WPS 按 ANSI 解 UTF-8 CSV，不加就是乱码
     w = csv.writer(buf)
     w.writerow(["term_en", "term_zh", "domain", "note", "source"])
     for r in db.glossary_list():
@@ -1013,6 +1153,8 @@ def figures(pid: str):
     if key in _fig_cache:
         return {"figures": _fig_cache[key]}
     out = []
+    if not os.path.exists(p["path"]):
+        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
     doc = pymupdf.open(p["path"])
     try:
         for pno in range(len(doc)):
@@ -1022,7 +1164,10 @@ def figures(pid: str):
             for r in rects:
                 for m in merged:
                     if m.intersects(r):
-                        m |= r
+                        # 必须用 include_rect：pymupdf 的 Rect **没有实现 __ior__**，
+                        # `m |= r` 只是把循环变量指向一个新矩形，列表里那个元素一字未动——
+                        # 于是"合并重叠的图块"从来没生效过，多面板的图只裁到第一块（实测确认）。
+                        m.include_rect(r)
                         break
                 else:
                     merged.append(r)
@@ -1044,8 +1189,18 @@ _fig_cache = {}
 def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, dpi: int = 130):
     import pymupdf
     p = _paper_or_404(pid)
+    if not os.path.exists(p["path"]):
+        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
     doc = pymupdf.open(p["path"])
     try:
+        # 手工/陈旧请求可能给出越界页码、负矩形、离谱 dpi（dpi=100000 能撑爆内存），
+        # 以前这三条都会变成 500，现在给 400/404 并说清哪儿不对
+        if page < 0 or page >= len(doc):
+            raise HTTPException(404, f"页码越界：这篇只有 {len(doc)} 页")
+        if not (36 <= dpi <= 400):
+            raise HTTPException(400, "dpi 只支持 36–400")
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            raise HTTPException(400, "截图范围太小")
         pix = doc[page].get_pixmap(clip=pymupdf.Rect(x0, y0, x1, y1), dpi=dpi)
         return Response(content=pix.tobytes("png"), media_type="image/png")
     finally:
@@ -1103,7 +1258,7 @@ def _context(pid: str, conv_id: int, history: list):
         return c.get("summary") or "", tail
     prev = c.get("summary") or ""
     new_sum = ""
-    if not (config.load()["mock"] or not config.load()["provider"]["api_key"]):
+    if not _demo_mode():
         new_sum = llm.summarize_dialog(prev, head)
     if new_sum:
         db.conv_set_summary(conv_id, new_sum, head[-1].get("id") or 0)
@@ -1124,7 +1279,7 @@ def _stream_answer(p: dict, conv_id: int, question: str):
     hist = db.qa_history(pid, conv_id)[:-1]      # 不含刚写进去的这条；删过的消息这里自然就没有了
     buf = []
     try:
-        if config.load()["mock"] or not config.load()["provider"]["api_key"]:
+        if _demo_mode():
             gen = _mock_stream(question)
         else:
             summary, ctx = _context(pid, conv_id, hist)
@@ -1302,7 +1457,7 @@ def _translate_sse(pid: str, text: str, context: str, hits: list):
     """
     buf = []
     try:
-        if config.load()["mock"] or not config.load()["provider"]["api_key"]:
+        if _demo_mode():
             gen = _mock_translate(text)
         else:
             gen = llm.translate_stream(text, context, hits)
@@ -1333,7 +1488,10 @@ def translate_selection(pid: str, body: dict):
 def translate_para(pid: str, body: dict):
     p = _paper_or_404(pid)
     paras = {p_["idx"]: p_ for p_ in db.get_paragraphs(pid)}
-    idx = int(body["idx"])
+    try:
+        idx = int(body.get("idx"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "缺 idx（要译哪一段）")
     if idx not in paras:
         raise HTTPException(404, "段落不存在")
     _require_paras(pid)          # 扫描件没有段落可译，直说
@@ -1381,6 +1539,14 @@ def translate_full_start(pid: str):
     envs, host = _pdf2zh_env(svc, cfg)
     # 先探一下这个服务连不连得通。连不通的后果不是"慢"而是**永远不动**
     # （pdf2zh 会在每个请求上重试，CPU 0、界面停在「翻译中」），所以宁可在门口拦住。
+    # 盘上已经有成品就先认领：pdf2zh 是独立进程，eggpaper 退出后它可能才写完——那次
+    # 启动扫描已经过去了，状态被清成 none，用户再点一次会**重译一遍并覆盖**刚做好的文件。
+    got = translate_full.adopt_existing(pid, p["path"], TRANSLATED_DIR)
+    if got:
+        db.update_paper(pid, dual_path=got["dual"], mono_path=got["mono"],
+                        translate_status="done", translate_error="")
+        _applog(f"整本翻译 {pid}: 发现上次已经译好的成品，直接认领")
+        return {"status": "done", "service": "", "note": "上次已经译好了，直接用了那份成品"}
     used, note = translate_full.choose_service(svc, host)
     if used is None:
         raise HTTPException(400, note)

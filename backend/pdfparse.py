@@ -135,10 +135,15 @@ def citation_source(path: str) -> str:
         md = doc.metadata or {}
         head = [f"{k}: {md[k]}" for k in ("title", "author", "subject", "keywords") if md.get(k)]
         body = "[首页原文]\n" + "\n".join(out)
+        meta = ""
         if head:
             # 有些出版社把整条引文塞进 Subject（ACS 就是这么干的），值得给模型看一眼
-            body += "\n\n[PDF 元数据]\n" + "\n".join(head)
-        return body[:6000]
+            meta = "\n\n[PDF 元数据]\n" + "\n".join(head)
+        # 截断要**给元数据留位置**：首页文字密的时候（110 行 × 60 来字就差不多把 6000 吃满），
+        # body[:6000] 会把末尾那段元数据整段切掉——而它恰恰是"刊名卷期页藏在元数据里"那类
+        # PDF（ACS 等）唯一的出处，等于这段白写了。所以正文按剩余额度截。
+        room = max(1200, 6000 - len(meta))
+        return body[:room] + meta
     finally:
         doc.close()
 

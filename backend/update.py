@@ -97,11 +97,16 @@ def _set(**kw):
         _progress.update(kw)
 
 
+def download_dir() -> str:
+    """安装包只允许落在这里、也只允许装这里的文件。"""
+    return os.path.join(tempfile.gettempdir(), "eggpaper-update")
+
+
 def download(url: str, sha256: str = "", size: int = 0):
     """把安装包下到临时目录，校验哈希。后台线程里跑，进度用 progress() 轮。"""
     _set(state="downloading", pct=0, got=0, total=size, path="", error="", message="")
     try:
-        out_dir = os.path.join(tempfile.gettempdir(), "eggpaper-update")
+        out_dir = download_dir()
         os.makedirs(out_dir, exist_ok=True)
         name = os.path.basename(url.split("?")[0]) or "eggpaper-setup.exe"
         out = os.path.join(out_dir, name)
@@ -116,7 +121,13 @@ def download(url: str, sha256: str = "", size: int = 0):
                     h.update(chunk)
                     got += len(chunk)
                     _set(got=got, total=total, pct=round(got * 100 / total) if total else 0)
-        if sha256 and h.hexdigest().lower() != sha256:
+        # 没有 sha256 就不认：以前 `if sha256 and ...` 在发布方漏写 sha256（或旧格式的
+        # latest.json）时**整段跳过**，等于没有任何校验——一个被改动过的包会被直接标成 ready。
+        if not sha256:
+            os.remove(out)
+            _set(state="error", error="更新源没给 sha256，无法校验完整性（发布方需要补上这一项）")
+            return
+        if h.hexdigest().lower() != sha256:
             os.remove(out)
             _set(state="error", error="下下来的安装包校验不一致（可能没下完或被改过），已丢弃")
             return
@@ -137,10 +148,19 @@ def install(path: str) -> bool:
     Inno Setup 的参数含义：/SILENT 只有进度条没有向导；/CLOSEAPPLICATIONS 关掉正在跑的
     旧版本（我们的 exe 会被关掉，这正是我们要的）；/RESTARTAPPLICATIONS 装完再拉起来。
     这里用 Popen 而不是等它跑完——安装器要替换的正是当前这个进程占着的文件。
+
+    **只接受刚下载到那个临时目录里的文件**：这个接口是本机无鉴权的（127.0.0.1 + 任意网页
+    都能 POST），以前直接把调用方给的 path 交给 Popen——等于"用 eggpaper 的名义执行任意
+    本机程序"，而且不管什么模式都会在 1.2 秒后把服务自己杀掉。现在路径必须落在下载目录里、
+    且必须是 .exe；开发模式（源码）只提示不自杀。
     """
-    if not path or not os.path.exists(path):
+    if not path:
         return False
-    args = [path]
+    real = os.path.realpath(path)
+    home = os.path.realpath(download_dir())
+    if os.path.dirname(real) != home or not real.lower().endswith(".exe") or not os.path.exists(real):
+        return False
+    args = [real]
     if os.name == "nt":
         args += ["/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"]
     try:
@@ -148,7 +168,10 @@ def install(path: str) -> bool:
     except Exception:
         return False
 
-    # 给安装器一点点时间拿到文件句柄，然后把自己关掉（开发模式下不自杀，只提示）
+    if not is_packaged():
+        return True          # 开发模式：跑的是源码，装完也不该把这边的进程杀掉
+
+    # 给安装器一点点时间拿到文件句柄，然后把自己关掉
     def bye():
         time.sleep(1.2)
         os._exit(0)

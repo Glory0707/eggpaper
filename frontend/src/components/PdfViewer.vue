@@ -155,6 +155,16 @@ async function load({ keepPlace = false } = {}) {
   try {
     await buildSheets()
   } catch (e) {
+    // 译文/双语取不到（这篇还没译、译文文件被删、翻译中途失败）：**退回原文**并说人话。
+    // 以前是直接停在空白纸面上——纸面一个页面都没有、两个按钮还是"选中且禁用"的状态，
+    // 用户只能自己猜到要回去点「原文」，而弹出的还是 pdf.js 那句 Missing PDF 黑话。
+    if (store.viewer.variant !== 'original') {
+      const was = store.viewer.variant
+      store.viewer.variant = 'original'      // 赋值会触发 watch → 重新 load
+      toast((was === 'mono' ? '译文版' : '双语版') + '打不开，已切回原文；想再看可重新「整本翻译」', 5000)
+      loading = false
+      return
+    }
     toast('文档加载失败：' + e.message)
     ready.value = true
     loading = false
@@ -907,13 +917,17 @@ onMounted(async () => {
     freshNotes.value = true
     setTimeout(() => (freshNotes.value = false), 1800)
   }
-  await load()
-  await nextTick()
+  // 缩放/适页要在 load() **之前**定下来：load() 里会用 restorePos 写 scrollTop，
+  // 而那个位置是按**当时那套缩放**算出来的像素。先加载再改适页，页高整个变了——存下来的
+  // 位置就落到别处（用适页读过时缩放常常只有适宽的一半，跳到文末都算常事），而且
+  // watch(scale) 会在 250ms 后把这个错位置写回 localStorage，正确位置就此丢掉。
   try {
     const saved = JSON.parse(localStorage.getItem(LS_POS + store.currentId) || '{}')
     if (saved.fit) fit.value = saved.fit
     if (saved.zoom) zoom.value = saved.zoom
   } catch { /* */ }
+  await load()
+  await nextTick()
   await measureNotes()
   ro = new ResizeObserver(() => { reflow() })
   ro.observe(deskEl.value.parentElement || deskEl.value)
@@ -959,14 +973,21 @@ const vis = reactive({ visible: false, x: 0, y: 0, img: '', question: '', answer
 
 function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
+  // 译文/双语页（origPage = -1）上不许框选：那里没有原文段落，页边也摆不出对应的卡片，
+  // 钉下去的结果是"AI 的回答存了但永远看不到"，还会顺手覆盖 ¶0 上已有的那条。
+  if (it.origPage < 0) { toast('译文页上不能框选：切回「原文」再圈，钉的位置才对得上'); return }
   e.preventDefault()
   const el = pageEls.value[it.gi]
   const base = el.getBoundingClientRect()
   const pt = ev => ({ x: ev.clientX - base.left, y: ev.clientY - base.top })
   const p0 = pt(e)
   const move = ev => { const p = pt(ev); frameRect.value = { x0: p0.x, y0: p0.y, x1: p.x, y1: p.y, gi: it.gi } }
-  const up = ev => {
+  const stop = () => {
     document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up)
+    window.removeEventListener('blur', stop)
+  }
+  const up = ev => {
+    stop()
     const rr = frameRect.value
     frameRect.value = null
     if (!rr) return
@@ -988,6 +1009,9 @@ function startFrameDrag(e, it) {
   }
   frameRect.value = { x0: p0.x, y0: p0.y, x1: p0.x, y1: p0.y }
   document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
+  // 拖到窗口外松手时 document 收不到 mouseup：监听器会一直留着，之后鼠标一动纸上就冒
+  // 幽灵框（下一次框选的结果还可能是上一次的）。失焦也当成"松手了"。
+  window.addEventListener('blur', stop)
 }
 
 function closeVis() { vis.visible = false }

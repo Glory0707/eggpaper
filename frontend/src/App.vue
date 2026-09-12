@@ -48,21 +48,29 @@ function onDrop(e) {
 function endDrag() { dragOver.value = false }
 
 onMounted(async () => {
-  store.settings = await api.settings()
-  await refreshPapers()
-  await refreshCollections()
-  if (store.papers.length) openPaper(store.papers[0].id)
+  // 监听与轮询**先装上**：它们不该依赖任何一次网络请求成功。
+  // 原来这一串 await 是连着的，第一个（/api/settings）一失败，后面全不执行——
+  // 文库不加载、3 秒轮询不开（双击打开 PDF、翻译进度、析读状态全哑）、键盘也没挂上，
+  // 界面停在"论文，启动！"却一个字都不解释；此时点设置还会因为 settings 是 null 直接报错。
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('dragend', endDrag)
+  window.addEventListener('blur', endDrag)
   pollTimer = setInterval(poll, 3000)
+  try {
+    store.settings = await api.settings()
+    await refreshPapers()
+    await refreshCollections()
+    if (store.papers.length) openPaper(store.papers[0].id)
+  } catch (e) {
+    toast('初始化失败：' + e.message + '（后台服务可能刚起来或被打断，稍等片刻会自动恢复）', 6000)
+  }
   // 更新：先问自己是哪个版本，再等 6 秒做一次安静探测。故意不抢首屏——
   // 用户先看到论文，更新提示随后自己浮出来；源里没东西就什么都不会发生。
   loadVersion().then(() => {
     if (store.settings?.update?.auto_check !== false) {
       setTimeout(() => checkUpdate(false, true), 6000)
     }
-  })
-  window.addEventListener('keydown', onKey)
-  window.addEventListener('dragend', endDrag)
-  window.addEventListener('blur', endDrag)
+  }).catch(() => {})
 })
 onUnmounted(() => {
   clearInterval(pollTimer)
@@ -252,6 +260,10 @@ function onKey(e) {
   // （否则"删分类"弹窗开着按 Esc，会把整个文库也一起收掉）
   if (dlg.open) { if (e.key === 'Escape') { e.preventDefault(); dlgCancel() } return }
   if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) return
+  // 设置弹窗开着就**一个键都不接**（含 Esc，它按设计只有 × 和「保存」两个出口）。
+  // 以前这里不看设置——点过弹窗里的按钮后焦点在按钮上，按 t 会真的去翻译当前段并钉一条
+  // 页边卡、按 2/3 会切变体、按 r 进框选，而这些动作全发生在弹窗背后，用户根本看不见。
+  if (showSettings.value) return
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
   if (e.key === 'Escape') {

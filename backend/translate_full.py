@@ -34,6 +34,7 @@ import threading
 import time
 
 JOBS = {}      # paper_id -> {status, error, dual, mono, service, note, pages, started}
+_RUNNING = {}  # paper_id -> Popen：删论文时要能把它掐掉（见 cancel）
 _PROBE = {}    # host -> (ok, why, at)  连通性预检的短期缓存
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _PROG = re.compile(r"(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
@@ -182,17 +183,67 @@ def pinned_config(out_dir: str, pid: str) -> str:
         return ""
 
 
-def sweep_configs(out_dir: str):
-    """清掉上一次留下的 --config 副本（里面有 key，别让它躺着）。"""
+def sweep_configs(out_dir: str, keep: str = "", older_than: float = 6 * 3600):
+    """清掉陈旧的 --config 副本（里面有 key，别让它躺着）。
+
+    **必须按年龄清**：out_dir 是所有论文共用的，而"另一篇正在翻译"的副本就在同一个目录里。
+    以前这里是"见到 .pdf2zh-*.json 就删"，A 在译时用户切到 B 再点译，B 的线程会把 A 的副本
+    删掉——那个副本正是用来拦住 pdf2zh 把 key 写进用户 ~/.config 的。keep 是本次要用的那份。
+    """
+    now = time.time()
     try:
         for fn in os.listdir(out_dir):
-            if fn.startswith(".pdf2zh-") and fn.endswith(".json"):
-                try:
-                    os.remove(os.path.join(out_dir, fn))
-                except OSError:
-                    pass
+            if not (fn.startswith(".pdf2zh-") and fn.endswith(".json")):
+                continue
+            path = os.path.join(out_dir, fn)
+            if keep and os.path.abspath(path) == os.path.abspath(keep):
+                continue
+            try:
+                if now - os.path.getmtime(path) > older_than:
+                    os.remove(path)
+            except OSError:
+                pass
     except OSError:
         pass
+
+
+def cancel(pid: str):
+    """删论文时用：把还在跑的 pdf2zh 掐掉。
+
+    pdf2zh 是独立进程——不掐的话，"删掉这篇论文"之后它还会跑完、还会往
+    translated/ 里写回 <pid>-dual.pdf，用户以为删干净了、盘上却留下孤立的译文文件。
+    """
+    proc = _RUNNING.get(pid)
+    if proc is None:
+        return False
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    return True
+
+
+def adopt_existing(pid: str, pdf_path: str, out_dir: str):
+    """盘上已经有"看起来完整"的成品就认领，返回 {"dual":..., "mono":...} 或 None。
+
+    为什么要有：pdf2zh 是独立进程，eggpaper 关掉/装新版本时它还在跑，写完之后没人认领——
+    启动时那次扫描早过了。用户看到界面上还是「整本翻译」，点一次就重译一遍（还覆盖成品）。
+    判定"完整"看 %%EOF 收尾，免得把写到一半就被杀掉的半截文件当成成品。
+    """
+    stem = os.path.splitext(os.path.basename(pdf_path))[0]
+    dual = os.path.join(out_dir, stem + "-dual.pdf")
+    try:
+        if os.path.getsize(dual) < 10_000:
+            return None
+        with open(dual, "rb") as f:
+            f.seek(max(0, os.path.getsize(dual) - 2048))
+            tail = f.read()
+    except OSError:
+        return None
+    if b"%%EOF" not in tail:
+        return None
+    mono = os.path.join(out_dir, stem + "-mono.pdf")
+    return {"dual": dual, "mono": mono if os.path.exists(mono) else ""}
 
 
 def job(pid: str) -> dict:
@@ -216,8 +267,8 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         cfg_copy = ""
         try:
             os.makedirs(out_dir, exist_ok=True)
-            sweep_configs(out_dir)           # 上一次万一被硬杀，留下的含 key 副本先清掉
             cfg_copy = pinned_config(out_dir, pid) if envs else ""
+            sweep_configs(out_dir, keep=cfg_copy)   # 只清陈旧的（别删别人正在用的那份）
             cmd = _cmd(pdf_path, out_dir, service, extra, cfg_copy)
             _say(f"整本翻译开始 {pid}：{service} · {' '.join(cmd)}")
             env = {**os.environ, **(envs or {})}
@@ -225,6 +276,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace",
                                     cwd=out_dir, env=env, creationflags=flags, startupinfo=si)
+            _RUNNING[pid] = proc
 
             def watch():
                 # 卡死判定：tqdm 每几秒就来一行，长时间静默只可能是网络挂住或死锁
@@ -304,6 +356,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             j.update(status="error", error=f"{type(e).__name__}: {str(e)[-400:]}")
             _say(f"整本翻译失败 {pid}：{type(e).__name__}: {str(e)[-300]}")
         finally:
+            _RUNNING.pop(pid, None)
             if cfg_copy:
                 try:
                     os.remove(cfg_copy)      # 副本里有 key，用完就删，别留在盘上

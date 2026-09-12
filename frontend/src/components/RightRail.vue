@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf } from '../store'
+import { api, store, toast, jumpTo, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf,
+         paperEpoch, samePaper } from '../store'
 import { lineSpanOf, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import AskPanel from './AskPanel.vue'
@@ -84,16 +85,23 @@ async function loadSix() {
   Object.assign(six, { problem: null, why: null, next: null, lens: null })
   Object.keys(openSix).forEach(k => (openSix[k] = false))   // 换篇回到"只有问题"的样子
   if (!store.currentId) return
-  try { Object.assign(six, await api.sixAnswers(store.currentId)) } catch { /* 没缓存很正常 */ }
+  const mine = paperEpoch()
+  try {
+    const r = await api.sixAnswers(store.currentId)
+    if (!samePaper(mine)) return        // 回来时已经换篇：这是上一篇的答案
+    Object.assign(six, r)
+  } catch { /* 没缓存很正常 */ }
 }
 async function genSix(key) {
   if (sixBusy[key]) return
+  const mine = paperEpoch()
   sixBusy[key] = true
   try {
-    six[key] = await api.sixAnswer(store.currentId, key)
+    const r = await api.sixAnswer(store.currentId, key)
+    if (!samePaper(mine)) return        // 换篇了：别把这答案挂到新论文上
+    six[key] = r
     openSix[Q_OF[key]] = true
-  } catch (e) { toast(e.message) }
-  sixBusy[key] = false
+  } catch (e) { toast(e.message) } finally { sixBusy[key] = false }
 }
 // 「方法卡」是"怎么解决的"那条的加深版：点一下跳到速览页并顺手取回（没取过才取）
 function openMethod() {
@@ -267,10 +275,13 @@ const stepsShown = computed(() => {
   return mcMore.value ? all : all.slice(0, MC_STEPS)
 })
 async function genMethodCard() {
+  const mine = paperEpoch()
   mcBusy.value = true
-  try { methodCard.value = await api.methodCard(store.currentId) }
-  catch (e) { toast('生成失败：' + e.message) }
-  mcBusy.value = false
+  try {
+    const r = await api.methodCard(store.currentId)
+    if (!samePaper(mine)) return
+    methodCard.value = r
+  } catch (e) { toast('生成失败：' + e.message) } finally { mcBusy.value = false }
 }
 // 本文缩写：**只列还没收进术语表的**。收进去之后它就出现在下面那张表里了，
 // 同一对 en→zh 在同一屏里出现两次没有意义（反馈由 toast 负责）。
@@ -301,22 +312,27 @@ const advisor = ref([])
 const advBusy = ref(false)
 async function loadAdvisor() {
   if (advBusy.value || advisor.value.length) return
+  const mine = paperEpoch()
   advBusy.value = true
-  try { const r = await api.advisor(store.currentId); advisor.value = r.questions || [] }
-  catch (e) { toast('生成失败：' + e.message) }
-  advBusy.value = false
+  try {
+    const r = await api.advisor(store.currentId)
+    if (!samePaper(mine)) return
+    advisor.value = r.questions || []
+  } catch (e) { toast('生成失败：' + e.message) } finally { advBusy.value = false }
 }
 async function loadCachedBlocks() {
   if (!store.currentId) return
+  const mine = paperEpoch()
   if (!methodCard.value) {
     try {
       const r = await api.methodCard(store.currentId, true)
-      if (r?.goal) methodCard.value = r
+      if (samePaper(mine) && r?.goal) methodCard.value = r
     } catch { /* 没缓存很正常 */ }
   }
   if (!advisor.value.length && store.analysis.status === 'done') {
     try {
       const r = await api.advisor(store.currentId, true)
+      if (!samePaper(mine)) return
       advisor.value = r.questions || []
     } catch { /* 同上 */ }
   }
@@ -520,7 +536,9 @@ watch(() => store.currentId, () => {
             </div>
           </section>
 
-          <!-- 眉批的家在纸面页边：这里只给"它们在哪儿"和生成入口，不再复述内容 -->
+          <!-- 眉批的家在纸面页边：这里只给"它们在哪儿"和生成入口，不再复述内容。
+               状态是 error 时结果**还在**（失败不抹旧结果），所以这里说的是"这次的没成"，
+               不是"眉批没了"——别让用户以为页边那些批注也作废了。 -->
           <div class="blk" v-if="store.marginalia.status !== 'done'">
             <div class="blk-head">
               <span class="mono-label">眉批</span>
@@ -541,6 +559,17 @@ watch(() => store.currentId, () => {
                 <span class="blk-elapsed">{{ marginElapsed }}s</span>
               </div>
             </div>
+            <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
+              {{ store.marginalia.error }}
+            </p>
+          </div>
+          <!-- 完成了但有块没生成：页边少了一段，得说出来，否则用户以为那段没问题 -->
+          <div class="blk" v-else-if="store.marginalia.error">
+            <div class="blk-head">
+              <span class="mono-label">眉批</span>
+              <button class="blk-get" @click="emit('marginalia')">补齐</button>
+            </div>
+            <p class="blk-warn">{{ store.marginalia.error }}</p>
           </div>
         </template>
       </template>

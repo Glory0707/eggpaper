@@ -5,17 +5,22 @@ import { vDrag } from '../drag'
 
 const emit = defineEmits(['close', 'save'])
 
+/* 启动时 /api/settings 失败的话 store.settings 还是 null，而设置弹窗是随时可能被点开的——
+   以前这里直接读 null.provider 会抛异常，表现就是"点⚙没反应"（弹窗根本没渲染出来）。
+   兜一个默认值，让弹窗永远打得开：里面填的东西就算拿不到也会显示成空。 */
+const S = store.settings || { provider: {}, pdf2zh: {}, update: {} }
+
 const f = reactive({
-  base_url: store.settings.provider.base_url,
-  model: store.settings.provider.model,
+  base_url: (S.provider || {}).base_url || '',
+  model: (S.provider || {}).model || '',
   // 这一栏原来没初始化：表单读的是 undefined，于是**配置里明明有 vision_model，
   // 弹窗里也永远是空的**（看着像没保存上，重填一遍也填不进去）。
-  vision_model: store.settings.provider.vision_model || '',
-  api_key: store.settings.provider.key_masked || '',
-  mock: store.settings.mock,
-  service: store.settings.pdf2zh.service,
-  feed: store.settings.update?.feed_url || '',
-  auto_check: store.settings.update?.auto_check !== false,
+  vision_model: (S.provider || {}).vision_model || '',
+  api_key: (S.provider || {}).key_masked || '',
+  mock: !!S.mock,
+  service: (S.pdf2zh || {}).service || 'bing',
+  feed: (S.update || {}).feed_url || '',
+  auto_check: (S.update || {}).auto_check !== false,
   layers: { ...store.viewer.layers },
 })
 
