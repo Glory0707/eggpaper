@@ -78,6 +78,13 @@ function indexOf(root) {
   while ((node = walker.nextNode())) {
     const t = node.nodeValue || ''
     for (let i = 0; i < t.length; i++) {
+      // 连字必须先折开，跟 normText 一个口径：pdf.js 的文本层里 "scientiﬁc" 是一个字符，
+      // 不折的话它在索引里被整个丢掉，查 scientific / efficiency / flow 一律查不到
+      const lig = LIG[t[i].toLowerCase()]
+      if (lig) {
+        for (const ch of lig) { idx.norm += ch; idx.map.push(node, i) }
+        continue
+      }
       const c = t[i].toLowerCase()
       if (c.length === 1 && KEEP.test(c)) { idx.norm += c; idx.map.push(node, i) }
     }

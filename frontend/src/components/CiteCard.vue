@@ -86,9 +86,7 @@ async function copy(row) {
         <div class="cite-empty" v-if="!meta && !err">
           <div v-if="busy">正在认首页<span class="r-dots">…</span></div>
           <template v-else>
-            <div>参考文献要的作者、刊名、卷期页、DOI 就印在首页的刊头、页脚和页边水印上。
-              认一次（一次模型调用）存下来，之后各种格式都在本地排。</div>
-            <div style="margin-top:14px">
+            <div style="margin-top:2px">
               <button class="primary" @click="recognize">识别文献信息</button>
             </div>
           </template>

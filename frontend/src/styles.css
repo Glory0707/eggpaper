@@ -461,6 +461,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   background: rgba(255, 255, 255, 0.72); padding: 0 2px; border-radius: 2px;
   opacity: 0.9; pointer-events: none; white-space: nowrap; overflow: hidden;
 }
+/* 手选（"这段也要读"）之后那一行就是**撤销出口**：纱已经没了，不给它点击就没法退回来 */
+.para-tag.undo { pointer-events: auto; cursor: pointer; }
+.para-tag.undo:hover { color: var(--accent-deep); }
 
 /* 略读的蒙纱：悬停**掀开**这一块看一眼，点一下是「这段我也要读」。
    纱必须吃鼠标事件才掀得动——被纱盖住的本来就是"略过不读"的那批段落，

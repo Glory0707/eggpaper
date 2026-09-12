@@ -149,8 +149,7 @@ function save() {
           <option value="google">google（免费，国内多数网络连不通）</option>
           <option value="deepl">deepl（另需 DEEPL_AUTH_KEY 环境变量）</option>
         </select>
-        <div class="f-hint">开跑前先探一次；不通就自动换 bing，并告诉你换过了</div>
-      </div>
+        </div>
       <div class="f-row">
         <label class="mono-label">更新源（静态目录地址，留空不检查）</label>
         <input type="text" v-model="f.feed" placeholder="http://192.168.1.5:8440 或 https://…/eggpaper" />

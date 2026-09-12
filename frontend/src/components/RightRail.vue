@@ -64,8 +64,7 @@ function jumpNote(n) {
    段落角色退到幕后：页边书签、略读蒙纱、点段改判、跳转定位一律照旧，
    但"图例 + 计数"那块 UI 换成读者真正会问的六个问题。
    故意不把答案摊开：问题先出现，点哪条才展开哪条。
-   ①③④ 的正文是现成的（缺口段 / 主张链 / 局限段），一分钱不花；
-   ②⑤⑥ 要模型写一两句，走「获取」、按篇缓存。 */
+   六条答案都在**首次析读时一次写完**并按篇缓存，进这一页就有，不需要点任何按钮。 */
 const SIX = [
   { k: 'q1', n: 1, q: '要解决什么？' },
   { k: 'q2', n: 2, q: '为什么要解决？', gen: 'why' },
@@ -78,8 +77,6 @@ const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false
 function toggleSix(k) { openSix[k] = !openSix[k] }
 
 const six = reactive({ problem: null, why: null, next: null, lens: null })
-const sixBusy = reactive({ problem: false, why: false, next: false, lens: false })
-const Q_OF = { problem: 'q1', why: 'q2', next: 'q5', lens: 'q6' }
 /* 六问各自的"答没答出来"。免费的 ③④ 看骨架，①②⑤⑥ 看有没有取过。
    有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
 const sixHas = computed(() => ({
@@ -87,15 +84,6 @@ const sixHas = computed(() => ({
   q3: !!store.analysis.claims.length, q4: !!(limitParas.value.length + warnNotes.value.length),
   q5: !!six.next?.items?.length, q6: !!six.lens?.items?.length,
 }))
-const sixMissing = computed(() => ['problem', 'why', 'next', 'lens'].filter(k => !six[k]))
-// 六问一次补全：四条答案互不依赖，串行点四次不如一次发出去（各自的加载态还在自己那一问上）
-const sixAllBusy = ref(false)
-async function genSixAll() {
-  const keys = sixMissing.value
-  if (!keys.length || sixAllBusy.value) return
-  sixAllBusy.value = true
-  try { await Promise.all(keys.map(k => genSix(k))) } finally { sixAllBusy.value = false }
-}
 
 async function loadSix() {
   Object.assign(six, { problem: null, why: null, next: null, lens: null })
@@ -107,17 +95,6 @@ async function loadSix() {
     if (!samePaper(mine)) return        // 回来时已经换篇：这是上一篇的答案
     Object.assign(six, r)
   } catch { /* 没缓存很正常 */ }
-}
-async function genSix(key) {
-  if (sixBusy[key]) return
-  const mine = paperEpoch()
-  sixBusy[key] = true
-  try {
-    const r = await api.sixAnswer(store.currentId, key)
-    if (!samePaper(mine)) return        // 换篇了：别把这答案挂到新论文上
-    six[key] = r
-    openSix[Q_OF[key]] = true
-  } catch (e) { toast(e.message) } finally { sixBusy[key] = false }
 }
 // 「方法卡」是"怎么解决的"那条的加深版：点一下跳到速览页并顺手取回（没取过才取）
 function openMethod() {
@@ -488,14 +465,6 @@ watch(() => store.currentId, () => {
         <template v-else>
           <!-- 六个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
           <div class="six-head">
-            <span class="mono-num" v-if="store.analysis.status === 'done' && sixMissing.length">
-              {{ 6 - sixMissing.length }}/6 已有答案
-            </span>
-            <button v-if="store.analysis.status === 'done' && sixMissing.length > 1"
-                    class="six-allget" :disabled="sixAllBusy" title="把还没答案的几问一次取回来（各问各自的加载态）"
-                    @click="genSixAll">
-              {{ sixAllBusy ? '正在取…' : `补全其余 ${sixMissing.length} 问` }}
-            </button>
             <span v-if="store.readingPara" class="mono-num">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
           </div>
 
@@ -515,17 +484,13 @@ watch(() => store.currentId, () => {
                    标在句尾（原文在纸上，点 ¶ 就到，不必在这里再抄一遍）。 -->
               <template v-if="s.k === 'q1'">
                 <MdLite v-if="six.problem?.text" class="six-txt" :text="six.problem.text" @cite="jumpPara" />
-                <button v-else class="six-get" :disabled="sixBusy.problem" @click="genSix('problem')">
-                  {{ sixBusy.problem ? '正在想' : '获取' }}
-                </button>
+                <div v-else class="six-note">未生成</div>
               </template>
 
-              <!-- ② 为什么要解决：生成一句（含依据段号），点右侧获取 -->
+              <!-- ② 为什么要解决：析读时已经写好（含依据段号） -->
               <template v-else-if="s.k === 'q2'">
                 <MdLite v-if="six.why?.text" class="six-txt" :text="six.why.text" @cite="jumpPara" />
-                <button v-else class="six-get" :disabled="sixBusy.why" @click="genSix('why')">
-                  {{ sixBusy.why ? '正在想' : '获取' }}
-                </button>
+                <div v-else class="six-note">未生成</div>
               </template>
 
               <!-- ③ 怎么解决的：主张 → 证据链 -->
@@ -580,10 +545,7 @@ watch(() => store.currentId, () => {
                   <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
-                <button v-if="!six[s.gen]?.items?.length" class="six-get"
-                        :disabled="sixBusy[s.gen]" @click="genSix(s.gen)">
-                  {{ sixBusy[s.gen] ? '正在想' : '获取' }}
-                </button>
+                <div v-if="!six[s.gen]?.items?.length" class="six-note">未生成</div>
               </template>
             </div>
              </div>
@@ -708,10 +670,6 @@ watch(() => store.currentId, () => {
               <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ prettyChem(o) }}</li></ul>
             </div>
           </div>
-          <!-- 没算过 vs 算不了是两件事：已析读的论文上不能说"先析读全文" -->
-          <div v-else-if="store.analysis.status === 'done'" class="six-note">
-            还没算过 · 点右上「获取」（问作者没承认的那一层）。
-          </div>
           <div v-else class="six-note">先析读，才有主张和薄弱点可问。</div>
         </div>
 
@@ -749,7 +707,7 @@ watch(() => store.currentId, () => {
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
-          <button class="t-go" title="在论文里找这个词（跳过去、并高亮命中）" @click="findTerm(t.term_en)">文中</button>
+          <button class="t-go" title="在论文里找这个词（跳过去、并高亮命中）" @click="findTerm(t.term_en)">↗</button>
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>

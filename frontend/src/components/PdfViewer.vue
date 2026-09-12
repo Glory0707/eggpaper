@@ -116,10 +116,6 @@ function onVeilClick(e, idx) {
   if (window.getSelection()?.isCollapsed === false) return
   toggleKeep(idx)
 }
-function clearKeep() {
-  skimKeep.value = new Set()
-  try { localStorage.removeItem(LS_KEEP + store.currentId) } catch { /* 同上 */ }
-}
 /* 有「值得读 / 要当心」批注的段落不蒙。模型自己在那一段插了句话，说明那儿有东西要看——
    把整段蒙掉等于把刚写下的提醒一起藏起来。略读该略的是没有信息量的铺垫，
    不是**有批注的段**。（"你写的"那两条不算：那是你自己划的，你记得住。） */
@@ -133,22 +129,23 @@ const protectedIdx = computed(() => {
   }
   return s
 })
+/* 蒙纱按**行**画，不按段落外接框。段落框是整段的外接矩形：段里插了图/表就一起盖住
+   （用户报的"蒙在图上"），而段末最后一行短、框却按最长行给宽，看着就是"错位"。
+   行级坐标本来就有（页边划线用的同一份），直接拿来用。 */
+function veilBoxes(p) {
+  const s = scale.value
+  const ls = p.lines?.length ? p.lines : null
+  if (!ls) return [rectStyle(p)]
+  return ls.map(l => ({
+    left: l.bbox.x0 * s + 'px', top: l.bbox.y0 * s + 'px',
+    width: (l.bbox.x1 - l.bbox.x0) * s + 'px', height: (l.bbox.y1 - l.bbox.y0) * s + 'px',
+  }))
+}
 // 此刻被蒙掉吗：略读开着 + 判过角色 + 不是核心 + 读者没手动留下 + 段上没有批注
 function veiled(p, pno) {
   return store.viewer.layers.skim && pno >= 0 && !!roleOf(p) && !isCore(p)
     && !kept(p.idx) && !protectedIdx.value.has(p.idx)
 }
-const skimStats = computed(() => {
-  let keepN = 0, skipN = 0, unknown = 0, mine = 0, byNote = 0
-  for (const p of store.paras) {
-    if (isCore(p)) { keepN++; continue }
-    if (kept(p.idx)) { keepN++; mine++; continue }
-    if (protectedIdx.value.has(p.idx)) { keepN++; byNote++; continue }
-    if (!roleOf(p)) { unknown++; continue }
-    skipN++
-  }
-  return { kept: keepN, skipped: skipN, unknown, mine, byNote }
-})
 // 纸边那行小字：说清"为什么留下了这一段"——角色名 / 你要读 / 有眉批
 function roleTag(p) {
   if (kept(p.idx) && !isCore(p)) return '你要读'
@@ -1281,12 +1278,15 @@ watch(() => store.marginalia.notes, (n, o) => {
             <div class="para-zone">
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
                 <!-- 蒙掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
-                <div v-if="veiled(p, it.origPage)"
-                     class="para-fade veil"
-                     :title="`略读把这一段蒙掉了（判为「${roleTag(p)}」）· 点一下：这段也要读`"
-                     :style="{ ...rectStyle(p), animationDelay: Math.min(400, pi * 12) + 'ms' }"
-                     @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
-                     @click="onVeilClick($event, p.idx)"></div>
+                <template v-if="veiled(p, it.origPage)">
+                  <div v-for="(vb, vi) in veilBoxes(p)" :key="'v' + vi"
+                       class="para-fade veil"
+                       :title="vi ? '' : `略读把这一段蒙掉了（判为「${roleTag(p)}」）· 点一下：这段也要读`"
+                       :style="{ left: vb.left, top: vb.top, width: vb.width, height: vb.height,
+                                 animationDelay: Math.min(400, pi * 12 + vi * 8) + 'ms' }"
+                       @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
+                       @click="onVeilClick($event, p.idx)"></div>
+                </template>
                 <!-- 留下来的段落：左侧一道芯线 + 一行角色名，说清"为什么留它"。
                      受保护的段（有值得读/要当心批注）也算"留下来"，它同样需要那个记号，
                      否则纸上跟"压根没判过角色"的段落长得一模一样。 -->
@@ -1296,9 +1296,11 @@ watch(() => store.marginalia.notes, (n, o) => {
                        :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"></div>
                   <!-- 标签写在纸**内**、贴着段落文字起点的左侧：纸外那点空白只有 ~25px
                        （适宽模式下纸正好占满书桌），写在纸外会被滚动容器裁掉半个字 -->
-                  <span class="para-tag"
+                  <span class="para-tag" :class="{ undo: kept(p.idx) }"
+                        :title="kept(p.idx) ? '点一下：不特别留这一段了' : ''"
                         :style="{ top: p.bbox.y0 * scale + 'px',
-                                  left: Math.max(2, p.bbox.x0 * scale - 58) + 'px' }">{{ roleTag(p) }}</span>
+                                  left: Math.max(2, p.bbox.x0 * scale - 58) + 'px' }"
+                        @click.stop="kept(p.idx) && toggleKeep(p.idx)">{{ roleTag(p) }}</span>
                 </template>
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
               </template>
@@ -1414,26 +1416,6 @@ watch(() => store.marginalia.notes, (n, o) => {
     <Transition name="pop">
     <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
       <button @click="store.viewer.frame = false">退出框选</button>
-    </div>
-    </Transition>
-
-    <!-- 略读的状态行：略读是按段落角色蒙纱，读者得知道它蒙了几段、留了几段、
-         还有几段根本没判过；判错了怎么扳回来也写在这里。没析读时它直说"判不了"，
-         而不是默默什么都不做（那看起来就是"略读坏了"）。 -->
-    <Transition name="fade">
-    <div v-if="ready && store.viewer.layers.skim" class="desk-float skim-hud" :style="{ left: midX + 'px' }">
-      <template v-if="store.analysis.status === 'done'">
-        <span>保留 <b class="mono-num">{{ skimStats.kept }}</b> 段 · 略去 <b class="mono-num">{{ skimStats.skipped }}</b> 段</span>
-        <span v-if="skimStats.byNote" class="sh-note"
-              title="这些段上有「值得读 / 要当心」的眉批——有批注的段不蒙，否则刚写的提醒会被一起藏起来">含 {{ skimStats.byNote }} 段有眉批</span>
-        <span v-if="skimStats.unknown" class="sh-warn"
-              title="这些段没有角色（析读没判到，或你手工改判过），按原文显示，不会被蒙掉">未判 {{ skimStats.unknown }} 段</span>
-        <button v-if="skimStats.mine" title="取消你手选的「这段也要读」" @click="clearKeep">手选 {{ skimStats.mine }} 段 ✕</button>
-        <span class="sh-tip">点蒙掉的段 = 这段也要读</span>
-      </template>
-      <span v-else-if="!store.paras.length">这份 PDF 没有文字层（扫描件），略读用不了</span>
-      <span v-else>略读要按角色蒙纱，先点顶栏「析读」</span>
-      <button @click="store.viewer.layers.skim = false">退出略读</button>
     </div>
     </Transition>
 

@@ -8,6 +8,8 @@ import time
 from urllib.parse import urlparse
 
 import uvicorn
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -100,14 +102,25 @@ def _sweep_orphan_translations():
         names = os.listdir(TRANSLATED_DIR)
     except OSError:
         return
+    # 判"归谁"的钥匙统一成**库文件名的主干**（不含 -dual/-mono）。
+    # 这里原来是两套口径：从 dual_path 收集时用完整名（`<pid>-dual`），
+    # 而遍历文件时用去掉后缀的主干（`<pid>`）——两边永远对不上，于是**每次启动都把
+    # 已经译好的 PDF 删掉**（用户看到的是"双语版打不开，已切回原文"）。
+    def stem_of(fn):
+        fn = os.path.basename(fn or "")
+        for suf in ("-dual.pdf", "-mono.pdf"):
+            if fn.endswith(suf):
+                return fn[:-len(suf)]
+        return os.path.splitext(fn)[0]
+
     stems = set()
     for row in db.list_papers():
         p = db.get_paper(row["id"]) or {}
-        p2 = p.get("dual_path") or ""
-        if p2 and os.path.exists(p2):
-            stems.add(os.path.splitext(os.path.basename(p2))[0])
-            continue
-        stem = os.path.splitext(os.path.basename(p.get("path") or ""))[0]
+        for key in ("dual_path", "mono_path"):
+            fp = p.get(key) or ""
+            if fp and os.path.exists(fp):
+                stems.add(stem_of(fp))
+        stem = stem_of(p.get("path"))
         if stem and (stem + "-dual.pdf") in names:
             stems.add(stem)          # 还没落库但确实属于这篇
     n = 0
@@ -545,6 +558,24 @@ def _run_analysis(pid: str, paras: list):
         db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
                         abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
+        # 六问剩下的三条在**首次析读时一次备齐**：读者点开"为什么 / 还能做什么 / 换个学科"
+        # 的时候不该再等一次模型调用，界面上也就不需要那个「获取」按钮了。
+        # 三条互不依赖 → 并行跑；单条失败只记一行日志，绝不让整次析读陪葬
+        # （那一问留空，重新析读会再来一次）。
+        p2 = db.get_paper(pid)
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futs = {ex.submit(_mock_six, k) if _demo_mode() else ex.submit(_gen_six, p2, k): k
+                    for k in ("why", "next", "lens")}
+            for fut in as_completed(futs):
+                k = futs[fut]
+                try:
+                    got = fut.result()
+                    if got.get("text") or got.get("items"):
+                        db.answer_put(pid, k, got)
+                    else:
+                        print(f"[eggpaper] 六问·{k} 这次是空的")
+                except Exception as e:
+                    print(f"[eggpaper] 六问·{k} 没生成：{_human_msg(e)}")
     except Exception as e:
         # 人话 + **不清空**已有结果：一次限流不该让上次读出来的骨架陪葬
         db.fail_analysis(pid, _human_msg(e))
