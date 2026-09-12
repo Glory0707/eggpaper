@@ -610,7 +610,6 @@ def mock_marginalia(paras: list) -> list:
 
 
 def mock_analyze(paras: list) -> dict:
-    import db as gdb
     roles, purposes = {}, {}
     claim_idx = []
     for p in paras:

@@ -10,7 +10,7 @@
  *   ② 「稍后」永远在。只有更新源里写了 min_version 且当前版本低于它时（协议不兼容
  *      那种）才不给推迟——那是必须升的。
  */
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { api, store, toast } from '../store'
 
 const d = computed(() => store.update)

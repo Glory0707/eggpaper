@@ -146,8 +146,7 @@ body {
 @keyframes slideLIn { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
 
 /* ---------- 排版原子 ---------- */
-/* 标签：正常字体 + 一点字距。以前这里用等宽大写，一屏几十个小灰字全在
-   抢注意力，是「繁杂」的主要来源——等宽现在只管编号和代码位 */
+/* 标签：正常字体 + 一点字距。等宽大写一屏几十个会抢注意力（等宽只留给编号与代码位） */
 .mono-label {
   font-family: var(--sans);
   font-size: var(--fs-xs);
@@ -440,9 +439,8 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   position: absolute; background: var(--veil);
   transition: opacity 260ms var(--ease-smooth);
 }
-/* 跳转/查找"标出这一段"：以前**没有** .hot 的样式，于是它套用的是 .para-fade 的白纱——
-   跳过去不是亮一下，而是把要找的那一段擦白（越找越找不着）。现在是一层强调色：
-   入场快、停留、退场慢（1.6s 后开始淡出），眼睛有落在那句上的时间。 */
+/* 跳转/查找"标出这一段"：一层强调色，入场快、停留、退场慢（1.6s 后开始淡出）。
+   没有这个 .hot 样式时它会套用 .para-fade 的 86% 白纱——那不是标出，是把要找的那段擦白。 */
 .para-fade.hot {
   background: rgba(29, 78, 95, 0.16);
   animation: flashIn 180ms var(--ease-out), flashOut 520ms var(--ease-smooth) 1.6s forwards;

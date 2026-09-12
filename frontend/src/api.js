@@ -116,9 +116,8 @@ function sseStream(url, body, onEvent) {
         if (!line) continue
         let ev
         try { ev = JSON.parse(line) } catch { continue }   // 半帧/心跳：解不出来就跳过
-        // onEvent 必须在 try **外面**调：翻译那条路收到 error 事件时会 throw
-        // （用来让 done 拒绝、弹出错误），而这个 throw 以前正好被上面那个空 catch 吞掉了——
-        // 结果是"半截译文被当成成品钉在页边，报错一个字都没说"。
+        // onEvent 必须在 try **外面**调：翻译那条路靠收到 error 事件时 throw 来让 done 拒绝，
+        // 被空 catch 吞掉就会"半截译文当成成品钉在页边，一句错都没报"。
         onEvent(ev)
       }
     }

@@ -253,8 +253,8 @@ watch(tab, t => {
   if (t === 'ask') loadSuggest()
   if (t === 'eye') { loadFigures(); loadCachedBlocks() }
 })
-// 重算析读 / 重写眉批之后，服务端把由主张派生的缓存都作废了，前端手里那份也得跟着丢，
-// 否则一眼卡还是旧的、方法卡还是旧的、三问还在问一句已经删掉的"有坑"。
+// 重算析读 / 重写眉批后，服务端作废了由主张派生的缓存，前端那份也得跟着丢，否则
+// 一眼卡、方法卡还是旧的，三问还在问一句已经删掉的"有坑"。
 watch(() => store.analysis.status, s => {
   if (s !== 'done') return
   methodCard.value = null; advisor.value = []; suggest.value = []
@@ -421,17 +421,15 @@ const termsFiltered = computed(() => {
   if (!f) return list
   return list.filter(t => t.term_en.toLowerCase().includes(f) || t.term_zh.includes(f))
 })
-// 「文中」：把术语和原文连起来——搜索框预填这个英文词，第一条命中直接跳过去。
-// 从前术语表是个孤岛：知道译法，却没法回原文看它到底怎么用的。
+// 「文中」：术语表 → 原文。预填这个英文词，跳到第一条命中。
 function findTerm(en) {
   if (!en) return
   store.viewerApi?.findInPaper(en)
   toast(`在文中找「${en}」`)
 }
 
-/* 换篇：所有"按篇"的东西都要清干净。不清的症状是上一章的方法卡、导师三问、
-   图表缩略图、推荐问题在新论文上继续摆着——而这些还都带 `if (已有) return` 的守卫，
-   意味着它们**永远不会**被换成新论文的（比闪一下更难发现）。 */
+/* 换篇：所有"按篇"的东西都要清干净——它们都带 `if (已有) return` 守卫，不清就会
+   **永远**留在新论文上（比闪一下更难发现）。 */
 watch(() => store.currentId, () => {
   tab.value = 'skeleton'
   methodCard.value = null
@@ -475,12 +473,12 @@ watch(() => store.currentId, () => {
         <!-- 没析读时只陈述状态：顶栏那颗「析读」就在上面，同一屏里放第二个同名按钮是重复 -->
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? '还没有析读——顶栏「析读」读完全文，才有这六个问题的答案。' : '这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但这六个问题答不了。' }}
+            {{ store.paras.length ? '还没析读：读完全文才有这六个问题的答案。' : '这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这六问答不了。' }}
           </div>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">这份 PDF 没有可提取的文字层（多半是扫描件）。原文照样能读，图表也能框选问 AI，但这六个问题答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图可以看。</span></div>
+          <div class="r-note">这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这六问答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图。</span></div>
         </template>
 
         <template v-else>
@@ -567,7 +565,7 @@ watch(() => store.currentId, () => {
                   </span>
                 </div>
                 <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
-                  作者没有明说局限，眉批里也没有标出可疑之处。
+                  作者没明说局限，眉批也没标出可疑之处。
                 </div>
               </template>
 
@@ -616,13 +614,13 @@ watch(() => store.currentId, () => {
                  "只看要当心"是读者的第一个念头；关掉的档位在纸上和页边同时消失。 -->
             <div class="band-bar" v-if="mnotes.length">
               <button v-for="b in BANDS" :key="b.k" class="band-chip" :class="{ off: !bandOn(b.k) }"
-                      :title="bandOn(b.k) ? `纸面上显示「${b.zh}」（点一下收起）` : `「${b.zh}」现在收起了（点一下显示）`"
+                      :title="bandOn(b.k) ? `纸面上显示「${b.zh}」` : `「${b.zh}」已收起`"
                       @click="toggleBand(b.k)">
                 <i class="bdot" :style="{ background: b.color }"></i>{{ b.zh }}<span class="n">{{ bandCount[b.k] }}</span>
               </button>
             </div>
             <div class="band-alloff" v-if="mnotes.length && !bandAny">
-              四档都收起了，纸面上没有批注 ·
+              四档都收起：纸面上没有批注 ·
               <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true, mine: true }">全开</button>
             </div>
             <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
@@ -671,7 +669,7 @@ watch(() => store.currentId, () => {
           <div class="blk-head">
             <span class="mono-label">方法卡</span>
             <button v-if="!methodCard?.goal && !mcBusy" class="blk-get" @click="genMethodCard"
-                    title="把方法整理成可复现的 protocol">获取</button>
+                    title="整理成可复现的步骤">获取</button>
             <span v-else-if="mcBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
           </div>
           <div class="card-eye" v-if="methodCard?.goal">
@@ -706,12 +704,11 @@ watch(() => store.currentId, () => {
               <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ prettyChem(o) }}</li></ul>
             </div>
           </div>
-          <!-- 没算过 vs 算不了：这是两件事。以前两者共用一句"先析读全文"，
-               已经析读过的论文上就这么明晃晃地显示着一句和事实相反的话。 -->
+          <!-- 没算过 vs 算不了是两件事：已析读的论文上不能说"先析读全文" -->
           <div v-else-if="store.analysis.status === 'done'" class="six-note">
-            还没算过——点右上「获取」，会问到作者没承认的那一层。
+            还没算过 · 点右上「获取」（问作者没承认的那一层）。
           </div>
-          <div v-else class="six-note">先析读全文，才有主张和薄弱点可以问。</div>
+          <div v-else class="six-note">先析读，才有主张和薄弱点可问。</div>
         </div>
 
         <!-- 导出 -->
@@ -756,9 +753,8 @@ watch(() => store.currentId, () => {
       </Transition>
 
       <!-- ============ 提问 ============ -->
-      <!-- 常驻不卸载：切去看原文时，正在生成的回答不该被掐掉。unmount 会 abort 掉这条流，
-           服务端因此不写回答行——库里的症状就是"只有问题、没有回答"。
-           所以改成显示/隐藏，在 rbody 上盖一层。 -->
+      <!-- 常驻不卸载：切走时 unmount 会 abort 这条流，服务端因此不写回答行
+           （库里只剩问题、没有回答）。改成显示/隐藏，在 rbody 上盖一层。 -->
       <div class="ask-layer" v-show="tab === 'ask'">
         <AskPanel :quick="quickList" />
       </div>

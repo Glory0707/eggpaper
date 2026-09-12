@@ -20,7 +20,6 @@ from ctypes import wintypes
 import json
 import os
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -77,7 +76,6 @@ def start_tray(url: str, port: int, log) -> bool:
     "后台服务"只能进设置里点，或者去任务管理器。"""
     try:
         import pystray
-        from PIL import Image, ImageDraw
     except ImportError as e:
         log(f"托盘不可用（{e}）")
         return False

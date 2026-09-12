@@ -1592,3 +1592,38 @@ ICO（Shell 缓存），独立窗口/任务栏走**页面声明的 favicon**（E
 **回归**：`_qa/test_polish.py`（22 条断言全绿，含 4 条"前置守卫"，元素找不到就报错而不是空转）；
 `_qa/tour.py`（逐屏截图，人眼复看）。跑之前把 fixture 里 ¶2 上那条批注改成「值得读」档，
 好让"有眉批的段不蒙"这条规则在 fixture 上真的能被验证（否则那一段的批注是 noise 档，规则合法地不触发）。
+
+## M4.22 · 冗余清理：死代码 / 冗余文件 / 过时说明 / 界面文案 ✅ 已完成（2026-09-12）
+
+> 用户："删除和更新整个系统的冗余代码、冗余无用文件、文件中的无用说明、删除前端所有界面的冗余文案
+> （尽可能简洁）（不要影响或降级功能、能使效率和速度更快更好）"
+
+**先量化再动手**：写了两个审计脚本（`_qa/audit_dead.py`、`_qa/audit_fe_exports.py`）——
+Python 侧查未使用 import 与"全仓库只出现一次"的模块级定义；前端侧查没人调用的 api 方法、
+没人 import 的导出、组件里 import 了却没用的名字、以及 CSS 里任何模板/脚本都没出现过的类名。
+结论出乎意料，先摆出来：**代码本身几乎不脏**——801 处 CSS 类名引用里没有一个是从没用过的
+（只有 `.b-good/.b-warn/.b-note/.b-mine` 这类动态拼的误报），前端导出也全都在用。
+所以"删死代码"只删到 7 处，真正占地方的是**注释体积**和**工作区里的历史垃圾**。
+
+| 类别 | 删了什么 | 依据 |
+|---|---|---|
+| 死代码（7 处） | `backend/mark.py::bars_for()`（它自己的 docstring 还写着"check_icon 与旧调用方还在问"，而那个调用方早没了）、`llm.py` 里 `mock_analyze` 的 `import db as gdb`、`window.py` 的 `sys`、`desktop.py` 的 `subprocess` 与 `from PIL import Image, ImageDraw`、`make_icon.py` 的 `ImageDraw`、`serve_update.py` 的 `sys`、`UpdateCard.vue` 的 `watch` | 逐条 grep 复验"是否真的一次都没被用到"，不是看名字猜 |
+| 死逻辑（2 行） | `store.js` 里清 `data-skin` / `layers.skeleton` 的两句：皮肤与页边角色书签两版前就删了，全仓库没有任何地方读这两个值 | 迁移代码的唯一价值是"给旧数据擦屁股"；已经没有任何读者 |
+| 过时说明 | 上一轮图标定稿后 `docs/icon.md` 第二节还写着 7 个早就不存在的比例常量（`RATIO/MARGIN/BARS_BY_SIZE`）；`mark.py` 里残留的"垫成蛋形"口径 → 全部按现状重写 | 说明与代码不一致 = 下一个读的人被带沟里 |
+| 注释瘦身 | 把"当年怎么错的 + 我自己的经历 + 症状复述"压成一句"删了会怎样"：main.py 10 处、update.py 2 处、translate_full.py 3 处、db.py 1 处，前端 17 处（store/api/find/App/PdfViewer/RightRail/AskPanel/SettingsModal/styles.css） | 保留的是**约束**（删掉就会回归的坑），去掉的是**叙述** |
+| 界面文案 | 40 来处：toast 里的客套与括号注释、"先析读全文才有…"这类绕句、tooltip 里重复可见标签、更新卡与设置里的长句；规则是"信息不减，字数减半" | 例：`初始化失败：…（后台服务可能刚起来或被打断，稍等片刻会自动恢复）` → `（后台可能刚起来，稍后会自动恢复）` |
+| 工作区垃圾 | `_qa/` 里被后续脚本取代的一次性探针与旧截图：60+ 个文件 → 30 个，138 MB → 30 MB（`feed/` 里那个 32 MB 的旧测试安装包、`verify_*`/`probe_*`/`shoot*`/`zoom_*`/`audit_deadcode2` 之类）；三个 `__pycache__`、仓库根的 `_backend.log`/`_backend.err.log`/`_vite.log` | 只删**我自己的**临时产物；`docs/作者手记.md`、`_qa/fa-data`（回归用的 fixture）、`_qa/test_*.py`（回归套件，docs 里点名引用）一律不动 |
+
+**没删但要说清的**：`build/`（PyInstaller 的 work/dist 缓存，重装包要用，删了只是让下次构建更慢）、
+`.build-venv/`（构建环境）、`installer/eggpaper.ico` 与 `png`（构建时由 `tools/make_icon.py` 重新生成）。
+这些都已在 `.gitignore` 里，不是仓库内容。
+
+**回归与体积**：
+- `_qa/test_api_smoke.py`（22 条路径真打、12 组断言）全绿；
+- `_qa/test_polish.py`（24 条断言）全绿；
+- `npm run build` 干净通过（无模板/语法错误），产物 `index.css` 189.47 kB → gzip 47.55 kB、
+  `index.js` 568.25 kB → gzip 182.35 kB，与清理前同量级——**因为本来就没有死代码可删**：
+  界面速度的瓶颈从来不在这些字节上，而在请求与重排（那是 M4.21 的事）。
+
+**一句留给下一个人的话**：这个仓库的注释密度是刻意的（每条"为什么"都对应一次踩坑）。
+清理的判据不是"注释多不多"，而是"这条说明里的约束还成立吗"——成立的留，不成立的删。

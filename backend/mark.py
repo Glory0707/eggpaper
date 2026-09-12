@@ -46,11 +46,6 @@ def gap_floor(px: float) -> float:
     return max(GAP_MIN, min(px * GAP_MIN_RATIO, 3.0))
 
 
-def bars_for(px: float, inner_h: float = 0.0) -> int:
-    """条数恒定是三条（见模块头）。留着这个函数是因为 check_icon 与旧调用方还在问。"""
-    return len(BARS)
-
-
 def layout(px: float) -> dict:
     """算出这枚标记在 px 像素画布上的几何（单位就是像素）。
 

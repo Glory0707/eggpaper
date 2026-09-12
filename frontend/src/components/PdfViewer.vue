@@ -220,9 +220,8 @@ async function load({ keepPlace = false } = {}) {
   try {
     await buildSheets()
   } catch (e) {
-    // 译文/双语取不到（这篇还没译、译文文件被删、翻译中途失败）：**退回原文**并说人话。
-    // 以前是直接停在空白纸面上——纸面一个页面都没有、两个按钮还是"选中且禁用"的状态，
-    // 用户只能自己猜到要回去点「原文」，而弹出的还是 pdf.js 那句 Missing PDF 黑话。
+    // 译文/双语取不到（还没译、译文文件被删、翻译中途失败）：**退回原文**并说人话——
+    // 停在空白纸面上时，用户只能自己猜到要回去点「原文」。
     if (store.viewer.variant !== 'original') {
       const was = store.viewer.variant
       store.viewer.variant = 'original'      // 赋值会触发 watch → 重新 load
@@ -521,9 +520,8 @@ function notesOnPage(pno) { return pageLayouts.value[pno]?.notes || [] }
 // 一条引文落到哪几行——用段落自带的行级坐标算，不依赖渲染，页边排序和跳转都用它
 // （缓存放组件里，不往 store 的批注对象上挂字段：那是数据，别被排布逻辑污染）
 const spanCache = new Map()
-/* 卡片上显示的、纸上划的，必须是**同一句话**。
-   模型引的半句先用段落原文补成整句（sentenceAround），补不出来就退回原引文。
-   这一步以前没有，于是纸上只有半道线、卡片上是半句话，两边都让人犯嘀咕。 */
+/* 卡片上显示的、纸上划的，必须是**同一句话**：模型引的半句先用段落原文补成整句
+   （sentenceAround），补不出来才退回原引文。 */
 const anchorCache = new Map()
 function anchorText(n) {
   if (!n) return ''
@@ -593,9 +591,8 @@ function kindLabel(n) {
    不硬切：切口带省略号，而且有明确的展开出口——页边只有 154px 宽，
    一条 200 字的引文全铺出来会把整页的批注挤下去。 */
 const openQuote = ref(null)
-// 摊开全句：卡片会变高，必须**跟着重新排版**——页边是按"上一条的下沿 + 8px"往下摆的，
-// 不重量一次，下面的卡就不会让位，展开的引文会被它们盖住（用户报的就是这个）。
-// 量两次：一次在 DOM 更新后，一次等字折行/滚动条落定之后。
+// 摊开全句：卡片会变高，必须**跟着重新排版**（页边按"上一条下沿 + 8px"往下摆，
+// 不重量一次，下面的卡不会让位、展开的引文会被盖住）。量两次：DOM 更新后 + 折行落定后。
 function toggleQuote(n) {
   openQuote.value = openQuote.value === n.id ? null : n.id
   measureNotes()
@@ -979,7 +976,7 @@ function step(dir) {
 
 async function translateCurrent() {
   if (store.readingPara) await translateParaAndPin(store.readingPara)
-  else toast('滚动一下，告诉我你在读哪段')
+  else toast('先滚动到要译的段落')
 }
 
 store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }

@@ -20,7 +20,6 @@ import http.server
 import os
 import socket
 import subprocess
-import sys
 import threading
 import urllib.request
 

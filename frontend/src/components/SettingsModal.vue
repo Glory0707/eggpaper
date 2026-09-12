@@ -5,9 +5,8 @@ import { vDrag } from '../drag'
 
 const emit = defineEmits(['close', 'save'])
 
-/* 启动时 /api/settings 失败的话 store.settings 还是 null，而设置弹窗是随时可能被点开的——
-   以前这里直接读 null.provider 会抛异常，表现就是"点⚙没反应"（弹窗根本没渲染出来）。
-   兜一个默认值，让弹窗永远打得开：里面填的东西就算拿不到也会显示成空。 */
+/* store.settings 可能是 null（启动时 /api/settings 还没回来或失败），而弹窗随时会被点开：
+   兜一个默认值，让弹窗永远打得开——读不到就显示成空。 */
 const S = store.settings || { provider: {}, pdf2zh: {}, update: {} }
 
 const f = reactive({
@@ -150,7 +149,7 @@ function save() {
           <option value="google">google（免费，国内多数网络连不通）</option>
           <option value="deepl">deepl（另需 DEEPL_AUTH_KEY 环境变量）</option>
         </select>
-        <div class="f-hint">连不通的服务不会傻等：开跑前先探一次，不通就自动换 bing 并告诉你换过了</div>
+        <div class="f-hint">开跑前先探一次；不通就自动换 bing，并告诉你换过了</div>
       </div>
       <div class="f-row">
         <label class="mono-label">更新源（静态目录地址，留空不检查）</label>

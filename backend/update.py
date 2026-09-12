@@ -121,8 +121,8 @@ def download(url: str, sha256: str = "", size: int = 0):
                     h.update(chunk)
                     got += len(chunk)
                     _set(got=got, total=total, pct=round(got * 100 / total) if total else 0)
-        # 没有 sha256 就不认：以前 `if sha256 and ...` 在发布方漏写 sha256（或旧格式的
-        # latest.json）时**整段跳过**，等于没有任何校验——一个被改动过的包会被直接标成 ready。
+        # 没有 sha256 就不认：写成 `if sha256 and ...` 的话，发布方漏写 sha256（或旧格式
+        # latest.json）时整段校验被跳过，一个被改动过的包会被直接标成 ready。
         if not sha256:
             os.remove(out)
             _set(state="error", error="更新源没给 sha256，无法校验完整性（发布方需要补上这一项）")
@@ -149,10 +149,9 @@ def install(path: str) -> bool:
     旧版本（我们的 exe 会被关掉，这正是我们要的）；/RESTARTAPPLICATIONS 装完再拉起来。
     这里用 Popen 而不是等它跑完——安装器要替换的正是当前这个进程占着的文件。
 
-    **只接受刚下载到那个临时目录里的文件**：这个接口是本机无鉴权的（127.0.0.1 + 任意网页
-    都能 POST），以前直接把调用方给的 path 交给 Popen——等于"用 eggpaper 的名义执行任意
-    本机程序"，而且不管什么模式都会在 1.2 秒后把服务自己杀掉。现在路径必须落在下载目录里、
-    且必须是 .exe；开发模式（源码）只提示不自杀。
+    **只接受刚下载到那个临时目录里的 .exe**：这个接口本机无鉴权（127.0.0.1 + 任意网页都能
+    POST），把调用方给的 path 交给 Popen 等于"以 eggpaper 的名义执行任意本机程序"。开发模式
+    （源码）只提示不自杀。
     """
     if not path:
         return False

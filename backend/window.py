@@ -25,7 +25,6 @@ favicon 那一侧我们仍按每档 DPI 的精确尺寸给足原图（见 `tools
 """
 import os
 import subprocess
-import sys
 import threading
 import time
 import traceback

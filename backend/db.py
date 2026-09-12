@@ -244,9 +244,9 @@ def set_paper_collections(pid: str, cids: list):
 def replace_paragraphs(pid: str, paras: list):
     """整篇替换段落。**删与插必须在同一个事务里**。
 
-    以前是先 commit 删除、再另起一次 commit 插入——中间有一个真实的"这篇 0 段"窗口，
-    并发的读者会看到它：`GET /paragraphs` 的惰性回填、`_run_marginalia` 取语料都可能
-    落在这个窗口里，最坏的后果是拿空语料算眉批、然后以"成功"把整页批注覆盖掉。
+    先 commit 删除、再另起一次 commit 插入的话，中间有一个真实的"这篇 0 段"窗口：
+    `GET /paragraphs` 的惰性回填、`_run_marginalia` 取语料都可能落进去，最坏是拿空语料
+    算眉批并以"成功"把整页批注覆盖掉。
     """
     with _lock:
         c = _get()

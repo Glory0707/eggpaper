@@ -13,13 +13,12 @@
    所以开跑前先做一次 TCP 预检（2.5 秒），不通就当场换服务或者报错，别让它静默挂着。
 
 3. **pdf2zh 的进度只在 stdout**。它用 tqdm 打 `11%|██ | 2/18 [00:07<00:57]`，
-   以前是 subprocess.run(capture_output=True)，等于全程黑箱——用户看不到任何东西。
-   现在改成 Popen 逐行读：页进度报给前端，同一份也写进 app.log。
-   （顺带：管道里的 tqdm 每个进度是一条独立行，不是 \r 刷屏，正好逐行解析。）
+   用 Popen 逐行读 stdout：页进度报给前端并写进 app.log（管道里的 tqdm 每条进度是独立行，
+   不是 \r 刷屏，正好逐行解析）。capture_output 那种跑法等于全程黑箱，用户什么都看不到。
 
 4. **产物必须按源文件名的词干找**。整个翻译件共用一个 out_dir，而 pdf2zh 按输入名
-   命名产物（`abc.pdf` → `abc-dual.pdf`）。以前是 `sorted(os.listdir())[0]`，
-   译第二篇时会把第一篇的双语 PDF 认成自己的——A 的译文挂到 B 上。
+   命名产物（`abc.pdf` → `abc-dual.pdf`）。用 `sorted(os.listdir())[0]` 认产物，译第二篇时
+   会把第一篇的双语 PDF 认成自己的——A 的译文挂到 B 上。
 """
 import collections
 import json
@@ -187,8 +186,8 @@ def sweep_configs(out_dir: str, keep: str = "", older_than: float = 6 * 3600):
     """清掉陈旧的 --config 副本（里面有 key，别让它躺着）。
 
     **必须按年龄清**：out_dir 是所有论文共用的，而"另一篇正在翻译"的副本就在同一个目录里。
-    以前这里是"见到 .pdf2zh-*.json 就删"，A 在译时用户切到 B 再点译，B 的线程会把 A 的副本
-    删掉——那个副本正是用来拦住 pdf2zh 把 key 写进用户 ~/.config 的。keep 是本次要用的那份。
+    "见到 .pdf2zh-*.json 就删"会把另一篇正在用的副本删掉——那份正是用来拦住 pdf2zh
+    把 key 写进用户 ~/.config 的。keep 是本次要用的那份。
     """
     now = time.time()
     try:

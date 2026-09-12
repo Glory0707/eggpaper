@@ -24,9 +24,8 @@ import update
 from glossary_seed import SEED
 
 app = FastAPI(title="eggpaper", version="0.1.0")
-# 只放行本机来源。以前是 allow_origins=["*"]：任何网页都能跨域读这个服务
-# （/api/settings、/api/papers、论文正文段落），还能 POST /api/update/install。
-# 界面自己跟服务同源，压根不需要 CORS；这条只为了让 `npm run dev`（Vite 5173）能用。
+# 只放行本机来源：界面与服务同源，不需要 CORS，这条只为让 `npm run dev`（Vite 5173）能用。
+# 放开成 * 等于任何网页都能读 /api/settings 与论文正文，还能 POST /api/update/install。
 app.add_middleware(CORSMiddleware,
                    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost)(:\d+)?$",
                    allow_methods=["*"], allow_headers=["*"])
@@ -40,9 +39,8 @@ READY = threading.Event()
 def _demo_mode(cfg: dict = None) -> bool:
     """现在这几件事走不走演示数据。**只留这一个判断口。**
 
-    以前有的路由看 `mock`、有的看"有没有 key"，于是"关掉演示模式 + 清空 key"这种状态下
-    一半功能报 `RuntimeError: MOCK`、另一半悄悄给〔演示〕数据——同一屏里自相矛盾，
-    而且那句 MOCK 用户根本读不懂。口径统一成：用户勾了演示，或者压根没配 key。
+    全项目**只有这一个**判断口：用户勾了演示，或者压根没配 key。分散判断会让同一屏里
+    一半功能报 `RuntimeError: MOCK`、另一半悄悄给〔演示〕数据。
     """
     cfg = cfg or config.load()
     return bool(cfg["mock"]) or not (cfg.get("provider", {}).get("api_key") or "").strip()
@@ -132,10 +130,9 @@ def _sweep_orphan_translations():
 def _clear_zombie_jobs():
     """把"上一次进程留下的在跑状态"清掉。
 
-    析读/眉批/翻译都是**守护线程**在跑，而状态写在数据库里。进程一没（崩了、被 taskkill、
-    装新版本重启、用户从托盘退出），那条 `running` 就永远留在库里：POST 看到 running 直接
-    返回什么都不做，用户点多少次都没反应、界面永远停在"写批注中"——症状就是"点了没反应/
-    加载不出来"。刚才我自己装新版本时就把用户的一篇论文卡成了这样（0 条批注 + running）。
+    析读/眉批/翻译都是**守护线程**在跑，而状态写在数据库里；进程一没（崩溃、taskkill、
+    装新版重启、托盘退出），那条 `running` 就永远留在库里：POST 看到 running 直接返回，
+    用户点多少次都没反应、界面永远停在"写批注中"。
 
     刚启动的进程里不可能有任务在跑，所以这些状态全是僵尸，一律归零（回到"还没做过"，
     按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
@@ -207,10 +204,9 @@ def put_settings(body: dict):
             cfg["update"]["feed_url"] = u["feed_url"].strip()
         if "auto_check" in u:
             cfg["update"]["auto_check"] = bool(u["auto_check"])
-    # 填了 key 就自动退出演示模式。**只在用户真的提交了 provider 时才动**：
-    # 以前只判断"body 里没有 mock"，于是「立即检查更新」那种只发 {update:{...}} 的局部保存
-    # 也会顺手把 mock 关掉——用户没碰过模型设置，却突然开始真调模型（可能立刻 401/欠费），
-    # 而弹窗里的复选框还打着勾。
+    # 填了 key 就自动退出演示模式，但**只在用户真的提交了 provider 时才动**：局部保存
+    # （如「立即检查更新」只发 {update:{...}}）不能顺手关掉它——用户没碰过模型设置，却会
+    # 突然开始真调模型（可能立刻 401/欠费），而弹窗里那个勾还打着。
     was_demo = _demo_mode(cfg)
     if cfg["provider"]["api_key"] and "mock" not in body and "provider" in body:
         cfg["mock"] = False
@@ -276,8 +272,8 @@ def update_reveal(body: dict):
 
 def _my_port() -> int:
     """本进程到底在哪个端口上。桌面入口会按 8430→8431→8432 找第一个空闲的，
-    而"在独立窗口打开"以前写死 8430——服务落在 8431 时，那个按钮开出的是别人家的页面。
-    instance.json 里记着真实端口（desktop.py 写的），读不到再退回 8430。"""
+    instance.json 里记着真实端口（desktop.py 写的），读不到再退回 8430——
+    写死 8430 的话，服务落在 8431 时"在独立窗口打开"开出的是别人家的页面。"""
     try:
         with open(os.path.join(os.path.dirname(config.DATA_DIR), "instance.json"), encoding="utf-8") as f:
             p = int(json.load(f).get("port") or 0)
@@ -366,7 +362,7 @@ async def upload(file: UploadFile = File(...)):
     dup = db.find_duplicate(name, len(raw))
     if dup:
         # 同一份文件（同名同大小）已经在库里：不建第二篇，直接把它交出去。
-        # 以前只有"双击打开"那条路判重，浏览器拖入/点选会把同一篇导入两遍。
+        # 两条导入路径（双击打开 / 拖入点选）都要判重，否则同一篇会进库两遍。
         return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
                 "duplicate": True}
     pid = db.new_id()
@@ -493,8 +489,8 @@ def paper_pdf(pid: str, variant: str = "original"):
             raise HTTPException(404, "译文版尚未生成")
         return FileResponse(mono, media_type="application/pdf")
     if not os.path.exists(p["path"]):
-        # 用户在资源管理器里挪走/删掉库里的 PDF 了。以前这里交给 FileResponse，
-        # 它抛 RuntimeError("File at path ... does not exist") → 500 + 一句英文黑话。
+        # 用户在资源管理器里挪走/删掉库里的 PDF 了。必须自己判：交给 FileResponse 会抛
+        # RuntimeError("File at path ... does not exist") → 500 + 一句英文黑话。
         raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。"
                                  "把它拖回来重新导入一次即可，批注不会丢。")
     return FileResponse(p["path"], media_type="application/pdf")
@@ -585,9 +581,8 @@ def analysis(pid: str):
 def override_role(pid: str, body: dict):
     """人工改判某段的角色。
 
-    界面上原来的入口是"点页边书签 → 角色卡里的下拉框"，那套 UI 已经删了（角色不再
-    需要一套空间导航）；接口与数据留着——角色现在只影响略读蒙纱，万一模型把该读的
-    段落蒙掉了，这是唯一的补救口径。不会误删数据，也不会有人误以为它没了。
+    界面上没有入口（角色现在只影响略读蒙纱），接口与数据留着：万一模型把该读的段落
+    蒙掉了，这是唯一的补救口径。
     """
     _paper_or_404(pid)
     role = body.get("role") or ""
@@ -1108,9 +1103,8 @@ def export_md(pid: str):
     if notes:
         lines += ["## 眉批与查译", ""]
         for n in notes:
-            # 类型名与界面口径一致：自造款用模型起的短标签，自己钉的三种算"你 ·"，
-            # 其余查同一张表。以前 conflict/region/note 都不在表里，导出写成
-            # [conflict]/[region]/[lookup]，跟界面上看到的"前后打架 / 你 · 选区问答"对不上。
+            # 类型名与界面口径一致：自造款用模型给的短标签，自己钉的三种算"你 ·"，
+            # 其余查同一张表——导出里写的是"前后打架 / 你 · 选区问答"，不是 [conflict]。
             zh = (n.get("label") or "").strip() or KIND_ZH.get(n["kind"], n["kind"])
             who = "你 · " + zh if n["kind"] in ("lookup", "region", "note") else zh
             lines.append(f"- **[{who}] {n['note']}** — “{n['quote'][:48]}”")
@@ -1193,8 +1187,8 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
         raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
     doc = pymupdf.open(p["path"])
     try:
-        # 手工/陈旧请求可能给出越界页码、负矩形、离谱 dpi（dpi=100000 能撑爆内存），
-        # 以前这三条都会变成 500，现在给 400/404 并说清哪儿不对
+        # 手工/陈旧请求可能给出越界页码、负矩形、离谱 dpi（dpi=100000 能撑爆内存）：
+        # 一律 400/404 并说清哪儿不对，别让它变成 500
         if page < 0 or page >= len(doc):
             raise HTTPException(404, f"页码越界：这篇只有 {len(doc)} 页")
         if not (36 <= dpi <= 400):

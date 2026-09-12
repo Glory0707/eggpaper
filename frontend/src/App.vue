@@ -62,7 +62,7 @@ onMounted(async () => {
     await refreshCollections()
     if (store.papers.length) openPaper(store.papers[0].id)
   } catch (e) {
-    toast('初始化失败：' + e.message + '（后台服务可能刚起来或被打断，稍等片刻会自动恢复）', 6000)
+    toast('初始化失败：' + e.message + '（后台可能刚起来，稍后会自动恢复）', 6000)
   }
   // 更新：先问自己是哪个版本，再等 6 秒做一次安静探测。故意不抢首屏——
   // 用户先看到论文，更新提示随后自己浮出来；源里没东西就什么都不会发生。
@@ -160,8 +160,7 @@ async function doTranslateFull() {
 }
 
 /* 整本翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
-   顺带把「译完了」这一拍也接上——以前判断条件是数据库里的 running，
-   而 running 从来没被写进去过，于是完成通知与「译文/双语」的解锁整条是死的。 */
+   完成这一拍也在这里接——完成通知与「译文/双语」的解锁都看它。 */
 async function pollTranslate() {
   if (!store.currentId) return
   const j = await api.translateStatus(store.currentId)
@@ -170,7 +169,7 @@ async function pollTranslate() {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
     rollOnce()
-    toast('双语已生成，切「译文」或「双语」查看')
+    toast('双语已生成')
   } else if (j.status === 'error') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()
@@ -221,7 +220,7 @@ async function onImport(list) {
   if (many && ok.length > 1) {
     toast(`已导入 ${ok.length} 篇；其余 ${ok.length - 1} 篇在后台排队通读，列表里能看进度`)
   } else if (first.no_text) {
-    toast('这份 PDF 没有可提取的文字（可能是扫描件），只有阅读功能可用')
+    toast('这份 PDF 没有文字层（扫描件）：只能读，析读与眉批用不了')
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
     toast('这份 PDF 只认出 ' + first.n_paragraphs + ' 段，析读结果可能很粗')
   }
@@ -247,10 +246,10 @@ const tranLabel = computed(() => {
 })
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
-    return `pdf2zh 正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}：`
-         + '进度按页报，译完自动提示。正在读的这篇不受影响'
+    return `pdf2zh 正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}`
+         + ' · 按页报进度 · 译完自动提示'
   }
-  return '用 pdf2zh 把整篇译成第二份 PDF（奇页原文偶页译文），译文/双语两个模式靠它'
+  return '把整篇译成第二份 PDF（奇页原文、偶页译文）——「译文 / 双语」靠它'
 })
 
 /* ---------------- 键盘流 ---------------- */
@@ -260,9 +259,8 @@ function onKey(e) {
   // （否则"删分类"弹窗开着按 Esc，会把整个文库也一起收掉）
   if (dlg.open) { if (e.key === 'Escape') { e.preventDefault(); dlgCancel() } return }
   if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) return
-  // 设置弹窗开着就**一个键都不接**（含 Esc，它按设计只有 × 和「保存」两个出口）。
-  // 以前这里不看设置——点过弹窗里的按钮后焦点在按钮上，按 t 会真的去翻译当前段并钉一条
-  // 页边卡、按 2/3 会切变体、按 r 进框选，而这些动作全发生在弹窗背后，用户根本看不见。
+  // 设置弹窗开着就**一个键都不接**（含 Esc，它按设计只有 × 和「保存」两个出口）：
+  // 焦点在弹窗按钮上时按 t / 2 / r 会在弹窗背后真的去翻译、切变体、进框选。
   if (showSettings.value) return
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
@@ -315,7 +313,7 @@ function onKey(e) {
           <div class="t">{{ store.paper.title || store.paper.filename }}</div>
           <!-- 引用格式是这篇的身份信息，跟标题同一族数据 → 就挂在标题旁边。
                任何页签下都够得着，不占右栏那四栏的版面 -->
-          <button class="cite-btn" title="参考文献格式 · 点开就能复制" @click="store.cite.open = true">引用</button>
+          <button class="cite-btn" title="参考文献格式（可复制）" @click="store.cite.open = true">引用</button>
         </div>
       </div>
       <div class="doc-head" v-else>

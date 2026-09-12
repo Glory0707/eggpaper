@@ -106,11 +106,6 @@ watch(() => store.viewer.fs, k => {
   store.reflowTick++     // 页边书签、旁批、沟槽宽度是量出来的，字号一变要重新量
 }, { immediate: true })
 
-// 旧版本在 <html> 上留过 data-skin（皮肤已删）：留着只会让 devtools 里多一个没用的属性
-delete document.documentElement.dataset.skin
-// 同理：layers 里留过 skeleton（页边角色书签已删），清掉免得它继续被存回去
-delete store.viewer.layers.skeleton
-
 /* 查更新。silent=true（默认）时一切失败都咽下去——这是打开软件时的一次安静探测，
    源没配、网断了、源上没东西，都不该变成一个报错弹窗。 */
 export async function checkUpdate(force = false, silent = true) {
@@ -172,8 +167,7 @@ export async function openPaper(pid) {
   if (store.viewer.variant !== 'original' && store.paper.translate_status !== 'done') {
     store.viewer.variant = 'original'
   }
-  // 换篇先清干净再装新的：上一章的划线和眉批在新论文上闪一下，比慢半拍难看得多
-  // （症状：新论文的页面上短暂出现别人家的划线和批注卡）
+  // 换篇先清干净再装新的，否则新论文上会闪一下上一篇的划线和批注卡
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
   store.marginalia = { status: 'none', notes: [], progress: null }

@@ -51,9 +51,8 @@ async function loadConvs(keep = false) {
 }
 async function loadMsgs() {
   if (!pid.value || !convId.value) { msgs.value = []; return }
-  // 屏幕上的 msgs 只能有一个作者：要么流式在写，要么历史在写。
-  // 正在生成时载入历史，会把刚推上去的那问一答整个换掉——问题看着发出了，
-  // 回答其实还在往一个已经不在列表里的对象里吐（症状：发了没反应）。
+  // 屏幕上的 msgs 只能有一个作者：要么流式在写，要么历史在写。生成中载入历史会把刚推
+  // 上去的那问一答换掉，而回答还在往一个不在列表里的对象里吐（症状：发了没反应）。
   if (busy.value) return
   loading.value = true
   try {
@@ -321,10 +320,10 @@ onUnmounted(() => { stop(true) })
         <!-- 这里原来还有一行「依据 ¶1 ¶5 ¶6…」。删了：它列的就是正文里那些已经可点的 ¶，
              一字不差地再说一遍（后端 cites_of 就是从答案正文里正则抓的）。 -->
         <div class="qa-acts" v-if="!m.streaming">
-          <button @click="copy(m)" title="复制这条">复制</button>
+          <button @click="copy(m)" title="复制">复制</button>
           <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen(i)"
-                  :disabled="busy" title="重新生成这条回答">重新生成</button>
-          <button @click="delMsg(i)" title="删除这条">删除</button>
+                  :disabled="busy" title="重新生成">重新生成</button>
+          <button @click="delMsg(i)" title="删除">删除</button>
         </div>
       </div>
 
