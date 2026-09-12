@@ -568,16 +568,17 @@ def _run_analysis(pid: str, paras: list):
             futs = {ex.submit(_mock_six, k) if _demo_mode() else ex.submit(_gen_six, p2, k): k
                     for k in todo}
             # 术语表也是**按篇**的：析读时让模型把这篇自己的说法发掘出来（用户口径：
-            # 每篇只要它独有的术语，不要全库共用的词表）
-            futs[ex.submit(_demo_terms if _demo_mode() else llm.extract_terms, title, use)] = "terms"
+            # 每篇只要它独有的术语，不要全库共用的词表；缩写也跟着这一批一起走）。
+            # 传的是**全部**段落而不是 use：里面的"正文里有没有这个词"要跟界面上的
+            # 判据同源（界面拿的就是全篇），否则会出现界面画"—"、库里其实有。
+            futs[ex.submit(_demo_terms if _demo_mode() else llm.extract_terms, title, paras)] = "terms"
             for fut in as_completed(futs):
                 k = futs[fut]
                 try:
                     got = fut.result()
                     if k == "terms":
-                        if got:
-                            db.glossary_put_ai(pid, got)
-                            print(f"[eggpaper] 本篇术语 {len(got)} 条")
+                        n = _save_terms(pid, got)
+                        print(f"[eggpaper] 本篇术语 {n} 条" if n else "[eggpaper] 术语这次是空的")
                     elif got.get("text") or got.get("items"):
                         db.answer_put(pid, k, got)
                     else:
@@ -1029,8 +1030,20 @@ def _gen_six(p: dict, key: str):
     return llm.answer_lens(p["title"], s.get("one_line", ""), claims, db.get_paragraphs(pid))
 
 
-def _demo_terms(title, paras) -> list:
-    return [{"en": "demo term", "zh": "演示术语", "kind": "method"}]
+def _demo_terms(title, paras) -> dict:
+    return {"terms": [{"en": "demo term", "zh": "演示术语", "kind": "method"}], "abbrs": {}}
+
+
+def _save_terms(pid: str, got) -> int:
+    """术语与缩写一次落库——它们是同一次调用的产物，分两处写迟早会只写一半。"""
+    got = got if isinstance(got, dict) else {}
+    terms = got.get("terms") or []
+    if terms:
+        db.glossary_put_ai(pid, terms)
+    added = db.merge_abbrs(pid, got.get("abbrs") or {})
+    if added:
+        print(f"[eggpaper] 本篇缩写补了 {added} 条")
+    return len(terms)
 
 
 def _mock_six(key: str) -> dict:
@@ -1626,6 +1639,48 @@ def glossary_add(pid: str, body: dict):
     gid = db.glossary_add(pid, en, zh, body.get("domain", ""), body.get("note", ""),
                           body.get("source", "manual"))
     return {"id": gid}
+
+
+# 一篇术语的生成互斥锁：同一篇被点两次（比如飞速切页签、或两个窗口）只该花一次 token。
+_terms_locks: dict = {}
+_terms_guard = threading.Lock()
+
+
+def _terms_lock(pid: str) -> threading.Lock:
+    with _terms_guard:
+        return _terms_locks.setdefault(pid, threading.Lock())
+
+
+@app.post("/api/papers/{pid}/glossary/generate")
+def glossary_generate(pid: str):
+    """按篇发掘术语（+这篇自己的缩写）：这一篇还没有词表时，打开术语页调它一次。
+
+    为什么要懒生成：0.1.12 之前词表是全库共用的（那批种子行已删），旧论文的按篇词表是空的，
+    而"为了看一眼术语把整篇重新析读一遍"的代价太大。这里只在**确实为空**时花钱，
+    生成过就纯读库（第二次进来不发请求）。析读时照样会生成，这条路只是补历史欠账。
+    """
+    _paper_or_404(pid)
+    with _terms_lock(pid):
+        rows = db.glossary_list(pid)
+        if rows:                       # 并发下第二个请求在这里等到结果，直接拿走
+            return {"items": rows, "generated": False, "abbrs": _abbrs_of(pid)}
+        _require_paras(pid)
+        p = db.get_paper(pid)
+        got = _demo_terms(p["title"], []) if _demo_mode() else llm.extract_terms(
+            p["title"], db.get_paragraphs(pid))
+        if not _save_terms(pid, got):
+            raise HTTPException(503, "模型这次没给出术语，过一会儿再试一次")
+        # abbrs 一并回：缩写表和术语表是同一批的产物，界面不用为此再取一次论文
+        return {"items": db.glossary_list(pid), "generated": True, "abbrs": _abbrs_of(pid)}
+
+
+def _abbrs_of(pid: str) -> dict:
+    row = db.get_paper(pid)
+    try:
+        out = json.loads((row or {}).get("abbrs") or "{}")
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {}
 
 
 @app.delete("/api/glossary/{gid}")

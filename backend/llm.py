@@ -113,23 +113,33 @@ TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者�
 只收**这篇论文特有的**东西：
 - 它自造或改名的方法 / 框架 / 模型名（例如 "transport figure of merit"）
 - 它研究的材料、结构、器件、体系（例如 "rare-earth sesquioxide"）
-- 它赖以成立的关键量、指标、判据（例如 "thermoreflectance"）
-- 它反复使用的领域专名；缩写要展开成全称（"STM" → 扫描隧道显微镜）
+- 它赖以成立的关键量、指标、判据（例如 "thermophotonic efficiency"）
+- 它反复使用的领域专名（例如 "stokes shift"，中文"斯托克斯位移"）
 
 **不要收**：通用学术词（method / result / figure / paper / study / data / analysis）、
 只在参考文献里出现的词、任何一篇论文都会有的词。
 
 kind 用三个短词之一：method（方法/框架）、material（材料/结构）、metric（量/指标/判据）。
 
-只输出 JSON，不要 markdown 代码块，不要解释：
-{"terms":[{"en":"<原文里的英文说法，逐字照抄>","zh":"<中文译名>","kind":"method|material|metric"}]}
+另外单独给一份**这篇论文自己的缩写表** abbrs：正文里定义了、后面反复用的那些缩写，
+键是缩写字面（照原文，如 "CNT"、"oPad"），值是它展开的英文全称 + 中文（≤40 字）。
+不是这篇定义的、只是碰巧出现一次的缩写不要收；没有就给空对象。
 
-给 15~40 条，宁多勿少但必须真的属于这篇；en 要能在正文里原样找到，别改写、别翻译。
+只输出 JSON，不要 markdown 代码块，不要解释：
+{"terms":[{"en":"<原文里的英文说法，逐字照抄>","zh":"<中文译名>","kind":"method|material|metric"}],
+ "abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}
+
+terms 给 15~40 条，宁多勿少但必须真的属于这篇；en 要能在正文里原样找到，别改写、别翻译。
 """
 
 
-def extract_terms(title: str, paras: list) -> list:
-    """从正文里发掘**这篇论文自己的**术语（按篇建表用）。失败由调用方兜住。"""
+def extract_terms(title: str, paras: list) -> dict:
+    """从正文里发掘**这篇论文自己的**术语与缩写（按篇建表用）。
+
+    返回 {"terms": [...], "abbrs": {...}}；两者同一次调用出，是因为它们问的是同一件事
+    （"这篇文献自己的说法有哪些"），分两次问既慢又会让两份表互相打架。
+    失败由调用方兜住。
+    """
     parts = ["¶%s %s" % (p["idx"], p["text"][:600]) for p in paras if not p.get("in_refs")]
     body = "\n\n".join(parts)
     msgs = [
@@ -142,7 +152,52 @@ def extract_terms(title: str, paras: list) -> list:
         if out.strip():
             break
     data = parse_json(out)
-    terms = data.get("terms") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return {"terms": [], "abbrs": {}}
+    clean = _clean_terms(data.get("terms"))
+    kept = _only_in_text(clean, paras)
+    if len(kept) < len(clean):
+        # 看得见：模型给的词里有几条正文里没有（多半是把一句话里不连续的成分拼成了一个词），
+        # 静悄悄丢掉的话，"这次怎么少了几条"就永远查不出来
+        print("[eggpaper] 术语过滤：正文里找不到的 %d 条已丢" % (len(clean) - len(kept)))
+    return {"terms": kept, "abbrs": _clean_abbrs(data.get("abbrs"))}
+
+
+def norm_text(s: str) -> str:
+    """和前端 find.js / RightRail 的 fold() **逐字对齐**的归一化：
+
+    小写 + 连字折叠（ﬁ/ﬂ…）+ 只留 [0-9a-z 汉字]。空格、连字符、标点一律丢掉——
+    PDF 文字层里的下标（"Gd 2 O 2 S"）和换行 hyphen 靠这一步才对得上。
+    两边不一致的话，界面就会给一个"正文里明明有"的词画上一道"—"。
+    """
+    out = []
+    for ch in (s or "").lower():
+        lig = _LIG.get(ch)
+        if lig:
+            out.append(lig)
+        elif ch in _KEEP or "\u4e00" <= ch <= "\u9fff":
+            out.append(ch)
+    return "".join(out)
+
+
+_LIG = {"\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi",
+        "\ufb04": "ffl", "\ufb05": "ft", "\ufb06": "st"}   # 与 find.js 的 LIG 逐项一致
+_KEEP = set("0123456789abcdefghijklmnopqrstuvwxyz")
+
+
+def _only_in_text(terms: list, paras: list) -> list:
+    """只留**真在这篇正文里**的词（用户口径：术语必须确实是本文的）。
+
+    界面上每条术语右边那个「在文中找」箭头写的就是这个判断，判据要一模一样：
+    对不上的词会出现一个点不动的"—"，而"术语表里一半的词查不到原文"正是之前的老毛病。
+    """
+    corpus = norm_text(" ".join(p.get("text") or "" for p in paras))
+    if not corpus:                     # 没有正文可比（没解析/扫描件）就不过滤
+        return terms
+    return [t for t in terms if len(norm_text(t["en"])) >= 3 and norm_text(t["en"]) in corpus]
+
+
+def _clean_terms(terms) -> list:
     if not isinstance(terms, list):
         return []
     clean, seen = [], set()
@@ -158,6 +213,23 @@ def extract_terms(title: str, paras: list) -> list:
         clean.append({"en": en, "zh": zh,
                       "kind": kind if kind in ("method", "material", "metric") else ""})
     return clean[:48]
+
+
+def _clean_abbrs(abbrs) -> dict:
+    """缩写表：键必须真的像个缩写（短、没有空格），值是有内容的展开。"""
+    if not isinstance(abbrs, dict):
+        return {}
+    out, seen = {}, set()
+    for k, v in abbrs.items():
+        k, v = str(k).strip(), str(v).strip()
+        if not k or not v or len(k) > 16 or len(v) > 80 or any(ch.isspace() for ch in k):
+            continue
+        if k.lower() in seen:
+            continue
+        seen.add(k.lower())
+        out[k] = v
+    return out
+
 
 
 def test_connection() -> dict:

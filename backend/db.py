@@ -102,6 +102,13 @@ def _migrate(c: sqlite3.Connection):
             c.execute(stmt)
         except sqlite3.OperationalError:
             pass
+    # 删掉早期版本的"种子术语库"：那批行的 paper_id 是空的，属于全库共用词表。
+    # 现在的口径是**一篇文献一份**（用户明说不要种子库）。留着既显示不出来，
+    # 又会让"这篇有几条术语"的统计全错。每次启动都跑一遍，删的是本就不该存在的东西。
+    try:
+        c.execute("DELETE FROM glossary WHERE paper_id IS NULL OR paper_id=''")
+    except sqlite3.OperationalError:
+        pass
 
 
 def q(sql: str, params=(), commit: bool = False):
@@ -393,6 +400,33 @@ def glossary_put_ai(pid: str, terms: list):
             [(pid, t["en"], t["zh"], t.get("kind", ""), "", "ai",
               time.strftime("%Y-%m-%d %H:%M:%S")) for t in terms])
         _get().commit()
+
+
+def merge_abbrs(pid: str, abbrs: dict) -> int:
+    """把新发掘到的缩写并进这一篇的缩写表，返回补进去几条。
+
+    只补缺、不覆盖：骨架那一次抽到的写法（"CNT": "carbon nanotube，碳纳米管"）是跟着
+    正文语境来的，比术语那一次更贴原文，后来的一批不该把它顶掉。
+    """
+    if not isinstance(abbrs, dict) or not abbrs:
+        return 0
+    row = q("SELECT abbrs FROM papers WHERE id=?", (pid,))
+    if not row:
+        return 0
+    try:
+        cur = json.loads(row[0]["abbrs"] or "{}")
+    except Exception:
+        cur = {}
+    if not isinstance(cur, dict):
+        cur = {}
+    added = 0
+    for k, v in abbrs.items():
+        k, v = str(k).strip(), str(v).strip()
+        if k and v and k not in cur:
+            cur[k], added = v, added + 1
+    if added:
+        update_paper(pid, abbrs=json.dumps(cur, ensure_ascii=False))
+    return added
 
 
 def glossary_hit(pid: str, text: str):

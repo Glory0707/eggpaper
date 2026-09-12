@@ -204,13 +204,38 @@ watch(() => store.askFocusTick, () => { tab.value = 'ask' })
 watch(tab, t => { if (t === 'ask') store.askFocusTick++ })
 
 // ---------- 术语 ----------
+// 术语是**按篇**的（一篇文献一份词表，不设全库共用）。旧论文的按篇词表是空的——
+// 它们是"词表还全库共用"那会儿析读的，而"为了看术语把整篇重新析读一遍"代价太大，
+// 所以这里补一次懒生成：进术语页发现是空的、且这篇已经析读过，就让它发掘一次。
 const terms = ref([])
 const termFilter = ref('')
 const termForm = ref({ term_en: '', term_zh: '' })
+const termsBusy = ref(false)
+const termsTried = ref('')          // 已经替**哪一篇**试过生成（试失败的不再反复花钱）
 
 async function loadTerms() {
   if (!store.currentId) { terms.value = []; return }
+  const mine = paperEpoch()
   terms.value = await api.glossary(store.currentId)      // 术语是按篇的
+  maybeGenTerms(mine)
+}
+
+/* 空表才补生成。**只在"确认这篇析读完了"之后**动手：store.analysis.status 是异步填的，
+   换篇那一刻它还是上一篇的值，凭它判断会在刚导入、还没析读的论文上花掉一批 token。 */
+async function maybeGenTerms(mine = paperEpoch()) {
+  if (terms.value.length || termsBusy.value) return
+  if (termsTried.value === store.currentId) return
+  if (store.analysis.status !== 'done') return
+  termsTried.value = store.currentId
+  termsBusy.value = true
+  try {
+    const r = await api.glossaryGen(store.currentId)
+    if (!samePaper(mine)) return
+    terms.value = r.items || []
+    if (r.abbrs) store.paper.abbrs = JSON.stringify(r.abbrs)   // 缩写是同一批的产物
+  } catch (e) {
+    if (samePaper(mine)) toast('术语没生成：' + e.message)
+  } finally { termsBusy.value = false }
 }
 async function addTerm() {
   if (!termForm.value.term_en.trim() || !termForm.value.term_zh.trim()) return
@@ -239,6 +264,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onFigKey)
 })
 watch(tab, t => {
+  if (t === 'terms') loadTerms()      // 点进术语页：空表就补一次发掘（见 maybeGenTerms）
   if (t === 'ask') loadSuggest()
   if (t === 'eye') { loadFigures(); loadCachedBlocks() }
 })
@@ -248,6 +274,8 @@ watch(() => store.analysis.status, s => {
   if (s !== 'done') return
   methodCard.value = null; advisor.value = []; suggest.value = []
   loadSuggest(); loadCachedBlocks()
+  termsTried.value = ''              // 重算析读 = 词表也重发了一批，允许再补一次空白
+  loadTerms()
   loadSix()          // 服务端重算析读时把六问的答案一并清了（answers_clear），
                      // 前端留着旧的就会显示上一个世代的内容，而"已有答案"又把
                      // 「获取 / 补全」按钮全藏起来 —— 只能换篇才能再取一次
@@ -725,7 +753,7 @@ watch(() => store.currentId, () => {
           </div>
         </div>
 
-        <div class="mono-label" style="margin-bottom:6px">术语表 · {{ terms.length }}</div>
+        <div class="mono-label" style="margin-bottom:6px">术语表 · {{ termsBusy ? '发掘中…' : terms.length }}</div>
         <div class="term-form">
           <input type="text" v-model="termForm.term_en" placeholder="英文" />
           <input type="text" v-model="termForm.term_zh" placeholder="中文" />

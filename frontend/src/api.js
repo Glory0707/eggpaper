@@ -71,6 +71,8 @@ export const api = {
   translateFull: (pid) => req('POST', `/api/papers/${pid}/translate-full`),
   translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
   glossary: (pid) => req('GET', `/api/papers/${pid}/glossary`),
+  // 按篇发掘术语（+这篇自己的缩写）：只在词表为空时调一次，生成过就是纯读库
+  glossaryGen: (pid) => req('POST', `/api/papers/${pid}/glossary/generate`),
   glossaryAdd: (pid, item) => req('POST', `/api/papers/${pid}/glossary`, item),
   glossaryDelete: (id) => req('DELETE', `/api/glossary/${id}`),
   settings: () => req('GET', '/api/settings'),
