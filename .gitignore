@@ -20,6 +20,7 @@ config*.toml
 
 # User data — never commit
 data/
+logs/
 library/
 *.pdf
 

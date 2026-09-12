@@ -80,6 +80,34 @@ def layout(px: float) -> dict:
             "ring": w, "bars": bars}
 
 
+def _downscale_pm(img: Image.Image, w: int, h: int) -> Image.Image:
+    """预乘 alpha 后再 LANCZOS 缩小。
+
+    直接缩 RGBA 会在边缘产生一圈灰边：透明像素的 RGB 是 (0,0,0)，缩小把"白"和
+    "透明黑"在圆角处平均，alpha 半透明、RGB 却发灰，合成到任务栏/桌面上就是一圈脏边
+    （看着就是"图标糊"）。预乘后颜色按覆盖率加权，缩完再还原，边缘颜色才是对的。
+    """
+    from PIL import ImageChops
+    r, g, b, a = img.split()
+    pm = Image.merge("RGBA", (ImageChops.multiply(r, a), ImageChops.multiply(g, a),
+                              ImageChops.multiply(b, a), a))
+    pm = pm.resize((w, h), Image.BOX)
+    r2, g2, b2, a2 = pm.split()
+    rp, gp, bp, ap = r2.load(), g2.load(), b2.load(), a2.load()
+    out = Image.new("RGBA", (w, h))
+    op = out.load()
+    for y in range(h):
+        for x in range(w):
+            av = ap[x, y]
+            if av <= 2:
+                op[x, y] = (0, 0, 0, 0)
+            else:
+                k = 255.0 / av
+                op[x, y] = (min(255, round(rp[x, y] * k)), min(255, round(gp[x, y] * k)),
+                            min(255, round(bp[x, y] * k)), av)
+    return out
+
+
 def draw(px: int, tile: bool = False) -> Image.Image:
     """画一枚标记。tile=True 时垫一层纸色圆角底（深色地方也看得见）。"""
     ss = 4                                   # 超采样再缩，边缘才干净
@@ -97,4 +125,4 @@ def draw(px: int, tile: bool = False) -> Image.Image:
         y = th * ss / 2
         d.rounded_rectangle([size / 2 - x, cy * ss - y, size / 2 + x, cy * ss + y],
                             radius=min(x, y), fill=ACCENT)
-    return img.resize((px, px), Image.LANCZOS)
+    return _downscale_pm(img, px, px)

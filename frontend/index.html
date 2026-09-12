@@ -6,23 +6,30 @@
     <title>eggpaper</title>
     <meta name="theme-color" content="#1d4e5f" />
     <!-- 图标：浏览器标签、独立窗口（Edge 应用模式）的标题栏、任务栏、"安装为应用"都用这几份。
-         **每个尺寸一张原图**（tools/make_icon.py 按目标尺寸现画）——Chromium 挑图标是
-         "按需要的尺寸找最接近的一张再缩放"，少给几档它就得重采样，小尺寸上就是糊。
-         这里曾经挂过一条内联 SVG（旧几何、缝不到 1.2px），Chromium 会把它栅格化成小位图再放大，
-         任务栏那坨糊一直是它——别再加回来。
-         ?v= 是给浏览器图标缓存留的把手：换了图标就把它加一。 -->
-    <link rel="icon" type="image/png" sizes="16x16" href="/icons/icon-16.png?v=2" />
-    <link rel="icon" type="image/png" sizes="24x24" href="/icons/icon-24.png?v=2" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png?v=2" />
-    <link rel="icon" type="image/png" sizes="48x48" href="/icons/icon-48.png?v=2" />
-    <link rel="icon" type="image/png" sizes="64x64" href="/icons/icon-64.png?v=2" />
-    <link rel="icon" type="image/png" sizes="128x128" href="/icons/icon-128.png?v=2" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png?v=2" />
-    <link rel="icon" type="image/png" sizes="256x256" href="/icons/icon-256.png?v=2" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png?v=2" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png?v=2" />
-    <link rel="manifest" href="/manifest.webmanifest?v=2" />
+         **每一档 DPI 的精确物理尺寸都有一张原图**（tools/make_icon.py 的 ICO_SIZES 注释：
+         150% 缩放下任务栏要 30px，缺这档它就拿 32/24 缩放，看着就是糊的）。
+         应用模式窗口在 Windows 上主要取 favicon.ico；PNG 给标签页与"安装为应用"。
+         ?v= 由 build_installer.py 在发版时替换成版本号：浏览器按 URL 缓存图标，不换 URL 不重取。 -->
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/icon-16.png?v=3" />
+    <link rel="icon" type="image/png" sizes="20x20" href="/icons/icon-20.png?v=3" />
+    <link rel="icon" type="image/png" sizes="24x24" href="/icons/icon-24.png?v=3" />
+    <link rel="icon" type="image/png" sizes="30x30" href="/icons/icon-30.png?v=3" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png?v=3" />
+    <link rel="icon" type="image/png" sizes="36x36" href="/icons/icon-36.png?v=3" />
+    <link rel="icon" type="image/png" sizes="40x40" href="/icons/icon-40.png?v=3" />
+    <link rel="icon" type="image/png" sizes="42x42" href="/icons/icon-42.png?v=3" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/icons/icon-48.png?v=3" />
+    <link rel="icon" type="image/png" sizes="60x60" href="/icons/icon-60.png?v=3" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/icons/icon-64.png?v=3" />
+    <link rel="icon" type="image/png" sizes="72x72" href="/icons/icon-72.png?v=3" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/icons/icon-96.png?v=3" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/icons/icon-128.png?v=3" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png?v=3" />
+    <link rel="icon" type="image/png" sizes="256x256" href="/icons/icon-256.png?v=3" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png?v=3" />
+    <link rel="icon" href="/favicon.ico?v=3" sizes="any" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png?v=3" />
+    <link rel="manifest" href="/manifest.webmanifest?v=3" />
   </head>
   <body>
     <div id="app"></div>
