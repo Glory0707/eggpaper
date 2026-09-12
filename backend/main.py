@@ -68,6 +68,25 @@ def _startup():
     os.makedirs(PDF_DIR, exist_ok=True)
     os.makedirs(TRANSLATED_DIR, exist_ok=True)
     db.glossary_seed(SEED)
+    _clear_zombie_jobs()
+
+
+def _clear_zombie_jobs():
+    """把"上一次进程留下的在跑状态"清掉。
+
+    析读/眉批/翻译都是**守护线程**在跑，而状态写在数据库里。进程一没（崩了、被 taskkill、
+    装新版本重启、用户从托盘退出），那条 `running` 就永远留在库里：POST 看到 running 直接
+    返回什么都不做，用户点多少次都没反应、界面永远停在"写批注中"——症状就是"点了没反应/
+    加载不出来"。刚才我自己装新版本时就把用户的一篇论文卡成了这样（0 条批注 + running）。
+
+    刚启动的进程里不可能有任务在跑，所以这些状态全是僵尸，一律归零（回到"还没做过"，
+    按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
+    """
+    for col in ("analysis_status", "marginalia_status", "translate_status"):
+        n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col}='running'")[0][0]
+        if n:
+            db.q(f"UPDATE papers SET {col}='none' WHERE {col}='running'", commit=True)
+            _applog(f"启动清理：{n} 篇的 {col} 卡在 running，已归零")
 
 
 # ---------------- 设置 ----------------
@@ -395,14 +414,19 @@ def _run_analysis(pid: str, paras: list):
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
     except Exception as e:
         db.set_analysis(pid, [], {}, status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
+    finally:
+        _job_done("analysis", pid)
 
 
 @app.post("/api/papers/{pid}/analyze")
 def analyze(pid: str):
     p = _paper_or_404(pid)
     _require_paras(pid)
-    if p["analysis_status"] == "running":
+    if p["analysis_status"] == "running" and _job_live("analysis", pid):
         return {"status": "running"}
+    if p["analysis_status"] == "running":
+        _applog(f"析读 {pid}: 数据库里是 running 但本进程没有这个任务（上次被中断），重来")
+    _live_jobs.add(("analysis", pid))
     db.update_paper(pid, analysis_status="running", analysis_error=None)
     threading.Thread(target=_run_analysis, args=(pid, db.get_paragraphs(pid)), daemon=True).start()
     return {"status": "running"}
@@ -413,6 +437,9 @@ def analysis(pid: str):
     _paper_or_404(pid)
     status, claims, annos = db.get_analysis(pid)
     p = _paper_or_404(pid)
+    if status == "running" and not _job_live("analysis", pid):
+        db.update_paper(pid, analysis_status="none")        # 僵尸状态：归零
+        status = "none"
     eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
     return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos, "evidence_qs": eqs}
 
@@ -488,9 +515,36 @@ def _resolve_rects(pid: str):
 
 _rect_tried = set()      # 试过定位的钉子 id（失败的不再重复开 PDF）
 
+# 本进程**真正在跑**的长任务：{("marginalia", pid), ("analysis", pid), ...}
+# 数据库里的 running 只是"上一次置的标记"，进程重启后它说明不了任何事；判断"是不是真的在跑"
+# 只看这个集合。路由里登记、线程的 finally 里注销——所以"status=running 但不在集合里"
+# 就是僵尸状态，可以放心重来（见 _clear_zombie_jobs 的注释）。
+_live_jobs = set()
+
 # 眉批生成的实时进度：pid -> {"done": 已完成块数, "total": 总块数, "t0": 起始时刻}
 # 只活在内存里——它是"这一次运行"的状态，进程重启后没有意义（也没必要进数据库）。
 _margin_progress = {}
+
+
+def _job_live(kind: str, pid: str) -> bool:
+    return (kind, pid) in _live_jobs
+
+
+def _job_done(kind: str, pid: str):
+    _live_jobs.discard((kind, pid))
+
+
+def _applog(msg: str):
+    """往 app.log 写一行。打包版（console=False）没有 stdout，print 出去的东西一个字都留不下——
+    而"这次到底花了多久、卡在哪一段"恰恰是用户最常问的。和 window.py 写的是同一份日志。"""
+    try:
+        import time as _t
+        d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "app.log"), "a", encoding="utf-8") as f:
+            f.write("[%s] %s\n" % (_t.strftime("%Y-%m-%d %H:%M:%S"), msg))
+    except OSError:
+        pass
 
 
 def _run_marginalia(pid: str):
@@ -518,19 +572,34 @@ def _run_marginalia(pid: str):
         db.answers_clear(pid)
         db.update_paper(pid, advisor=None)
         _resolve_rects(pid)
-        print(f"[eggpaper] 眉批 {pid}: {len(notes)} 条 · 模型 {t_llm:.1f}s · "
-              f"定位 {_t.time() - t0 - t_llm:.1f}s")
+        t_all = _t.time() - t0
+        n = _margin_progress.get(pid, {}).get("total") or 0
+        # 一行说清"慢在哪儿"：块数 × 单块时间 = 模型，剩下的是定位与写库。
+        # 顺带记下**这一次用的是哪个端点/模型**——"改了设置到底生效没有"看这一行就够。
+        cfg = config.load()["provider"]
+        _applog(f"眉批完成 {pid}: {len(notes)} 条 / {n} 块 · 模型 {t_llm:.1f}s · "
+                f"定位+入库 {t_all - t_llm:.1f}s · 总 {t_all:.1f}s"
+                + (f" · 平均 {t_llm / n:.1f}s/块" if n else "")
+                + f" · {cfg['model']} @ {cfg['base_url']}")
+        print(f"[eggpaper] 眉批 {pid}: {len(notes)} 条 · 模型 {t_llm:.1f}s · 定位 {t_all - t_llm:.1f}s")
     except Exception as e:
+        _applog(f"眉批失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
         db.set_marginalia(pid, [], status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
     finally:
         _margin_progress.pop(pid, None)
+        _job_done("marginalia", pid)
 
 
 @app.post("/api/papers/{pid}/marginalia")
 def marginalia_start(pid: str):
     p = _paper_or_404(pid)
-    if p["marginalia_status"] == "running":
+    # 只有**本进程真在跑**才算"在跑"；重启留下的 running 是僵尸，直接重来一遍
+    if p["marginalia_status"] == "running" and _job_live("marginalia", pid):
         return {"status": "running"}
+    if p["marginalia_status"] == "running":
+        _applog(f"眉批 {pid}: 数据库里是 running 但本进程没有这个任务（上次被中断），重来")
+    _live_jobs.add(("marginalia", pid))
+    _margin_progress[pid] = {"done": 0, "total": 0, "t0": time.time()}
     db.update_paper(pid, marginalia_status="running", marginalia_error=None)
     threading.Thread(target=_run_marginalia, args=(pid,), daemon=True).start()
     return {"status": "running"}
@@ -539,6 +608,9 @@ def marginalia_start(pid: str):
 @app.get("/api/papers/{pid}/marginalia")
 def marginalia_get(pid: str):
     p = _paper_or_404(pid)
+    if p["marginalia_status"] == "running" and not _job_live("marginalia", pid):
+        db.update_paper(pid, marginalia_status="none")     # 僵尸状态：归零，让按钮回来
+        p = _paper_or_404(pid)
     if p["marginalia_status"] == "done" and any(not n["rect"] for n in db.get_marginalia(pid)):
         _resolve_rects(pid)
     return {"status": p["marginalia_status"], "error": p.get("marginalia_error"),

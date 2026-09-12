@@ -535,7 +535,7 @@ watch(() => store.currentId, () => {
                 <i :class="{ det: marginPct !== null }" :style="marginPct !== null ? { width: marginPct + '%' } : null" />
               </div>
               <div class="blk-prog-line">
-                <span v-if="marginPct !== null">已读 {{ store.marginalia.progress.done }}/{{ store.marginalia.progress.total }} 块</span>
+                <span v-if="store.marginalia.progress?.total">已读 {{ store.marginalia.progress.done }}/{{ store.marginalia.progress.total }} 块</span>
                 <span v-else>正在通读全文</span>
                 <span class="blk-elapsed">{{ marginElapsed }}s</span>
               </div>

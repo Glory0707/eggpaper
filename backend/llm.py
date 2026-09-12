@@ -448,16 +448,27 @@ BAND_OF = {"insight": "good",
            "padding": "noise", "redundant": "noise", "stiff": "noise", "hedge": "noise"}
 
 
+CHUNK_PARAS = 12          # 一块多少段
+CHUNK_WORKERS = 6         # 同时几块在跑
+
+
 def analyze_marginalia(title: str, paras: list, on_chunk=None) -> list:
     """分块细读，返回 [{para_idx, page, quote, kind, label, band, note}]。
 
-    `on_chunk(已完成块数, 总块数)` 每读完一块回调一次——界面上那条小进度条吃的是它。
-    为什么报"块"而不是百分比：一次请求是一条 12 段的完整 LLM 调用，中间没有可信的颗粒度，
-    报块数才是**真实**进度（长论文十几块，进度条一格一格走，不是装饰动画）。
+    `on_chunk(已完成块数, 总块数)` 每读完一块回调一次（总量在第 0 秒就回调一次）——
+    界面上那条小进度条吃的是它。为什么报"块"而不是百分比：一次请求是一条 12 段的完整
+    LLM 调用，中间没有可信的颗粒度，报块数才是**真实**进度。
+
+    **并发为什么是 6**（实测定的，别凭感觉调）：这篇 48 段的论文 = 4 块，
+    3 并发要排两波、端到端 53 秒；6 并发一波就完、~36 秒。单块的耗时由模型决定
+    （实测 DeepSeek 带思考 ~36 秒/块，其中七成 token 花在思考上），**墙钟时间 = 波数 × 单块时间**，
+    所以能压的只有波数。再往上加并发收益就有限了（还容易被服务端限流），
+    真正要更快只能减块数或减单块输出量，那是产品取舍，见 docs/plan.md M4.12。
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     page_of = {p["idx"]: p["page"] for p in paras}
-    chunks = [paras[i:i + 12] for i in range(0, len(paras), 12)]
+    n = CHUNK_PARAS
+    chunks = [paras[i:i + n] for i in range(0, len(paras), n)]
 
     def run(chunk):
         body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in chunk)
@@ -474,10 +485,15 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> list:
         return data.get("notes", []) if isinstance(data, dict) else []
 
     total = len(chunks)
+    if on_chunk:
+        try:
+            on_chunk(0, total)     # 先报总量：界面从第一秒就能说"共 N 块"，而不是干等
+        except Exception:
+            pass
     batches, failed, done = [None] * total, 0, 0
     # 用 as_completed 而不是 map：map 只在"轮到它"时才把结果交出来，第 1 块慢的时候
     # 后面早写完的块也报不出来——进度会假滞后。顺序仍按块号回填，最终批注次序不变。
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=min(CHUNK_WORKERS, max(1, total))) as ex:
         futs = {ex.submit(run, c): i for i, c in enumerate(chunks)}
         for fut in as_completed(futs):
             i = futs[fut]

@@ -8,6 +8,9 @@ const emit = defineEmits(['close', 'save'])
 const f = reactive({
   base_url: store.settings.provider.base_url,
   model: store.settings.provider.model,
+  // 这一栏原来没初始化：表单读的是 undefined，于是**配置里明明有 vision_model，
+  // 弹窗里也永远是空的**（看着像没保存上，重填一遍也填不进去）。
+  vision_model: store.settings.provider.vision_model || '',
   api_key: store.settings.provider.key_masked || '',
   mock: store.settings.mock,
   service: store.settings.pdf2zh.service,
