@@ -65,9 +65,9 @@
 |---|---|
 | ![reader](docs/screenshots/marginalia.png) | ![spread](docs/screenshots/dual-spread.png) |
 
-| 论文内查找 | 在纸上高亮所有命中，n/N 逐个走 |
-|---|---|
-| ![find](docs/screenshots/find.png) | ![roles](docs/screenshots/roles.png) |
+| 论文内查找：在纸上高亮所有命中，n/N 逐个走 |
+|---|
+| ![find](docs/screenshots/find.png) |
 
 提问：流式回答 + 可点 ¶ 引用 + 每条消息的复制/重新生成/删除 + 多会话。
 

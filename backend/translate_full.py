@@ -43,8 +43,6 @@ AUTH_FAILS = ("authentication fails", "invalid api key", "incorrect api key",
 
 PROBE_TIMEOUT = 2.5      # 预检单次连接的上限：够连通的早连通了，不通的也别让用户等
 PROBE_TTL = 600          # 一次预检结果管 10 分钟，别每次点按钮都白等 2.5 秒
-STALL_SECS = 360         # 连续 6 分钟没有任何输出 = 卡死（正常情况下 tqdm 每几秒一行）
-HARD_SECS = 2400         # 兜底上限 40 分钟
 
 # 各服务要先能连上的主机。故意不写全：拿不准的（自建端点、本地模型、需要另配的
 # 云服务）留空 = 不预检——宁可让它自己去失败，也别在这里误报"不通"挡住一条能走的路。
@@ -104,17 +102,6 @@ def choose_service(service: str, host: str = ""):
         return alt, f"{service} 在你的网络下不通（{why}），已自动改用 {alt}"
     return None, (f"{why}。「设置 → 整本翻译服务」换一个能用的（国内推荐 bing），"
                   f"或者先连上外网再试。")
-
-
-# ---------------- 进度 ----------------
-
-def parse_progress(line: str):
-    """从 tqdm 那行里抠出 (已译页, 总页)。抠不到返回 None。"""
-    m = _PROG.search(_ANSI.sub("", line))
-    if not m:
-        return None
-    done, total = int(m.group(2)), int(m.group(3))
-    return (done, total) if total > 0 else None
 
 
 # ---------------- 起进程 ----------------
@@ -332,8 +319,8 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
 
 
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
-          envs: dict = None, log=None, note: str = "", attempts: int = 3) -> dict:
-    """按页流水线翻译整本。attempts 只是旧签名的占位（页级自带两次尝试）。"""
+          envs: dict = None, log=None, note: str = "") -> dict:
+    """按页流水线翻译整本：进度=完成页数，坏页回退原文，一页卡不住整本。"""
     j = job(pid)
     if j["status"] == "running":
         return j

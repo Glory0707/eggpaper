@@ -803,7 +803,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .term-row .t-go:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
 /* 本文正文里没有这个词的术语：整行压暗、箭头位置换成一道短横——不是"坏了"，
    是"这篇里没有它"（术语表是全库共用的） */
-.term-row.absent { opacity: 0.5; }
 .term-row .t-no { flex: 0 0 auto; margin-left: auto; color: var(--ink-3); font-size: var(--fs-xs); padding: 0 3px; }
 /* 术语：flex 子项默认 min-width:auto，输入框的"默认宽度"会撑破整行，
    必须显式 min-width:0 才肯收缩 */
@@ -866,7 +865,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .f-row label { display: block; margin-bottom: 5px; }
 .modal .f-row input, .modal .f-row select { width: 100%; }
 /* 选项下面的一行小字：说清"选了它会发生什么"。字号比标签小一档，不抢视线 */
-.modal .f-hint { margin-top: 5px; font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.5; }
 .modal .f-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; align-items: center; }
 /* 应用内对话框（确认 / 输入）：比设置窄一点，正文一行一句，确定键可以是朱红 */
 .modal.dialog { width: 372px; }
@@ -1362,12 +1360,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
    问题是一行按钮、答案收起在下面——读一篇论文该带着问题进去，
    所以默认只看见问题；点哪条才摊开哪条。
    ============================================================ */
-.six-head { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; min-height: 16px; }
-.six-head .six-allget {
-  margin-left: auto; font-size: var(--fs-xs); padding: 2px 9px; border-radius: 11px;
-  color: var(--accent-deep); background: var(--accent-soft); border-color: var(--accent-line);
-}
-.six-head .six-allget:hover { background: var(--accent); color: #fff; border-color: var(--accent-deep); }
+.six-head { margin: 0 0 6px; min-height: 16px; }
 /* 已有答案的那一问，编号是墨色（没答的是灰的）——扫一眼就知道还差哪几问 */
 .six-q i.on { color: var(--ink); font-weight: 600; }
 .six-q:hover i.on { color: var(--accent-deep); }
@@ -1403,11 +1396,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .six-fold > .six-fold-in { overflow: hidden; min-height: 0; }
 .six-txt { font-size: var(--fs-read); line-height: 1.74; color: var(--ink); }
 .six-note { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
-.six-get {
-  font-size: var(--fs-sm); padding: 3px 14px; color: var(--ink-2);
-  background: var(--card-2); border: 1px solid var(--hairline); border-radius: 3px;
-}
-.six-get:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
 .six-foot { margin-top: 8px; }
 .six-foot button { font-size: var(--fs-sm); padding: 2px 9px; color: var(--ink-3); background: transparent; border-color: transparent; }
 .six-foot button:hover { color: var(--accent-deep); background: var(--accent-soft); transform: none; box-shadow: none; }
