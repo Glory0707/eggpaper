@@ -225,7 +225,8 @@ function onKey(e) {
     store.viewer.libOpen = false
     store.shortcutCard = false
     store.cite.open = false
-    showSettings.value = false
+    // 设置**不**在 Esc 里关：里面可能填了一半（base_url / key / 模型号），
+    // 一键关掉就把输入丢了。出口只有右上角 × 和「保存」（用户明确要求）。
     dragOver.value = false
     store.viewer.frame = false     // 框选模式永远能一键退出
     store.escTick++                // PDF 侧的划词/框选/查找浮层收起

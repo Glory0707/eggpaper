@@ -86,12 +86,15 @@ function save() {
 </script>
 
 <template>
-  <div class="modal-mask" @click.self="emit('close')">
+  <!-- 这一层**不接点击关闭**：设置里可能填了一半（base_url、key、模型号），
+       点到窗外就丢掉是最气人的那种"手一滑"。出口只有两个：右上角 × 和「保存」。
+       （Esc 也在 App 的全局键盘处理里专门排除了这一项。） -->
+  <div class="modal-mask">
     <Transition name="pop" appear>
     <div class="modal" v-drag>
       <div class="modal-head" data-drag>
         <h3>设置</h3>
-        <button class="modal-x" title="关闭（Esc）" @click="emit('close')">×</button>
+        <button class="modal-x" title="关闭" @click="emit('close')">×</button>
       </div>
       <div class="f-row">
         <label class="mono-label">LLM BASE URL</label>
