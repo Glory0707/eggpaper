@@ -108,6 +108,58 @@ def parse_json(text: str) -> dict:
     return json.loads(text[i:j + 1])
 
 
+TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者读这篇时会卡住、需要中英对照的那些说法。
+
+只收**这篇论文特有的**东西：
+- 它自造或改名的方法 / 框架 / 模型名（例如 "transport figure of merit"）
+- 它研究的材料、结构、器件、体系（例如 "rare-earth sesquioxide"）
+- 它赖以成立的关键量、指标、判据（例如 "thermoreflectance"）
+- 它反复使用的领域专名；缩写要展开成全称（"STM" → 扫描隧道显微镜）
+
+**不要收**：通用学术词（method / result / figure / paper / study / data / analysis）、
+只在参考文献里出现的词、任何一篇论文都会有的词。
+
+kind 用三个短词之一：method（方法/框架）、material（材料/结构）、metric（量/指标/判据）。
+
+只输出 JSON，不要 markdown 代码块，不要解释：
+{"terms":[{"en":"<原文里的英文说法，逐字照抄>","zh":"<中文译名>","kind":"method|material|metric"}]}
+
+给 15~40 条，宁多勿少但必须真的属于这篇；en 要能在正文里原样找到，别改写、别翻译。
+"""
+
+
+def extract_terms(title: str, paras: list) -> list:
+    """从正文里发掘**这篇论文自己的**术语（按篇建表用）。失败由调用方兜住。"""
+    parts = ["¶%s %s" % (p["idx"], p["text"][:600]) for p in paras if not p.get("in_refs")]
+    body = "\n\n".join(parts)
+    msgs = [
+        {"role": "system", "content": TERMS_SYSTEM},
+        {"role": "user", "content": "论文标题：" + (title or "") + "\n\n" + body[:48000]},
+    ]
+    out = ""
+    for _ in range(2):                 # 推理模型偶尔把 token 花在思考上，空结果重试一次
+        out = chat(msgs, max_tokens=8000, temperature=0.2)
+        if out.strip():
+            break
+    data = parse_json(out)
+    terms = data.get("terms") if isinstance(data, dict) else None
+    if not isinstance(terms, list):
+        return []
+    clean, seen = [], set()
+    for t in terms:
+        if not isinstance(t, dict):
+            continue
+        en = str(t.get("en", "")).strip()
+        zh = str(t.get("zh", "")).strip()
+        kind = str(t.get("kind", "")).strip()
+        if not en or not zh or len(en) > 80 or len(zh) > 40 or en.lower() in seen:
+            continue
+        seen.add(en.lower())
+        clean.append({"en": en, "zh": zh,
+                      "kind": kind if kind in ("method", "material", "metric") else ""})
+    return clean[:48]
+
+
 def test_connection() -> dict:
     try:
         out = chat([{"role": "user", "content": "只回复两个字：可用"}], max_tokens=2048)

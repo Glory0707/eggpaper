@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS claims(
   PRIMARY KEY(paper_id, cid)
 );
 CREATE TABLE IF NOT EXISTS glossary(
-  id INTEGER PRIMARY KEY AUTOINCREMENT, term_en TEXT, term_zh TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id TEXT, term_en TEXT, term_zh TEXT,
   domain TEXT DEFAULT '', note TEXT DEFAULT '', source TEXT DEFAULT 'manual', created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS qa_messages(
@@ -78,6 +78,7 @@ def _get() -> sqlite3.Connection:
 def _migrate(c: sqlite3.Connection):
     """惰性迁移：旧库补列。"""
     for stmt in (
+        "ALTER TABLE glossary ADD COLUMN paper_id TEXT",
         "ALTER TABLE papers ADD COLUMN mono_path TEXT",
         "ALTER TABLE annotations ADD COLUMN inferred_role TEXT",
         "ALTER TABLE papers ADD COLUMN suggest TEXT",
@@ -361,15 +362,20 @@ def override_annotation(pid: str, para_idx: int, role: str):
         q("UPDATE annotations SET role=inferred_role, user_override=0 WHERE paper_id=? AND para_idx=?", (pid, para_idx), commit=True)
 
 
-# ---------- glossary ----------
+# ---------- 术语：**按篇**，不设全库共用的词表 ----------
+# 理由（用户定的口径）：术语是"这篇文献自己的说法"，跨篇共用只会让列表里全是别的论文的词
+# （实测：全库 44 条里只有 3 条属于当前这篇，点"跳去原文"必然查不到）。
+# 一篇文献一份词表，由析读时的模型从正文里发掘 + 读者自己补；导出也是按篇导。
 
-def glossary_list():
-    return [dict(r) for r in q("SELECT * FROM glossary ORDER BY id")]
+def glossary_list(pid: str):
+    return [dict(r) for r in q("SELECT * FROM glossary WHERE paper_id=? ORDER BY term_en", (pid,))]
 
 
-def glossary_add(term_en: str, term_zh: str, domain: str = "", note: str = "", source: str = "manual") -> int:
-    q("INSERT INTO glossary(term_en, term_zh, domain, note, source, created_at) VALUES(?,?,?,?,?,?)",
-      (term_en, term_zh, domain, note, source, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
+def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: str = "",
+                 source: str = "manual") -> int:
+    q("INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
+      " VALUES(?,?,?,?,?,?,?)",
+      (pid, term_en, term_zh, domain, note, source, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
 
 
@@ -377,21 +383,23 @@ def glossary_delete(gid: int):
     q("DELETE FROM glossary WHERE id=?", (gid,), commit=True)
 
 
-def glossary_seed(pairs: list):
-    existing = {r["term_en"].lower() for r in q("SELECT term_en FROM glossary")}
+def glossary_put_ai(pid: str, terms: list):
+    """把模型发掘出来的术语整批写进这一篇（替换上一批 AI 词，读者的手写词不动）。"""
     with _lock:
+        _get().execute("DELETE FROM glossary WHERE paper_id=? AND source='ai'", (pid,))
         _get().executemany(
-            "INSERT INTO glossary(term_en, term_zh, domain, note, source, created_at) VALUES(?,?,?,?,?,?)",
-            [(en, zh, domain, "", "seed", time.strftime("%Y-%m-%d %H:%M:%S"))
-             for en, zh, domain in pairs if en.lower() not in existing])
+            "INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
+            " VALUES(?,?,?,?,?,?,?)",
+            [(pid, t["en"], t["zh"], t.get("kind", ""), "", "ai",
+              time.strftime("%Y-%m-%d %H:%M:%S")) for t in terms])
         _get().commit()
 
 
-def glossary_hit(text: str):
-    """返回与文本精确子串匹配的术语对（大小写不敏感）。"""
+def glossary_hit(pid: str, text: str):
+    """这一篇的词里，有哪些出现在给定文本里（大小写不敏感的子串匹配）。"""
     hits = []
     low = text.lower()
-    for r in q("SELECT term_en, term_zh FROM glossary"):
+    for r in q("SELECT term_en, term_zh FROM glossary WHERE paper_id=?", (pid,)):
         if r["term_en"].lower() in low:
             hits.append({"en": r["term_en"], "zh": r["term_zh"]})
     return hits

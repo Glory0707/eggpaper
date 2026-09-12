@@ -46,7 +46,7 @@ export const api = {
   figureUrl: (pid, f, dpi = 130) =>
     `/api/papers/${pid}/figure.png?page=${f.page}&x0=${f.x0}&y0=${f.y0}&x1=${f.x1}&y1=${f.y1}&dpi=${dpi}`,
   exportMdUrl: (pid) => `/api/papers/${pid}/export.md`,
-  glossaryCsvUrl: '/api/glossary/export.csv',
+  glossaryCsvUrl: (pid) => `/api/papers/${pid}/glossary/export.csv`,
 
   // 提问：会话 + 流式回答
   askUrl: (pid) => `/api/papers/${pid}/ask`,
@@ -70,8 +70,8 @@ export const api = {
   // 那两个接口返回的是 SSE，真被调也会炸——删掉，别再钓着一个错的东西
   translateFull: (pid) => req('POST', `/api/papers/${pid}/translate-full`),
   translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
-  glossary: () => req('GET', '/api/glossary'),
-  glossaryAdd: (item) => req('POST', '/api/glossary', item),
+  glossary: (pid) => req('GET', `/api/papers/${pid}/glossary`),
+  glossaryAdd: (pid, item) => req('POST', `/api/papers/${pid}/glossary`, item),
   glossaryDelete: (id) => req('DELETE', `/api/glossary/${id}`),
   settings: () => req('GET', '/api/settings'),
   version: () => req('GET', '/api/version'),

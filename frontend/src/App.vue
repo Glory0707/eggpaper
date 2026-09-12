@@ -288,7 +288,6 @@ function onKey(e) {
     case 'PageUp': e.preventDefault(); store.viewerApi?.stepPage(-1); break
     case 't': store.viewerApi?.translateCurrent(); break
     case 's': store.viewerApi?.translateSelectionKey(); break
-    case 'f': store.viewer.layers.skim = !store.viewer.layers.skim; break
     case 'r': store.viewer.frame = !store.viewer.frame; break
     case '1': store.viewer.variant = 'original'; break
     case '2': if (tranSt.value === 'done') store.viewer.variant = 'mono'; break
@@ -334,7 +333,9 @@ function onKey(e) {
             <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">交替</button>
           </div>
         </Transition>
-        <button class="toggle" :class="{ on: store.viewer.layers.skim }" @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
+        <!-- 略读暂时下线：蒙版的取舍还不够准（用户要求先禁用，按钮变灰不可点）。
+             逻辑与后端都留着，等取舍规则重做之后再放出来。 -->
+        <button class="toggle" disabled title="略读暂时下线（正在重做）">略读</button>
         <button class="toggle" :class="{ on: store.viewer.frame }" title="框选问 AI（r）"
                 @click="store.viewer.frame = !store.viewer.frame">框选</button>
         <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
@@ -423,7 +424,6 @@ function onKey(e) {
       <div class="k-row"><span>下一段 / 上一段（略读时仅核心段）</span><kbd>j / k</kbd></div>
       <div class="k-row"><span>译当前段并钉页边</span><kbd>t</kbd></div>
       <div class="k-row"><span>翻译划选</span><kbd>s</kbd></div>
-      <div class="k-row"><span>略读</span><kbd>f</kbd></div>
       <div class="k-row"><span>框选问 AI（Esc 退出）</span><kbd>r</kbd></div>
       <div class="k-row"><span>原文 / 译文 / 双语</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>聚焦提问</span><kbd>/</kbd></div>

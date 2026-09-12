@@ -209,11 +209,12 @@ const termFilter = ref('')
 const termForm = ref({ term_en: '', term_zh: '' })
 
 async function loadTerms() {
-  terms.value = await api.glossary()
+  if (!store.currentId) { terms.value = []; return }
+  terms.value = await api.glossary(store.currentId)      // 术语是按篇的
 }
 async function addTerm() {
   if (!termForm.value.term_en.trim() || !termForm.value.term_zh.trim()) return
-  await api.glossaryAdd({ ...termForm.value, source: 'manual' })
+  await api.glossaryAdd(store.currentId, { ...termForm.value, source: 'manual' })
   termForm.value = { term_en: '', term_zh: '' }
   loadTerms()
 }
@@ -324,7 +325,7 @@ const abbrList = computed(() => {
   } catch { return [] }
 })
 async function saveAbbr(a) {
-  await api.glossaryAdd({ term_en: a.en, term_zh: a.zh, source: 'abbr' })
+  await api.glossaryAdd(store.currentId, { term_en: a.en, term_zh: a.zh, source: 'abbr' })
   loadTerms()                     // 列表里少一条、下面的术语表多一条，动作可见
   toast(`「${a.en}」已收进术语表`)
 }
@@ -423,8 +424,6 @@ function inPaper(t) {
   const q = fold(t?.term_en)
   return q.length >= 3 && paperNorm.value.includes(q)
 }
-const termScope = ref('paper')          // paper = 只看本文出现的词；all = 全部
-const paperTermN = computed(() => terms.value.filter(inPaper).length)
 const termsFiltered = computed(() => {
   const f = termFilter.value.trim().toLowerCase()
   let list = [...terms.value].sort((a, b) => (inPaper(b) ? 1 : 0) - (inPaper(a) ? 1 : 0)
@@ -449,6 +448,7 @@ watch(() => store.currentId, () => {
   advisor.value = []
   figures.value = []
   suggest.value = []
+  loadTerms()          // 术语按篇：换一篇就换一份词表
   loadSix()
 }, { immediate: true })
 </script>
@@ -732,14 +732,8 @@ watch(() => store.currentId, () => {
           <button title="添加" @click="addTerm">＋</button>
         </div>
         <input type="text" v-model="termFilter" placeholder="筛选…" class="term-filter" />
-        <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl" download>导出 CSV</a></div>
-        <!-- 术语表是全库共用的：默认只看**本文正文里出现过**的词，其余的要专门切过去看 -->
-        <div class="band-bar">
-          <button class="band-chip" :class="{ off: termScope !== 'paper' }" @click="termScope = 'paper'">本文 {{ paperTermN }}</button>
-          <button class="band-chip" :class="{ off: termScope !== 'all' }" @click="termScope = 'all'">全部 {{ terms.length }}</button>
-        </div>
-        <div v-for="t in (termScope === 'paper' ? termsFiltered.filter(inPaper) : termsFiltered)"
-             :key="t.id" class="term-row" :class="{ absent: !inPaper(t) }">
+        <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>导出 CSV</a></div>
+        <div v-for="t in termsFiltered" :key="t.id" class="term-row">
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>

@@ -23,7 +23,6 @@ import llm
 import pdfparse
 import translate_full
 import update
-from glossary_seed import SEED
 
 app = FastAPI(title="eggpaper", version="0.1.0")
 # 只放行本机来源：界面与服务同源，不需要 CORS，这条只为让 `npm run dev`（Vite 5173）能用。
@@ -88,7 +87,6 @@ def _startup():
     os.makedirs(PDF_DIR, exist_ok=True)
     os.makedirs(TRANSLATED_DIR, exist_ok=True)
     translate_full.sweep_configs(TRANSLATED_DIR)   # 清掉可能残留的 pdf2zh --config 副本（里面有 key）
-    db.glossary_seed(SEED)
     _clear_zombie_jobs()
 
 
@@ -566,19 +564,26 @@ def _run_analysis(pid: str, paras: list):
         # 骨架的 problem 字段是"顺手写的"，模型经常不给 → 少了它六问就永远缺第一问
         # （线上就是这样：三篇论文都有 why/next/lens，却都没有 problem）。缺了就补跑。
         todo = ["why", "next", "lens"] + ([] if prob else ["problem"])
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=5) as ex:
             futs = {ex.submit(_mock_six, k) if _demo_mode() else ex.submit(_gen_six, p2, k): k
                     for k in todo}
+            # 术语表也是**按篇**的：析读时让模型把这篇自己的说法发掘出来（用户口径：
+            # 每篇只要它独有的术语，不要全库共用的词表）
+            futs[ex.submit(_demo_terms if _demo_mode() else llm.extract_terms, title, use)] = "terms"
             for fut in as_completed(futs):
                 k = futs[fut]
                 try:
                     got = fut.result()
-                    if got.get("text") or got.get("items"):
+                    if k == "terms":
+                        if got:
+                            db.glossary_put_ai(pid, got)
+                            print(f"[eggpaper] 本篇术语 {len(got)} 条")
+                    elif got.get("text") or got.get("items"):
                         db.answer_put(pid, k, got)
                     else:
                         print(f"[eggpaper] 六问·{k} 这次是空的")
                 except Exception as e:
-                    print(f"[eggpaper] 六问·{k} 没生成：{_human_msg(e)}")
+                    print(f"[eggpaper] {k} 没生成：{_human_msg(e)}")
     except Exception as e:
         # 人话 + **不清空**已有结果：一次限流不该让上次读出来的骨架陪葬
         db.fail_analysis(pid, _human_msg(e))
@@ -907,7 +912,7 @@ def summary(pid: str):
         data = {"one_line": "〔演示模式〕这是一篇测试论文的一眼卡摘要。", "contributions": "演示贡献", "methods": "演示方法",
                 "findings": "演示发现", "keywords": ["演示"]}
     else:
-        hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+        hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
         data = llm.summarize(p["title"], db.get_paragraphs(pid), hits)
         _require_shape(data, ("one_line", "findings", "keywords"), "一眼卡")
     db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
@@ -1022,6 +1027,10 @@ def _gen_six(p: dict, key: str):
                                claims, warns)
     s = json.loads(p["summary"]) if p.get("summary") else {}
     return llm.answer_lens(p["title"], s.get("one_line", ""), claims, db.get_paragraphs(pid))
+
+
+def _demo_terms(title, paras) -> list:
+    return [{"en": "demo term", "zh": "演示术语", "kind": "method"}]
 
 
 def _mock_six(key: str) -> dict:
@@ -1148,18 +1157,19 @@ def export_md(pid: str):
                     headers={"Content-Disposition": f"attachment; filename=eggpaper-{pid}.md"})
 
 
-@app.get("/api/glossary/export.csv")
-def glossary_export():
+@app.get("/api/papers/{pid}/glossary/export.csv")
+def glossary_export(pid: str):
+    _paper_or_404(pid)
     import csv
     import io
     buf = io.StringIO()
     buf.write("﻿")     # BOM：中文 Windows 上 Excel/WPS 按 ANSI 解 UTF-8 CSV，不加就是乱码
     w = csv.writer(buf)
     w.writerow(["term_en", "term_zh", "domain", "note", "source"])
-    for r in db.glossary_list():
+    for r in db.glossary_list(pid):
         w.writerow([r["term_en"], r["term_zh"], r["domain"], r["note"], r["source"]])
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": "attachment; filename=eggpaper-glossary.csv"})
+                    headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
 
 
 # ---------------- 图表速览 ----------------
@@ -1311,7 +1321,7 @@ def _stream_answer(p: dict, conv_id: int, question: str):
             gen = _mock_stream(question)
         else:
             summary, ctx = _context(pid, conv_id, hist)
-            hits = db.glossary_hit(" ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+            hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
             gen = llm.chat_stream(llm.ask_messages(p["title"], db.get_paragraphs(pid), ctx, question,
                                                    hits, summary))
         for piece in gen:
@@ -1506,7 +1516,7 @@ def translate_selection(pid: str, body: dict):
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "没有选中文本")
-    hits = db.glossary_hit(text)
+    hits = db.glossary_hit(pid, text)
     context = body.get("context", "")
     return StreamingResponse(_translate_sse(pid, text, context, hits), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1524,7 +1534,7 @@ def translate_para(pid: str, body: dict):
         raise HTTPException(404, "段落不存在")
     _require_paras(pid)          # 扫描件没有段落可译，直说
     para = paras[idx]
-    hits = db.glossary_hit(para["text"])
+    hits = db.glossary_hit(pid, para["text"])
     ctx = paras.get(idx - 1, {}).get("text", "")
     return StreamingResponse(_translate_sse(pid, para["text"], ctx, hits), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1600,18 +1610,21 @@ def translate_full_status(pid: str):
 
 # ---------------- 术语表 ----------------
 
-@app.get("/api/glossary")
-def glossary_list():
-    return db.glossary_list()
+@app.get("/api/papers/{pid}/glossary")
+def glossary_list(pid: str):
+    _paper_or_404(pid)
+    return db.glossary_list(pid)
 
 
-@app.post("/api/glossary")
-def glossary_add(body: dict):
+@app.post("/api/papers/{pid}/glossary")
+def glossary_add(pid: str, body: dict):
+    _paper_or_404(pid)
     en = (body.get("term_en") or "").strip()
     zh = (body.get("term_zh") or "").strip()
     if not en or not zh:
         raise HTTPException(400, "中英文都要填")
-    gid = db.glossary_add(en, zh, body.get("domain", ""), body.get("note", ""), body.get("source", "manual"))
+    gid = db.glossary_add(pid, en, zh, body.get("domain", ""), body.get("note", ""),
+                          body.get("source", "manual"))
     return {"id": gid}
 
 
