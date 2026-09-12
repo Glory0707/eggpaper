@@ -89,11 +89,7 @@ async function poll() {
     startMarginFast()      // 刷新/换篇回来时也接上快轮询（否则只能等 3 秒那条）
   }
   const p = store.papers.find(x => x.id === store.currentId)
-  if (p && p.translate_status === 'running') {
-    const j = await api.translateStatus(store.currentId)
-    if (j.status === 'done') { await refreshPapers(); rollOnce(); toast('双语已生成，切「译文」或「双语」查看') }
-    if (j.status === 'error') { await refreshPapers(); toast('整本翻译失败：' + (j.error || '').slice(0, 80)) }
-  }
+  if (p && p.translate_status === 'running') await pollTranslate()
 }
 
 /* 窄窗：右栏改浮层，进窄窗时自动收起一次，把宽度还给论文
@@ -146,10 +142,32 @@ onUnmounted(() => clearInterval(marginFastTimer))
 async function doTranslateFull() {
   if (!store.currentId) return
   try {
-    await api.translateFull(store.currentId)
+    const r = await api.translateFull(store.currentId)
+    tranProg.value = { done: 0, total: 0, svc: r.service || '' }
     await refreshPapers()
-    toast('整本翻译已启动，完成后自动提示')
+    // 服务被自动换掉（比如 google 在这台机器的网络下不通）要说出来——
+    // 用户设的是 google、跑的是 bing，不吭声等于骗人
+    toast(r.note || `${r.service || '整本翻译'}：已开始，完成后自动提示`)
   } catch (e) { toast('启动失败：' + e.message) }
+}
+
+/* 整本翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
+   顺带把「译完了」这一拍也接上——以前判断条件是数据库里的 running，
+   而 running 从来没被写进去过，于是完成通知与「译文/双语」的解锁整条是死的。 */
+async function pollTranslate() {
+  if (!store.currentId) return
+  const j = await api.translateStatus(store.currentId)
+  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '' }
+  if (j.status === 'done') {
+    tranProg.value = { done: 0, total: 0, svc: '' }
+    await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
+    rollOnce()
+    toast('双语已生成，切「译文」或「双语」查看')
+  } else if (j.status === 'error') {
+    tranProg.value = { done: 0, total: 0, svc: '' }
+    await refreshPapers()
+    toast('整本翻译失败：' + (j.error || '').slice(0, 100), 6000)
+  }
 }
 
 /* 应用级的选择入口：空态那一屏（整屏可点）、以及任何不在文库面板里的时候都用它。
@@ -211,6 +229,21 @@ async function saveSettings(body) {
 // 析读在忙：排队与在读都算（后台排队时按钮也该按不动、并说清是在排队）
 const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.status))
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
+// 整本翻译的进度（回填自 /translate-status 的 pages）。total 为 0 = 还没解析出页数
+const tranProg = ref({ done: 0, total: 0, svc: '' })
+const tranPct = computed(() => tranProg.value.total
+  ? Math.round(tranProg.value.done * 100 / tranProg.value.total) : 0)
+const tranLabel = computed(() => {
+  if (tranSt.value !== 'running') return '整本翻译'
+  return tranProg.value.total ? `翻译中 ${tranProg.value.done}/${tranProg.value.total}` : '翻译中…'
+})
+const tranTip = computed(() => {
+  if (tranSt.value === 'running') {
+    return `pdf2zh 正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}：`
+         + '进度按页报，译完自动提示。正在读的这篇不受影响'
+  }
+  return '用 pdf2zh 把整篇译成第二份 PDF（奇页原文偶页译文），译文/双语两个模式靠它'
+})
 
 /* ---------------- 键盘流 ---------------- */
 function onKey(e) {
@@ -297,8 +330,8 @@ function onKey(e) {
         <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
              译完就没必要再露出来了——留一个永远点不动的按钮只会让人猜它还能干什么。 -->
         <button v-if="tranSt !== 'done'" @click="doTranslateFull" :disabled="tranSt === 'running'"
-                title="用 pdf2zh 把整篇译成第二份 PDF，译文/双语两个模式靠它">
-          {{ tranSt === 'running' ? '翻译中…' : '整本翻译' }}
+                :title="tranTip">
+          {{ tranLabel }}
         </button>
         <button class="primary" @click="doAnalyze" :disabled="anaBusy">
           {{ store.analysis.status === 'queued' ? '排队中…' : (store.analysis.status === 'running' ? '通读中…'
@@ -307,6 +340,11 @@ function onKey(e) {
       </div>
       <div class="actions">
         <button class="ghost" @click="showSettings = true" title="设置">⚙</button>
+      </div>
+      <!-- 整本翻译的进度：一条发丝墨线压在工具栏下沿，译完/失败自己消失。
+           它是唯一要跑分钟级的活（这篇 18 页实测 2 分钟），不给点动静用户只会以为卡了。 -->
+      <div class="tran-line" v-if="tranSt === 'running'">
+        <i :class="{ det: tranPct > 0 }" :style="tranPct > 0 ? { width: tranPct + '%' } : null"></i>
       </div>
     </header>
 

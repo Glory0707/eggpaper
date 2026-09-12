@@ -5,6 +5,7 @@ import queue
 import shutil
 import threading
 import time
+from urllib.parse import urlparse
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
@@ -69,6 +70,7 @@ def _startup():
     config.ensure_dirs()
     os.makedirs(PDF_DIR, exist_ok=True)
     os.makedirs(TRANSLATED_DIR, exist_ok=True)
+    translate_full.sweep_configs(TRANSLATED_DIR)   # 清掉可能残留的 pdf2zh --config 副本（里面有 key）
     db.glossary_seed(SEED)
     _clear_zombie_jobs()
 
@@ -84,11 +86,50 @@ def _clear_zombie_jobs():
     刚启动的进程里不可能有任务在跑，所以这些状态全是僵尸，一律归零（回到"还没做过"，
     按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
     """
+    _adopt_orphan_translation()          # 先认领：上一次进程退出时 pdf2zh 可能已经把译完写好了
     for col in ("analysis_status", "marginalia_status", "translate_status"):
         n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col} IN ('running','queued')")[0][0]
         if n:
             db.q(f"UPDATE papers SET {col}='none' WHERE {col} IN ('running','queued')", commit=True)
             _applog(f"启动清理：{n} 篇的 {col} 卡在 running/queued，已归零")
+
+
+def _adopt_orphan_translation():
+    """收留"孤儿译文"。
+
+    pdf2zh 是我们起的**独立进程**：eggpaper 关掉/装新版本时它不会被一起带走，
+    会接着把 `<pid>-dual.pdf` 写完。但那条 running 状态被上面的清理归零了，
+    用户回来看到的还是「整本翻译」——白译一场，还得再等两分钟。启动时看一眼文件在不在，
+    在就直接认领成 done。只认「看起来完整」的文件（有 %%EOF 收尾），
+    免得把写到一半就被杀掉的那份当成成品。
+    """
+    try:
+        names = os.listdir(TRANSLATED_DIR)
+    except OSError:
+        return
+    # 用 get_paper 逐篇取（list_papers 的列里**故意没有** path/dual_path——
+    # 那份列表是要发给浏览器的，不该把用户的本地路径捎出去）
+    for row in db.list_papers():
+        p = db.get_paper(row["id"]) or {}
+        if p.get("translate_status") == "done" and p.get("dual_path"):
+            continue
+        stem = os.path.splitext(os.path.basename(p.get("path") or ""))[0]
+        if not stem or (stem + "-dual.pdf") not in names:
+            continue
+        dual = os.path.join(TRANSLATED_DIR, stem + "-dual.pdf")
+        try:
+            size = os.path.getsize(dual)
+            with open(dual, "rb") as f:
+                f.seek(max(0, size - 2048))
+                tail = f.read()
+        except OSError:
+            continue
+        if size < 10_000 or b"%%EOF" not in tail:
+            continue
+        mono = os.path.join(TRANSLATED_DIR, stem + "-mono.pdf")
+        db.update_paper(p["id"], dual_path=dual, mono_path=mono if os.path.exists(mono) else "",
+                        translate_status="done", translate_error="")
+        _applog(f"认领上次没结算的译文：{p['id']} → {os.path.basename(dual)}")
 
 
 # ---------------- 设置 ----------------
@@ -1303,23 +1344,63 @@ def translate_para(pid: str, body: dict):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+def _pdf2zh_env(service: str, cfg: dict):
+    """整本翻译要的 key 从哪来：**用用户在「设置」里已经填的那一套**，不让他填第二遍。
+
+    只经环境变量交给子进程（pdf2zh 读 OPENAI_*/DEEPSEEK_* 这些）。
+    注意 pdf2zh 自己会把拿到的值落到 `~/.config/PDFMathTranslate/config.json`
+    （它的 GUI 就靠那个文件），这一层我们管不了——能保证的是 eggpaper 这边
+    不落盘、不进库、不打印。返回 (环境变量, 端点主机名)。
+    """
+    prov = cfg.get("provider") or {}
+    key = (prov.get("api_key") or "").strip()
+    base = (prov.get("base_url") or "").strip()
+    model = (prov.get("model") or "").strip()
+    if not key:
+        return {}, ""
+    if service == "openai":
+        envs = {"OPENAI_API_KEY": key}
+        if base:
+            envs["OPENAI_BASE_URL"] = base
+        if model:
+            envs["OPENAI_MODEL"] = model
+        return envs, (urlparse(base).hostname or "") if base else ""
+    if service == "deepseek":
+        envs = {"DEEPSEEK_API_KEY": key}
+        if model:
+            envs["DEEPSEEK_MODEL"] = model
+        return envs, "api.deepseek.com"
+    return {}, ""
+
+
 @app.post("/api/papers/{pid}/translate-full")
 def translate_full_start(pid: str):
     p = _paper_or_404(pid)
     cfg = config.load()
-    translate_full.start(pid, p["path"], TRANSLATED_DIR, cfg["pdf2zh"]["service"], cfg["pdf2zh"]["options"])
-    return {"status": "running"}
+    svc = (cfg["pdf2zh"].get("service") or "bing").strip()
+    envs, host = _pdf2zh_env(svc, cfg)
+    # 先探一下这个服务连不连得通。连不通的后果不是"慢"而是**永远不动**
+    # （pdf2zh 会在每个请求上重试，CPU 0、界面停在「翻译中」），所以宁可在门口拦住。
+    used, note = translate_full.choose_service(svc, host)
+    if used is None:
+        raise HTTPException(400, note)
+    translate_full.start(pid, p["path"], TRANSLATED_DIR, used,
+                         cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog, note=note)
+    db.update_paper(pid, translate_status="running", translate_error="")
+    return {"status": "running", "service": used, "note": note}
 
 
 @app.get("/api/papers/{pid}/translate-status")
 def translate_full_status(pid: str):
-    _paper_or_404(pid)
+    p = _paper_or_404(pid)
     j = translate_full.job(pid)
     if j["status"] == "done":
-        p = _paper_or_404(pid)
-        mono = j["dual"].replace("-dual.pdf", "-mono.pdf") if os.path.exists(j["dual"].replace("-dual.pdf", "-mono.pdf")) else ""
-        if j["dual"] != p["dual_path"] or mono != (p["mono_path"] or ""):
-            db.update_paper(pid, dual_path=j["dual"], mono_path=mono, translate_status="done")
+        # 双语/译文两个模式的入口看的就是这两列——不落库，界面上的「译文/双语」永远点不动
+        if j["dual"] != p["dual_path"] or (j["mono"] or "") != (p["mono_path"] or ""):
+            db.update_paper(pid, dual_path=j["dual"], mono_path=j["mono"] or "",
+                            translate_status="done", translate_error="")
+    elif j["status"] == "error" and p["translate_status"] != "error":
+        db.update_paper(pid, translate_status="error", translate_error=j["error"])
     return j
 
 

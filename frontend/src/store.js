@@ -66,10 +66,10 @@ export const store = reactive({
 
 window.addEventListener('resize', () => { store.vw = window.innerWidth })
 
-export function toast(msg) {
+export function toast(msg, ms = 2600) {
   store.toast = msg
   clearTimeout(toast._t)
-  toast._t = setTimeout(() => (store.toast = ''), 2600)
+  toast._t = setTimeout(() => (store.toast = ''), ms)
 }
 
 watch(() => store.viewer.variant, v => lsSet('variant', v))

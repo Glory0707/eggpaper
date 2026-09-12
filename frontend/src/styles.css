@@ -212,12 +212,25 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 
 /* ---------- 顶栏 ---------- */
 .topbar {
+  position: relative;              /* 整本翻译那条发丝进度线压在它的下沿上 */
   display: flex; align-items: center; gap: 16px;
   height: 56px; padding: 0 14px;
   background: var(--card);
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
+/* 整本翻译的进度：和右栏眉批那条同一个语汇（发丝轨 + 墨色滑块），只是贴在最上面。
+   没解析出页数（pdf2zh 刚起来那几秒）就先走不确定态。 */
+.tran-line {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: var(--hairline-soft); overflow: hidden;
+}
+.tran-line i {
+  display: block; height: 100%; width: 30%; background: var(--accent);
+  animation: slide 1.8s var(--ease-smooth) infinite;
+  transition: width .45s var(--ease-smooth);
+}
+.tran-line i.det { animation: none; }
 .wordmark { display: flex; align-items: center; gap: 9px; user-select: none; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
 .wordmark .name { font-family: var(--brand); font-style: italic; font-weight: 600; font-size: var(--fs-display); }
@@ -765,6 +778,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .f-row { margin-bottom: 12px; }
 .modal .f-row label { display: block; margin-bottom: 5px; }
 .modal .f-row input, .modal .f-row select { width: 100%; }
+/* 选项下面的一行小字：说清"选了它会发生什么"。字号比标签小一档，不抢视线 */
+.modal .f-hint { margin-top: 5px; font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.5; }
 .modal .f-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; align-items: center; }
 /* 应用内对话框（确认 / 输入）：比设置窄一点，正文一行一句，确定键可以是朱红 */
 .modal.dialog { width: 372px; }

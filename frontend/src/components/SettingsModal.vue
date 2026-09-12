@@ -139,11 +139,13 @@ function save() {
       <div class="f-row">
         <label class="mono-label">整本翻译服务（pdf2zh）</label>
         <select v-model="f.service">
-          <option value="google">google</option>
-          <option value="bing">bing</option>
-          <option value="deepl">deepl</option>
-          <option value="openai">openai（OpenAI 兼容）</option>
+          <option value="bing">bing（免费，不用填 key）</option>
+          <option value="openai">openai（用上面填的模型与端点，按量计费）</option>
+          <option value="deepseek">deepseek（用上面填的 key）</option>
+          <option value="google">google（免费，国内多数网络连不通）</option>
+          <option value="deepl">deepl（另需 DEEPL_AUTH_KEY 环境变量）</option>
         </select>
+        <div class="f-hint">连不通的服务不会傻等：开跑前先探一次，不通就自动换 bing 并告诉你换过了</div>
       </div>
       <div class="f-row">
         <label class="mono-label">更新源（静态目录地址，留空不检查）</label>

@@ -20,7 +20,12 @@ DEFAULTS = {
     },
     "mock": True,          # 演示模式：不调 LLM，用启发式假数据跑通全流程
     "pdf2zh": {
-        "service": "google",   # pdf2zh 翻译服务名（google/bing/openai/...）
+        # pdf2zh 翻译服务名（bing/google/openai/deepseek/...）。
+        # 默认 bing：免费、不用 key、国内能连。**别改回 google**——translate.google.com
+        # 在国内多数网络下连不通，而 pdf2zh 对连不通的服务不是报错而是死等重试，
+        # 用户看到的是「翻译中」永远不动（实测 4 分钟 0 CPU、0 输出）。
+        # openai/deepseek 会用「设置」里已填的那套 key 和模型（见 main._pdf2zh_env）。
+        "service": "bing",
         "options": "",         # 透传给 pdf2zh CLI 的额外参数
     },
     "update": {
