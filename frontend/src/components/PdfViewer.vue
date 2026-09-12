@@ -139,29 +139,76 @@ const protectedIdx = computed(() => {
    （用户报的"蒙在图上"），而段末最后一行短、框却按最长行给宽，看着就是"错位"。
    行级坐标本来就有（页边划线用的同一份），直接拿来用。 */
 /* 图区（/figures 认出来的图片框）不蒙，图上的坐标轴文字、图注也不蒙——用户原话
-   "不要在图片以及图片上的文字加蒙版"。判据是行框与图框相交（都是 PDF 点，直接比）。 */
+   "不要在图片以及图片上的文字加蒙版"。两个坐标系都是 PDF 点，直接比。 */
 function onFigure(b) {
   return figs.value.some(f => !(b.x1 <= f.x0 || b.x0 >= f.x1 || b.y1 <= f.y0 || b.y0 >= f.y1))
 }
-function veilBoxes(p) {
+/* 蒙纱的几何**从屏幕上的文字行量**，不用后端的行框：后端按解析器切行，与 pdf.js 渲染
+   出来的行距/切分并不完全一致，画出来会压到上一行、漏掉自己那一行下沿（实测 117 块里
+   9 块只盖到 52%~60% 的文字）。文字层就在 DOM 里，逐行量最准——和引文划线同一套办法。
+   量完按 y 合并成整行（pdf.js 一行常常切成好几个 span）。 */
+const veilRects = ref({})                 // origPage -> { paraIdx: [box] }
+function computeVeils() {
+  const out = {}
   const s = scale.value
-  if (!p.lines?.length) return onFigure(p.bbox) ? [] : [rectStyle(p)]
-  return p.lines.filter(l => !onFigure(l.bbox)).map(l => ({
-    left: l.bbox.x0 * s + 'px', top: l.bbox.y0 * s + 'px',
-    width: (l.bbox.x1 - l.bbox.x0) * s + 'px', height: (l.bbox.y1 - l.bbox.y0) * s + 'px',
-  }))
+  for (const it of flatItems.value) {
+    if (it.origPage < 0) continue
+    const el = pageEls.value[it.gi]
+    if (!el) continue
+    const base = el.getBoundingClientRect()
+    const rows = new Map()                 // 取整的 y -> 该行的 x0/x1/y/h
+    for (const span of el.querySelectorAll('.textLayer span')) {
+      const r = span.getBoundingClientRect()
+      if (r.width < 4 || r.height < 4) continue
+      const y = r.top - base.top, h = r.height
+      const k = Math.round(y)
+      const cur = rows.get(k)
+      const x0 = r.left - base.left, x1 = x0 + r.width
+      if (cur) { cur.x0 = Math.min(cur.x0, x0); cur.x1 = Math.max(cur.x1, x1) }
+      else rows.set(k, { x0, x1, y, h })
+    }
+    const lines = [...rows.values()]
+    const per = {}
+    for (const p of parasByPage.value[it.origPage] || []) {
+      if (!veiled(p, it.origPage)) continue
+      const y0 = p.bbox.y0 * s - 2, y1 = p.bbox.y1 * s + 2
+      per[p.idx] = lines
+        .filter(l => l.y + l.h > y0 && l.y < y1)
+        .filter(l => !onFigure({ x0: l.x0 / s, x1: l.x1 / s,
+                                 y0: (l.y - 1) / s, y1: (l.y + l.h + 1) / s }))
+        .map(l => ({ left: l.x0 + 'px', top: l.y + 'px',
+                     width: (l.x1 - l.x0) + 'px', height: l.h + 'px' }))
+    }
+    out[it.origPage] = per
+  }
+  veilRects.value = out
 }
-// 此刻被蒙掉吗：略读开着 + 判过角色 + 不是核心 + 读者没手动留下 + 段上没有批注
-function veiled(p, pno) {
-  return store.viewer.layers.skim && pno >= 0 && !!roleOf(p) && !isCore(p)
-    && !kept(p.idx) && !protectedIdx.value.has(p.idx)
-}
-// 纸边那行小字：说清"为什么留下了这一段"——角色名 / 你要读 / 有眉批
-function roleTag(p) {
-  if (kept(p.idx) && !isCore(p)) return '你要读'
-  if (protectedIdx.value.has(p.idx) && !isCore(p)) return '有眉批'
-  return ROLE_ZH[roleOf(p) || ''] || ''
-}
+function veilBoxes(p, pno) { return veilRects.value[pno]?.[p.idx] || [] }
+/* 该蒙哪些段——这是略读的**全部判断**，写在一处。
+   ① 候选只有两类：模型判成 background / boilerplate 的，以及参考文献段；
+   ② 首页不蒙（标题、摘要、引言是"这篇讲什么"，蒙掉它略读就没意义了）；
+   ③ 有「值得读 / 要当心」批注的段、读者手选的段不蒙；
+   ④ **上限三分之一**：模型有时把大半篇正文都判成 boilerplate（实测一篇 48 段里 28 段），
+      照单全蒙等于把论文涂白——那不是略读，是关灯。超了就按"最没有信息量"排前面：
+      数字与引用标记越少（说明这段没有结果、没有数据，是铺陈），越先被蒙。 */
+const skimSkip = computed(() => {
+  if (!store.viewer.layers.skim) return new Set()
+  const ps = store.paras
+  const cand = ps.filter(p => {
+    if (p.page <= 0) return false
+    if (kept(p.idx) || protectedIdx.value.has(p.idx)) return false
+    const r = roleOf(p)
+    return !!p.in_refs || r === 'boilerplate' || r === 'background'
+  })
+  const cap = Math.max(2, Math.floor(ps.length / 3))
+  const score = p => {
+    const t = p.text || ''
+    const marks = (t.match(/[0-9]/g) || []).length + 2 * (t.match(/\[\d+\]/g) || []).length
+    return marks / Math.max(1, t.length / 100)          // 每百字的"硬信息"密度
+  }
+  return new Set(cand.sort((a, b) => score(a) - score(b)).slice(0, cap).map(p => p.idx))
+})
+function veiled(p, pno) { return pno > 0 && skimSkip.value.has(p.idx) }
 
 /* ---------------- 文档装载与 sheets 构建 ---------------- */
 
@@ -499,6 +546,7 @@ function noteHeight(n) {
 async function measureNotes() {
   await nextTick()
   computeQuoteMarks()
+  computeVeils()
   const next = { ...noteHeights.value }
   let changed = false
   for (const el of document.querySelectorAll('.mg-note[data-nid]')) {
@@ -1290,29 +1338,21 @@ watch(() => store.marginalia.notes, (n, o) => {
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
                 <!-- 蒙掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
                 <template v-if="veiled(p, it.origPage)">
-                  <div v-for="(vb, vi) in veilBoxes(p)" :key="'v' + vi"
+                  <div v-for="(vb, vi) in veilBoxes(p, it.origPage)" :key="'v' + vi"
                        class="para-fade veil"
-                       :title="vi ? '' : `略读把这一段蒙掉了（判为「${roleTag(p)}」）· 点一下：这段也要读`"
+                       :title="vi ? '' : '略读蒙掉了这一段 · 点一下：这段也要读'"
                        :style="{ left: vb.left, top: vb.top, width: vb.width, height: vb.height,
                                  animationDelay: Math.min(400, pi * 12 + vi * 8) + 'ms' }"
                        @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
                        @click="onVeilClick($event, p.idx)"></div>
                 </template>
-                <!-- 留下来的段落：左侧一道芯线 + 一行角色名，说清"为什么留它"。
-                     受保护的段（有值得读/要当心批注）也算"留下来"，它同样需要那个记号，
-                     否则纸上跟"压根没判过角色"的段落长得一模一样。 -->
-                <template v-else-if="store.viewer.layers.skim && it.origPage >= 0
-                                    && (isCore(p) || kept(p.idx) || protectedIdx.has(p.idx))">
-                  <div class="para-core-bar"
-                       :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"></div>
-                  <!-- 标签写在纸**内**、贴着段落文字起点的左侧：纸外那点空白只有 ~25px
-                       （适宽模式下纸正好占满书桌），写在纸外会被滚动容器裁掉半个字 -->
-                  <span class="para-tag" :class="{ undo: kept(p.idx) }"
-                        :title="kept(p.idx) ? '点一下：不特别留这一段了' : ''"
-                        :style="{ top: p.bbox.y0 * scale + 'px',
-                                  left: Math.max(2, p.bbox.x0 * scale - 58) + 'px' }"
-                        @click.stop="kept(p.idx) && toggleKeep(p.idx)">{{ roleTag(p) }}</span>
-                </template>
+                <!-- 留下来的段落只在页边留一道芯线（不写字）。手选过的段落，这条芯线
+                     就是撤销出口：纸上没有别的可点的地方了。 -->
+                <div v-else-if="store.viewer.layers.skim && it.origPage > 0 && (isCore(p) || kept(p.idx))"
+                     class="para-core-bar" :class="{ undo: kept(p.idx) }"
+                     :title="kept(p.idx) ? '点一下：不特别留这一段了' : ''"
+                     :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"
+                     @click.stop="kept(p.idx) && toggleKeep(p.idx)"></div>
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
               </template>
 

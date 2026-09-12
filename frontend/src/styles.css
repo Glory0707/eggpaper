@@ -452,18 +452,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 @keyframes flashIn  { from { opacity: 0 } to { opacity: 1 } }
 @keyframes flashOut { to { opacity: 0 } }
 .para-core-bar { position: absolute; left: -7px; width: 3px; background: var(--accent); opacity: 0.85; border-radius: 1px; }
-/* 略读留在纸上的那行小字（角色名 / 你要读 / 有眉批）。写在纸**内**、
-   贴着段落文字起点的左侧：适宽模式下纸正好占满书桌，纸外只剩 ~25px，
-   写在纸外会被滚动容器裁掉半个字（实测只有末两个字看得见）。left 由模板算。 */
-.para-tag {
-  position: absolute; width: 56px; text-align: right;
-  font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3);
-  background: rgba(255, 255, 255, 0.72); padding: 0 2px; border-radius: 2px;
-  opacity: 0.9; pointer-events: none; white-space: nowrap; overflow: hidden;
-}
-/* 手选（"这段也要读"）之后那一行就是**撤销出口**：纱已经没了，不给它点击就没法退回来 */
-.para-tag.undo { pointer-events: auto; cursor: pointer; }
-.para-tag.undo:hover { color: var(--accent-deep); }
+/* 手选过的段落：这条芯线可以点（页面上唯一能撤销"这段也要读"的地方） */
+.para-core-bar.undo { pointer-events: auto; cursor: pointer; width: 5px; opacity: 1; }
+.para-core-bar.undo:hover { background: var(--vermilion); }
 
 /* 略读的蒙纱：悬停**掀开**这一块看一眼，点一下是「这段我也要读」。
    纱必须吃鼠标事件才掀得动——被纱盖住的本来就是"略过不读"的那批段落，

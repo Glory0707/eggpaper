@@ -423,6 +423,8 @@ function inPaper(t) {
   const q = fold(t?.term_en)
   return q.length >= 3 && paperNorm.value.includes(q)
 }
+const termScope = ref('paper')          // paper = 只看本文出现的词；all = 全部
+const paperTermN = computed(() => terms.value.filter(inPaper).length)
 const termsFiltered = computed(() => {
   const f = termFilter.value.trim().toLowerCase()
   let list = [...terms.value].sort((a, b) => (inPaper(b) ? 1 : 0) - (inPaper(a) ? 1 : 0)
@@ -731,7 +733,13 @@ watch(() => store.currentId, () => {
         </div>
         <input type="text" v-model="termFilter" placeholder="筛选…" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl" download>导出 CSV</a></div>
-        <div v-for="t in termsFiltered" :key="t.id" class="term-row" :class="{ absent: !inPaper(t) }">
+        <!-- 术语表是全库共用的：默认只看**本文正文里出现过**的词，其余的要专门切过去看 -->
+        <div class="band-bar">
+          <button class="band-chip" :class="{ off: termScope !== 'paper' }" @click="termScope = 'paper'">本文 {{ paperTermN }}</button>
+          <button class="band-chip" :class="{ off: termScope !== 'all' }" @click="termScope = 'all'">全部 {{ terms.length }}</button>
+        </div>
+        <div v-for="t in (termScope === 'paper' ? termsFiltered.filter(inPaper) : termsFiltered)"
+             :key="t.id" class="term-row" :class="{ absent: !inPaper(t) }">
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
