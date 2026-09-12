@@ -77,6 +77,7 @@ const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false
 function toggleSix(k) { openSix[k] = !openSix[k] }
 
 const six = reactive({ problem: null, why: null, next: null, lens: null })
+const sixBusy = reactive({ problem: false, why: false, next: false, lens: false })
 /* 六问各自的"答没答出来"。免费的 ③④ 看骨架，①②⑤⑥ 看有没有取过。
    有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
 const sixHas = computed(() => ({
@@ -95,6 +96,16 @@ async function loadSix() {
     if (!samePaper(mine)) return        // 回来时已经换篇：这是上一篇的答案
     Object.assign(six, r)
   } catch { /* 没缓存很正常 */ }
+  // 还缺的那几问自己补上：新的析读会一次写全，但**早先析读过的论文**（生成逻辑上线之前）
+  // 或者当时没写成的那一问，这里静默重取一次——界面上不再有「获取」按钮
+  for (const k of ['problem', 'why', 'next', 'lens']) {
+    if (six[k] || sixBusy[k]) continue
+    sixBusy[k] = true
+    api.sixAnswer(store.currentId, k)
+      .then(v => { if (samePaper(mine)) six[k] = v })
+      .catch(() => { /* 没配 key / 模型不给：保持"未生成" */ })
+      .finally(() => { sixBusy[k] = false })
+  }
 }
 // 「方法卡」是"怎么解决的"那条的加深版：点一下跳到速览页并顺手取回（没取过才取）
 function openMethod() {
@@ -396,11 +407,29 @@ function figJump(f) {
   figIdx.value = -1
 }
 
+/* 术语表是全库共用的，但"跳去原文"这件事**只对本文出现过的词成立**：
+   别的论文的术语在这里点 ↗ 必然查不到（用户报的"几乎都查不到原文"就是这个）。
+   所以先算一次本文正文（归一化：折连字、只留字母数字与汉字），只给命中的词出箭头，
+   并把它们排在前面——一眼能看出哪些是这篇的词。 */
+const LIGFOLD = { 'ﬀ': 'ff', 'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬃ': 'ffi',
+                  'ﬄ': 'ffl', 'ﬅ': 'ft', 'ﬆ': 'st' }
+function fold(s) {
+  let out = ''
+  for (const ch of (s || '').toLowerCase()) out += LIGFOLD[ch] || ch
+  return out.replace(/[^0-9a-z一-鿿]+/g, '')
+}
+const paperNorm = computed(() => fold(store.paras.map(p => p.text || '').join(' ')))
+function inPaper(t) {
+  const q = fold(t?.term_en)
+  return q.length >= 3 && paperNorm.value.includes(q)
+}
 const termsFiltered = computed(() => {
   const f = termFilter.value.trim().toLowerCase()
-  const list = [...terms.value].sort((a, b) => a.term_en.localeCompare(b.term_en))
+  let list = [...terms.value].sort((a, b) => (inPaper(b) ? 1 : 0) - (inPaper(a) ? 1 : 0)
+                                            || a.term_en.localeCompare(b.term_en))
   if (!f) return list
-  return list.filter(t => t.term_en.toLowerCase().includes(f) || t.term_zh.includes(f))
+  list = list.filter(t => t.term_en.toLowerCase().includes(f) || t.term_zh.includes(f))
+  return list
 })
 // 「文中」：术语表 → 原文。预填这个英文词，跳到第一条命中。
 function findTerm(en) {
@@ -484,13 +513,13 @@ watch(() => store.currentId, () => {
                    标在句尾（原文在纸上，点 ¶ 就到，不必在这里再抄一遍）。 -->
               <template v-if="s.k === 'q1'">
                 <MdLite v-if="six.problem?.text" class="six-txt" :text="six.problem.text" @cite="jumpPara" />
-                <div v-else class="six-note">未生成</div>
+                <div v-else class="six-note">{{ sixBusy.problem ? '…' : '未生成' }}</div>
               </template>
 
               <!-- ② 为什么要解决：析读时已经写好（含依据段号） -->
               <template v-else-if="s.k === 'q2'">
                 <MdLite v-if="six.why?.text" class="six-txt" :text="six.why.text" @cite="jumpPara" />
-                <div v-else class="six-note">未生成</div>
+                <div v-else class="six-note">{{ sixBusy.problem ? '…' : '未生成' }}</div>
               </template>
 
               <!-- ③ 怎么解决的：主张 → 证据链 -->
@@ -545,7 +574,7 @@ watch(() => store.currentId, () => {
                   <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
-                <div v-if="!six[s.gen]?.items?.length" class="six-note">未生成</div>
+                <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : '未生成' }}</div>
               </template>
             </div>
              </div>
@@ -670,7 +699,6 @@ watch(() => store.currentId, () => {
               <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ prettyChem(o) }}</li></ul>
             </div>
           </div>
-          <div v-else class="six-note">先析读，才有主张和薄弱点可问。</div>
         </div>
 
         <!-- 导出 -->
@@ -703,11 +731,14 @@ watch(() => store.currentId, () => {
         </div>
         <input type="text" v-model="termFilter" placeholder="筛选…" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl" download>导出 CSV</a></div>
-        <div v-for="t in termsFiltered" :key="t.id" class="term-row">
+        <div v-for="t in termsFiltered" :key="t.id" class="term-row" :class="{ absent: !inPaper(t) }">
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
-          <button class="t-go" title="在论文里找这个词（跳过去、并高亮命中）" @click="findTerm(t.term_en)">↗</button>
+          <!-- 只有本文出现过的词才有这个箭头：别的论文的术语点进去必然查不到 -->
+          <button v-if="inPaper(t)" class="t-go" title="在论文里找这个词（跳过去、并高亮命中）"
+                  @click="findTerm(t.term_en)">↗</button>
+          <span v-else class="t-no" title="这篇论文的正文里没有这个词">—</span>
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
         </div>
       </template>

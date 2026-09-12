@@ -98,6 +98,12 @@ function loadKeep() {
   try { return new Set(JSON.parse(localStorage.getItem(LS_KEEP + store.currentId) || '[]')) } catch { return new Set() }
 }
 const skimKeep = ref(loadKeep())
+const figs = ref([])                        // 这一篇的图片框（略读时避开它们）
+async function loadFigs() {
+  if (!store.currentId) return
+  try { const r = await api.figures(store.currentId); figs.value = r.figures || [] }
+  catch { figs.value = [] }
+}
 const pingId = ref(null)                  // 刚从纸上点回来的那条批注（亮一下）
 const kept = idx => skimKeep.value.has(idx)
 function toggleKeep(idx) {
@@ -132,11 +138,15 @@ const protectedIdx = computed(() => {
 /* 蒙纱按**行**画，不按段落外接框。段落框是整段的外接矩形：段里插了图/表就一起盖住
    （用户报的"蒙在图上"），而段末最后一行短、框却按最长行给宽，看着就是"错位"。
    行级坐标本来就有（页边划线用的同一份），直接拿来用。 */
+/* 图区（/figures 认出来的图片框）不蒙，图上的坐标轴文字、图注也不蒙——用户原话
+   "不要在图片以及图片上的文字加蒙版"。判据是行框与图框相交（都是 PDF 点，直接比）。 */
+function onFigure(b) {
+  return figs.value.some(f => !(b.x1 <= f.x0 || b.x0 >= f.x1 || b.y1 <= f.y0 || b.y0 >= f.y1))
+}
 function veilBoxes(p) {
   const s = scale.value
-  const ls = p.lines?.length ? p.lines : null
-  if (!ls) return [rectStyle(p)]
-  return ls.map(l => ({
+  if (!p.lines?.length) return onFigure(p.bbox) ? [] : [rectStyle(p)]
+  return p.lines.filter(l => !onFigure(l.bbox)).map(l => ({
     left: l.bbox.x0 * s + 'px', top: l.bbox.y0 * s + 'px',
     width: (l.bbox.x1 - l.bbox.x0) * s + 'px', height: (l.bbox.y1 - l.bbox.y0) * s + 'px',
   }))
@@ -1084,6 +1094,7 @@ onMounted(async () => {
   await load()
   await nextTick()
   await measureNotes()
+  loadFigs()
   ro = new ResizeObserver(() => { reflow() })
   ro.observe(deskEl.value.parentElement || deskEl.value)
   document.addEventListener('mouseup', onMouseUp)

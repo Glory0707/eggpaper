@@ -803,6 +803,10 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   text-underline-offset: 2px; text-decoration-style: dotted;
 }
 .term-row .t-go:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
+/* 本文正文里没有这个词的术语：整行压暗、箭头位置换成一道短横——不是"坏了"，
+   是"这篇里没有它"（术语表是全库共用的） */
+.term-row.absent { opacity: 0.5; }
+.term-row .t-no { flex: 0 0 auto; margin-left: auto; color: var(--ink-3); font-size: var(--fs-xs); padding: 0 3px; }
 /* 术语：flex 子项默认 min-width:auto，输入框的"默认宽度"会撑破整行，
    必须显式 min-width:0 才肯收缩 */
 .term-form { display: flex; gap: 6px; margin-bottom: 10px; }

@@ -563,9 +563,12 @@ def _run_analysis(pid: str, paras: list):
         # 三条互不依赖 → 并行跑；单条失败只记一行日志，绝不让整次析读陪葬
         # （那一问留空，重新析读会再来一次）。
         p2 = db.get_paper(pid)
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        # 骨架的 problem 字段是"顺手写的"，模型经常不给 → 少了它六问就永远缺第一问
+        # （线上就是这样：三篇论文都有 why/next/lens，却都没有 problem）。缺了就补跑。
+        todo = ["why", "next", "lens"] + ([] if prob else ["problem"])
+        with ThreadPoolExecutor(max_workers=4) as ex:
             futs = {ex.submit(_mock_six, k) if _demo_mode() else ex.submit(_gen_six, p2, k): k
-                    for k in ("why", "next", "lens")}
+                    for k in todo}
             for fut in as_completed(futs):
                 k = futs[fut]
                 try:
