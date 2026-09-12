@@ -152,6 +152,15 @@ async function doTranslateFull() {
   } catch (e) { toast('启动失败：' + e.message) }
 }
 
+/* 应用级的选择入口：空态那一屏（整屏可点）、以及任何不在文库面板里的时候都用它。
+   文库面板里另有一个自己的 input（面板收起时那个 input 会随组件卸载，靠不住）。 */
+const appFile = ref(null)
+function pickFiles() { appFile.value?.click() }
+function onAppFile(e) {
+  onImport(Array.from(e.target.files || []))
+  e.target.value = ''                     // 同一个文件连选两次也要能再触发
+}
+
 /* 导入：可以一次给多篇。**逐篇上传**而不是并发——
    每篇的解析在服务端是几秒钟的活，并发只会让服务端更忙、提示也更乱；
    逐篇还能说清"正在导入第 2/5 篇"，并且**第一篇一到就打开**，不用等全部传完。
@@ -316,10 +325,15 @@ function onKey(e) {
 
       <!-- 中：书桌。drop 不拦在这里：让它冒到 .app 统一收，拖到纸上也能导入 -->
       <main class="desk">
-        <div class="empty" v-if="!store.paper">
+        <!-- 空态整屏都可以点：第一次打开软件时，用户面对的就是这一屏，
+             "拖进来"三个字只交代了一半——手边没有拖拽习惯的人会去点它。
+             所以整块都能点开文件选择，键盘（Enter/Space）与拖入同样有效。 -->
+        <div class="empty" v-if="!store.paper" role="button" tabindex="0"
+             title="点击选择 PDF，或直接把文件拖进来"
+             @click="pickFiles" @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">
           <EggMark class="egg-big" :class="{ hop: dragOver }" />
           <div class="e-title">论文，启动！</div>
-          <div class="e-sub">把 PDF 拖进来</div>
+          <div class="e-sub">把 PDF 拖进来，或<b>点这里选择文件</b></div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
         </div>
         <PdfViewer v-else :key="store.currentId" @override="onOverride" />
@@ -350,6 +364,8 @@ function onKey(e) {
     <Dialog />
     <CiteCard />
     <UpdateCard />
+    <!-- 应用级文件选择：空态整屏可点、键盘也能用（多选：一次导入多篇） -->
+    <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 
     <!-- 键盘卡 -->
     <Transition name="pop">

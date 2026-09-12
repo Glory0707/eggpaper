@@ -722,11 +722,16 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .abbr-list .term-row:last-child { border-bottom: none; }
 
 /* 空状态 */
-.empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); }
+.empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); cursor: pointer; }
+/* 整屏可点（第一次打开软件时面对的就是这一屏）：指针 + 悬停时那句提示变色。
+   只做这两样——空态本该安静，动效留给拖入时的弹跳。 */
+.empty:focus-visible { outline: 2px solid var(--accent); outline-offset: 8px; border-radius: 4px; }
+.empty:hover .e-sub, .empty:focus-visible .e-sub { color: var(--accent-deep); }
 .empty .egg-big { width: 112px; height: 112px; opacity: 0.94; color: var(--accent); transition: opacity var(--t-slow) var(--ease-smooth); }
 .empty .egg-big.hop { opacity: 1; }
 .empty .e-title { font-family: var(--sans); font-size: var(--fs-display); font-weight: 700; letter-spacing: -0.01em; }
-.empty .e-sub { font-size: var(--fs-md); color: var(--ink-3); }
+.empty .e-sub { font-size: var(--fs-md); color: var(--ink-3); transition: color var(--t-fast) var(--ease-smooth); }
+.empty .e-sub b { font-weight: 650; border-bottom: 1px solid currentColor; padding-bottom: 1px; }
 .empty .stamp {
   font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.16em;
   color: var(--vermilion); border: 1.5px solid var(--vermilion);
