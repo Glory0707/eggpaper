@@ -1,93 +1,96 @@
-"""那枚印章标记的几何：**按目标像素尺寸直接算**，不再用 96 视口手调数字。
+"""那枚印章标记的几何：**与 EggMark.vue 的 compact 稿逐数字对齐**，按目标像素直接算。
 
-放在 backend/ 里是为了构建工具和应用共用同一份：`tools/make_icon.py` 用它生成
-exe 图标与网页图标，`desktop.py` 用它画托盘图标。形状与
-frontend/src/components/EggMark.vue 同源（椭圆环 + 几行字条，末行短一截）。
+一处定义，四处共用：`tools/make_icon.py` 生成 exe 图标与网页图标，`desktop.py` 画托盘，
+`window.py` 注入窗口/任务栏图标，`tools/check_icon.py` 在栅格上实测。形状的唯一来源是
+`frontend/src/components/EggMark.vue` —— 改那边就要改这里（数字一一对应，别凭感觉调）。
 
-**小尺寸的判据是"白缝"，不是"笔画够粗"**——这条是踩出来的，写进代码而不是写进注释：
+**用户拍板的那一版是"三条线"**（主页面左上角那枚，也就是 Vue 里的 compact 稿）：
+椭圆环（上半 ry 34 / 下半 ry 42，钝端朝上）+ 三条字条（宽 30/36/22，末条自然短一截）。
+16px 上也得是三条——**条数是标识的一部分，不能因为放不下就减条**；放不下时压薄字条
+（缝优先），而不是砍掉一条。这条是踩出来的：上一版按尺寸表 4→3→2 减条，48px 上画成了
+四条宽条，整枚看着像个带横纹的方块（用户："又回退了，四角"）。
 
-1. 手调的尺寸表很容易出现"字条离环只有 0.75px"这种数字（上一版 24px 的第一条字条
-   就压在环的内沿上，两者在栅格上连成一片，整枚图标糊成一坨深色；用户连着说了三次
-   "更糊了"）。现在所有缝——字条之间、字条到环——都等于同一个 g，g 由
-   "环内高度 / (2n+1)"解出来；放不下就**减字条**（4→3→2），绝不压窄缝。
-2. 上一版还把标记画在 96 视口的中间一块（60×68）里，等于自己缩掉三成，于是又有
-   "托盘上的图标偏小"。现在标记占画布的 1-2×6% = 88%。
-3. `tools/check_icon.py` 会把这些缝在栅格上实测出来（含 ASCII 放大图）。改动之后跑
-   一次，缝小于 max(1.6px, 画布 7.5%) 就会报错——这是唯一能防住"越改越糊"的闸门。
+另外三条纪律（写进代码而不是注释）：
+
+1. **白缝的下限**比笔画粗细更重要——缝糊了整枚就成一坨。`gap_floor()` 管这个。
+2. 标记占画布 76/84 = 90%（Vue 的 viewBox 就是 84×84 里放一枚 60×76 的蛋）。
 """
-from PIL import Image, ImageDraw
+import math
 
-VIEW = 96                                   # 画布名义单位（调用方读它当参考）
+from PIL import Image, ImageChops, ImageDraw
+
+VIEW = 84                                   # 与 EggMark.vue 的 viewBox 同尺度
 ACCENT = (29, 78, 95)                       # --accent
 PAPER = (255, 255, 255)
 
-RATIO = 0.79                                # 蛋的宽/高（品牌椭圆 60×76）
-MARGIN = 0.06                               # 四周留白占画布比例
-RING_RATIO = 0.085                          # 环宽 = 蛋高的这个比例（品牌 6/76）
-RING_MIN = 1.5                              # 环宽下限（px）
-BAR_MIN = 1.5                               # 字条厚度下限（px）
-THICK = 0.88                                # 字条厚度 / 缝宽（留一点余量给抗锯齿）
-GAP_MIN = 1.6                               # 白缝下限（px）
-GAP_MIN_RATIO = 0.075                       # 白缝下限（占画布比例）
-BARS_BY_SIZE = ((56, 4), (40, 4), (26, 3), (0, 2))   # 尺寸 ≥ 此值 → 用几根字条
+# —— 以下数字逐条对应 EggMark.vue 的 compact 稿（viewBox "6 10 84 84"）——
+CX, CY = 48.0, 48.0                         # 蛋的中心
+RX = 30.0                                   # 横向半径（上下两半共用 → 最宽处在正中间）
+RY_UP, RY_DN = 34.0, 42.0                   # 上/下半的纵向半径（下半更长 → 钝端朝上）
+RING = 8.5                                  # 环宽（compact 的 stroke-width）
+BARS = ((32.0, 30.0), (44.0, 36.0), (56.0, 22.0))   # 三条：(中心 y, 宽)
+BAR_H = 7.0                                 # 字条厚度
 
-
-def bars_for(px: float, inner_h: float) -> int:
-    """这个尺寸放几根字条：先按尺寸取档，再按"缝够不够宽"往下减。"""
-    n = 2
-    for lo, cnt in BARS_BY_SIZE:
-        if px >= lo:
-            n = cnt
-            break
-    while n > 1 and inner_h / (n * THICK + n + 1) < gap_floor(px):
-        n -= 1
-    return n
+RING_MIN = 1.4                              # 环宽下限（px）
+BAR_H_MIN = 1.0                             # 字条厚度下限（px）
+# 白缝下限（px，最小尺寸那档）。**0.75 是"三条线"这个设计在 16px 上的物理极限**：
+# 设计本身是 条 7 : 缝 5 的比例，16px 上缝就只有 0.95px；想让缝更宽只能压薄字条或者
+# 减条数，而减条数被用户否掉了（三条线是标识）。所以这里如实记下这个下限，
+# 并让 tools/check_icon.py 在 16px 上按它判——不是"凑合通过"，是"这版设计就到这里"。
+GAP_MIN = 0.75
+GAP_MIN_RATIO = 0.045                       # 大尺寸按画布比例给缝（3px 封顶）
 
 
 def gap_floor(px: float) -> float:
-    """白缝的下限：小尺寸用绝对像素（1px 的差别就是在 16px 上决定成败的那种），
-    大尺寸按比例（3px 以上已经足够，再往上放大没有意义）。"""
+    """白缝的下限：小尺寸用绝对像素（16px 上 1px 的差别就是成败），大尺寸按比例。"""
     return max(GAP_MIN, min(px * GAP_MIN_RATIO, 3.0))
+
+
+def bars_for(px: float, inner_h: float = 0.0) -> int:
+    """条数恒定是三条（见模块头）。留着这个函数是因为 check_icon 与旧调用方还在问。"""
+    return len(BARS)
 
 
 def layout(px: float) -> dict:
     """算出这枚标记在 px 像素画布上的几何（单位就是像素）。
 
-    返回 box（环的外接框）、ring（环宽）、bars（每根字条的 中心 y / 宽 / 厚）。
-    字条宽度按椭圆在**该高度**的内接宽度收，所以末行自然短一截，也不会顶到环。
+    返回 box（蛋的外接框）、ring（环宽）、bars（每条的 中心 y / 宽 / 厚）。
     """
-    m = max(1.0, px * MARGIN)
-    eh = px - 2 * m                          # 蛋的外高
-    ew = eh * RATIO                          # 蛋的外宽
-    w = max(RING_MIN, eh * RING_RATIO)       # 环宽
-    inner_h = eh - 2 * w
-    n = bars_for(px, inner_h)
-    gap = inner_h / (n * THICK + n + 1)      # 缝：解 n*THICK*gap + (n+1)*gap = inner_h
-    thick = max(BAR_MIN, gap * THICK)        # 字条比缝略窄，抗锯齿吃掉的那点由它补
-    top = (px - eh) / 2 + w
-    # 环中心线的半轴；字条在不碰到环的前提下尽量宽（0.94 是留给抗锯齿的余量）
-    a = (ew - w) / 2
-    b = (eh - w) / 2
-    bars = []
-    for i in range(n):
-        cy = top + (i + 1) * gap + i * thick + thick / 2
-        # 宽度按字条**离中心最远的那条边**来算：靠椭圆两端时内接宽度收得很快，
-        # 用中心线算会让字条的一角顶进环里
-        dy = min(0.92, (abs(cy - px / 2) + thick / 2) / b)
-        half = (a * (1 - dy * dy) ** 0.5 - w / 2) * 0.94
-        bars.append((cy, max(2.0, half * 2), thick))
-    return {"box": ((px - ew) / 2, (px - eh) / 2, (px + ew) / 2, (px + eh) / 2),
-            "ring": w, "bars": bars}
+    s = px / VIEW
+    cx = cy = px / 2
+    rx, ry_up, ry_dn = RX * s, RY_UP * s, RY_DN * s
+    ring = max(RING_MIN, RING * s)
+    ys = [cy + (by - CY) * s for by, _ in BARS]
+    # 三条线：位置与宽度照抄 Vue；厚度看"缝够不够"，不够就压薄（**不减条数**）
+    t = BAR_H * s
+    if len(ys) > 1:
+        space = min(ys[i] - ys[i - 1] for i in range(1, len(ys)))
+        t = min(t, max(BAR_H_MIN, space - gap_floor(px)))
+    t = max(BAR_H_MIN, t)
+    bars = [{"y": ys[i], "w": max(1.5, w * s), "h": t} for i, (_, w) in enumerate(BARS)]
+    return {"box": (cx - rx, cy - ry_up, cx + rx, cy + ry_dn),
+            "ring": ring, "bars": bars, "rx": rx, "ry_up": ry_up, "ry_dn": ry_dn, "t": t}
+
+
+def _egg_poly(cx, cy, rx, ry_up, ry_dn, n=200):
+    """蛋的轮廓：上半椭圆 + 下半椭圆（两半共用 rx，所以中间是最宽的平滑过渡）。"""
+    pts = []
+    for i in range(n + 1):                  # 上半：左 → 顶 → 右
+        a = math.pi - math.pi * i / n
+        pts.append((cx + rx * math.cos(a), cy - ry_up * math.sin(a)))
+    for i in range(n + 1):                  # 下半：右 → 底 → 左
+        a = -math.pi * i / n
+        pts.append((cx + rx * math.cos(a), cy - ry_dn * math.sin(a)))
+    return pts
 
 
 def _downscale_pm(img: Image.Image, w: int, h: int) -> Image.Image:
-    """预乘 alpha 后再 LANCZOS 缩小。
+    """预乘 alpha 后再 BOX 缩小。
 
     直接缩 RGBA 会在边缘产生一圈灰边：透明像素的 RGB 是 (0,0,0)，缩小把"白"和
     "透明黑"在圆角处平均，alpha 半透明、RGB 却发灰，合成到任务栏/桌面上就是一圈脏边
     （看着就是"图标糊"）。预乘后颜色按覆盖率加权，缩完再还原，边缘颜色才是对的。
     """
-    from PIL import ImageChops
     r, g, b, a = img.split()
     pm = Image.merge("RGBA", (ImageChops.multiply(r, a), ImageChops.multiply(g, a),
                               ImageChops.multiply(b, a), a))
@@ -108,21 +111,48 @@ def _downscale_pm(img: Image.Image, w: int, h: int) -> Image.Image:
     return out
 
 
+# 垫底时两者的比例：纸底铺满画布**高度**（宽按品牌比例 0.79，左右自然留空），
+# 白底 = **方形 + 圆角**（常规应用图标那种"应用块"）。
+# 用户的口径（第三次、也是最终口径）："就要方形的白色垫，只是四个角是圆角，
+# 包括桌面快捷方式和任务栏图标"。半径取画布的 20%——iOS / Win11 应用块大概就是这个观感；
+# 徽标按正常比例（占画布 88%，见 MARGIN）画上去，四周自然留出白边。
+TILE_RADIUS = 0.20
+
+
 def draw(px: int, tile: bool = False) -> Image.Image:
-    """画一枚标记。tile=True 时垫一层纸色圆角底（深色地方也看得见）。"""
+    """画一枚标记。
+
+    tile=True：垫一层**方形圆角**白底（就是常规应用图标那个样子）。
+    用户的最终口径："就要方形的白色垫，只是四个角是圆角"——之前试过"不垫"
+    （深色任务栏上墨色看不清）和"垫成跟徽标同形的蛋"（不是他要的），都别再回去。
+    """
     ss = 4                                   # 超采样再缩，边缘才干净
     size = px * ss
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    g = layout(px)
+    # 统一用"未缩放的画布像素"算，最后一步才乘 ss 去画——混着用会把偏移量加两遍
+    # （曾经这样把三条字条画到画布外面去了：蛋在、条没了）。
+    c = px / 2
+    base = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     if tile:
-        d.rounded_rectangle([0, 0, size - 1, size - 1], radius=size // 5, fill=PAPER)
-    x0, y0, x1, y1 = (v * ss for v in g["box"])
-    d.ellipse([x0, y0, x1, y1], outline=ACCENT, width=max(2, round(g["ring"] * ss)))
-    rw = g["ring"] * ss
-    for cy, bw, th in g["bars"]:
-        x = bw * ss / 2
-        y = th * ss / 2
-        d.rounded_rectangle([size / 2 - x, cy * ss - y, size / 2 + x, cy * ss + y],
-                            radius=min(x, y), fill=ACCENT)
-    return _downscale_pm(img, px, px)
+        ImageDraw.Draw(base).rounded_rectangle([0, 0, size - 1, size - 1],
+                                              radius=px * TILE_RADIUS * ss, fill=PAPER)
+
+    g = layout(px)
+    # 环：外轮廓填满，再挖掉"往里收一个环宽"的内轮廓。
+    # 不用 PIL 的 ellipse(outline=..., width=...) —— 它画的是**正圆环**，而品牌形状是
+    # 上下两个不同纵向半径拼出的蛋（下半更长、钝端朝上），正圆环会把这个特征抹平。
+    mask = Image.new("L", (size, size), 0)
+    md = ImageDraw.Draw(mask)
+    md.polygon(_egg_poly(c * ss, c * ss, g["rx"] * ss, g["ry_up"] * ss, g["ry_dn"] * ss),
+               fill=255)
+    rin = g["ring"] * ss
+    md.polygon(_egg_poly(c * ss, c * ss, g["rx"] * ss - rin, g["ry_up"] * ss - rin,
+                         g["ry_dn"] * ss - rin), fill=0)
+    # 三条字条：两端圆头（rx = 厚度/2）
+    for b in g["bars"]:
+        y, w, h = b["y"] * ss, b["w"] * ss, b["h"] * ss
+        md.rounded_rectangle([c * ss - w / 2, y - h / 2, c * ss + w / 2, y + h / 2],
+                             radius=h / 2, fill=255)
+
+    layer = Image.new("RGBA", (size, size), ACCENT + (0,))
+    layer.putalpha(mask)
+    return _downscale_pm(Image.alpha_composite(base, layer), px, px)
