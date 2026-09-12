@@ -5,6 +5,7 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, paraByIdx, CORE_ROLES, ROLE_ZH, bandOf, kindColor, kindText, kindZH } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex, sentenceAround } from '../find'
+import { planFor } from '../skim'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
@@ -86,13 +87,15 @@ function roleOf(p) {
 }
 function isCore(p) { return CORE_ROLES.includes(roleOf(p) || 'background') }
 
-/* ---------------- 略读：判得准不准，读者要看得见、也要能自己扳 ----------------
-   略读只做一件事：把"不用细读"的段落蒙掉（依据是析读判的角色）。但角色是**模型判的**，
-   它会把一段重要的前人工作判成"背景铺垫"——读者在纸上明明看得见那句话要紧。所以三件事：
-   ① 蒙纱与核心段都能看见"为什么"（纸边标角色名，只在这一层图层开着时出现）；
-   ② 悬停把这一块**掀开**看一眼，点一下是"这段我也要读"（按篇记在本地，
-      这属于读者对这篇的判断，不是全局偏好）；③ 顶部一行说清留了几段、略了几段、
-      还有几段根本没判过角色——略读的"精确度"得让人能核对，否则只是个特效。 */
+/* ---------------- 略读：把不用细读的正文蒙掉，读者要看得见、也要能自己扳 ----------------
+   蒙纱只做一件事：把"不用细读"的那部分正文盖住。三条规定（用户定的）：
+   ① 位置正确——只蒙**正文段落**（析读判成背景/样板/参考文献的段），图注表注、
+      图片、首页一概不蒙；
+   ② 精度灵活——段里整段都可略就整段蒙（段落模式）；段里混着带硬信息的句子
+      （数字、引用、图表指引、"we propose"），就只蒙可略的句子（句子模式）；
+   ③ 效果干净——没有"蒙版"：那一段的文字和符号**本体变成灰色**（纱与纸同色，只把
+      下面的深色像素统一变浅，任何黑点都透不出来）；悬停掀开看一眼（字回黑），
+      点一下是"这段我也要读"（按篇记在本地）。 */
 const LS_KEEP = 'eggpaper:skimKeep:'
 function loadKeep() {
   try { return new Set(JSON.parse(localStorage.getItem(LS_KEEP + store.currentId) || '[]')) } catch { return new Set() }
@@ -122,72 +125,30 @@ function onVeilClick(e, idx) {
   if (window.getSelection()?.isCollapsed === false) return
   toggleKeep(idx)
 }
-/* 有「值得读 / 要当心」批注的段落不蒙。模型自己在那一段插了句话，说明那儿有东西要看——
-   把整段蒙掉等于把刚写下的提醒一起藏起来。略读该略的是没有信息量的铺垫，
-   不是**有批注的段**。（"你写的"那两条不算：那是你自己划的，你记得住。） */
+/* 有「值得读 / 要当心」批注、或读者自己钉过东西的段落不蒙。那儿已经插了话/钉了子，
+   把整段蒙掉等于把读者自己的锚点一起藏起来。略读该略的是没有信息量的铺垫。 */
 const protectedIdx = computed(() => {
   const s = new Set()
   // 用**全部**批注而不是过滤后的那一份：这条规则说的是"那段有东西要看"，
   // 跟用户此刻收起了哪一档（纯粹是显示偏好）无关
   for (const n of store.marginalia.notes) {
     const b = bandOf(n)
-    if (b === 'good' || b === 'warn') s.add(n.para_idx)
+    if (b === 'good' || b === 'warn' || b === 'mine') s.add(n.para_idx)
   }
   return s
 })
-/* 蒙纱按**行**画，不按段落外接框。段落框是整段的外接矩形：段里插了图/表就一起盖住
-   （用户报的"蒙在图上"），而段末最后一行短、框却按最长行给宽，看着就是"错位"。
-   行级坐标本来就有（页边划线用的同一份），直接拿来用。 */
 /* 图区（/figures 认出来的图片框）不蒙，图上的坐标轴文字、图注也不蒙——用户原话
-   "不要在图片以及图片上的文字加蒙版"。两个坐标系都是 PDF 点，直接比。 */
-function onFigure(b) {
-  return figs.value.some(f => !(b.x1 <= f.x0 || b.x0 >= f.x1 || b.y1 <= f.y0 || b.y0 >= f.y1))
+   "不要在图片以及图片上的文字加蒙版"。两个坐标系都是 PDF 点，直接比。
+   **必须带页号**：图片框只属于它那一页，拿别页的图框比坐标，正文行会因为
+   "跟另一页的图同一位置"被整行丢掉（实测：第 2 页的句子撞上第 4 页的图框）。 */
+function onFigure(pno, b) {
+  return figs.value.some(f => f.page === pno && !(b.x1 <= f.x0 || b.x0 >= f.x1 || b.y1 <= f.y0 || b.y0 >= f.y1))
 }
-/* 蒙纱的几何**从屏幕上的文字行量**，不用后端的行框：后端按解析器切行，与 pdf.js 渲染
-   出来的行距/切分并不完全一致，画出来会压到上一行、漏掉自己那一行下沿（实测 117 块里
-   9 块只盖到 52%~60% 的文字）。文字层就在 DOM 里，逐行量最准——和引文划线同一套办法。
-   量完按 y 合并成整行（pdf.js 一行常常切成好几个 span）。 */
-const veilRects = ref({})                 // origPage -> { paraIdx: [box] }
-function computeVeils() {
-  const out = {}
-  const s = scale.value
-  for (const it of flatItems.value) {
-    if (it.origPage < 0) continue
-    const el = pageEls.value[it.gi]
-    if (!el) continue
-    const base = el.getBoundingClientRect()
-    const rows = new Map()                 // 取整的 y -> 该行的 x0/x1/y/h
-    for (const span of el.querySelectorAll('.textLayer span')) {
-      const r = span.getBoundingClientRect()
-      if (r.width < 4 || r.height < 4) continue
-      const y = r.top - base.top, h = r.height
-      const k = Math.round(y)
-      const cur = rows.get(k)
-      const x0 = r.left - base.left, x1 = x0 + r.width
-      if (cur) { cur.x0 = Math.min(cur.x0, x0); cur.x1 = Math.max(cur.x1, x1) }
-      else rows.set(k, { x0, x1, y, h })
-    }
-    const lines = [...rows.values()]
-    const per = {}
-    for (const p of parasByPage.value[it.origPage] || []) {
-      if (!veiled(p, it.origPage)) continue
-      const y0 = p.bbox.y0 * s - 2, y1 = p.bbox.y1 * s + 2
-      per[p.idx] = lines
-        .filter(l => l.y + l.h > y0 && l.y < y1)
-        .filter(l => !onFigure({ x0: l.x0 / s, x1: l.x1 / s,
-                                 y0: (l.y - 1) / s, y1: (l.y + l.h + 1) / s }))
-        .map(l => ({ left: l.x0 + 'px', top: l.y + 'px',
-                     width: (l.x1 - l.x0) + 'px', height: l.h + 'px' }))
-    }
-    out[it.origPage] = per
-  }
-  veilRects.value = out
-}
-function veilBoxes(p, pno) { return veilRects.value[pno]?.[p.idx] || [] }
-/* 该蒙哪些段——这是略读的**全部判断**，写在一处。
+/* 该蒙哪些段——段落级的判断写在一处。
    ① 候选只有两类：模型判成 background / boilerplate 的，以及参考文献段；
+      图注/表注（解析器标了 caption）不是正文，永不入围；
    ② 首页不蒙（标题、摘要、引言是"这篇讲什么"，蒙掉它略读就没意义了）；
-   ③ 有「值得读 / 要当心」批注的段、读者手选的段不蒙；
+   ③ 有批注的段、读者手选的段不蒙；
    ④ **上限三分之一**：模型有时把大半篇正文都判成 boilerplate（实测一篇 48 段里 28 段），
       照单全蒙等于把论文涂白——那不是略读，是关灯。超了就按"最没有信息量"排前面：
       数字与引用标记越少（说明这段没有结果、没有数据，是铺陈），越先被蒙。 */
@@ -195,7 +156,7 @@ const skimSkip = computed(() => {
   if (!store.viewer.layers.skim) return new Set()
   const ps = store.paras
   const cand = ps.filter(p => {
-    if (p.page <= 0) return false
+    if (p.page <= 0 || p.caption) return false
     if (kept(p.idx) || protectedIdx.value.has(p.idx)) return false
     const r = roleOf(p)
     return !!p.in_refs || r === 'boilerplate' || r === 'background'
@@ -209,6 +170,102 @@ const skimSkip = computed(() => {
   return new Set(cand.sort((a, b) => score(a) - score(b)).slice(0, cap).map(p => p.idx))
 })
 function veiled(p, pno) { return pno > 0 && skimSkip.value.has(p.idx) }
+
+/* 每段的句子级方案（skim.planFor）：段落文本一篇之内不变，缓存到组件卸载（本组件
+   按篇挂载，:key=currentId），省得每次重排都重新分句。 */
+const planCache = new Map()
+function skimPlan(p) {
+  if (p.in_refs) return { mode: 'all', skip: [] }        // 参考文献整段盖，不参与分句
+  let plan = planCache.get(p.idx)
+  if (!plan) { plan = planFor(p.text || ''); planCache.set(p.idx, plan) }
+  return plan
+}
+
+const veilRects = ref({})                 // origPage -> { paraIdx: [{x,y,w,h,hole}] }
+
+/* 段内的文字行（跨栏安全）：中心落在这一段框里的 span 按 y 归组合并成整行。
+   蒙纱的段落模式和句子模式都用它。
+   **一个 span 都不能丢**：宽度过滤会把"l"、"1"、"."这类窄字形 span 排掉，
+   它们的墨迹没被灰到，就成了灰字里的黑点（用户报的"还有黑色噪点"）。
+   行盒四周留 1–2px 余量：字形的墨迹常比 pdf.js 量的矩形宽出一丝（斜体、字肩），
+   lighten 混合下余量本身不可见，只会把这点墨迹也一并变灰。 */
+function paraRows(p, el, s) {
+  const base = el.getBoundingClientRect()
+  const bx0 = p.bbox.x0 * s - 2, bx1 = p.bbox.x1 * s + 2
+  const by0 = p.bbox.y0 * s - 2, by1 = p.bbox.y1 * s + 2
+  const rows = new Map()
+  for (const span of el.querySelectorAll('.textLayer span')) {
+    const r = span.getBoundingClientRect()
+    if (r.width < 1 || r.height < 1) continue
+    const x = r.left - base.left, y = r.top - base.top
+    const cx = x + r.width / 2
+    if (cx < bx0 || cx > bx1 || y + r.height < by0 || y > by1) continue
+    const k = Math.round(y)
+    const cur = rows.get(k)
+    if (cur) { cur.x0 = Math.min(cur.x0, x); cur.x1 = Math.max(cur.x1, x + r.width) }
+    else rows.set(k, { x0: x, x1: x + r.width, y, h: r.height })
+  }
+  return [...rows.values()]
+}
+
+function paraRowBoxes(p, el, s) {
+  return paraRows(p, el, s)
+    .filter(l => !onFigure(p.page, { x0: (l.x0 - 1) / s, x1: (l.x1 + 1) / s, y0: (l.y - 2.5) / s, y1: (l.y + l.h + 2.5) / s }))
+    .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3, hole: false }))
+}
+
+/* 句子模式：只蒙可略句子所在的那些行，但**整行**洗灰。
+   为什么不按匹配到的字符画小块：归一化匹配不认符号（κ、σ、括号…），
+   字符级的小块会在灰字里留下一颗颗没变灰的黑色符号——用户说的"黑点噪声"。
+   整行盖就没有这个问题：那一坨里的文字和所有符号一起变灰。 */
+function sentenceBoxes(p, el, s) {
+  const box = { y0: p.bbox.y0 * s, y1: p.bbox.y1 * s }
+  const bands = []
+  for (const sent of skimPlan(p).skip) {
+    const r = findQuoteRects(el, sent, box)
+    if (!r) continue                       // 这句对不上就不蒙：蒙错比漏蒙糟
+    for (const b of r.rects) bands.push({ y0: b.y - 2, y1: b.y + b.h + 2 })
+  }
+  if (!bands.length) return []
+  // 用行的**中心**判断落在哪个带里：带是字形矩形（带 ±2 松量），行距又紧，
+  // 拿行的上沿去比会擦到下一行，把留着的那句也洗灰
+  const rows = paraRows(p, el, s)
+    .filter(l => bands.some(b => { const c = l.y + l.h / 2; return c > b.y0 && c < b.y1 }))
+    .filter(l => !onFigure(p.page, { x0: (l.x0 - 1) / s, x1: (l.x1 + 1) / s, y0: (l.y - 2.5) / s, y1: (l.y + l.h + 2.5) / s }))
+    .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3, hole: true }))
+  return rows
+}
+
+function computeVeils() {
+  const out = {}
+  const s = scale.value
+  for (const it of flatItems.value) {
+    if (it.origPage < 0) continue
+    const el = pageEls.value[it.gi]
+    if (!el) continue
+    const per = {}
+    for (const p of parasByPage.value[it.origPage] || []) {
+      if (!veiled(p, it.origPage)) continue
+      const plan = skimPlan(p)
+      const boxes = plan.mode === 'none' ? []                    // 整段都是硬信息：别蒙
+                   : plan.mode === 'partial' ? sentenceBoxes(p, el, s)
+                   : paraRowBoxes(p, el, s)
+      if (boxes.length) per[p.idx] = boxes
+    }
+    out[it.origPage] = per
+  }
+  veilRects.value = out
+}
+function veilBoxes(p, pno) { return veilRects.value[pno]?.[p.idx] || [] }
+
+/* 蒙纱盖住的段不再画批注笔迹：那条"可跳过"的点线画在纱的**上面**（DOM 顺序靠后），
+   透过纱看就是一排小黑点——用户原话"蒙的位置还有小黑点"。页边卡片照旧，
+   掀开蒙纱照样能对上这段被谁标过。 */
+function marksShownOnPage(pno) {
+  const list = notesOnPage(pno)
+  if (!store.viewer.layers.skim) return list
+  return list.filter(n => !skimSkip.value.has(n.para_idx))
+}
 
 /* ---------------- 文档装载与 sheets 构建 ---------------- */
 
@@ -477,7 +534,13 @@ async function renderAll() {
     if (seq !== passToken) return
     await renderItem(flatItems.value[i])
   }
-  if (seq === passToken) rendering.value = false
+  if (seq === passToken) {
+    rendering.value = false
+    // 谁触发的那次渲染（缩放/换姿势/换篇）最后都要**重新量一遍标注**：渲染中途跑过的
+    // measureNotes（比如 fit 一变引发的两条 renderAll 竞赛）是对着半套文字层量的，
+    // 蒙纱和引文划线会缺块——以渲染收尾后的这一次为准。
+    await measureNotes()
+  }
 }
 
 // 同一画布的渲染任务串成一条链，后来者排队；轮到执行时重新对齐当前
@@ -508,6 +571,10 @@ function doRenderItem(it) {
         clearTextIndex(tlEl)          // 节点全换了，旧的引文索引作废
         const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
         await tl.render()
+        // 渲染是**流式**的：期间进来的查询（页边引文、略读蒙纱）会拿当时那半套文字层
+        // 建索引并缓存——缓存键是这个元素，渲染完了元素没换，半套索引就一直被复用。
+        // 这里再清一次：之后来的查询都会对着完整的文字层重建。
+        clearTextIndex(tlEl)
       }
       doneKeys.add(key)
     } catch (err) {
@@ -1320,6 +1387,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div class="spread-row" v-for="(s, si) in sheets" :key="si">
         <div class="page-wrap" v-for="it in s.items" :key="it.key">
             <div class="page" :ref="el => (pageEls[it.gi] = el)"
+                 :data-page="it.origPage" :data-scale="scale"
                  :style="{ width: it.w * scale + 'px', height: it.h * scale + 'px' }"
                  @mousedown="e => startFrameDrag(e, it)">
 
@@ -1336,12 +1404,14 @@ watch(() => store.marginalia.notes, (n, o) => {
 
             <div class="para-zone">
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
-                <!-- 蒙掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
+                <!-- 蒙掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」。
+                     hole=句子模式盖的（段里有要紧的句子被留下了），提示语跟着说。 -->
                 <template v-if="veiled(p, it.origPage)">
                   <div v-for="(vb, vi) in veilBoxes(p, it.origPage)" :key="'v' + vi"
                        class="para-fade veil"
-                       :title="vi ? '' : '略读蒙掉了这一段 · 点一下：这段也要读'"
-                       :style="{ left: vb.left, top: vb.top, width: vb.width, height: vb.height,
+                       :title="vi ? '' : (vb.hole ? '略读蒙掉了这句（要紧的句子留着）· 点一下：这段也要读'
+                                                  : '略读蒙掉了这一段 · 点一下：这段也要读')"
+                       :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
                                  animationDelay: Math.min(400, pi * 12 + vi * 8) + 'ms' }"
                        @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
                        @click="onVeilClick($event, p.idx)"></div>
@@ -1367,7 +1437,7 @@ watch(() => store.marginalia.notes, (n, o) => {
               <!-- 眉批引文：按句子落行，划了几行就是几个块；框选钉子按区域画。
                    笔法分三档（见 styles.css）：值得读是马克笔、要当心是波浪线、可跳过只有一条点线。
                    块本身不吃鼠标事件——它盖在正文上，吃了就没法选字了。 -->
-              <template v-for="{ n } in notesOnPage(it.origPage)" :key="'n' + n.id">
+              <template v-for="{ n } in marksShownOnPage(it.origPage)" :key="'n' + n.id">
                 <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark" :data-nid="n.id"
                      :class="['b-' + bandOf(n), { draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }]"
                      :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>

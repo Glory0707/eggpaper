@@ -289,6 +289,7 @@ function onKey(e) {
     case 't': store.viewerApi?.translateCurrent(); break
     case 's': store.viewerApi?.translateSelectionKey(); break
     case 'r': store.viewer.frame = !store.viewer.frame; break
+    case 'f': store.viewer.layers.skim = !store.viewer.layers.skim; break
     case '1': store.viewer.variant = 'original'; break
     case '2': if (tranSt.value === 'done') store.viewer.variant = 'mono'; break
     case '3': if (tranSt.value === 'done') store.viewer.variant = 'dual'; break
@@ -333,9 +334,11 @@ function onKey(e) {
             <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">交替</button>
           </div>
         </Transition>
-        <!-- 略读暂时下线：蒙版的取舍还不够准（用户要求先禁用，按钮变灰不可点）。
-             逻辑与后端都留着，等取舍规则重做之后再放出来。 -->
-        <button class="toggle" disabled title="略读暂时下线（正在重做）">略读</button>
+        <!-- 略读：只蒙不用细读的正文（背景/样板/参考文献），图与图注永不蒙；
+             段里混着要紧的句子就只蒙那些句子。悬停掀开，点一下=这段也要读。 -->
+        <button class="toggle" :class="{ on: store.viewer.layers.skim }"
+                title="略读：把不用细读的正文蒙掉（f）"
+                @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
         <button class="toggle" :class="{ on: store.viewer.frame }" title="框选问 AI（r）"
                 @click="store.viewer.frame = !store.viewer.frame">框选</button>
         <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
@@ -421,6 +424,7 @@ function onKey(e) {
     <Transition name="pop">
     <div class="keys-card" v-if="store.shortcutCard" @click="store.shortcutCard = false">
       <div class="mono-label" style="margin-bottom:8px">键盘</div>
+      <div class="k-row"><span>略读开 / 关</span><kbd>f</kbd></div>
       <div class="k-row"><span>下一段 / 上一段（略读时仅核心段）</span><kbd>j / k</kbd></div>
       <div class="k-row"><span>译当前段并钉页边</span><kbd>t</kbd></div>
       <div class="k-row"><span>翻译划选</span><kbd>s</kbd></div>

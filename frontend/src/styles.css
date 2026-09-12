@@ -11,7 +11,7 @@
   --paper-deep: #f6f6f5;   /* 左栏、页边沟槽 */
   --card: #ffffff;         /* 面板：顶栏、右栏 */
   --card-2: #ffffff;       /* 内容与浮层 */
-  --veil: rgba(255, 255, 255, 0.86);   /* 略读蒙纱：一层白描图纸 */
+  --veil: rgba(255, 255, 255, 0.86);   /* 略读：与纸同色的纱 + lighten，只把文字变灰 */
   --care-wash: transparent;            /* 护眼底纹：洗在纸面上的那一层，默认不洗 */
 
   /* 墨三级。第三级原来 #8a867c，在纯白/三档护眼底上只有 3.2–3.6，小字不达标；
@@ -87,17 +87,17 @@
    真正管用的是亮度、色温、看远处休息，别把颜色当药。 */
 html[data-care='mung'] {
   --paper: #e4f2e6; --paper-deep: #daedde; --card: #eaf6ec; --card-2: #f5fbf6;
-  --veil: rgba(230, 245, 232, 0.88);
+  --veil: rgba(228, 242, 230, 0.86);
   --care-wash: rgba(199, 237, 204, 0.9);
 }
 html[data-care='cyan'] {
   --paper: #e2f2f2; --paper-deep: #d8ebeb; --card: #e9f6f6; --card-2: #f5fbfb;
-  --veil: rgba(228, 244, 244, 0.88);
+  --veil: rgba(226, 242, 242, 0.86);
   --care-wash: rgba(204, 232, 232, 0.9);
 }
 html[data-care='sand'] {
   --paper: #f6f6ea; --paper-deep: #efefe0; --card: #fafaf2; --card-2: #fdfef9;
-  --veil: rgba(246, 246, 230, 0.88);
+  --veil: rgba(246, 246, 234, 0.86);
   --care-wash: rgba(245, 245, 220, 0.9);
 }
 
@@ -443,7 +443,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   transition: opacity 260ms var(--ease-smooth);
 }
 /* 跳转/查找"标出这一段"：一层强调色，入场快、停留、退场慢（1.6s 后开始淡出）。
-   没有这个 .hot 样式时它会套用 .para-fade 的 86% 白纱——那不是标出，是把要找的那段擦白。 */
+   没有这个 .hot 样式时它会套用 .para-fade 的那层纸灰——那不是标出，是把要找的那段盖住。 */
 .para-fade.hot {
   background: rgba(29, 78, 95, 0.16);
   animation: flashIn 180ms var(--ease-out), flashOut 520ms var(--ease-smooth) 1.6s forwards;
@@ -456,14 +456,18 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .para-core-bar.undo { pointer-events: auto; cursor: pointer; width: 5px; opacity: 1; }
 .para-core-bar.undo:hover { background: var(--vermilion); }
 
-/* 略读的蒙纱：悬停**掀开**这一块看一眼，点一下是「这段我也要读」。
-   纱必须吃鼠标事件才掀得动——被纱盖住的本来就是"略过不读"的那批段落，
-   在那里选字的机会很少，换回来的是"你看得见自己在略掉什么"。 */
+/* 略读的蒙纱：**看不见的纱**——纱本身与纸同色，只靠 lighten 混合把下面的深色像素
+   （文字、符号、一切比它深的东西）统一变成灰。视觉上就是"那段文字自己变成了灰色"，
+   没有一块看得到的蒙版，也不会有任何黑点从底下透出来（比纱浅的一律不动）。
+   悬停**掀开**这一块看一眼（纱淡出、字回黑），点一下是「这段我也要读」。
+   纱必须吃鼠标事件才掀得动——被蒙住的本来就是"略过不读"的那批段落，
+   换回来的是"你看得见自己在略掉什么"。 */
 .para-fade.veil {
   animation: veilRoll 380ms var(--ease-out) backwards;
   pointer-events: auto; cursor: pointer;
+  mix-blend-mode: lighten;
 }
-.para-fade.veil:hover { opacity: 0.1; }
+.para-fade.veil:hover { opacity: 0.08; }
 /* 纱按段落顺序从左往右扫下来，像有人一行行盖过去（延迟由模板按段序给） */
 @keyframes veilRoll {
   from { opacity: 0; clip-path: inset(0 100% 0 0) }
@@ -1111,30 +1115,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   font-size: var(--fs-sm); padding: 3px 12px; color: var(--ink); font-weight: 600;
 }
 .frame-hint button:hover { transform: none; box-shadow: none; background: #fff; }
-
-/* 略读状态行：读的时候它得在，但不该抢注意力——一根发丝线、两个字号的灰，
-   想核对"它到底略掉了什么"的时候一眼能读到 */
-/* 略读状态行：位置要避开上面那条「退出框选」（frame-hint，top: 70px、高 31px）——
-   两条都是居中的 .desk-float，DOM 里后出现的压在先出现的上面，
-   靠得太近时按钮会被盖掉一半、只露出下缘 */
-.skim-hud {
-  top: 108px; display: flex; align-items: center; gap: 9px;
-  background: var(--card); border: 1px solid var(--hairline); border-radius: 20px;
-  padding: 4px 6px 4px 13px; font-size: var(--fs-sm); color: var(--ink-2);
-  box-shadow: var(--shadow-page); opacity: 0.82;
-  transition: opacity var(--t-base) var(--ease-smooth);
-}
-.skim-hud:hover { opacity: 1; }
-.skim-hud b { font-weight: 600; color: var(--ink); }
-.skim-hud .mono-num { font-family: var(--mono); }
-.skim-hud .sh-warn { color: var(--ink-3); cursor: help; }
-.skim-hud .sh-note { color: var(--accent-deep); cursor: help; }
-.skim-hud .sh-tip { color: var(--ink-3); font-size: var(--fs-xs); }
-.skim-hud button {
-  padding: 2px 10px; font-size: var(--fs-sm); border-radius: 13px;
-  border-color: transparent; background: transparent; color: var(--ink-2);
-}
-.skim-hud button:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
 
 .vis-pop .vp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
 .vis-pop .vp-x {
