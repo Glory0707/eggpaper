@@ -156,7 +156,7 @@ cd frontend && npm install && npm run dev # http://localhost:5173
 
 首次打开：设置 → 填任意 OpenAI 兼容 base_url + key + model → 测试连接。不填 key 也可用（演示模式）。
 
-设计文档：[design.md](docs/design.md)（定位与取舍）· [ux.md](docs/ux.md)（布局与交互）· [visual.md](docs/visual.md)（视觉与动效）· [plan.md](docs/plan.md)（计划与走查）。
+设计文档：[design.md](docs/design.md)（定位与取舍）· [ux.md](docs/ux.md)（布局与交互）· [visual.md](docs/visual.md)（视觉与动效）· [icon.md](docs/icon.md)（图标怎么改才生效）· [plan.md](docs/plan.md)（计划与走查）。
 
 ## License
 
@@ -166,6 +166,10 @@ cd frontend && npm install && npm run dev # http://localhost:5173
 
 ![mark](docs/screenshots/mark.png)
 
-一枚**印章**：椭圆环 + 环内几行字（末行短一截）。环是纸的边界，字是内容——印章正是批注本自己的语言；而椭圆环又刚好是蛋的轮廓，名字里的 egg 靠形状带出来，不靠画一只蛋。小尺寸另备一稿（环加粗、字条三条），128 → 16px 都立得住。
+一枚**印章**：椭圆环 + 环内几行字（末行短一截）。环是纸的边界，字是内容——印章正是批注本自己的语言；而椭圆环又刚好是蛋的轮廓，名字里的 egg 靠形状带出来，不靠画一只蛋。
+
+几何**按目标像素算**（`backend/mark.py`）：每一档的缝由「环内高度 ÷ (2n+1)」解出，放不下就减字条（4→3→2），从不压窄缝；16 → 256px 都立得住——判据是**白缝**，不是"笔画够不够粗"。
+
+改图标（换形状、查缓存、验任务栏）看 [docs/icon.md](docs/icon.md)，那里记着四条图标链路分别吃哪份图。
 
 皮肤只做过一版又删掉了：一套设计系统只该有一副面孔。至于「蛋仔派对」那个游戏：玩心只借它的**动作**（空态拖入时原地弹跳、析读完成时滚半圈），不借它的配色和形象——糖果色和 Q 萌吉祥物与「明亮的批注本」不是一套调性，而且那四个字是法院认过的未注册驰名商标，靠太近不划算。
