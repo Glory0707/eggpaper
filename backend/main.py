@@ -1583,7 +1583,7 @@ def _pdf2zh_env(service: str, cfg: dict):
 
 
 @app.post("/api/papers/{pid}/translate-full")
-def translate_full_start(pid: str):
+def translate_full_start(pid: str, force: bool = False):
     p = _paper_or_404(pid)
     cfg = config.load()
     svc = (cfg["pdf2zh"].get("service") or "bing").strip()
@@ -1592,12 +1592,14 @@ def translate_full_start(pid: str):
     # （pdf2zh 会在每个请求上重试，CPU 0、界面停在「翻译中」），所以宁可在门口拦住。
     # 盘上已经有成品就先认领：pdf2zh 是独立进程，eggpaper 退出后它可能才写完——那次
     # 启动扫描已经过去了，状态被清成 none，用户再点一次会**重译一遍并覆盖**刚做好的文件。
-    got = translate_full.adopt_existing(pid, p["path"], TRANSLATED_DIR)
-    if got:
-        db.update_paper(pid, dual_path=got["dual"], mono_path=got["mono"],
-                        translate_status="done", translate_error="")
-        _applog(f"整本翻译 {pid}: 发现上次已经译好的成品，直接认领")
-        return {"status": "done", "service": "", "note": "上次已经译好了，直接用了那份成品"}
+    # force=1（界面上的「重新整本翻译」）跳过认领：译文打不开就得重译，认领旧文件没意义。
+    if not force:
+        got = translate_full.adopt_existing(pid, p["path"], TRANSLATED_DIR)
+        if got:
+            db.update_paper(pid, dual_path=got["dual"], mono_path=got["mono"],
+                            translate_status="done", translate_error="")
+            _applog(f"整本翻译 {pid}: 发现上次已经译好的成品，直接认领")
+            return {"status": "done", "service": "", "note": "上次已经译好了，直接用了那份成品"}
     used, note = translate_full.choose_service(svc, host)
     if used is None:
         raise HTTPException(400, note)

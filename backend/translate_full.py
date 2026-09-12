@@ -154,7 +154,7 @@ def _no_window():
 PDF2ZH_CONFIG = os.path.join(os.path.expanduser("~"), ".config", "PDFMathTranslate", "config.json")
 
 
-def pinned_config(out_dir: str, pid: str) -> str:
+def pinned_config(out_dir: str, pid: str, overlay: dict = None) -> str:
     """把 pdf2zh 的配置"钉"在一份临时副本上，返回路径（拿不到就返回空 = 不传）。
 
     为什么：pdf2zh 会把从环境变量读到的 OPENAI_API_KEY / DEEPSEEK_API_KEY
@@ -165,6 +165,9 @@ def pinned_config(out_dir: str, pid: str) -> str:
 
     副本里先原样放**真配置的内容**：这样除了"写哪儿"，行为与不传时完全一致
     （用户自己设过的字体路径之类不会丢）。读不出来就退化成不传，不为了隐私把功能弄坏。
+    overlay：本次运行的环境变量（key/base_url/model）**覆盖**副本里的同名项——
+    pdf2zh 读配置优先于读环境，不覆盖的话副本里的旧 key 会顶掉这次真正要用的 key
+    （实测：假 key 的测试因此"成功"跑真 key）。
     """
     dst = os.path.join(out_dir, f".pdf2zh-{pid}.json")
     try:
@@ -174,7 +177,9 @@ def pinned_config(out_dir: str, pid: str) -> str:
         else:
             data = {}
         if not isinstance(data, dict):
-            return ""
+            data = {}
+        if overlay:
+            data.update({k: v for k, v in overlay.items() if v})
         with open(dst, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
         return dst
@@ -212,14 +217,15 @@ def cancel(pid: str):
     pdf2zh 是独立进程——不掐的话，"删掉这篇论文"之后它还会跑完、还会往
     translated/ 里写回 <pid>-dual.pdf，用户以为删干净了、盘上却留下孤立的译文文件。
     """
-    proc = _RUNNING.get(pid)
-    if proc is None:
-        return False
-    try:
-        proc.kill()
-    except Exception:
-        pass
-    return True
+    j = job(pid)
+    j["_abort"] = True                      # 页级流水线：让 worker 别再起下一页
+    procs = _RUNNING.get(pid) or []
+    for proc in procs:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    return bool(procs)
 
 
 def adopt_existing(pid: str, pdf_path: str, out_dir: str):
@@ -250,118 +256,202 @@ def job(pid: str) -> dict:
                                  "service": "", "note": "", "pages": [0, 0], "started": 0.0})
 
 
+
+# ---------------- 整本翻译：按页流水线 ----------------
+# 为什么不再"一个 pdf2zh 进程译整本"：实测它对单段翻译失败是**无限重试**
+#（tenacity 默认没有上限），一页挂住全本挂住——8 页的论文停在 4/8 十几分钟不动
+#（用户报的"卡在中间"），重试整本也没用：还是那个段落、还是挂。
+# 改成按页起进程：
+#   · 进度 = 已完成的页数，粒度天然精确，不会再"卡在中间不知道怎么回事"；
+#   · 单页有超时，坏页最多拖几分钟就放弃，**绝不让一页拖死整本**；
+#   · 失败的页回退用原文（双语里这一页是两页原文），成品永远完整、页码永不错位；
+#   · 两个 worker 并行，墙钟时间比串行短；pdf2zh 自带译文缓存，重试的那页也快。
+
+PAGE_WORKERS = 2         # 并发页数：开太大只会更快撞上服务限流
+PAGE_TIMEOUT = 150       # 单页上限 2.5 分钟：正常一页几秒到几十秒；坏页早放弃早回退
+PAGE_TRIES = 2           # 每页试两次（第二次走 pdf2zh 的译文缓存，通常很快）
+
+
+def _page_dir(out_dir: str, pid: str, pno: int, t: int) -> str:
+    return os.path.join(out_dir, f".pages-{pid}", f"p{pno}-{t}")
+
+
+def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
+              envs: dict, cfg: str, proc_reg: list, auth_out: list) -> tuple:
+    """翻译一页。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
+    proc_reg：正在跑的进程都登记进来，删论文时 cancel() 能把它们掐掉。
+    auth_out：一旦在输出里看到鉴权失败就**立刻**杀进程并记到这里——
+    pdf2zh 对 401 是无限重试，等它自己结束要磨到天荒地老。"""
+    cmd = _cmd(pdf_path, out_dir, service, extra, cfg) + ["--pages", str(pno)]
+    tail = collections.deque(maxlen=5)
+    flags, si = _no_window()
+    proc = None
+    deadline = time.time() + PAGE_TIMEOUT
+
+    def _kill_when_stale():
+        while proc.poll() is None and time.time() < deadline:
+            time.sleep(2)
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace",
+                                cwd=out_dir, env={**os.environ, **(envs or {})},
+                                creationflags=flags, startupinfo=si)
+        proc_reg.append(proc)
+        threading.Thread(target=_kill_when_stale, daemon=True).start()
+        for raw in proc.stdout:
+            line = _ANSI.sub("", raw).strip()
+            if not line or chr(13) in line or _PROG.search(line):
+                continue                          # 进度行不进 tail（太吵）
+            low = line.lower()
+            if any(k in low for k in AUTH_FAILS):
+                auth_out.append(f"{service} 服务的 key 不对（pdf2zh 报鉴权失败）：{line[-160:]}")
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                continue
+            tail.append(line)
+        proc.wait()
+    except Exception as e:
+        tail.append(f"{type(e).__name__}: {str(e)[-160:]}")
+        return None, list(tail)
+    stem = os.path.splitext(os.path.basename(pdf_path))[0]
+    dual = os.path.join(out_dir, stem + "-dual.pdf")
+    mono = os.path.join(out_dir, stem + "-mono.pdf")
+    if os.path.exists(dual) and os.path.exists(mono):
+        return {"dual": dual, "mono": mono}, list(tail)
+    if not any("单页超时" in t for t in tail):
+        tail.append(f"单页失败（退出码 {proc.poll()}）")
+    return None, list(tail)
+
+
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
-          envs: dict = None, log=None, note: str = "") -> dict:
+          envs: dict = None, log=None, note: str = "", attempts: int = 3) -> dict:
+    """按页流水线翻译整本。attempts 只是旧签名的占位（页级自带两次尝试）。"""
     j = job(pid)
     if j["status"] == "running":
         return j
 
     def run():
+        _say = say = log or (lambda _m: None)
         j.update(status="running", error="", dual="", mono="", service=service,
                  note=note, pages=[0, 0], started=time.time())
-        last = [time.time()]                 # 最后一行输出的时刻，给卡死判定用
-        tail = collections.deque(maxlen=8)   # 最近几行非进度输出：失败时要能说清为什么
-        _say = log or (lambda _m: None)
-        proc = None
+        page_root = os.path.join(out_dir, f".pages-{pid}")
         cfg_copy = ""
+        procs = []                           # 在跑的页进程，cancel() 按这个掐
         try:
+            import pymupdf
             os.makedirs(out_dir, exist_ok=True)
-            cfg_copy = pinned_config(out_dir, pid) if envs else ""
-            sweep_configs(out_dir, keep=cfg_copy)   # 只清陈旧的（别删别人正在用的那份）
-            cmd = _cmd(pdf_path, out_dir, service, extra, cfg_copy)
-            _say(f"整本翻译开始 {pid}：{service} · {' '.join(cmd)}")
-            env = {**os.environ, **(envs or {})}
-            flags, si = _no_window()
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", errors="replace",
-                                    cwd=out_dir, env=env, creationflags=flags, startupinfo=si)
-            _RUNNING[pid] = proc
+            os.makedirs(page_root, exist_ok=True)
+            with pymupdf.open(pdf_path) as doc:
+                n = len(doc)
+            if envs:
+                cfg_copy = pinned_config(page_root, pid)   # 拦住 key 被写进 pdf2zh 的配置
+            j["pages"] = [0, n]
+            _RUNNING[pid] = procs
+            results = {}                     # pno(0 基) -> {"dual","mono"}
+            lock = threading.Lock()
+            auth_error = []                  # 鉴权失败：整本必败，立刻停下
 
-            def watch():
-                # 卡死判定：tqdm 每几秒就来一行，长时间静默只可能是网络挂住或死锁
-                while proc.poll() is None:
-                    time.sleep(5)
-                    if time.time() - last[0] > STALL_SECS:
-                        _say(f"整本翻译 {pid}：静默 {STALL_SECS}s 无输出，判定卡死，已终止")
-                        j["error"] = (f"pdf2zh 卡住了：{STALL_SECS // 60} 分钟没有任何输出"
-                                      f"（多半是 {service} 服务连不通或者被限流）。"
-                                      f"换一个翻译服务再试。")
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                        return
-                    if time.time() - j["started"] > HARD_SECS:
-                        _say(f"整本翻译 {pid}：超过 {HARD_SECS // 60} 分钟，已终止")
-                        j["error"] = f"超过 {HARD_SECS // 60} 分钟还没译完，已终止。"
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                        return
+            def worker(pno: int):
+                # 单页的一切失败只影响这一页（回退原文），绝不允许拖死整本
+                try:
+                    _worker(pno)
+                except Exception as e:
+                    _say(f"整本翻译 {pid}: 第 {pno + 1} 页异常（{type(e).__name__}），保留原文")
 
-            threading.Thread(target=watch, daemon=True).start()
-            for raw in proc.stdout:
-                last[0] = time.time()
-                line = _ANSI.sub("", raw).rstrip()
-                if not line.strip():
-                    continue
-                low = line.lower()
-                if any(k in low for k in AUTH_FAILS):
-                    # key 不对时 pdf2zh **不会中止**：它逐段报 401，一路把所有页都试完
-                    # （实测：假 key 也能磨 5 分钟以上，输出一直在刷所以看门狗也不响）。
-                    # 这种错一眼就认得，当场掐掉，别让用户等一场必然失败的翻译。
-                    j["error"] = f"{service} 服务的 key 不对（pdf2zh 报鉴权失败）：{line.strip()[-160:]}"
-                    _say(f"整本翻译 {pid}：鉴权失败，已终止 —— {line.strip()[:200]}")
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    break
-                pg = parse_progress(line)
-                if pg:
-                    j["pages"] = [pg[0], pg[1]]
-                elif "\r" not in line:
-                    tail.append(line)
-                    _say(f"pdf2zh: {line}")     # 进度行不写日志（太吵），别的都留个痕
-            try:
-                rc = proc.wait(timeout=30)   # 上面两处主动 kill 过，别在这儿二次挂住
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                rc = proc.wait()
-            if j["error"]:
-                j["status"] = "error"
+            def _worker(pno: int):
+                pdir = _page_dir(out_dir, pid, pno, 0)
+                os.makedirs(pdir, exist_ok=True)
+                cfg = (pinned_config(pdir, pid, overlay=envs) if envs else "") or cfg_copy
+                got, tail = None, []
+                auth_out = []
+                for t in range(PAGE_TRIES):
+                    if auth_error or j.get("_abort"):
+                        return
+                    pdir_t = _page_dir(out_dir, pid, pno, t)
+                    os.makedirs(pdir_t, exist_ok=True)
+                    got, tail = _run_page(pdf_path, pno + 1, pdir_t, service, extra,
+                                          envs, cfg, procs, auth_out)
+                    if auth_out:
+                        auth_error.append(auth_out[0])
+                        return
+                    if got:
+                        if t > 0:
+                            _say(f"整本翻译 {pid}: 第 {pno + 1} 页第二次尝试成功")
+                        break
+                with lock:
+                    if got:
+                        results[pno] = got
+                    j["pages"] = [len(results), n]
+                if not got:
+                    _say(f"整本翻译 {pid}: 第 {pno + 1} 页两次都没译成，这一页保留原文"
+                         f"（{' / '.join(tail[-2:])}）")
+
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=PAGE_WORKERS) as pool:
+                list(pool.map(worker, range(n)))
+
+            if auth_error:
+                j.update(status="error", error=auth_error[0])
+                say(f"整本翻译失败 {pid}：{auth_error[0]}")
                 return
-            if rc != 0:
-                # 只说"退出码 1"等于没说：pdf2zh 的原因就在它自己的输出里
-                # （服务名不认识、key 没配、模型不存在……），把它最后几行带出来
-                why = " / ".join(t.strip() for t in list(tail)[-3:] if t.strip())
-                raise RuntimeError(f"pdf2zh 退出码 {rc}" + (f"：{why}" if why else ""))
+            if j.get("_abort"):
+                j.update(status="error", error="已取消")
+                return
 
+            # ---- 组装：dual=奇页原文偶页译文；mono=纯译文。失败页回退原文 ----
             stem = os.path.splitext(os.path.basename(pdf_path))[0]
-            dual = os.path.join(out_dir, stem + "-dual.pdf")
-            mono = os.path.join(out_dir, stem + "-mono.pdf")
-            if not os.path.exists(dual):
-                raise RuntimeError("没有生成双语 PDF，输出目录里只有：" +
-                                   ", ".join(sorted(os.listdir(out_dir))[:6]))
-            j.update(status="done", dual=dual, mono=mono if os.path.exists(mono) else "",
-                     pages=[j["pages"][1] or 0, j["pages"][1] or 0])
-            _say(f"整本翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}")
-        except FileNotFoundError:
-            j.update(status="error", error="这一版安装包里没带 pdf2zh（整本翻译引擎）。"
-                                           "单独装它：pip install pdf2zh，或改用「译文/双语」之外的方式读原文")
-            _say(f"整本翻译失败 {pid}：没装 pdf2zh")
+            dual_path = os.path.join(out_dir, stem + "-dual.pdf")
+            mono_path = os.path.join(out_dir, stem + "-mono.pdf")
+            failed = []
+            src = pymupdf.open(pdf_path)
+            dual = pymupdf.open()
+            mono = pymupdf.open()
+            try:
+                for pno in range(n):
+                    got = results.get(pno)
+                    if got:
+                        with pymupdf.open(got["dual"]) as d:
+                            dual.insert_pdf(d)
+                        with pymupdf.open(got["mono"]) as m:
+                            mono.insert_pdf(m)
+                    else:
+                        failed.append(pno + 1)
+                        # 双语里这一页放两页原文：保住"奇页原文偶页译文"的页码关系
+                        dual.insert_pdf(src, from_page=pno, to_page=pno)
+                        dual.insert_pdf(src, from_page=pno, to_page=pno)
+                        mono.insert_pdf(src, from_page=pno, to_page=pno)
+                if n and not results:
+                    j.update(status="error",
+                             error=f"所有页面都没译成（{service} 连不上或被限流）。"
+                                   "换一个翻译服务（设置 → 整本翻译）再试。")
+                    say(f"整本翻译失败 {pid}：全部页面失败")
+                    return
+                dual.save(dual_path)
+                mono.save(mono_path)
+            finally:
+                src.close(); dual.close(); mono.close()
+
+            done_note = (note or "") + (f"（第 {', '.join(map(str, failed))} 页没译成，保留原文）"
+                                        if failed else "")
+            j.update(status="done", dual=dual_path, mono=mono_path if os.path.exists(mono_path) else "",
+                     error="", pages=[n, n], note=done_note)
+            _say(f"整本翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
+                 f" · {len(results)}/{n} 页" + (f" · 失败页 {failed}" if failed else ""))
         except Exception as e:
             j.update(status="error", error=f"{type(e).__name__}: {str(e)[-400:]}")
-            _say(f"整本翻译失败 {pid}：{type(e).__name__}: {str(e)[-300]}")
+            say(f"整本翻译失败 {pid}：{type(e).__name__}: {str(e)[-300]}")
         finally:
             _RUNNING.pop(pid, None)
-            if cfg_copy:
-                try:
-                    os.remove(cfg_copy)      # 副本里有 key，用完就删，别留在盘上
-                except OSError:
-                    pass
-            if proc is not None and proc.poll() is None:
+            shutil.rmtree(page_root, ignore_errors=True)   # 页级产物已组装，别留盘
+            for proc in procs:
                 try:
                     proc.kill()
                 except Exception:

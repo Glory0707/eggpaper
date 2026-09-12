@@ -149,13 +149,16 @@ onUnmounted(() => clearInterval(marginFastTimer))
 
 async function doTranslateFull() {
   if (!store.currentId) return
+  // 译过一次也允许再来：有的译文打不开（文件写坏/服务抽风），用户要的就是"重译一遍"
+  const again = tranSt.value === 'done'
   try {
-    const r = await api.translateFull(store.currentId)
-    tranProg.value = { done: 0, total: 0, svc: r.service || '' }
+    const r = await api.translateFull(store.currentId, again)
+    tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0 }
     await refreshPapers()
     // 服务被自动换掉（比如 google 在这台机器的网络下不通）要说出来——
     // 用户设的是 google、跑的是 bing，不吭声等于骗人
-    toast(r.note || `${r.service || '整本翻译'}：已开始，完成后自动提示`)
+    toast(r.note || (again ? '重新整本翻译：已开始，完成后自动提示'
+                           : `${r.service || '整本翻译'}：已开始，完成后自动提示`))
   } catch (e) { toast('启动失败：' + e.message) }
 }
 
@@ -237,17 +240,33 @@ async function saveSettings(body) {
 const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.status))
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
 // 整本翻译的进度（回填自 /translate-status 的 pages）。total 为 0 = 还没解析出页数
-const tranProg = ref({ done: 0, total: 0, svc: '' })
+const tranProg = ref({ done: 0, total: 0, svc: '', started: 0 })
 const tranPct = computed(() => tranProg.value.total
   ? Math.round(tranProg.value.done * 100 / tranProg.value.total) : 0)
+// 已用时：页与页之间可能隔好久（服务限流会自动重试），把"在走"明明白白写给用户看
+const tranTick = ref(0)
+let tranTimer = null
+watch(tranSt, s => {
+  clearInterval(tranTimer)
+  if (s === 'running') tranTimer = setInterval(() => { tranTick.value++ }, 1000)
+}, { immediate: true })
+onUnmounted(() => clearInterval(tranTimer))
+const tranElapsed = computed(() => {
+  tranTick.value
+  if (!tranProg.value.started) return ''
+  const t = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
+  return t >= 90 ? `${Math.floor(t / 60)} 分 ${t % 60} 秒` : `${t} 秒`
+})
 const tranLabel = computed(() => {
+  if (tranSt.value === 'done') return '重新整本翻译'
   if (tranSt.value !== 'running') return '整本翻译'
-  return tranProg.value.total ? `翻译中 ${tranProg.value.done}/${tranProg.value.total}` : '翻译中…'
+  const n = tranProg.value.total ? ` ${tranProg.value.done}/${tranProg.value.total}` : '…'
+  return `翻译中${n}`
 })
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
     return `pdf2zh 正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}`
-         + ' · 按页报进度 · 译完自动提示'
+         + ` · 已用 ${tranElapsed.value || '刚刚'} · 页与页之间偶尔会慢（服务限流时自动重试），进度线在走就是在译`
   }
   return '把整篇译成第二份 PDF（奇页原文、偶页译文）——「译文 / 双语」靠它'
 })
@@ -343,7 +362,9 @@ function onKey(e) {
                 @click="store.viewer.frame = !store.viewer.frame">框选</button>
         <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
              译完就没必要再露出来了——留一个永远点不动的按钮只会让人猜它还能干什么。 -->
-        <button v-if="tranSt !== 'done'" @click="doTranslateFull" :disabled="tranSt === 'running'"
+        <!-- 整本翻译常驻：译过一次也要能再来（有的译文打不开，重译一遍就好）。
+             译完后的按钮是「重新整本翻译」，点了会覆盖现有译文重译。 -->
+        <button @click="doTranslateFull" :disabled="tranSt === 'running'"
                 :title="tranTip">
           {{ tranLabel }}
         </button>

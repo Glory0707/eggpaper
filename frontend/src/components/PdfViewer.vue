@@ -5,7 +5,6 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, paraByIdx, CORE_ROLES, ROLE_ZH, bandOf, kindColor, kindText, kindZH } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex, sentenceAround } from '../find'
-import { planFor } from '../skim'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
@@ -87,12 +86,12 @@ function roleOf(p) {
 }
 function isCore(p) { return CORE_ROLES.includes(roleOf(p) || 'background') }
 
-/* ---------------- 略读：把不用细读的正文蒙掉，读者要看得见、也要能自己扳 ----------------
-   蒙纱只做一件事：把"不用细读"的那部分正文盖住。三条规定（用户定的）：
-   ① 位置正确——只蒙**正文段落**（析读判成背景/样板/参考文献的段），图注表注、
-      图片、首页一概不蒙；
-   ② 精度灵活——段里整段都可略就整段蒙（段落模式）；段里混着带硬信息的句子
-      （数字、引用、图表指引、"we propose"），就只蒙可略的句子（句子模式）；
+/* ---------------- 略读：把不用细读的段落整段变灰，读者要看得见、也要能自己扳 ----------------
+   略读只做一件事：把"不用细读"的段落**整段**变灰（用户定的：大段大段地灰才算略读，
+   一段中间突然留一句不灰反而迷乱）。三条规定：
+   ① 位置正确——只灰**正文段落**（析读判成背景/样板/参考文献的段），图注表注、
+      图片、首页一概不灰；参考文献既然不用看，就**整段全灰**（不打折）；
+   ② 整段整段——按段为单位灰，不做句级切分；段落灰与不灰的边界就是段界；
    ③ 效果干净——没有"蒙版"：那一段的文字和符号**本体变成灰色**（纱与纸同色，只把
       下面的深色像素统一变浅，任何黑点都透不出来）；悬停掀开看一眼（字回黑），
       点一下是"这段我也要读"（按篇记在本地）。 */
@@ -144,44 +143,49 @@ const protectedIdx = computed(() => {
 function onFigure(pno, b) {
   return figs.value.some(f => f.page === pno && !(b.x1 <= f.x0 || b.x0 >= f.x1 || b.y1 <= f.y0 || b.y0 >= f.y1))
 }
-/* 该蒙哪些段——段落级的判断写在一处。
+/* 该灰哪些段——段落级的判断写在一处。
    ① 候选只有两类：模型判成 background / boilerplate 的，以及参考文献段；
       图注/表注（解析器标了 caption）不是正文，永不入围；
-   ② 首页不蒙（标题、摘要、引言是"这篇讲什么"，蒙掉它略读就没意义了）；
-   ③ 有批注的段、读者手选的段不蒙；
-   ④ **上限三分之一**：模型有时把大半篇正文都判成 boilerplate（实测一篇 48 段里 28 段），
-      照单全蒙等于把论文涂白——那不是略读，是关灯。超了就按"最没有信息量"排前面：
-      数字与引用标记越少（说明这段没有结果、没有数据，是铺陈），越先被蒙。 */
+   ② 首页不灰（标题、摘要、引言是"这篇讲什么"，灰掉它略读就没意义了）；
+   ③ 有批注的段、读者手选的段不灰；
+   ④ **不打折**：参考文献既然不用看就整个全灰，背景/样板段也是一段就整段灰——
+      不设数量上限、不做句级切分（用户定的：大段大段地灰才算略读，
+      一段中间突然留一句不灰反而迷乱）。 */
 const skimSkip = computed(() => {
   if (!store.viewer.layers.skim) return new Set()
-  const ps = store.paras
-  const cand = ps.filter(p => {
+  return new Set(store.paras.filter(p => {
     if (p.page <= 0 || p.caption) return false
     if (kept(p.idx) || protectedIdx.value.has(p.idx)) return false
     const r = roleOf(p)
     return !!p.in_refs || r === 'boilerplate' || r === 'background'
-  })
-  const cap = Math.max(2, Math.floor(ps.length / 3))
-  const score = p => {
-    const t = p.text || ''
-    const marks = (t.match(/[0-9]/g) || []).length + 2 * (t.match(/\[\d+\]/g) || []).length
-    return marks / Math.max(1, t.length / 100)          // 每百字的"硬信息"密度
-  }
-  return new Set(cand.sort((a, b) => score(a) - score(b)).slice(0, cap).map(p => p.idx))
+  }).map(p => p.idx))
 })
 function veiled(p, pno) { return pno > 0 && skimSkip.value.has(p.idx) }
 
-/* 每段的句子级方案（skim.planFor）：段落文本一篇之内不变，缓存到组件卸载（本组件
-   按篇挂载，:key=currentId），省得每次重排都重新分句。 */
-const planCache = new Map()
-function skimPlan(p) {
-  if (p.in_refs) return { mode: 'all', skip: [] }        // 参考文献整段盖，不参与分句
-  let plan = planCache.get(p.idx)
-  if (!plan) { plan = planFor(p.text || ''); planCache.set(p.idx, plan) }
-  return plan
-}
+/* 参考文献区多数根本不在段落流里：解析器会丢掉每条 <14 词的文献条目，
+   甚至从 References 标题起整页跳过。段落流**之后**的那些页（参考文献/附录/
+   补充材料——正是"不用看"的部分）整页变灰；不拦鼠标，想复制引文照样能选。 */
+const lastParaPage = computed(() => store.paras.reduce((m, p) => Math.max(m, p.page), -1))
 
-const veilRects = ref({})                 // origPage -> { paraIdx: [{x,y,w,h,hole}] }
+const veilRects = ref({})                 // origPage -> { paraIdx: [{x,y,w,h}] }
+const veilPageRects = ref({})             // origPage -> [{x,y,w,h}]：整页置灰的那些页
+
+/* 页级的文字行：不限段落，整页的 span 按 y 归组（首页页眉例外——首页不参与略读） */
+function pageRows(el, s) {
+  const base = el.getBoundingClientRect()
+  const rows = new Map()
+  for (const span of el.querySelectorAll('.textLayer span')) {
+    const r = span.getBoundingClientRect()
+    if (r.width < 1 || r.height < 1) continue
+    const x = r.left - base.left, y = r.top - base.top
+    if (y + r.height < 4 || y > base.height - 4) continue
+    const k = Math.round(y)
+    const cur = rows.get(k)
+    if (cur) { cur.x0 = Math.min(cur.x0, x); cur.x1 = Math.max(cur.x1, x + r.width) }
+    else rows.set(k, { x0: x, x1: x + r.width, y, h: r.height })
+  }
+  return [...rows.values()]
+}
 
 /* 段内的文字行（跨栏安全）：中心落在这一段框里的 span 按 y 归组合并成整行。
    蒙纱的段落模式和句子模式都用它。
@@ -211,52 +215,43 @@ function paraRows(p, el, s) {
 function paraRowBoxes(p, el, s) {
   return paraRows(p, el, s)
     .filter(l => !onFigure(p.page, { x0: (l.x0 - 1) / s, x1: (l.x1 + 1) / s, y0: (l.y - 2.5) / s, y1: (l.y + l.h + 2.5) / s }))
-    .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3, hole: false }))
-}
-
-/* 句子模式：只蒙可略句子所在的那些行，但**整行**洗灰。
-   为什么不按匹配到的字符画小块：归一化匹配不认符号（κ、σ、括号…），
-   字符级的小块会在灰字里留下一颗颗没变灰的黑色符号——用户说的"黑点噪声"。
-   整行盖就没有这个问题：那一坨里的文字和所有符号一起变灰。 */
-function sentenceBoxes(p, el, s) {
-  const box = { y0: p.bbox.y0 * s, y1: p.bbox.y1 * s }
-  const bands = []
-  for (const sent of skimPlan(p).skip) {
-    const r = findQuoteRects(el, sent, box)
-    if (!r) continue                       // 这句对不上就不蒙：蒙错比漏蒙糟
-    for (const b of r.rects) bands.push({ y0: b.y - 2, y1: b.y + b.h + 2 })
-  }
-  if (!bands.length) return []
-  // 用行的**中心**判断落在哪个带里：带是字形矩形（带 ±2 松量），行距又紧，
-  // 拿行的上沿去比会擦到下一行，把留着的那句也洗灰
-  const rows = paraRows(p, el, s)
-    .filter(l => bands.some(b => { const c = l.y + l.h / 2; return c > b.y0 && c < b.y1 }))
-    .filter(l => !onFigure(p.page, { x0: (l.x0 - 1) / s, x1: (l.x1 + 1) / s, y0: (l.y - 2.5) / s, y1: (l.y + l.h + 2.5) / s }))
-    .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3, hole: true }))
-  return rows
+    .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3 }))
 }
 
 function computeVeils() {
   const out = {}
+  const outPage = {}
   const s = scale.value
   for (const it of flatItems.value) {
     if (it.origPage < 0) continue
     const el = pageEls.value[it.gi]
     if (!el) continue
+    // 段落流之后的页（参考文献/附录）：整页灰。
+    // 双重门：略读开着 + 段落流**已经加载**（刚打开论文时 store.paras 还是空的，
+    // lastParaPage 是 -1，不加门会把每一页都当成"段落流之后的页"整页灰掉）。
+    if (store.viewer.layers.skim && lastParaPage.value >= 0 &&
+        it.origPage > lastParaPage.value && it.origPage > 0) {
+      const boxes = pageRows(el, s)
+        .filter(l => !onFigure(it.origPage, { x0: (l.x0 - 1) / s, x1: (l.x1 + 1) / s, y0: (l.y - 2.5) / s, y1: (l.y + l.h + 2.5) / s }))
+        .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3 }))
+      if (boxes.length) outPage[it.origPage] = boxes
+      continue
+    }
     const per = {}
     for (const p of parasByPage.value[it.origPage] || []) {
       if (!veiled(p, it.origPage)) continue
-      const plan = skimPlan(p)
-      const boxes = plan.mode === 'none' ? []                    // 整段都是硬信息：别蒙
-                   : plan.mode === 'partial' ? sentenceBoxes(p, el, s)
-                   : paraRowBoxes(p, el, s)
+      const boxes = paraRowBoxes(p, el, s)
       if (boxes.length) per[p.idx] = boxes
     }
     out[it.origPage] = per
   }
   veilRects.value = out
+  veilPageRects.value = outPage
 }
 function veilBoxes(p, pno) { return veilRects.value[pno]?.[p.idx] || [] }
+/* 段落流之后的页（参考文献/附录）整页灰：pointer-events:none——不拦选字，
+   想复制一条引文照样行；要细读就按 f 关掉略读。 */
+function pageVeils(pno) { return veilPageRects.value[pno] || [] }
 
 /* 蒙纱盖住的段不再画批注笔迹：那条"可跳过"的点线画在纱的**上面**（DOM 顺序靠后），
    透过纱看就是一排小黑点——用户原话"蒙的位置还有小黑点"。页边卡片照旧，
@@ -1403,14 +1398,17 @@ watch(() => store.marginalia.notes, (n, o) => {
                            width: Math.abs(frameRect.x1 - frameRect.x0) + 'px', height: Math.abs(frameRect.y1 - frameRect.y0) + 'px' }"></div>
 
             <div class="para-zone">
+              <!-- 参考文献区/附录（段落流之后的页）整页灰：不拦鼠标，字可以照常选中 -->
+              <div v-for="(vb, vi) in pageVeils(it.origPage)" :key="'pv' + vi"
+                   class="para-fade veil page-veil"
+                   :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
+                             animationDelay: Math.min(400, vi * 8) + 'ms' }"></div>
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
-                <!-- 蒙掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」。
-                     hole=句子模式盖的（段里有要紧的句子被留下了），提示语跟着说。 -->
+                <!-- 灰掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
                 <template v-if="veiled(p, it.origPage)">
                   <div v-for="(vb, vi) in veilBoxes(p, it.origPage)" :key="'v' + vi"
                        class="para-fade veil"
-                       :title="vi ? '' : (vb.hole ? '略读蒙掉了这句（要紧的句子留着）· 点一下：这段也要读'
-                                                  : '略读蒙掉了这一段 · 点一下：这段也要读')"
+                       :title="vi ? '' : '略读灰掉了这一段 · 点一下：这段也要读'"
                        :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
                                  animationDelay: Math.min(400, pi * 12 + vi * 8) + 'ms' }"
                        @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"

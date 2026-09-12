@@ -68,7 +68,8 @@ export const api = {
 
   // 划词/段译只有流式一条路（translateStream）：这两个非流式包装没人用，而且后端
   // 那两个接口返回的是 SSE，真被调也会炸——删掉，别再钓着一个错的东西
-  translateFull: (pid) => req('POST', `/api/papers/${pid}/translate-full`),
+  // force=1：盘上已有成品也重译一遍（译文打不开时的"重新整本翻译"）
+  translateFull: (pid, force) => req('POST', `/api/papers/${pid}/translate-full${force ? '?force=1' : ''}`),
   translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
   glossary: (pid) => req('GET', `/api/papers/${pid}/glossary`),
   // 按篇发掘术语（+这篇自己的缩写）：只在词表为空时调一次，生成过就是纯读库

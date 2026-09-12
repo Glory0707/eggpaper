@@ -22,7 +22,7 @@ hiddenimports = [
     "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.loops.asyncio",
     "uvicorn.protocols.http.auto", "uvicorn.protocols.http.h11_impl",
     "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on", "uvicorn.lifespan.off",
-    "appinfo", "citation", "config", "db", "glossary_seed", "llm", "mark", "pdfparse",
+    "appinfo", "citation", "config", "db", "llm", "mark", "pdfparse",
     "update", "window",
 ]
 

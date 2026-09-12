@@ -468,6 +468,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   mix-blend-mode: lighten;
 }
 .para-fade.veil:hover { opacity: 0.08; }
+/* 参考文献区的整页灰：不接鼠标（选字/复制引文照常），也不悬停掀开——
+   要细读就按 f 关掉略读 */
+.para-fade.veil.page-veil { pointer-events: none; cursor: auto; }
 /* 纱按段落顺序从左往右扫下来，像有人一行行盖过去（延迟由模板按段序给） */
 @keyframes veilRoll {
   from { opacity: 0; clip-path: inset(0 100% 0 0) }
