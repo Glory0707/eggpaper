@@ -641,6 +641,21 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .blk-get:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
 .blk-busy { margin-left: auto; font-size: var(--fs-sm); color: var(--ink-3); }
+/* 眉批生成中的进度（只出现在这一块里）。有真实块数时是**确定值**的一条墨线，
+   拿不到块数（还没测出总量）才退回滑动动画——不假装知道进度。 */
+.blk-prog { margin: 2px 0 4px; }
+.blk-prog .r-bar { height: 2px; background: var(--hairline-soft); overflow: hidden; }
+.blk-prog .r-bar i {
+  display: block; height: 100%; width: 30%; background: var(--accent);
+  animation: slide 1.8s var(--ease-smooth) infinite;
+  transition: width .45s var(--ease-smooth);
+}
+.blk-prog .r-bar i.det { animation: none; }
+.blk-prog-line {
+  display: flex; justify-content: space-between; margin-top: 6px;
+  font-size: var(--fs-xs); color: var(--ink-3);
+}
+.blk-elapsed { font-family: var(--mono); }
 .blk-more {
   display: block; width: 100%; text-align: center; padding: 7px 0;
   font-size: var(--fs-sm); color: var(--ink-3); background: transparent;

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis,
-         reloadSummary, checkUpdate, loadVersion } from './store'
+         refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import RightRail from './components/RightRail.vue'
@@ -18,6 +18,7 @@ const roll = ref(false)          // 完成一个动作时，印章滚一下（�
 const gPending = ref(false)
 const VARIANTS = ['original', 'mono', 'dual']
 let pollTimer = null
+let marginFastTimer = null     // 眉批运行时那条 1 秒快轮询（跑完即停）
 
 function rollOnce(ms = 700) {
   roll.value = false
@@ -83,7 +84,10 @@ async function poll() {
   } catch { /* 轮询里的失败不打扰用户 */ }
   if (!store.currentId) return
   if (store.analysis.status === 'running') await refreshAnalysis()
-  if (store.marginalia.status === 'running') await refreshMarginalia()
+  if (store.marginalia.status === 'running') {
+    await refreshMarginalia()
+    startMarginFast()      // 刷新/换篇回来时也接上快轮询（否则只能等 3 秒那条）
+  }
   const p = store.papers.find(x => x.id === store.currentId)
   if (p && p.translate_status === 'running') {
     const j = await api.translateStatus(store.currentId)
@@ -119,7 +123,23 @@ async function doMarginalia() {
   if (!store.currentId) return
   await api.marginaliaStart(store.currentId)
   await refreshMarginalia()
+  startMarginFast()
 }
+
+/* 眉批是**唯一**会持续几十秒到几分钟的任务。全局那条 3 秒轮询在它跑完那一刻最多还要
+   再等 3 秒才把结果取回来——"明明好了却还显示在写"就是这么来的。只给它一条 1 秒的
+   快轮询，跑完立刻停；其他功能照旧 3 秒，互不影响。 */
+function startMarginFast() {
+  if (marginFastTimer) return
+  marginFastTimer = setInterval(async () => {
+    await refreshMarginalia()
+    if (store.marginalia.status !== 'running') {
+      clearInterval(marginFastTimer)
+      marginFastTimer = null
+    }
+  }, 1000)
+}
+onUnmounted(() => clearInterval(marginFastTimer))
 
 async function doTranslateFull() {
   if (!store.currentId) return

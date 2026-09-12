@@ -20,7 +20,7 @@ export const store = reactive({
   paper: null,
   paras: [],
   analysis: { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' },
-  marginalia: { status: 'none', notes: [] },
+  marginalia: { status: 'none', notes: [], progress: null },
   summary: null,
   summaryErr: '',
   settings: null,
@@ -154,7 +154,7 @@ export async function openPaper(pid) {
   // （症状：新论文的页面上短暂出现别人家的划线和批注卡）
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-  store.marginalia = { status: 'none', notes: [] }
+  store.marginalia = { status: 'none', notes: [], progress: null }
   store.readingPara = null
   store.paras = await api.paragraphs(pid)
   store.summary = null

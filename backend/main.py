@@ -488,19 +488,42 @@ def _resolve_rects(pid: str):
 
 _rect_tried = set()      # 试过定位的钉子 id（失败的不再重复开 PDF）
 
+# 眉批生成的实时进度：pid -> {"done": 已完成块数, "total": 总块数, "t0": 起始时刻}
+# 只活在内存里——它是"这一次运行"的状态，进程重启后没有意义（也没必要进数据库）。
+_margin_progress = {}
 
-def _run_marginalia(pid: str, paras: list):
+
+def _run_marginalia(pid: str):
+    import time as _t
+    t0 = _t.time()
+    _margin_progress[pid] = {"done": 0, "total": 0, "t0": t0}
+
+    def on_chunk(done, total):
+        p = _margin_progress.get(pid) or {"t0": t0}
+        p.update(done=done, total=total)
+        _margin_progress[pid] = p
+
     try:
         title = db.get_paper(pid)["title"]
+        paras = db.get_paragraphs(pid)
         use = [p for p in paras if not p.get("in_refs")]
-        notes = llm.mock_marginalia(paras) if config.load()["mock"] else llm.analyze_marginalia(title, use)
+        if config.load()["mock"]:
+            notes = llm.mock_marginalia(paras)
+            on_chunk(1, 1)
+        else:
+            notes = llm.analyze_marginalia(title, use, on_chunk=on_chunk)
+        t_llm = _t.time() - t0
         db.set_marginalia(pid, notes)
         # "还能做什么"吃眉批里的"有坑"，导师三问的输入也是这批 warning——重写眉批要一起作废
         db.answers_clear(pid)
         db.update_paper(pid, advisor=None)
         _resolve_rects(pid)
+        print(f"[eggpaper] 眉批 {pid}: {len(notes)} 条 · 模型 {t_llm:.1f}s · "
+              f"定位 {_t.time() - t0 - t_llm:.1f}s")
     except Exception as e:
         db.set_marginalia(pid, [], status="error", error=f"{type(e).__name__}: {str(e)[:300]}")
+    finally:
+        _margin_progress.pop(pid, None)
 
 
 @app.post("/api/papers/{pid}/marginalia")
@@ -509,7 +532,7 @@ def marginalia_start(pid: str):
     if p["marginalia_status"] == "running":
         return {"status": "running"}
     db.update_paper(pid, marginalia_status="running", marginalia_error=None)
-    threading.Thread(target=_run_marginalia, args=(pid, db.get_paragraphs(pid)), daemon=True).start()
+    threading.Thread(target=_run_marginalia, args=(pid,), daemon=True).start()
     return {"status": "running"}
 
 
@@ -519,6 +542,7 @@ def marginalia_get(pid: str):
     if p["marginalia_status"] == "done" and any(not n["rect"] for n in db.get_marginalia(pid)):
         _resolve_rects(pid)
     return {"status": p["marginalia_status"], "error": p.get("marginalia_error"),
+            "progress": _margin_progress.get(pid),
             "notes": [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None) for n in db.get_marginalia(pid)]}
 
 

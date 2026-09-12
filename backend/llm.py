@@ -448,9 +448,14 @@ BAND_OF = {"insight": "good",
            "padding": "noise", "redundant": "noise", "stiff": "noise", "hedge": "noise"}
 
 
-def analyze_marginalia(title: str, paras: list) -> list:
-    """分块细读，返回 [{para_idx, page, quote, kind, label, band, note}]"""
-    from concurrent.futures import ThreadPoolExecutor
+def analyze_marginalia(title: str, paras: list, on_chunk=None) -> list:
+    """分块细读，返回 [{para_idx, page, quote, kind, label, band, note}]。
+
+    `on_chunk(已完成块数, 总块数)` 每读完一块回调一次——界面上那条小进度条吃的是它。
+    为什么报"块"而不是百分比：一次请求是一条 12 段的完整 LLM 调用，中间没有可信的颗粒度，
+    报块数才是**真实**进度（长论文十几块，进度条一格一格走，不是装饰动画）。
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     page_of = {p["idx"]: p["page"] for p in paras}
     chunks = [paras[i:i + 12] for i in range(0, len(paras), 12)]
 
@@ -468,32 +473,53 @@ def analyze_marginalia(title: str, paras: list) -> list:
         data = parse_json(out)
         return data.get("notes", []) if isinstance(data, dict) else []
 
-    notes, seen, per_para = [], set(), {}
+    total = len(chunks)
+    batches, failed, done = [None] * total, 0, 0
+    # 用 as_completed 而不是 map：map 只在"轮到它"时才把结果交出来，第 1 块慢的时候
+    # 后面早写完的块也报不出来——进度会假滞后。顺序仍按块号回填，最终批注次序不变。
     with ThreadPoolExecutor(max_workers=3) as ex:
-        for batch in ex.map(run, chunks):
-            for n in batch:
+        futs = {ex.submit(run, c): i for i, c in enumerate(chunks)}
+        for fut in as_completed(futs):
+            i = futs[fut]
+            try:
+                batches[i] = fut.result()
+            except Exception:
+                failed += 1
+                batches[i] = []
+            done += 1
+            if on_chunk:
                 try:
-                    para_idx, quote = int(n.get("para")), str(n.get("quote", "")).strip()
-                    note = str(n.get("note", "")).strip()[:80]
-                except (TypeError, ValueError):
-                    continue
-                kind = str(n.get("kind", "")).strip().lower()
-                label, band = str(n.get("label", "")).strip()[:8], str(n.get("band", "")).strip().lower()
-                if kind in KINDS:
-                    band, label = BAND_OF[kind], ""
-                elif label and band in BANDS:
-                    kind = "custom"          # 自造款：标签 + 档位齐了才收，否则页面不知道把它画成什么
-                else:
-                    continue
-                # 一段最多三条：模型偶尔会对着同一句反复批，截胡在入口比让页边堆满好
-                if not quote or quote[:40] in seen or per_para.get(para_idx, 0) >= 3:
-                    continue
-                if para_idx not in page_of:
-                    continue
-                seen.add(quote[:40])
-                per_para[para_idx] = per_para.get(para_idx, 0) + 1
-                notes.append({"para_idx": para_idx, "page": page_of[para_idx], "quote": quote,
-                              "kind": kind, "label": label, "band": band, "note": note})
+                    on_chunk(done, total)
+                except Exception:
+                    pass
+    if total and failed == total:
+        raise RuntimeError(f"{total} 块全部失败（模型或网络问题）")
+
+    notes, seen, per_para = [], set(), {}
+    for batch in batches:
+        for n in batch:
+            try:
+                para_idx, quote = int(n.get("para")), str(n.get("quote", "")).strip()
+                note = str(n.get("note", "")).strip()[:80]
+            except (TypeError, ValueError):
+                continue
+            kind = str(n.get("kind", "")).strip().lower()
+            label, band = str(n.get("label", "")).strip()[:8], str(n.get("band", "")).strip().lower()
+            if kind in KINDS:
+                band, label = BAND_OF[kind], ""
+            elif label and band in BANDS:
+                kind = "custom"          # 自造款：标签 + 档位齐了才收，否则页面不知道把它画成什么
+            else:
+                continue
+            # 一段最多三条：模型偶尔会对着同一句反复批，截胡在入口比让页边堆满好
+            if not quote or quote[:40] in seen or per_para.get(para_idx, 0) >= 3:
+                continue
+            if para_idx not in page_of:
+                continue
+            seen.add(quote[:40])
+            per_para[para_idx] = per_para.get(para_idx, 0) + 1
+            notes.append({"para_idx": para_idx, "page": page_of[para_idx], "quote": quote,
+                          "kind": kind, "label": label, "band": band, "note": note})
     return notes[:48]
 
 

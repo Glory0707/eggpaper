@@ -13,6 +13,28 @@ const emit = defineEmits(['analyze', 'marginalia'])
 const tab = ref('skeleton')
 const rbodyEl = ref(null)      // 「↗」指针要滚到指定那一问，得能问到滚动容器
 
+/* 眉批生成中的进度：块数来自服务端（真进度），秒数是本地计时（不依赖服务端时钟）。 */
+const marginPct = computed(() => {
+  const p = store.marginalia.progress
+  if (!p || !p.total) return null
+  return Math.max(3, Math.min(100, Math.round((p.done / p.total) * 100)))
+})
+const marginSecs = ref(0)
+let marginT0 = 0
+let marginTimer = null
+watch(() => store.marginalia.status, (s) => {
+  if (s === 'running') {
+    marginT0 = Date.now()
+    marginSecs.value = 0
+    if (!marginTimer) marginTimer = setInterval(() => { marginSecs.value = Math.round((Date.now() - marginT0) / 1000) }, 1000)
+  } else if (marginTimer) {
+    clearInterval(marginTimer)
+    marginTimer = null
+  }
+})
+onUnmounted(() => { if (marginTimer) clearInterval(marginTimer) })
+const marginElapsed = computed(() => marginSecs.value)
+
 
 // 摘一段原文：断在句末更体面，断不了就按字数切
 function excerpt(text, cap = 132) {
@@ -505,6 +527,18 @@ watch(() => store.currentId, () => {
                 AI 眉批
               </button>
               <span v-else class="blk-busy">写批注中<span class="r-dots">…</span></span>
+            </div>
+            <!-- 生成中的真实进度：服务端按"读完几块"回报（12 段一块），不是装饰动画。
+                 首次生成要通读全文，长论文十几块，这条线就是"还要等多久"的答案。 -->
+            <div class="blk-prog" v-if="store.marginalia.status === 'running'">
+              <div class="r-bar">
+                <i :class="{ det: marginPct !== null }" :style="marginPct !== null ? { width: marginPct + '%' } : null" />
+              </div>
+              <div class="blk-prog-line">
+                <span v-if="marginPct !== null">已读 {{ store.marginalia.progress.done }}/{{ store.marginalia.progress.total }} 块</span>
+                <span v-else>正在通读全文</span>
+                <span class="blk-elapsed">{{ marginElapsed }}s</span>
+              </div>
             </div>
           </div>
         </template>
