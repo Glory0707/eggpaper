@@ -1,6 +1,7 @@
 """eggpaper 本地服务。唯一出网：用户配置的 LLM API 与 pdf2zh 翻译服务。"""
 import json
 import os
+import queue
 import shutil
 import threading
 import time
@@ -9,6 +10,7 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 import appinfo
 import citation
@@ -83,10 +85,10 @@ def _clear_zombie_jobs():
     按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
     """
     for col in ("analysis_status", "marginalia_status", "translate_status"):
-        n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col}='running'")[0][0]
+        n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col} IN ('running','queued')")[0][0]
         if n:
-            db.q(f"UPDATE papers SET {col}='none' WHERE {col}='running'", commit=True)
-            _applog(f"启动清理：{n} 篇的 {col} 卡在 running，已归零")
+            db.q(f"UPDATE papers SET {col}='none' WHERE {col} IN ('running','queued')", commit=True)
+            _applog(f"启动清理：{n} 篇的 {col} 卡在 running/queued，已归零")
 
 
 # ---------------- 设置 ----------------
@@ -208,7 +210,11 @@ def papers():
     return db.list_papers()
 
 
-@app.post("/api/papers")
+# 注意：这里**不要**加 @app.post("/api/papers")。这个函数是"把已经落在库里的 PDF 建进库"
+# 的内部步骤，上传路由（下面那个 async def upload）与"双击打开"都要调它。
+# 它头上曾经挂着一个装饰器，而 FastAPI 按注册顺序匹配——于是 POST /api/papers 命中的是它，
+# 要求 pid/filename/path 三个查询参数，**浏览器拖入/点击导入永远 422**（双击打开那条路不经过
+# 这个路由，所以一直正常，问题就被掩盖了）。
 def _ingest(pid: str, filename: str, path: str) -> dict:
     """把已经落在 PDF_DIR 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
 
@@ -229,11 +235,12 @@ def _ingest(pid: str, filename: str, path: str) -> dict:
     db.create_paper(pid, filename, title, path, n_pages, authors)
     db.replace_paragraphs(pid, paras)
     row = db.get_paper(pid)
-    # AI 主动：导入即后台通读，打开时简报已就绪（没有文字层的扫描件没得析读，直接标完成）
-    db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-                    analysis_status="running" if paras else "done")
+    # AI 主动：导入即排队后台通读，打开时简报已就绪（没有文字层的扫描件没得析读，直接标完成）
+    db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
     if paras:
-        threading.Thread(target=_run_analysis, args=(pid, paras), daemon=True).start()
+        _enqueue_analysis(pid, paras)
+    else:
+        db.update_paper(pid, analysis_status="done")
     return {"paper": row, "n_paragraphs": len(paras),
             "n_captions": sum(1 for p in paras if p["caption"]),
             "no_text": not paras}
@@ -250,7 +257,9 @@ async def upload(file: UploadFile = File(...)):
     path = os.path.join(PDF_DIR, f"{pid}.pdf")
     with open(path, "wb") as f:
         f.write(raw)
-    return _ingest(pid, file.filename, path)
+    # 解析（抽标题/段落）是**同步阻塞**的活，几秒钟起步。直接在 async 路由里做会卡住整个
+    # 事件循环——界面那几条轮询全部停摆，用户看到的是"导入时界面死了"。丢进线程池。
+    return await run_in_threadpool(_ingest, pid, file.filename, path)
 
 
 @app.post("/api/papers/import-path")
@@ -422,14 +431,13 @@ def _run_analysis(pid: str, paras: list):
 def analyze(pid: str):
     p = _paper_or_404(pid)
     _require_paras(pid)
-    if p["analysis_status"] == "running" and _job_live("analysis", pid):
-        return {"status": "running"}
-    if p["analysis_status"] == "running":
-        _applog(f"析读 {pid}: 数据库里是 running 但本进程没有这个任务（上次被中断），重来")
-    _live_jobs.add(("analysis", pid))
-    db.update_paper(pid, analysis_status="running", analysis_error=None)
-    threading.Thread(target=_run_analysis, args=(pid, db.get_paragraphs(pid)), daemon=True).start()
-    return {"status": "running"}
+    if p["analysis_status"] in ("running", "queued") and _job_live("analysis", pid):
+        return {"status": p["analysis_status"]}
+    if p["analysis_status"] in ("running", "queued"):
+        _applog(f"析读 {pid}: 数据库里是 {p['analysis_status']} 但本进程没有这个任务（上次被中断），重来")
+    # 也排队：手动重读一篇时，后台可能正在读别的几篇，一起冲上去只会互相抢限流
+    _enqueue_analysis(pid, db.get_paragraphs(pid))
+    return {"status": "queued"}
 
 
 @app.get("/api/papers/{pid}/analysis")
@@ -437,7 +445,7 @@ def analysis(pid: str):
     _paper_or_404(pid)
     status, claims, annos = db.get_analysis(pid)
     p = _paper_or_404(pid)
-    if status == "running" and not _job_live("analysis", pid):
+    if status in ("running", "queued") and not _job_live("analysis", pid):
         db.update_paper(pid, analysis_status="none")        # 僵尸状态：归零
         status = "none"
     eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
@@ -532,6 +540,42 @@ def _job_live(kind: str, pid: str) -> bool:
 
 def _job_done(kind: str, pid: str):
     _live_jobs.discard((kind, pid))
+
+
+# ---------------- 析读队列：一次导入多篇时，一篇一篇地读 ----------------
+# 为什么要排队而不是每篇开一条线程：析读是一次**整篇通读**（几十次调用），
+# 五篇一起冲上去只会互相抢限流、每篇都变慢，而且用户根本不在等它们。
+# 串行之后"最前面的那篇最快好"，界面上也就能说清谁在跑、谁在排队。
+_q_lock = threading.Lock()
+_analysis_q = queue.Queue()
+_analysis_worker = [None]        # 装线程；列表是为了在闭包里能改
+
+
+def _enqueue_analysis(pid: str, paras: list):
+    db.update_paper(pid, analysis_status="queued", analysis_error=None)
+    with _q_lock:
+        _analysis_q.put((pid, paras))
+        w = _analysis_worker[0]
+        if w is None or not w.is_alive():
+            w = threading.Thread(target=_analysis_loop, daemon=True)
+            _analysis_worker[0] = w
+            w.start()
+
+
+def _analysis_loop():
+    """队列空了就自己退出（下次导入再起一条）。空判断与入队在同一把锁里，不会漏活。"""
+    while True:
+        with _q_lock:
+            if _analysis_q.empty():
+                _analysis_worker[0] = None
+                return
+            pid, paras = _analysis_q.get_nowait()
+        _live_jobs.add(("analysis", pid))
+        db.update_paper(pid, analysis_status="running", analysis_error=None)
+        try:
+            _run_analysis(pid, paras)
+        finally:
+            _job_done("analysis", pid)
 
 
 def _applog(msg: str):

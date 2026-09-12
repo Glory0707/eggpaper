@@ -326,6 +326,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   font-size: var(--fs-xs); color: var(--ink-3); margin-top: 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* 后台任务的状态：一次导入多篇时，"还剩哪几篇没读完"靠这一行看 */
+.paper-item .p-state { font-size: var(--fs-xs); color: var(--ink-3); margin-top: 3px; }
+.paper-item .p-state.busy { color: var(--accent-deep); }
 .paper-item .p-del {
   position: absolute; right: 5px; top: 7px;
   border: none; background: none; color: var(--ink-3);

@@ -136,12 +136,13 @@ async function dropOn(cid) {
 
 /* ---------- 导入 / 删除 ---------- */
 function onFile(e) {
-  emit('import', e.target.files?.[0])
+  // 一次可以选多篇：emit 整个 FileList（导入与"逐篇上传"的节流在 App 那边做）
+  emit('import', Array.from(e.target.files || []))
   e.target.value = ''
 }
 function onDrop(e) {
   over.value = false
-  emit('import', e.dataTransfer?.files?.[0])
+  emit('import', Array.from(e.dataTransfer?.files || []))
 }
 async function del(pid, name) {
   const yes = await confirmBox({
@@ -221,6 +222,10 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
                 @click.stop="menuFor = menuFor === p.id ? null : p.id">＋</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
         <div class="p-author" v-if="p.authors">{{ p.authors }}</div>
+        <!-- 后台在忙什么，列表里得看得见——一次导入多篇时，"还剩哪几篇没读完"只能靠这一行 -->
+        <div class="p-state" v-if="p.analysis_status === 'queued'">排队通读中…</div>
+        <div class="p-state busy" v-else-if="p.analysis_status === 'running'">正在通读…</div>
+        <div class="p-state" v-else-if="p.analysis_status === 'error'">通读失败，可重试</div>
 
         <!-- 归入分类：勾选即存，不用"确定" -->
         <div class="coll-menu" v-if="menuFor === p.id" @click.stop>
@@ -248,6 +253,6 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
       拖入 PDF 或点击导入
     </div>
-    <input ref="fileInput" type="file" accept="application/pdf" hidden @change="onFile" />
+    <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFile" />
   </div>
 </template>

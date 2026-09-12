@@ -43,7 +43,7 @@ function onDragLeave(e) { if (hasFiles(e) && e.relatedTarget == null) dragOver.v
 function onDrop(e) {
   e.preventDefault()
   dragOver.value = false
-  onPickFile(e.dataTransfer?.files?.[0])
+  onImport(Array.from(e.dataTransfer?.files || []))     // 一次拖进来的全收下
 }
 function endDrag() { dragOver.value = false }
 
@@ -83,7 +83,7 @@ async function poll() {
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
   if (!store.currentId) return
-  if (store.analysis.status === 'running') await refreshAnalysis()
+  if (anaBusy.value) await refreshAnalysis()
   if (store.marginalia.status === 'running') {
     await refreshMarginalia()
     startMarginFast()      // 刷新/换篇回来时也接上快轮询（否则只能等 3 秒那条）
@@ -101,8 +101,10 @@ async function poll() {
 watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
 
 watch(() => store.analysis.status, (n, o) => {
-  // 析读把一眼卡一起作废了（服务端清了缓存），所以这里要重新取一次
-  if (o === 'running' && n === 'done') { rollOnce(); reloadSummary() }
+  // 析读把一眼卡一起作废了（服务端清了缓存），所以这里要重新取一次。
+  // 写成"进 done"而不是"running→done"：现在中间还多一个 queued（排队），
+  // 只认 running→done 会在"排队→读完"这条路径上漏掉这一拍。
+  if (n === 'done' && o && o !== 'done') { rollOnce(); reloadSummary() }
 })
 
 async function doAnalyze() {
@@ -150,22 +152,44 @@ async function doTranslateFull() {
   } catch (e) { toast('启动失败：' + e.message) }
 }
 
-async function onPickFile(file) {
-  if (!file) return
-  toast('已导入，正在后台通读…')
-  try {
-    const r = await api.upload(file)
-    await refreshPapers()
-    // 正在看某个分类时导入的，就顺手归到那个分类里——Zotero 的"导入到分类"一个意思
-    const c = store.lib.coll
-    if (typeof c === 'number') {
-      try { await api.paperColls(r.paper.id, [c]); await refreshCollections() } catch { /* 归类失败不影响导入 */ }
+/* 导入：可以一次给多篇。**逐篇上传**而不是并发——
+   每篇的解析在服务端是几秒钟的活，并发只会让服务端更忙、提示也更乱；
+   逐篇还能说清"正在导入第 2/5 篇"，并且**第一篇一到就打开**，不用等全部传完。
+   其余的在后台排队通读（服务端是一条串行队列），列表里能看到谁在排队、谁在读。 */
+async function onImport(list) {
+  const files = (Array.isArray(list) ? list : [list]).filter(f => f && f.name)
+  if (!files.length) return
+  const many = files.length > 1
+  const ok = []
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    toast(many ? `正在导入 ${i + 1}/${files.length}：${f.name.slice(0, 24)}` : '已导入，正在后台通读…')
+    try {
+      const r = await api.upload(f)
+      ok.push(r)
+      // 正在看某个分类时导入的，就顺手归到那个分类里——Zotero 的"导入到分类"一个意思
+      const c = store.lib.coll
+      if (typeof c === 'number') {
+        try { await api.paperColls(r.paper.id, [c]); await refreshCollections() } catch { /* 归类失败不影响导入 */ }
+      }
+      if (i === 0) {                    // 只打开第一篇：剩下的别把界面抢过去
+        await openPaper(r.paper.id)
+        store.viewer.libOpen = false
+      }
+      await refreshPapers()
+    } catch (e) {
+      toast(`《${f.name.slice(0, 20)}》导入失败：` + e.message)
     }
-    await openPaper(r.paper.id)
-    store.viewer.libOpen = false
-    if (r.no_text) toast('这份 PDF 没有可提取的文字（可能是扫描件），只有阅读功能可用')
-    else if (r.n_paragraphs && r.n_paragraphs < 5) toast('这份 PDF 只认出 ' + r.n_paragraphs + ' 段，析读结果可能很粗')
-  } catch (e) { toast('导入失败：' + e.message) }
+  }
+  const first = ok[0]
+  if (!first) return
+  if (many && ok.length > 1) {
+    toast(`已导入 ${ok.length} 篇；其余 ${ok.length - 1} 篇在后台排队通读，列表里能看进度`)
+  } else if (first.no_text) {
+    toast('这份 PDF 没有可提取的文字（可能是扫描件），只有阅读功能可用')
+  } else if (first.n_paragraphs && first.n_paragraphs < 5) {
+    toast('这份 PDF 只认出 ' + first.n_paragraphs + ' 段，析读结果可能很粗')
+  }
 }
 
 async function saveSettings(body) {
@@ -175,6 +199,8 @@ async function saveSettings(body) {
   if (store.currentId) refreshAnalysis()
 }
 
+// 析读在忙：排队与在读都算（后台排队时按钮也该按不动、并说清是在排队）
+const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.status))
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
 
 /* ---------------- 键盘流 ---------------- */
@@ -264,8 +290,9 @@ function onKey(e) {
                 title="用 pdf2zh 把整篇译成第二份 PDF，译文/双语两个模式靠它">
           {{ tranSt === 'running' ? '翻译中…' : '整本翻译' }}
         </button>
-        <button class="primary" @click="doAnalyze" :disabled="store.analysis.status === 'running'">
-          {{ store.analysis.status === 'running' ? '通读中…' : (store.analysis.status === 'done' ? '重新析读' : '析读') }}
+        <button class="primary" @click="doAnalyze" :disabled="anaBusy">
+          {{ store.analysis.status === 'queued' ? '排队中…' : (store.analysis.status === 'running' ? '通读中…'
+             : (store.analysis.status === 'done' ? '重新析读' : '析读')) }}
         </button>
       </div>
       <div class="actions">
@@ -313,7 +340,7 @@ function onKey(e) {
       <div class="lib-mask" v-if="store.viewer.libOpen" @click="store.viewer.libOpen = false"></div>
     </Transition>
     <Transition name="slide-l">
-      <LibPanel v-if="store.viewer.libOpen" @import="onPickFile" @close="store.viewer.libOpen = false" />
+      <LibPanel v-if="store.viewer.libOpen" @import="onImport" @close="store.viewer.libOpen = false" />
     </Transition>
     <Transition name="fade">
       <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" />
