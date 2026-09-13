@@ -119,7 +119,7 @@ function save() {
       <!-- 图层 + 演示模式并到一行：原来两个复选框各占一整行，白吃版面 -->
       <div class="f-line">
         <span class="mono-label" style="margin:0">图层</span>
-        <label class="ck"><input type="checkbox" v-model="f.layers.marginalia" />眉批（纸面页边）</label>
+        <label class="ck" title="只管 AI 眉批；你自己钉的查译、批注不受它管，一直显示"><input type="checkbox" v-model="f.layers.marginalia" />AI 眉批</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.mock" />演示模式</label>
       </div>
       <div class="f-row">

@@ -258,6 +258,16 @@ PAGE_WORKERS = 2         # 并发页数：开太大只会更快撞上服务限�
 PAGE_TIMEOUT = 150       # 单页上限 2.5 分钟：正常一页几秒到几十秒；坏页早放弃早回退
 PAGE_TRIES = 2           # 每页试两次（第二次走 pdf2zh 的译文缓存，通常很快）
 
+# LLM 翻译是一段一次模型调用：一页几十段、再撞上限流重试，两分半真的不够——
+# 超时杀掉重试再杀掉，用户看到的就是"进度爬几页退一页、永远到不了头"（实测 bing 6 分钟
+# 译完的论文，openai 会跑十几分钟）。这些服务给双倍时间，换"每一页都译成"。
+LLM_SERVICES = {"openai", "deepseek", "zhipu", "silicon", "modelscope",
+                "gemini", "grok", "groq"}
+
+
+def _page_timeout(service: str) -> float:
+    return PAGE_TIMEOUT * 2 if service in LLM_SERVICES else PAGE_TIMEOUT
+
 
 def _page_dir(out_dir: str, pid: str, pno: int, t: int) -> str:
     return os.path.join(out_dir, f".pages-{pid}", f"p{pno}-{t}")
@@ -273,7 +283,7 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
     tail = collections.deque(maxlen=5)
     flags, si = _no_window()
     proc = None
-    deadline = time.time() + PAGE_TIMEOUT
+    deadline = time.time() + _page_timeout(service)
 
     def _kill_when_stale():
         while proc.poll() is None and time.time() < deadline:
@@ -311,11 +321,25 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
     stem = os.path.splitext(os.path.basename(pdf_path))[0]
     dual = os.path.join(out_dir, stem + "-dual.pdf")
     mono = os.path.join(out_dir, stem + "-mono.pdf")
-    if os.path.exists(dual) and os.path.exists(mono):
+    # 半截文件不算数：进程被超时杀掉时 pdf2zh 可能刚写了个开头——
+    # 认了它，组装时 pymupdf 才炸（整本报错）；按"%%EOF 收尾"判完整，坏页老老实实回退
+    if all(_pdf_complete(p) for p in (dual, mono)):
         return {"dual": dual, "mono": mono}, list(tail)
     if not any("单页超时" in t for t in tail):
         tail.append(f"单页失败（退出码 {proc.poll()}）")
     return None, list(tail)
+
+
+def _pdf_complete(path: str) -> bool:
+    """文件存在且以 %%EOF 收尾（写到一半被杀的文件没有这个）。"""
+    try:
+        if os.path.getsize(path) < 10_000:
+            return False
+        with open(path, "rb") as f:
+            f.seek(max(0, os.path.getsize(path) - 2048))
+            return b"%%EOF" in f.read()
+    except OSError:
+        return False
 
 
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
@@ -405,24 +429,36 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 for pno in range(n):
                     got = results.get(pno)
                     if got:
-                        with pymupdf.open(got["dual"]) as d:
-                            dual.insert_pdf(d)
-                        with pymupdf.open(got["mono"]) as m:
-                            mono.insert_pdf(m)
-                    else:
-                        failed.append(pno + 1)
-                        # 双语里这一页放两页原文：保住"奇页原文偶页译文"的页码关系
-                        dual.insert_pdf(src, from_page=pno, to_page=pno)
-                        dual.insert_pdf(src, from_page=pno, to_page=pno)
-                        mono.insert_pdf(src, from_page=pno, to_page=pno)
+                        try:
+                            # pdf2zh 的 --pages 是"整本文档只译这一页"：mono 产物仍是全本
+                            # n 页（第 pno 页才是译文），dual 是原文/译文交错的全本 2n 页
+                            # （2i=原文、2i+1=译文，没译过的对儿是两页原文）。
+                            # **只取当页**——整本塞进来的话，18 页论文会拼出 648 页、
+                            # 266MB 的怪物（实测），打开即卡死：用户看到的"只翻译了一页"
+                            # 就是这坨重复里混着的一页译文。
+                            with pymupdf.open(got["dual"]) as d:
+                                lo = min(2 * pno, len(d) - 2)
+                                dual.insert_pdf(d, from_page=lo, to_page=lo + 1)
+                            with pymupdf.open(got["mono"]) as m:
+                                at = min(pno, len(m) - 1)
+                                mono.insert_pdf(m, from_page=at, to_page=at)
+                            continue
+                        except Exception:
+                            pass     # 产物坏掉（半截文件等）：跟没译成一样，回退原文
+                    failed.append(pno + 1)
+                    # 双语里这一页放两页原文：保住"奇页原文偶页译文"的页码关系
+                    dual.insert_pdf(src, from_page=pno, to_page=pno)
+                    dual.insert_pdf(src, from_page=pno, to_page=pno)
+                    mono.insert_pdf(src, from_page=pno, to_page=pno)
                 if n and not results:
                     j.update(status="error",
                              error=f"所有页面都没译成（{service} 连不上或被限流）。"
                                    "换一个翻译服务（设置 → 整本翻译）再试。")
                     say(f"整本翻译失败 {pid}：全部页面失败")
                     return
-                dual.save(dual_path)
-                mono.save(mono_path)
+                # garbage=4：页级产物各自内嵌了整本的字体资源，不回收的话成品虚胖一倍多
+                dual.save(dual_path, garbage=4, deflate=True)
+                mono.save(mono_path, garbage=4, deflate=True)
             finally:
                 src.close(); dual.close(); mono.close()
 

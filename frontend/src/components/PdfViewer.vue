@@ -66,17 +66,21 @@ const parasByPage = computed(() => {
   for (const p of store.paras) (m[p.page] ||= []).push(p)
   return m
 })
-/* 页边摆哪些批注：图层开关 × 档位过滤。四档就是纸上那四种笔触，
-   一档一个开关（右栏「问题」页的眉批块里点）——批注上到三四十条时，
-   "只看要当心"是读者的第一个念头。 */
+/* 页边摆哪些批注。读者自己钉的（查译/框选答疑/自己写的批注）是**读者资产**：
+   「眉批」图层开关和档位开关管的是 AI 眉批——没有 AI 眉批、或者把 AI 眉批全收起，
+   用户自己的东西也一分钟都不能跟着消失（用户原话：没有 AI 眉批的时候也要能显示）。
+   AI 眉批四档就是纸上那四种笔触，一档一个开关（右栏「问题」页的眉批块里点）——
+   批注上到三四十条时，"只看要当心"是读者的第一个念头。 */
+const USER_KINDS = new Set(['lookup', 'region', 'note'])
 const notesShown = computed(() => {
-  if (!store.viewer.layers.marginalia) return []
   const on = store.viewer.noteBands || {}
-  return store.marginalia.notes.filter(n => on[bandOf(n)] !== false)
+  return store.marginalia.notes.filter(n =>
+    USER_KINDS.has(n.kind) ||
+    (store.viewer.layers.marginalia && on[bandOf(n)] !== false))
 })
 /* 页边要多宽，取决于"上面真有东西要放吗"：有批注 → 整条 184，没有 → 一点都不留，
    论文因此能多出近 200px 的宽度。这条宽度是 measure() 的输入，图层一变就得重排。 */
-const gutterW = computed(() => (store.viewer.layers.marginalia && notesShown.value.length ? GUTTER_FULL : 0))
+const gutterW = computed(() => (notesShown.value.length ? GUTTER_FULL : 0))
 const gutterPad = computed(() => (gutterW.value ? 12 : 0))
 const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 
@@ -836,7 +840,7 @@ function onMouseUp(e) {
    一旦吃鼠标事件就没法选字了（见 styles.css 里那段注释）。所以走"整页 mouseup + 命中测试"——
    点一下（没拖动）本来也会触发 mouseup，选字、划词一条都不受影响。 */
 function onPaperClick(e) {
-  if (!store.viewer.layers.marginalia || !notesShown.value.length) return
+  if (!notesShown.value.length) return
   const pageEl = e.target?.closest?.('.page')
   if (!pageEl) return
   const it = flatItems.value.find(x => pageEls.value[x.gi] === pageEl)

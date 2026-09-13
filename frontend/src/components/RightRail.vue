@@ -152,14 +152,15 @@ const warnNotes = computed(() => store.marginalia.notes.filter(n => bandOf(n) ==
    它们同时是纸面上四种笔触，关了就在两边一起消失（纸上、页边各少一批）。
    计数按**全部**批注算（不受开关影响），否则关掉一档就看不到它有几条了。 */
 const mnotes = computed(() => store.marginalia.notes)
+/* 档位开关只管 AI 眉批。读者自己钉的（查译/框选/自己写的）是读者资产，永远显示、
+   不参与筛选——所以这里没有「我写的」这一档（用户原话：没有 AI 眉批也要能显示）。 */
 const BANDS = [
   { k: 'good', zh: '值得读', color: '#1d4e5f' },
   { k: 'warn', zh: '要当心', color: '#b8462e' },
   { k: 'noise', zh: '可跳过', color: '#8e8a80' },
-  { k: 'mine', zh: '我写的', color: '#57534a' },
 ]
 const bandCount = computed(() => {
-  const m = { good: 0, warn: 0, noise: 0, mine: 0 }
+  const m = { good: 0, warn: 0, noise: 0 }
   for (const n of mnotes.value) m[bandOf(n)] = (m[bandOf(n)] || 0) + 1
   return m
 })
@@ -645,8 +646,8 @@ watch(() => store.currentId, () => {
               </button>
             </div>
             <div class="band-alloff" v-if="mnotes.length && !bandAny">
-              四档都收起：纸面上没有批注 ·
-              <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true, mine: true }">全开</button>
+              AI 眉批三档都收起（你自己钉的还在）：纸面上没有批注 ·
+              <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true }">全开</button>
             </div>
             <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
               {{ store.marginalia.error }}
