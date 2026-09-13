@@ -311,12 +311,26 @@ def _key_num(k):
     return int(m.group()) if m else None
 
 
-def analyze_skeleton(title: str, paras: list) -> dict:
-    """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}"""
+REVIEW_SKELETON_APPENDIX = """
+
+这是一篇**综述/回顾**，它的"论证"是组织与评述，不是实验证明。判角色时额外遵守：
+- 梳理、分类、对比、评述文献的段落是这篇论文的**主体**：给 claim（它的组织/分类主张）
+  或 extension（某条线的展开），不要因为"在讲别人的工作"就标 background；
+- background 只给与主线无关的领域常识铺垫（一篇综述里通常很少）；
+- boilerplate 只给参考文献与真正的套话，文献梳理不算；
+- claims 是它的组织框架（"把 X 按 Y 分成几类 / 沿 Z 脉络梳理"），
+  anchors 填真实支撑该组织主张的段落；它给出的对比表格、数据汇总、典型案例算 evidence；
+- purposes 用读者视角："给出方法族的分类地图""对比三条技术路线的优劣""点出开放问题"。"""
+
+
+def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
+    """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}
+    kind：research / review（综述走附录提示词，别把它的主体判成背景）。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)
     user = f"论文标题：{title or '（未识别）'}\n\n{body}"
+    system = SKELETON_SYSTEM + (REVIEW_SKELETON_APPENDIX if kind == "review" else "")
     out = chat([
-        {"role": "system", "content": SKELETON_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ], max_tokens=16000, temperature=0.2)
     data = parse_json(out)
@@ -779,7 +793,7 @@ def mock_analyze(paras: list) -> dict:
             "problem": "（演示模式）这篇论文要解决的问题是：演示用的占位陈述 [¶2]。"}
 
 
-# ---------------- 方法卡（可复现 protocol） ----------------
+# ---------------- 方法卡（可复现 protocol）/ 谱系卡（综述导览） ----------------
 
 def method_card(title: str, paras: list) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
@@ -793,6 +807,29 @@ def method_card(title: str, paras: list) -> dict:
             '"notes":"<复现时要注意的坑，≤60字>"}'
             "步骤要具体可执行，保留关键数字。写法：化学式与上下标用 Unicode 字符"
             "（Sc₂O₃、10⁻⁷、Oₛ），不要 LaTeX、不要 $…$、不要用下划线代替下标。"
+            "不要 markdown 代码块，不要解释。"},
+        {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
+    ], max_tokens=6000, temperature=0.3)
+    return parse_json(out)
+
+
+def survey_card(title: str, paras: list) -> dict:
+    """谱系卡：综述版的方法卡。字段与 method_card 同一套 key（前端同一块渲染），
+    语义换成导览——普适于任何领域，**不预设数据集/基准**：它梳理了什么就写什么，
+    没有的东西（没有数据集、没有参数）就整段留空，绝不硬凑。"""
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
+    out = chat([
+        {"role": "system", "content":
+            "你在为一篇综述做一张『谱系卡』——读者 30 秒看懂这篇综述把领域名梳理成了什么样子。"
+            "只输出 JSON："
+            '{"goal":"<这张卡帮读者定位什么，≤40字>",'
+            '"system":"<它梳理的对象：领域/材料/方法族/现象，≤60字>",'
+            '"conditions":"<覆盖范围与边界：时间跨度、含与不含哪些分支，≤120字>",'
+            '"steps":["<一条主线/分支：名字 + 核心思路 + 代表工作或适用场景，≤60字>", "<...>"],'
+            '"notes":"<入门建议：先读哪条线、适合谁，≤60字>"}'
+            "steps 就是这篇综述自己的分类/脉络（有几条写几条，3~8 条为宜），每条自成一格。"
+            "**普适性**：领域不同载体不同——它用数据集/基准/材料体系/理论模型中的哪一种，就写哪一种；"
+            "没提到的东西不要编。化学式与上下标用 Unicode 字符（Sc₂O₃、10⁻⁷），不要 LaTeX。"
             "不要 markdown 代码块，不要解释。"},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
@@ -929,6 +966,25 @@ def answer_problem(title: str, gaps: list, backgrounds: list, claims: list) -> d
             "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
     ], max_tokens=3000, temperature=0.3, no_think=True)
     text = str(parse_json(out).get("text") or "").strip()[:400]
+    return {"text": text, "cites": cites_of(text)}
+
+
+def answer_how_review(title: str, claims: list, paras: list) -> dict:
+    """综述版③「它把文献怎么组织的？」：研究型的③靠主张-证据链拼，综述没有实验证据层，
+    那条路是空壳。这里由模型直接说清它的组织方式——按什么分类、沿什么脉络、各条线的关系。"""
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:700]}" for p in paras if not p.get("in_refs"))[:50000]
+    out = chat([
+        {"role": "system", "content":
+            "这是一篇综述，你在帮一位研究生说清它『把文献怎么组织的』。看给出的正文与它的组织主张，"
+            "用两三句话说清：它按什么线索/维度分类，分成哪几块，各块之间什么关系（并列/递进/交叉），"
+            "最后落到哪些开放问题。要求：说它自己的组织方式，不要复述被综述的内容；"
+            "能标依据的句子都标段号（如 [¶12]）。"
+            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
+        {"role": "user", "content":
+            f"论文标题：{title or ''}\n\n"
+            "[它的组织主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文]\n{body}"},
+    ], max_tokens=3000, temperature=0.3, no_think=True)
+    text = str(parse_json(out).get("text") or "").strip()[:500]
     return {"text": text, "cites": cites_of(text)}
 
 

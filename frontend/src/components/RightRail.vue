@@ -76,18 +76,20 @@ const SIX = [
 const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false, q6: false })
 function toggleSix(k) { openSix[k] = !openSix[k] }
 
-const six = reactive({ problem: null, why: null, next: null, lens: null })
-const sixBusy = reactive({ problem: false, why: false, next: false, lens: false })
+const six = reactive({ problem: null, why: null, how: null, next: null, lens: null })
+const sixBusy = reactive({ problem: false, why: false, how: false, next: false, lens: false })
 /* 六问各自的"答没答出来"。免费的 ③④ 看骨架，①②⑤⑥ 看有没有取过。
+   综述的 ③ 走模型生成的"谱系问"（研究型没有实验证据层，那条链对综述是空壳）。
    有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
 const sixHas = computed(() => ({
   q1: !!six.problem?.text, q2: !!six.why?.text,
-  q3: !!store.analysis.claims.length, q4: !!(limitParas.value.length + warnNotes.value.length),
+  q3: isReview.value ? !!six.how?.text : !!store.analysis.claims.length,
+  q4: !!(limitParas.value.length + warnNotes.value.length),
   q5: !!six.next?.items?.length, q6: !!six.lens?.items?.length,
 }))
 
 async function loadSix() {
-  Object.assign(six, { problem: null, why: null, next: null, lens: null })
+  Object.assign(six, { problem: null, why: null, how: null, next: null, lens: null })
   Object.keys(openSix).forEach(k => (openSix[k] = false))   // 换篇回到"只有问题"的样子
   if (!store.currentId) return
   const mine = paperEpoch()
@@ -98,7 +100,8 @@ async function loadSix() {
   } catch { /* 没缓存很正常 */ }
   // 还缺的那几问自己补上：新的析读会一次写全，但**早先析读过的论文**（生成逻辑上线之前）
   // 或者当时没写成的那一问，这里静默重取一次——界面上不再有「获取」按钮
-  for (const k of ['problem', 'why', 'next', 'lens']) {
+  const wanted = ['problem', 'why', 'next', 'lens'].concat(isReview.value ? ['how'] : [])
+  for (const k of wanted) {
     if (six[k] || sixBusy[k]) continue
     sixBusy[k] = true
     api.sixAnswer(store.currentId, k)
@@ -169,14 +172,6 @@ const bandAny = computed(() => BANDS.some(b => bandOn(b.k)))
 function toggleBand(k) {
   store.viewer.noteBands = { ...store.viewer.noteBands, [k]: !bandOn(k) }
 }
-// 待解那一行：只报有的那一边。"作者承认 0 处"这种话没人爱看
-const todoLine = computed(() => {
-  const a = limitParas.value.length, b = warnNotes.value.length
-  if (a && b) return `作者承认 ${a} 处局限 · 眉批另标出 ${b} 处可疑`
-  if (a) return `作者承认 ${a} 处局限，眉批没有另标可疑`
-  if (b) return `眉批标出 ${b} 处可疑，作者自己没写局限`
-  return '作者没有明说局限，眉批也没标出可疑之处'
-})
 
 function anchorsOf(claim) {
   return claim.anchors
@@ -324,7 +319,8 @@ onUnmounted(() => {
   endRailResize()
 })
 
-// ---------- 方法卡 / 缩写 / mini-map ----------
+// ---------- 方法卡 / 谱系卡（综述）/ 缩写 / mini-map ----------
+const isReview = computed(() => store.paper?.paper_type === 'review')
 const methodCard = ref(null)
 const mcBusy = ref(false)
 const mcMore = ref(false)          // 方法卡展开：默认只露前三步
@@ -530,8 +526,8 @@ watch(() => store.currentId, () => {
 
           <section class="six" v-for="s in SIX" :key="s.k" :class="{ open: openSix[s.k] }">
             <button class="six-q" @click="toggleSix(s.k)">
-              <i :class="{ on: sixHas[s.k] }" :title="sixHas[s.k] ? '这一问已经有答案' : '还没取过'">{{ s.n }}</i><span class="qt">{{ s.q }}</span>
-              <b v-if="s.k === 'q3' && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
+              <i :class="{ on: sixHas[s.k] }">{{ s.n }}</i><span class="qt">{{ s.k === 'q3' && isReview ? '它把文献怎么组织的？' : s.q }}</span>
+              <b v-if="s.k === 'q3' && !isReview && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
               <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
             </button>
 
@@ -553,7 +549,15 @@ watch(() => store.currentId, () => {
                 <div v-else class="six-note">{{ sixBusy.problem ? '…' : '未生成' }}</div>
               </template>
 
-              <!-- ③ 怎么解决的：主张 → 证据链 -->
+              <!-- ③ 研究型：主张 → 证据链；综述：由模型说清"它把文献怎么组织的"
+                   （综述没有实验证据层，主张-证据链在那儿是空壳，见后端 answer_how_review） -->
+              <template v-else-if="s.k === 'q3' && isReview">
+                <MdLite v-if="six.how?.text" class="six-txt" :text="six.how.text" @cite="jumpPara" />
+                <div v-else class="six-note">{{ sixBusy.how ? '…' : '未生成' }}</div>
+                <div class="six-foot">
+                  <button @click="openMethod">谱系卡 ↗</button>
+                </div>
+              </template>
               <template v-else-if="s.k === 'q3'">
                 <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id">
                   <div class="c-head" @click="c.anchors.length && jumpPara(c.anchors[0])">
@@ -590,7 +594,7 @@ watch(() => store.currentId, () => {
                   <span class="e-bar" :style="{ background: kindColor(n) }"></span>
                   <span class="e-note">
                     {{ prettyChem(n.note) }}
-                    <button class="ev-ask" title="就这条批注追问模型" @click.stop="askNote(n)">问 ↗</button>
+                    <button class="ev-ask" @click.stop="askNote(n)">问 ↗</button>
                   </span>
                 </div>
                 <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
@@ -619,7 +623,7 @@ watch(() => store.currentId, () => {
             <div class="blk-head">
               <span class="mono-label">眉批<span v-if="mnotes.length"> · {{ mnotes.length }}</span></span>
               <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')"
-                      :title="mnotes.length ? '重写全文眉批（旧的会被替换）' : '通读全文，在页边写下批注'">
+                      :title="mnotes.length ? '重写全文眉批（旧的会被替换）' : ''">
                 {{ mnotes.length ? '重写' : 'AI 眉批' }}
               </button>
               <span v-else class="blk-busy">写批注中<span class="r-dots">…</span></span>
@@ -640,7 +644,6 @@ watch(() => store.currentId, () => {
                  "只看要当心"是读者的第一个念头；关掉的档位在纸上和页边同时消失。 -->
             <div class="band-bar" v-if="mnotes.length">
               <button v-for="b in BANDS" :key="b.k" class="band-chip" :class="{ off: !bandOn(b.k) }"
-                      :title="bandOn(b.k) ? `纸面上显示「${b.zh}」` : `「${b.zh}」已收起`"
                       @click="toggleBand(b.k)">
                 <i class="bdot" :style="{ background: b.color }"></i>{{ b.zh }}<span class="n">{{ bandCount[b.k] }}</span>
               </button>
@@ -673,11 +676,6 @@ watch(() => store.currentId, () => {
             <span class="ce-k">发现</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>
-          <div class="ce-row go" @click="gotoSix('q4')" :title="`去「问题」页第 4 问：${todoLine}`">
-            <span class="ce-k">待解</span>
-            <span class="ce-v">{{ todoLine }}</span>
-            <span class="ce-go">↗</span>
-          </div>
           <div class="ce-kw"><span class="chip" v-for="k in store.summary.keywords" :key="k">{{ k }}</span></div>
         </div>
 
@@ -690,28 +688,28 @@ watch(() => store.currentId, () => {
           </div>
         </div>
 
-        <!-- 方法卡：目标/体系/条件 + 前三步默认露出，其余收起（八步全铺开自己就一屏） -->
+        <!-- 方法卡（研究型：可复现 protocol）/ 谱系卡（综述：把领域名梳理成什么样子）。
+             同一张卡、同一套字段，按文献类型换口径——综述没有"可复现步骤"，硬套只会编。 -->
         <div class="blk">
           <div class="blk-head">
-            <span class="mono-label">方法卡</span>
-            <button v-if="!methodCard?.goal && !mcBusy" class="blk-get" @click="genMethodCard"
-                    title="整理成可复现的步骤">获取</button>
+            <span class="mono-label">{{ isReview ? '谱系卡' : '方法卡' }}</span>
+            <button v-if="!methodCard?.goal && !mcBusy" class="blk-get" @click="genMethodCard">获取</button>
             <span v-else-if="mcBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
           </div>
           <div class="card-eye" v-if="methodCard?.goal">
-            <div class="ce-row"><span class="ce-k">目标</span><span class="ce-v">{{ prettyChem(methodCard.goal) }}</span></div>
-            <div class="ce-row"><span class="ce-k">体系</span><span class="ce-v">{{ prettyChem(methodCard.system) }}</span></div>
-            <div class="ce-row"><span class="ce-k">条件</span><span class="ce-v">{{ prettyChem(methodCard.conditions) }}</span></div>
-            <div class="ce-row"><span class="ce-k">步骤</span>
+            <div class="ce-row"><span class="ce-k">{{ isReview ? '定位' : '目标' }}</span><span class="ce-v">{{ prettyChem(methodCard.goal) }}</span></div>
+            <div class="ce-row"><span class="ce-k">{{ isReview ? '对象' : '体系' }}</span><span class="ce-v">{{ prettyChem(methodCard.system) }}</span></div>
+            <div class="ce-row"><span class="ce-k">{{ isReview ? '范围' : '条件' }}</span><span class="ce-v">{{ prettyChem(methodCard.conditions) }}</span></div>
+            <div class="ce-row"><span class="ce-k">{{ isReview ? '脉络' : '步骤' }}</span>
               <span class="ce-v">
                 <div class="mc-step" :class="{ unfold: mcMore && i >= MC_STEPS }"
                      :style="mcMore && i >= MC_STEPS ? { animationDelay: (i - MC_STEPS) * 45 + 'ms' } : null"
                      v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ prettyChem(s) }}</div>
               </span>
             </div>
-            <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">注意</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
+            <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">{{ isReview ? '入门' : '注意' }}</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
             <button v-if="!mcMore && methodCard.steps.length > MC_STEPS" class="blk-more" @click="mcMore = true">
-              展开全部 {{ methodCard.steps.length }} 步<span v-if="methodCard.notes"> · 注意</span>
+              展开全部 {{ methodCard.steps.length }} {{ isReview ? '条' : '步' }}<span v-if="methodCard.notes"> · {{ isReview ? '入门' : '注意' }}</span>
             </button>
           </div>
         </div>
@@ -721,7 +719,7 @@ watch(() => store.currentId, () => {
           <div class="blk-head">
             <span class="mono-label">导师三问</span>
             <button v-if="!advisor.length && !advBusy && store.analysis.status === 'done'" class="blk-get"
-                    @click="loadAdvisor" title="组会 / 答辩时最可能被问住的三个问题">获取</button>
+                    @click="loadAdvisor">获取</button>
             <span v-else-if="advBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
           </div>
           <div v-if="advisor.length">
@@ -748,7 +746,7 @@ watch(() => store.currentId, () => {
               <span class="t-en" :title="a.en">{{ a.en }}</span>
               <span class="t-arrow">→</span>
               <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
-              <button class="t-del" style="font-size:var(--fs-sm)" title="收进术语表"
+              <button class="t-add" title="收进术语表"
                       @click="saveAbbr(a)">＋</button>
             </div>
           </div>

@@ -15,6 +15,7 @@ datas = [
     (os.path.join(ROOT, "frontend", "dist"), "frontend/dist"),   # 前端界面
     (os.path.join(ROOT, "VERSION"), "."),                        # 版本号（更新检查要用）
     (os.path.join(ROOT, "installer", "eggpaper.ico"), "."),      # 多尺寸图标：窗口/托盘取它
+    (os.path.join(ROOT, "backend", "guide.html"), "."),          # 使用指南（设置里可打开）
 ]
 hiddenimports = [
     # 托盘（pystray 的后端是按平台动态选的，静态分析看不到）

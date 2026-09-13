@@ -2,6 +2,7 @@
 import json
 import os
 import queue
+import re
 import shutil
 import threading
 import time
@@ -363,6 +364,7 @@ def _ingest(pid: str, filename: str, path: str) -> dict:
         raise HTTPException(400, f"这份 PDF 读不了：{_human_msg(e)}")
     db.create_paper(pid, filename, title, path, n_pages, authors)
     db.replace_paragraphs(pid, paras)
+    _ensure_paper_type(pid)     # 导入时就判好类型：析读提示词、略读、③、谱系卡都吃这一位
     row = db.get_paper(pid)
     # AI 主动：导入即排队后台通读，打开时简报已就绪（没有文字层的扫描件没得析读，直接标完成）
     db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -462,6 +464,33 @@ def get_paper(pid: str):
     return p
 
 
+def _detect_paper_type(title: str, paras: list) -> str:
+    """研究型（research）/ 综述型（review），启发式，一次模型调用都不花。
+
+    综述几乎都会**自报家门**：标题带 review/survey/综述，或者摘要/引言里明说
+    "this review / this survey / we review"。三个信号命中其一就算；拿不准一律算
+    研究型——综述策略（只灰参考文献、谱系卡）误用到研究型论文上比反过来更难看。
+    """
+    rx = re.compile(r"\b(reviews?|surveys?|tutorial|primer|state[- ]of[- ]the[- ]art)\b|综述|述评", re.I)
+    title_hit = bool((title or "").strip()) and bool(rx.search(title or ""))
+    lead = " ".join((p.get("text") or "") for p in (paras or [])[:8])
+    lead_hit = bool(re.search(r"in (this|the) (review|survey)|we (review|survey)|本(文|篇)综述|这篇综述", lead, re.I))
+    return "review" if (title_hit or lead_hit) else "research"
+
+
+def _ensure_paper_type(pid: str) -> str:
+    """论文的类型字段，没有就现判一次（旧论文升级上来也走得到）。"""
+    p = db.get_paper(pid) or {}
+    t = (p.get("paper_type") or "").strip()
+    if t in ("research", "review"):
+        return t
+    t = _detect_paper_type(p.get("title"), db.get_paragraphs(pid))
+    db.update_paper(pid, paper_type=t)
+    if t == "review":
+        _applog(f"{pid}: 判定为综述，③/谱系卡/略读按综述策略走")
+    return t
+
+
 @app.post("/api/papers/{pid}/touch")
 def touch_paper(pid: str):
     """记一笔"最近读过"，文库按最近阅读排序时用。"""
@@ -548,10 +577,11 @@ def _run_analysis(pid: str, paras: list):
     try:
         title = db.get_paper(pid)["title"]
         use = [p for p in paras if not p.get("in_refs")]
+        kind = _ensure_paper_type(pid)      # 旧论文升级上来没判过类型，这里兜底补一次
         if _demo_mode():
             data = llm.mock_analyze(paras)
         else:
-            data = llm.analyze_skeleton(title, use)
+            data = llm.analyze_skeleton(title, use, kind=kind)
         # 参考文献段强制 boilerplate
         for p in paras:
             if p["in_refs"]:
@@ -1010,7 +1040,7 @@ def ask_visual(body: dict):
 # 这三问按需生成、按篇缓存，和「获取」同一个纪律。语料只喂相关的几类段落。
 
 # problem 也走这条：析读时会顺带产出（骨架提示词的 problem 字段），没有缓存时现生成
-SIX_KEYS = ("problem", "why", "next", "lens")
+SIX_KEYS = ("problem", "why", "how", "next", "lens")
 
 
 def _paras_of_role(pid: str, roles: set, cap: int = 8):
@@ -1023,6 +1053,12 @@ def _paras_of_role(pid: str, roles: set, cap: int = 8):
 def _gen_six(p: dict, key: str):
     pid = p["id"]
     _, claims, annos = db.get_analysis(pid)
+    if key == "how":
+        # ③「怎么解决的」研究型由前端拿主张-证据链直接拼（不生成）；综述没有实验证据层，
+        # 那条路是空壳——由模型直接说清"它把文献怎么组织的"
+        if p.get("paper_type") == "review":
+            return llm.answer_how_review(p["title"], claims, db.get_paragraphs(pid))
+        raise HTTPException(400, "研究型论文的这一问由骨架的主张-证据链直接拼出，无需生成")
     if key == "problem":
         return llm.answer_problem(p["title"],
                                   _paras_of_role(pid, {"gap"}),
@@ -1060,6 +1096,9 @@ def _save_terms(pid: str, got) -> int:
 
 
 def _mock_six(key: str) -> dict:
+    if key == "how":
+        return {"text": "〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
+                        "最后落到位开放问题上 [¶5]。", "cites": [5]}
     if key == "problem":
         return {"text": "〔演示模式〕现有做法依赖随机、不可控的缺陷位点，因此这篇论文要用本征有序的"
                         "结构位点来实现可控的高活性 [¶3]。", "cites": [3]}
@@ -1110,6 +1149,10 @@ def method_card(pid: str, cached: bool = False):
     if _demo_mode():
         data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
                 "steps": ["步骤一", "步骤二"], "notes": ""}
+    elif p.get("paper_type") == "review":
+        # 综述没有"可复现的方法"，同一张卡换谱系口径：分类/脉络/各线关系（普适，不预设数据集）
+        data = llm.survey_card(p["title"], db.get_paragraphs(pid))
+        _require_shape(data, ("goal", "steps"), "谱系卡")
     else:
         data = llm.method_card(p["title"], db.get_paragraphs(pid))
         _require_shape(data, ("goal", "steps"), "方法卡")
@@ -1705,6 +1748,13 @@ def glossary_delete(gid: int):
 
 
 # ---------------- 前端静态托管（构建后） ----------------
+
+@app.get("/guide")
+def guide_page():
+    """使用指南：一页静态 HTML。设置里可打开；砍界面文案时的安全网。"""
+    return FileResponse(os.path.join(os.path.dirname(__file__), "guide.html"),
+                        media_type="text/html; charset=utf-8")
+
 
 DIST = appinfo.dist_dir()
 if os.path.isdir(DIST):

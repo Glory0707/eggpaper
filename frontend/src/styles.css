@@ -793,6 +793,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .term-row .t-zh { font-size: var(--fs-sm); flex: 1 1 40%; min-width: 0; }
 .term-row .t-del { flex: 0 0 auto; margin-left: auto; border: none; background: none; color: var(--ink-3); font-size: var(--fs-md); padding: 0 3px; }
 .term-row .t-del:hover { color: var(--vermilion); box-shadow: none; transform: none; }
+/* 缩写行的「＋收进」：同款形体，但它是加法不是删除——悬停走强调色，不走朱红 */
+.term-row .t-add { flex: 0 0 auto; margin-left: auto; border: none; background: none; color: var(--ink-3); font-size: var(--fs-md); padding: 0 3px; }
+.term-row .t-add:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
 /* 「文中」：术语表 → 原文的出口。它比 × 常用得多，所以给一点形体（虚线下划线），
    但仍挂在行的尾部、不抢术语本身的注意力 */
 .term-row .t-go {

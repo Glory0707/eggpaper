@@ -81,6 +81,9 @@ async function quitApp() {
   try { await api.quit(); toast('正在退出…') } catch (e) { toast(e.message) }
 }
 
+/* 使用指南：一页纸，后端直接发；砍界面文案时它是安全网 */
+function openGuide() { window.open('/guide', '_blank') }
+
 function save() {
   Object.assign(store.viewer.layers, f.layers)
   emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key, vision_model: f.vision_model },
@@ -119,9 +122,9 @@ function save() {
       <!-- 图层 + 演示模式并到一行：原来两个复选框各占一整行，白吃版面 -->
       <div class="f-line">
         <span class="mono-label" style="margin:0">图层</span>
-        <label class="ck" title="只管 AI 眉批；你自己钉的查译、批注不受它管，一直显示"><input type="checkbox" v-model="f.layers.marginalia" />AI 眉批</label>
-        <label class="ck" style="margin-left:14px" title="你自己钉在页边的查译、框选答疑、写的批注；收起后页边只剩 AI 眉批"><input type="checkbox" v-model="f.layers.mine" />我的钉卡</label>
-        <label class="ck" style="margin-left:14px" title="打开论文时自动把不用细读的段落整段变灰"><input type="checkbox" v-model="f.layers.skim" />略读</label>
+        <label class="ck"><input type="checkbox" v-model="f.layers.marginalia" />AI 眉批</label>
+        <label class="ck" style="margin-left:14px" title="你自己钉的查译与批注"><input type="checkbox" v-model="f.layers.mine" />我的钉卡</label>
+        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.skim" />略读</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.mock" />演示模式</label>
       </div>
       <div class="f-row">
@@ -166,6 +169,7 @@ function save() {
         <span class="mono-label" style="margin:0">窗口</span>
         <span style="font-size:var(--fs-sm);color:var(--ink-3)">托盘图标里有「打开界面 / 检查更新 / 退出」</span>
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openWindow">在独立窗口打开</button>
+        <button style="padding:2px 10px;font-size:var(--fs-sm)" @click="openGuide">使用指南</button>
       </div>
       <div class="f-line" v-if="store.update.packaged">
         <span class="mono-label" style="margin:0">版本</span>

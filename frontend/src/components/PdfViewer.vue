@@ -158,8 +158,12 @@ function onFigure(pno, b) {
       一段中间突然留一句不灰反而迷乱）。 */
 const skimSkip = computed(() => {
   if (!store.viewer.layers.skim) return new Set()
+  // 综述的正文就是"梳理文献"本身——把 background/boilerplate 灰掉等于把血肉蒙掉
+  // （实测一篇 GNN 综述 82% 正文会被判成背景）。综述只灰参考文献区，正文一律保留。
+  const review = store.paper?.paper_type === 'review'
   return new Set(store.paras.filter(p => {
     if (p.page <= 0 || p.caption) return false
+    if (review) return !!p.in_refs
     if (kept(p.idx) || protectedIdx.value.has(p.idx)) return false
     const r = roleOf(p)
     return !!p.in_refs || r === 'boilerplate' || r === 'background'
@@ -1423,8 +1427,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                 <!-- 灰掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
                 <template v-if="veiled(p, it.origPage)">
                   <div v-for="(vb, vi) in veilBoxes(p, it.origPage)" :key="'v' + vi"
-                       class="para-fade veil"
-                       :title="vi ? '' : '略读灰掉了这一段 · 点一下：这段也要读'"
+                       class="para-fade veil" :title="vi ? '' : '这段也要读'"
                        :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
                                  animationDelay: Math.min(400, pi * 12 + vi * 8) + 'ms' }"
                        @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
@@ -1434,7 +1437,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                      就是撤销出口：纸上没有别的可点的地方了。 -->
                 <div v-else-if="store.viewer.layers.skim && it.origPage > 0 && (isCore(p) || kept(p.idx))"
                      class="para-core-bar" :class="{ undo: kept(p.idx) }"
-                     :title="kept(p.idx) ? '点一下：不特别留这一段了' : ''"
+                     :title="kept(p.idx) ? '取消保留' : ''"
                      :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"
                      @click.stop="kept(p.idx) && toggleKeep(p.idx)"></div>
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
@@ -1481,9 +1484,8 @@ watch(() => store.marginalia.notes, (n, o) => {
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
                 <!-- 就地追问：读到这条批注时人的第一反应是"凭什么"，
                      追问要在这儿，而不是跳到右栏问题页去凑一句话 -->
-                <button v-if="!pending" class="mg-ask" title="就这条批注追问模型"
-                        @click.stop="askNote(n)">问 ↗</button>
-                <button v-if="!pending" class="mg-del" title="移除这条批注" @click.stop="unpin(n.id)">×</button>
+                <button v-if="!pending" class="mg-ask" @click.stop="askNote(n)">问 ↗</button>
+                <button v-if="!pending" class="mg-del" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ prettyChem(n.note) }}</div>
               <!-- 引文：默认看开头，点「全句」摊开；引文本身点了是跳回纸上那句 -->
@@ -1494,7 +1496,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                   {{ openQuote === n.id ? '收起' : '全句' }}
                 </button>
                 <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->
-                <span v-if="quoteLoose(n)" class="mg-loose" title="模型抄回的引文与原文略有出入，纸上的划线只盖对得上的那一段">≈</span>
+                <span v-if="quoteLoose(n)" class="mg-loose" title="引文与原文略有出入">≈</span>
               </div>
             </div>
           </div>

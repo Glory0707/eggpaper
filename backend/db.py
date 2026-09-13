@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS papers(
   analysis_status TEXT DEFAULT 'none', analysis_error TEXT,
   translate_status TEXT DEFAULT 'none', translate_error TEXT,
   marginalia_status TEXT DEFAULT 'none', marginalia_error TEXT,
-  summary TEXT
+  summary TEXT, paper_type TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS paragraphs(
   paper_id TEXT, idx INTEGER, page INTEGER, bbox TEXT, text TEXT, in_refs INTEGER DEFAULT 0, lines TEXT,
@@ -97,6 +97,8 @@ def _migrate(c: sqlite3.Connection):
         # 眉批类型从"九选一"放开成开放词表：label 是自造的短标签，band 决定它的笔触档位
         "ALTER TABLE marginalia ADD COLUMN label TEXT",
         "ALTER TABLE marginalia ADD COLUMN band TEXT",
+        # 文献类型：research / review（导入时启发式判定；综述走另一套六问③、谱系卡与略读护栏）
+        "ALTER TABLE papers ADD COLUMN paper_type TEXT DEFAULT ''",
     ):
         try:
             c.execute(stmt)

@@ -282,10 +282,10 @@ const tranLabel = computed(() => {
 })
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
-    return `pdf2zh 正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}`
-         + ` · 已用 ${tranElapsed.value || '刚刚'} · 页与页之间偶尔会慢（服务限流时自动重试），进度线在走就是在译`
+    return `正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}`
+         + ` · 已用 ${tranElapsed.value || '刚刚'} · 页间偶尔会慢，进度在走就是在译`
   }
-  return '把整篇译成第二份 PDF（奇页原文、偶页译文）——「译文 / 双语」靠它'
+  return '整篇译成第二份 PDF，「译文 / 双语」靠它'
 })
 
 /* ---------------- 键盘流 ---------------- */
@@ -349,7 +349,7 @@ function onKey(e) {
           <div class="t">{{ store.paper.title || store.paper.filename }}</div>
           <!-- 引用格式是这篇的身份信息，跟标题同一族数据 → 就挂在标题旁边。
                任何页签下都够得着，不占右栏那四栏的版面 -->
-          <button class="cite-btn" title="参考文献格式（可复制）" @click="store.cite.open = true">引用</button>
+          <button class="cite-btn" @click="store.cite.open = true">引用</button>
         </div>
       </div>
       <div class="doc-head" v-else>
@@ -370,10 +370,9 @@ function onKey(e) {
             <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">交替</button>
           </div>
         </Transition>
-        <!-- 略读：只蒙不用细读的正文（背景/样板/参考文献），图与图注永不蒙；
-             段里混着要紧的句子就只蒙那些句子。悬停掀开，点一下=这段也要读。 -->
+        <!-- 略读：只蒙不用细读的正文，图与图注永不蒙；悬停掀开，点一下=这段也要读 -->
         <button class="toggle" :class="{ on: store.viewer.layers.skim }"
-                title="略读：把不用细读的正文蒙掉（f）"
+                title="略读（f）"
                 @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
         <button class="toggle" :class="{ on: store.viewer.frame }" title="框选问 AI（r）"
                 @click="store.viewer.frame = !store.viewer.frame">框选</button>
