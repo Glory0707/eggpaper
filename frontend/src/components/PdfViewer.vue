@@ -555,6 +555,9 @@ async function renderAll() {
     // measureNotes（比如 fit 一变引发的两条 renderAll 竞赛）是对着半套文字层量的，
     // 蒙纱和引文划线会缺块——以渲染收尾后的这一次为准。
     await measureNotes()
+    // 搜索只扫已渲染的文本层：大 PDF 刚打开就搜，后半本的页还没渲染出来，
+    // 会误报"没找到"。渲染齐了把活动查询再跑一遍，结果自己收敛。
+    if (searchOpen.value && searchQ.value.trim().length >= 2) runSearch()
   }
 }
 
@@ -1519,7 +1522,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <button title="上一页（PageUp）" @click="stepPage(-1)">‹</button>
       <span class="zb-page">
         <input ref="pageInputEl" v-model="pageIn" class="zb-input" title="跳到第几页"
-               @keydown.enter="gotoPage(Number(pageIn))" @blur="pageIn = String(pageNum)" />
+               @keydown.enter="gotoPage(Number(pageIn)); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
         <em>/ {{ store.paper?.n_pages || 0 }}</em>
       </span>
       <button title="下一页（PageDown）" @click="stepPage(1)">›</button>
