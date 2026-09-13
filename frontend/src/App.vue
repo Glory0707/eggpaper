@@ -19,6 +19,7 @@ const gPending = ref(false)
 const VARIANTS = ['original', 'mono', 'dual']
 let pollTimer = null
 let marginFastTimer = null     // 眉批运行时那条 1 秒快轮询（跑完即停）
+let _lastErrToast = { msg: '', at: 0 }   // 全局兜底报错的限流记号
 
 function rollOnce(ms = 700) {
   roll.value = false
@@ -55,6 +56,16 @@ onMounted(async () => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('dragend', endDrag)
   window.addEventListener('blur', endDrag)
+  // 兜底的最后一道网：哪条链路漏了 catch，也别静默死掉——报给用户（限流：同一句
+  // 30 秒内只报一次，轮询类的重复失败不刷屏）。拦过之后控制台里照样能看全栈。
+  window.addEventListener('unhandledrejection', ev => {
+    const msg = String(ev.reason?.message || ev.reason || '未知错误')
+    const now = Date.now()
+    if (msg === _lastErrToast.msg && now - _lastErrToast.at < 30000) return
+    _lastErrToast = { msg, at: now }
+    console.error('[eggpaper] 未处理的失败：', ev.reason)
+    toast('出错了：' + msg.slice(0, 120), 5000)
+  })
   pollTimer = setInterval(poll, 3000)
   try {
     store.settings = await api.settings()
@@ -91,13 +102,19 @@ async function poll() {
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
   if (!store.currentId) return
-  if (anaBusy.value) await refreshAnalysis()
-  if (store.marginalia.status === 'running') {
-    await refreshMarginalia()
-    startMarginFast()      // 刷新/换篇回来时也接上快轮询（否则只能等 3 秒那条）
-  }
-  const p = store.papers.find(x => x.id === store.currentId)
-  if (p && p.translate_status === 'running') await pollTranslate()
+  // 状态刷新各自兜住：后端正在重启/瞬时失败时，轮询本身不能死——
+  // 死了的话翻译进度、析读状态就永远不更新了，看起来像"卡住"
+  try { if (anaBusy.value) await refreshAnalysis() } catch { /* 下一个 3 秒再试 */ }
+  try {
+    if (store.marginalia.status === 'running') {
+      await refreshMarginalia()
+      startMarginFast()      // 刷新/换篇回来时也接上快轮询（否则只能等 3 秒那条）
+    }
+  } catch { /* 同上 */ }
+  try {
+    const p = store.papers.find(x => x.id === store.currentId)
+    if (p && p.translate_status === 'running') await pollTranslate()
+  } catch { /* 同上 */ }
 }
 
 /* 窄窗：右栏改浮层，进窄窗时自动收起一次，把宽度还给论文

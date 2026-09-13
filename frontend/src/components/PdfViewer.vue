@@ -67,16 +67,17 @@ const parasByPage = computed(() => {
   return m
 })
 /* 页边摆哪些批注。读者自己钉的（查译/框选答疑/自己写的批注）是**读者资产**：
-   「眉批」图层开关和档位开关管的是 AI 眉批——没有 AI 眉批、或者把 AI 眉批全收起，
-   用户自己的东西也一分钟都不能跟着消失（用户原话：没有 AI 眉批的时候也要能显示）。
+   「AI 眉批」图层开关和档位开关管不着它们，唯一的开关是设置里的「我的钉卡」——
+   默认显示，没有 AI 眉批也照常显示（用户原话），想收起去设置里点一下。
    AI 眉批四档就是纸上那四种笔触，一档一个开关（右栏「问题」页的眉批块里点）——
    批注上到三四十条时，"只看要当心"是读者的第一个念头。 */
 const USER_KINDS = new Set(['lookup', 'region', 'note'])
 const notesShown = computed(() => {
   const on = store.viewer.noteBands || {}
+  const mineOn = store.viewer.layers.mine !== false
   return store.marginalia.notes.filter(n =>
-    USER_KINDS.has(n.kind) ||
-    (store.viewer.layers.marginalia && on[bandOf(n)] !== false))
+    (USER_KINDS.has(n.kind) && mineOn) ||
+    (store.viewer.layers.marginalia && !USER_KINDS.has(n.kind) && on[bandOf(n)] !== false))
 })
 /* 页边要多宽，取决于"上面真有东西要放吗"：有批注 → 整条 184，没有 → 一点都不留，
    论文因此能多出近 200px 的宽度。这条宽度是 measure() 的输入，图层一变就得重排。 */
@@ -359,8 +360,19 @@ async function load({ keepPlace = false } = {}) {
     loading = false
     return
   }
-  await measure()
-  await renderAll()
+  try {
+    await measure()
+    await renderAll()
+  } catch (e) {
+    // 渲染中途炸了（某页画不出来等）：别让进度条永远爬、也别白屏不解释
+    console.error('[eggpaper] 渲染失败：', e)
+    toast('这份文档渲染失败了：' + String(e.message || e).slice(0, 120), 6000)
+    stopCreep()
+    loadPct.value = 1
+    ready.value = true
+    loading = false
+    return
+  }
   stopCreep()
   loadPct.value = 1
   ready.value = true

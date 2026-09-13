@@ -11,6 +11,7 @@ import uvicorn
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
@@ -65,6 +66,8 @@ def _human_msg(exc: Exception) -> str:
         return "连不上模型服务，检查网络与 base_url"
     if "404" in msg and "model" in low:
         return "模型名不对（404），去设置里核对"
+    if isinstance(exc, (json.JSONDecodeError, ValueError)):
+        return "模型这次没按约定的格式回，重试一次通常就好"
     if isinstance(exc, HTTPException):
         return str(exc.detail)
     return f"{exc.__class__.__name__}: {msg[:160]}"
@@ -76,6 +79,16 @@ async def _any_error(request, exc):
     hint = _human_msg(exc)
     print(f"[eggpaper] {request.url.path} 出错 → {hint}")
     return JSONResponse({"detail": hint}, status_code=500)
+
+
+@app.exception_handler(RequestValidationError)
+async def _bad_params(request, exc):
+    """参数不合法时 FastAPI 默认回一坨 422 的数组，前端那句 detail 展示不了。
+    翻成一句人话，并压成 400（客户端的问题，不该记成服务端 500）。"""
+    errs = exc.errors() or [{}]
+    where = ".".join(str(x) for x in errs[0].get("loc", []) if x != "body") or "参数"
+    return JSONResponse({"detail": f"{where} 不合法：{errs[0].get('msg', '请求格式不对')}"},
+                        status_code=400)
 
 PDF_DIR = os.path.join(config.DATA_DIR, "library")
 TRANSLATED_DIR = os.path.join(config.DATA_DIR, "translated")

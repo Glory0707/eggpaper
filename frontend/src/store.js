@@ -29,9 +29,10 @@ export const store = reactive({
   viewer: {
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
-    // skim 每次启动都从开着的来：下线那阵子存进 localStorage 的 false 不作数（那不是
-    // 用户的选择）。用户读完想关，按钮就在顶栏，这一局关了就这一局不蒙。
-    layers: { ...lsGet('layers', { marginalia: true }), skim: true },
+    // 图层默认：AI 眉批开、略读关（用户定的）。localStorage 里存过就以用户的为准——
+    // 包括略读：这一局关了就是想关，下次打开不再自作主张蒙上。
+    // mine 是"我的钉卡"（查译/框选答疑/自己写的批注）：默认显示，设置里可收起
+    layers: { marginalia: true, skim: false, mine: true, ...lsGet('layers', {}) },
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖

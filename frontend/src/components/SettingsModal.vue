@@ -120,6 +120,8 @@ function save() {
       <div class="f-line">
         <span class="mono-label" style="margin:0">图层</span>
         <label class="ck" title="只管 AI 眉批；你自己钉的查译、批注不受它管，一直显示"><input type="checkbox" v-model="f.layers.marginalia" />AI 眉批</label>
+        <label class="ck" style="margin-left:14px" title="你自己钉在页边的查译、框选答疑、写的批注；收起后页边只剩 AI 眉批"><input type="checkbox" v-model="f.layers.mine" />我的钉卡</label>
+        <label class="ck" style="margin-left:14px" title="打开论文时自动把不用细读的段落整段变灰"><input type="checkbox" v-model="f.layers.skim" />略读</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.mock" />演示模式</label>
       </div>
       <div class="f-row">

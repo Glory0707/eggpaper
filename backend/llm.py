@@ -104,8 +104,14 @@ def parse_json(text: str) -> dict:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     i, j = text.find("{"), text.rfind("}")
     if i < 0 or j < 0:
-        raise ValueError(f"LLM 未返回 JSON: {text[:120]}")
-    return json.loads(text[i:j + 1])
+        raise ValueError("模型这次没有按约定的 JSON 格式回，重试一次通常就好")
+    raw = text[i:j + 1]
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # 模型最常见的两种小毛病先就地修：尾逗号、中文引号——别一巴掌推给用户
+        fixed = re.sub(r",\s*([}\]])", r"\1", raw).replace("“", '"').replace("”", '"')
+        return json.loads(fixed)
 
 
 TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者读这篇时会卡住、需要中英对照的那些说法。
@@ -147,11 +153,16 @@ def extract_terms(title: str, paras: list) -> dict:
         {"role": "user", "content": "论文标题：" + (title or "") + "\n\n" + body[:48000]},
     ]
     out = ""
-    for _ in range(2):                 # 推理模型偶尔把 token 花在思考上，空结果重试一次
+    data = None
+    for _ in range(3):                 # 空结果、或回了坏 JSON，都再试一次；别把解析器异常推给用户
         out = chat(msgs, max_tokens=8000, temperature=0.2)
-        if out.strip():
+        if not out.strip():
+            continue
+        try:
+            data = parse_json(out)
             break
-    data = parse_json(out)
+        except (json.JSONDecodeError, ValueError):
+            continue
     if not isinstance(data, dict):
         return {"terms": [], "abbrs": {}}
     clean = _clean_terms(data.get("terms"))
@@ -430,11 +441,12 @@ def summarize(title: str, paras: list, hits=None) -> dict:
 
 # ---------------- 问答 ----------------
 
-QA_SYSTEM = """你是论文精读助手，基于给定的论文全文回答研究者的问题。
+QA_SYSTEM = """你是论文精读助手，陪研究者读这篇论文，也顺手帮处理其他问题。
 规则：
-1. 只基于论文原文回答，原文没有依据的要明说"原文未提及"
-2. 关键论断后面标注依据段编号，格式如 [¶5] 或 [¶5,¶12]
-3. 引用参考文献列表不作为依据
+1. 论文相关的问题基于给定的论文全文回答；论文之外的知识性提问、计算、写作、翻译等请求
+   也正常帮忙做——通用性要够，别把人挡回去，只要说明一句"这一点来自原文之外/原文未提及"
+2. 论文内的关键论断标注依据段编号，格式如 [¶5] 或 [¶5,¶12]；论文没有依据的要明说
+3. 引用参考文献列表不作为论文内容的依据
 4. 回答用中文，术语首次出现给出英文"""
 
 
