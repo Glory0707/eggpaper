@@ -121,17 +121,36 @@ async function poll() {
    （只在跨过门槛那一拍动手，否则用户手动展开会被反复关掉） */
 watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
 
+/* 本会话点过「析读」的凭据（哪篇、几点点的）：秒完的演示析读第一次拉状态就直接是
+   done（前一拍还是 none），只看 running/queued 会漏掉这条路径，所以留一份记录。
+   绑篇目：点了 A 的析读后转头去开旧论文 B，不该把 B 的右栏也强行撑开。 */
+let analyzeReq = { id: '', at: 0 }
+
 watch(() => store.analysis.status, (n, o) => {
   // 析读把一眼卡一起作废了（服务端清了缓存），所以这里要重新取一次。
   // 写成"进 done"而不是"running→done"：现在中间还多一个 queued（排队），
   // 只认 running→done 会在"排队→读完"这条路径上漏掉这一拍。
-  if (n === 'done' && o && o !== 'done') { rollOnce(); reloadSummary() }
+  if (n === 'done' && o && o !== 'done') {
+    rollOnce(); reloadSummary()
+    // 析读的产出全在右栏（骨架、六问、一眼卡）：这一局真的跑完了就把它展开，
+    // 别让用户读完再去找那颗 ◂。只在**这一局是本会话发起/见过在跑**时动手——
+    // 打开一篇早就析读完的论文不算，用户特意收起的右栏不该每次换篇都被强行撑开。
+    const mine = analyzeReq.id === store.currentId && Date.now() - analyzeReq.at < 600000
+    if (o === 'running' || o === 'queued' || mine) store.viewer.railUser = true
+  }
 })
 
 async function doAnalyze() {
   if (!store.currentId) return
+  analyzeReq = { id: store.currentId, at: Date.now() }
   await api.analyze(store.currentId)
   await refreshAnalysis()
+  // 演示模式的析读是秒完的：POST 回来再拉状态就已经是 done（前一拍也是 done），
+  // 上面的 watch 看不到"进 done"这一拍，这里补上同样的收尾（重复执行无害）。
+  if (store.analysis.status === 'done') {
+    rollOnce(); reloadSummary()
+    store.viewer.railUser = true
+  }
 }
 
 async function onOverride({ idx, role }) {
