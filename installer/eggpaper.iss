@@ -114,8 +114,15 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "..\build\pyi\eggpaper\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
+; 升级前先清空整个 _internal 再装新的。**必须整目录清**：升级只覆盖同名文件，
+; 旧版本里"改了名就永远留在盘上"的文件会无限累积——实测一台从 0.1.8 一路升上来的
+; 机器，_internal 里攒了 154 个化石文件共 21 MB（25 代前端带哈希的旧 chunk、
+; pywebview 实验时代被撤掉的 pythonnet/webview……），没有任何机制会再去删它们。
+; 先删后装，安装目录永远等于这次构建的准确内容。
+Type: filesandordirs; Name: "{app}\_internal"
 ; 网页图标搬进 dist\icons\ 之后，这几张旧位置的还在——留着就会"明明换了图标，
-; 服务端还能吐出旧的那张"，排查时能白耗半天。升级时顺手清掉。
+; 服务端还能吐出旧的那张"，排查时能白耗半天。整目录清后这条本可去掉，留着防的是
+; 更古老的版本（还没有 _internal 结构时）留下的散落文件。
 Type: files; Name: "{app}\_internal\frontend\dist\icon-192.png"
 Type: files; Name: "{app}\_internal\frontend\dist\icon-512.png"
 Type: files; Name: "{app}\_internal\frontend\dist\favicon-256.png"

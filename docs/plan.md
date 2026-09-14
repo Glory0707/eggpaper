@@ -2121,3 +2121,27 @@ h1（副标题与闭合标签丢失）。
 
 **回归**：流程 47/47 零页面错误（导入判重偶发比固定等待慢，测试改成轮询并
 快速失败）；译文/双语划选实测通过。版本 0.1.22。
+
+## M4.41 · 安装目录瘦身：119 MB → 91 MB ✅ 已完成（2026-09-14）
+
+> 用户：安装后 90 多 MB，大头在哪，能否在不损功能的前提下尽量轻量。
+
+**大头明细（0.1.22 安装后 119 MB）**：pymupdf 38（MuPDF 引擎，解析/渲染/派生双语
+必需）、frontend 19、PIL 13、OpenSSL 10、python311 5.6、pydantic_core 4.9、
+卸载器 4.3。其中 **20.9 MB 是历次升级的化石**（154 个文件）：前端带哈希的旧
+chunk/字体 16.2 MB（装了 25 代构建的累积）、pythonnet 3.3 + webview 1.2（pywebview
+实验时代被撤掉的依赖，spec 里早已 exclude 但旧文件升级时永远没人删）。
+
+**两处修复**：
+- iss 的 [InstallDelete] 增加「升级前清空 {app}\_internal 再装新文件」——升级目录
+  从此恒等于本次构建的准确内容，化石问题绝根。
+- spec excludes 增加 PIL.AvifImagePlugin（7.5 MB 的原生 _avif.pyd）：应用只画
+  PNG/ICO，永远碰不到 AVIF；Pillow 的插件发现是 pkgutil 枚举实际存在的模块，
+  缺失即跳过不报错（实测托盘照常 24px 原生绘制）。
+
+**保留的大头都有主**：pymupdf 38（引擎）、python311+OpenSSL+sqlite3 等 ~18（运行时）、
+eggpaper.exe 9.2（bootloader+纯模块包）、pydantic 4.9（FastAPI）、卸载器 4.3。
+
+**验证**：真机 0.1.22→0.1.23 静默升级——化石清零（pythonnet/webview/_avif 不存在、
+index chunk 只剩 1 个）、119→91 MB、服务/8 篇文献/托盘全部正常。安装包 34.9→33.2 MB。
+版本 0.1.23。

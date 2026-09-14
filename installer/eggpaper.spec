@@ -41,7 +41,11 @@ a = Analysis(
               "IPython", "notebook",
               # 独立窗口走浏览器应用模式。pywebview 试过并撤掉：它在打包环境里
               # import 就卡住（pythonnet 加载 .NET 时握着 GIL，兜底计时都跑不到）。
-              "webview", "pythonnet", "clr_loader"],
+              "webview", "pythonnet", "clr_loader",
+              # Pillow 11 自带的 AVIF 解码插件（含 7.5 MB 的原生 _avif.pyd）：
+              # 应用只画 PNG/ICO（托盘、印章），永远碰不到 AVIF。Pillow 的插件
+              # 发现走 pkgutil 枚举 PIL 包下实际存在的模块，缺了就跳过，不会报错。
+              "PIL.AvifImagePlugin"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
