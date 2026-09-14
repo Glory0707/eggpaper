@@ -99,6 +99,8 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE marginalia ADD COLUMN band TEXT",
         # 文献类型：research / review（导入时启发式判定；综述走另一套六问③、谱系卡与略读护栏）
         "ALTER TABLE papers ADD COLUMN paper_type TEXT DEFAULT ''",
+        # 内容指纹（sha256）：改了名的同一份文件不再占第二份库空间，批注/译文全复用已有那篇
+        "ALTER TABLE papers ADD COLUMN pdf_hash TEXT DEFAULT ''",
     ):
         try:
             c.execute(stmt)
@@ -150,12 +152,17 @@ def update_paper(pid: str, **fields):
     q(f"UPDATE papers SET {keys} WHERE id=?", (*fields.values(), pid), commit=True)
 
 
-def find_duplicate(filename: str, size: int):
-    """按"原始文件名 + 字节数"找同一份 PDF 的已有论文，返回它的 id（没有则 None）。
+def find_duplicate(filename: str, size: int, pdf_hash: str = ""):
+    """找同一份 PDF 的已有论文，返回它的 id（没有则 None）。
 
-    这条口径本来只有"双击打开"那条路有，浏览器拖入/点选导入没有——同一份 PDF 从两个入口
-    各导入一次就成了两篇（用户库里现在就有这样一对），两篇各自跑一遍通读、各写一份译文。
+    判重钥匙有两把，先**内容指纹**再"文件名 + 字节数"：改名重导的同一份文件
+    （下载两次、文件管理器里复制一份）不该占第二份库空间——两篇论文意味着两遍通读、
+    两份译文、两倍磁盘。指纹由导入方算好传进来；旧库的论文指纹是空的，回填线程
+    （main 启动时）会慢慢补齐，补上之后这把钥匙就全库都好使了。
     """
+    if pdf_hash:
+        for r in q("SELECT id FROM papers WHERE pdf_hash=?", (pdf_hash,)):
+            return r["id"]
     for r in q("SELECT id, path, filename FROM papers"):
         if (r["filename"] or "") != filename:
             continue
@@ -165,6 +172,12 @@ def find_duplicate(filename: str, size: int):
         except OSError:
             continue
     return None
+
+
+def papers_missing_hash():
+    """还没算过内容指纹的论文（启动后的回填线程按这份清单慢慢补）。"""
+    return [(r["id"], r["path"]) for r in
+            q("SELECT id, path FROM papers WHERE pdf_hash IS NULL OR pdf_hash=''")]
 
 
 def purge_paper(pid: str):

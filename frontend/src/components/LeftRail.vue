@@ -158,7 +158,7 @@ async function del(pid, name) {
     store.currentId = null
     store.paper = null
     store.paras = []
-    store.analysis = { status: 'none', claims: [], annotations: {}, error: '' }
+    store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
     store.marginalia = { status: 'none', notes: [] }
     store.summary = null
   }

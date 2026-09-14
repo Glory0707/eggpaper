@@ -41,22 +41,35 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
         raise RuntimeError("MOCK")
     budget = max_tokens
     out = ""
-    for _ in range(2):                      # 推理模型可能耗尽 token 空想，空结果加倍重试
+    last_err = None
+    for _ in range(2):
         body = {"model": cfg["provider"]["model"], "messages": messages,
                 "max_tokens": budget, "temperature": temperature}
         if no_think:
             body["thinking"] = {"type": "disabled"}
-        r = httpx.post(
-            f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
-            json=body,
-            timeout=600,
-        )
-        r.raise_for_status()
+        try:
+            r = httpx.post(
+                f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
+                json=body,
+                timeout=600,
+            )
+            # 5xx 是服务端抖动，重试一次常就好了；4xx（key/额度/模型名）重试也没用
+            if r.status_code >= 500:
+                last_err = RuntimeError(f"模型服务开小差了（{r.status_code}），已自动重试过一次")
+                continue
+            r.raise_for_status()
+        except (httpx.TransportError, httpx.TimeoutException) as e:
+            last_err = e
+            continue
         out = (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
         if out.strip():
             return out
-        budget = int(budget * 1.6)
+        budget = int(budget * 1.6)          # 推理模型可能耗尽 token 空想，空结果加倍重试
+    if out.strip():
+        return out
+    if last_err is not None:
+        raise last_err
     return out
 
 
@@ -329,11 +342,31 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)
     user = f"论文标题：{title or '（未识别）'}\n\n{body}"
     system = SKELETON_SYSTEM + (REVIEW_SKELETON_APPENDIX if kind == "review" else "")
-    out = chat([
+    msgs = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
-    ], max_tokens=16000, temperature=0.2)
-    data = parse_json(out)
+    ]
+    # 长论文（百来段）的骨架输出是一大坨 JSON，模型偶尔会在尾巴上拖一句解释或截断——
+    # 这是唯一"一炮定生死"的大调用（术语有 3 轮、眉批有补跑），这里同样兜一次重试，
+    # 别让一次格式失手就把整次析读打成"失败，可重试"。
+    data = None
+    for attempt in range(2):
+        out = chat(msgs, max_tokens=16000, temperature=0.2)
+        try:
+            data = parse_json(out)
+            break
+        except (ValueError, json.JSONDecodeError) as e:
+            if attempt == 0:
+                msgs = [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": (out or "")[-400:]},
+                    {"role": "user", "content": "上面的输出不是合法的 JSON。重新输出一次，"
+                                                "只输出 JSON 本体，从 { 开始、到 } 结束，中间不要有任何解释。"},
+                ]
+            last = e
+    if data is None:
+        raise last
     valid = {p["idx"] for p in paras}
 
     # claims：兼容 id/cid、anchors 可能是字符串

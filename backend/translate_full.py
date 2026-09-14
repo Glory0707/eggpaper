@@ -216,26 +216,21 @@ def cancel(pid: str):
 
 
 def adopt_existing(pid: str, pdf_path: str, out_dir: str):
-    """盘上已经有"看起来完整"的成品就认领，返回 {"dual":..., "mono":...} 或 None。
+    """盘上已经有"看起来完整"的成品就认领，返回 {"dual","mono"}（缺的一方是空串）或 None。
 
     为什么要有：pdf2zh 是独立进程，eggpaper 关掉/装新版本时它还在跑，写完之后没人认领——
     启动时那次扫描早过了。用户看到界面上还是「整本翻译」，点一次就重译一遍（还覆盖成品）。
     判定"完整"看 %%EOF 收尾，免得把写到一半就被杀掉的半截文件当成成品。
+    0.1.22 起盘上**只落译文版（mono）**省盘，双语版按需派生；旧版留下的成对文件同样认得。
     """
     stem = os.path.splitext(os.path.basename(pdf_path))[0]
-    dual = os.path.join(out_dir, stem + "-dual.pdf")
-    try:
-        if os.path.getsize(dual) < 10_000:
-            return None
-        with open(dual, "rb") as f:
-            f.seek(max(0, os.path.getsize(dual) - 2048))
-            tail = f.read()
-    except OSError:
-        return None
-    if b"%%EOF" not in tail:
-        return None
     mono = os.path.join(out_dir, stem + "-mono.pdf")
-    return {"dual": dual, "mono": mono if os.path.exists(mono) else ""}
+    dual = os.path.join(out_dir, stem + "-dual.pdf")
+    mono_ok = _pdf_complete(mono)
+    dual_ok = _pdf_complete(dual)
+    if not mono_ok and not dual_ok:
+        return None
+    return {"dual": dual if dual_ok else "", "mono": mono if mono_ok else ""}
 
 
 def job(pid: str) -> dict:
@@ -252,9 +247,12 @@ def job(pid: str) -> dict:
 #   · 进度 = 已完成的页数，粒度天然精确，不会再"卡在中间不知道怎么回事"；
 #   · 单页有超时，坏页最多拖几分钟就放弃，**绝不让一页拖死整本**；
 #   · 失败的页回退用原文（双语里这一页是两页原文），成品永远完整、页码永不错位；
-#   · 两个 worker 并行，墙钟时间比串行短；pdf2zh 自带译文缓存，重试的那页也快。
+#   · 页 worker 并行（免费服务 3 页、LLM 服务 2 页），墙钟时间比串行短；
+#   · pdf2zh 自带译文缓存，重试的那页也快；
+#   · 没跑完就中断时，译成的页留在 .pages-<pid>/ 里，重跑直接复用（48h 没人回收）。
 
-PAGE_WORKERS = 2         # 并发页数：开太大只会更快撞上服务限流
+PAGE_WORKERS_FREE = 3    # bing/google 这类免费服务没有严格限流：三页并行使墙钟短三分之一
+PAGE_WORKERS_LLM = 2     # LLM 翻译一段一次调用，开大了只会更快撞限流（429 → 页失败回退原文）
 PAGE_TIMEOUT = 150       # 单页上限 2.5 分钟：正常一页几秒到几十秒；坏页早放弃早回退
 PAGE_TRIES = 2           # 每页试两次（第二次走 pdf2zh 的译文缓存，通常很快）
 
@@ -265,12 +263,93 @@ LLM_SERVICES = {"openai", "deepseek", "zhipu", "silicon", "modelscope",
                 "gemini", "grok", "groq"}
 
 
+def _page_workers(service: str) -> int:
+    return PAGE_WORKERS_LLM if service in LLM_SERVICES else PAGE_WORKERS_FREE
+
+
 def _page_timeout(service: str) -> float:
     return PAGE_TIMEOUT * 2 if service in LLM_SERVICES else PAGE_TIMEOUT
 
 
 def _page_dir(out_dir: str, pid: str, pno: int, t: int) -> str:
     return os.path.join(out_dir, f".pages-{pid}", f"p{pno}-{t}")
+
+
+def _page_done(pdir: str, stem: str):
+    """这一页的目录里有没有一份完整的译文版产物（%%EOF 收尾）。
+    页级双语产物用完即删（省盘：组装成品由 原文+译文 派生，双语成品按需派生）。
+    有 → 返回 {"mono": 路径}；没有 → None。重跑时靠它跳过已译好的页。"""
+    mono = os.path.join(pdir, stem + "-mono.pdf")
+    return {"mono": mono} if _pdf_complete(mono) else None
+
+
+def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
+    """双语版 = 原文奇页 + 译文偶页交错。盘上只留译文版（省盘：双语是它的两倍大），
+    用户第一次点「双语」时才合成并缓存。失败页（译文就是原文那页）交错出来天然是两页原文，
+    与"奇原文偶译文"的页码关系一致。"""
+    import pymupdf
+    src = pymupdf.open(pdf_path)
+    mono = pymupdf.open(mono_path)
+    dual = pymupdf.open()
+    try:
+        for i in range(max(len(src), len(mono))):
+            dual.insert_pdf(src, from_page=min(i, len(src) - 1), to_page=min(i, len(src) - 1))
+            if i < len(mono):
+                dual.insert_pdf(mono, from_page=i, to_page=i)
+            else:
+                dual.insert_pdf(src, from_page=min(i, len(src) - 1), to_page=min(i, len(src) - 1))
+        dual.save(dual_path, garbage=4, deflate=True)
+    finally:
+        src.close(); mono.close(); dual.close()
+    return dual_path
+
+
+def derive_mono(dual_path: str, mono_path: str) -> str:
+    """旧版存量只有双语版时，抽偶数页（0 基 2i+1）合成译文版。"""
+    import pymupdf
+    dual = pymupdf.open(dual_path)
+    mono = pymupdf.open()
+    try:
+        for i in range(1, len(dual), 2):
+            mono.insert_pdf(dual, from_page=i, to_page=i)
+        mono.save(mono_path, garbage=4, deflate=True)
+    finally:
+        dual.close(); mono.close()
+    return mono_path
+
+
+def sweep_page_dirs(out_dir: str, max_age: float = 48 * 3600):
+    """回收陈旧的 .pages-* 页级目录（页级产物各自内嵌整本字体，一份好几 MB）。
+
+    翻译没跑完时成功的页**故意留着**（重跑直接复用，不再重译一遍），但用户也可能
+    再也不回来——那就按年龄回收。启动时调一次。
+    """
+    now = time.time()
+    try:
+        names = os.listdir(out_dir)
+    except OSError:
+        return
+    for fn in names:
+        if not fn.startswith(".pages-"):
+            continue
+        path = os.path.join(out_dir, fn)
+        try:
+            if now - os.path.getmtime(path) > max_age:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
+def _sweep_key_copies(page_root: str, pid: str):
+    """页级目录里的 pdf2zh 配置副本带着 key：留着复用是**为了省时间**，不是为了存 key。
+    目录留下之前把副本扫掉（正文产物不需要它们）。"""
+    for dirpath, _dirs, files in os.walk(page_root):
+        for fn in files:
+            if fn.startswith(f".pdf2zh-{pid}") and fn.endswith(".json"):
+                try:
+                    os.remove(os.path.join(dirpath, fn))
+                except OSError:
+                    pass
 
 
 def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
@@ -319,12 +398,17 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
         tail.append(f"{type(e).__name__}: {str(e)[-160:]}")
         return None, list(tail)
     stem = os.path.splitext(os.path.basename(pdf_path))[0]
-    dual = os.path.join(out_dir, stem + "-dual.pdf")
     mono = os.path.join(out_dir, stem + "-mono.pdf")
     # 半截文件不算数：进程被超时杀掉时 pdf2zh 可能刚写了个开头——
     # 认了它，组装时 pymupdf 才炸（整本报错）；按"%%EOF 收尾"判完整，坏页老老实实回退
-    if all(_pdf_complete(p) for p in (dual, mono)):
-        return {"dual": dual, "mono": mono}, list(tail)
+    if _pdf_complete(mono):
+        # 页级产物是"整本只译一页"，双语那份是纯开销（成品双语由 原文+译文 派生）——用完即删，
+        # 一个页目录少占一大半
+        try:
+            os.remove(os.path.join(out_dir, stem + "-dual.pdf"))
+        except OSError:
+            pass
+        return {"mono": mono}, list(tail)
     if not any("单页超时" in t for t in tail):
         tail.append(f"单页失败（退出码 {proc.poll()}）")
     return None, list(tail)
@@ -351,22 +435,52 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
 
     def run():
         _say = say = log or (lambda _m: None)
+        j.pop("_abort", None)     # 上次取消留下的标志必须清掉，否则这一次一页都起不来
         j.update(status="running", error="", dual="", mono="", service=service,
                  note=note, pages=[0, 0], started=time.time())
         page_root = os.path.join(out_dir, f".pages-{pid}")
         cfg_copy = ""
         procs = []                           # 在跑的页进程，cancel() 按这个掐
+        results = {}                         # pno(0 基) -> {"dual","mono"}：先装复用的，再装新译的
         try:
             import pymupdf
             os.makedirs(out_dir, exist_ok=True)
+            # 源文件没变 → 上次没跑完就中断的成功页**直接复用**（重跑不再从零来一遍）；
+            # 变了（重新导入/替换）→ 全部作废重来。标记文件就是这次校验的凭据。
+            try:
+                sig = json.dumps({"m": int(os.path.getmtime(pdf_path)),
+                                  "s": os.path.getsize(pdf_path)})
+            except OSError:
+                sig = ""
+            mark = os.path.join(page_root, ".src.json")
+            try:
+                with open(mark, encoding="utf-8") as f:
+                    old = f.read()
+            except (OSError, ValueError):
+                old = ""
+            if old != sig:
+                shutil.rmtree(page_root, ignore_errors=True)
             os.makedirs(page_root, exist_ok=True)
+            try:
+                with open(mark, "w", encoding="utf-8") as f:
+                    f.write(sig)
+            except OSError:
+                pass
             with pymupdf.open(pdf_path) as doc:
                 n = len(doc)
+            stem = os.path.splitext(os.path.basename(pdf_path))[0]
+            for pno in range(n):                     # 找回上次留下的成功页
+                for t in range(PAGE_TRIES):
+                    got = _page_done(_page_dir(out_dir, pid, pno, t), stem)
+                    if got:
+                        results[pno] = got
+                        break
+            if results:
+                _say(f"整本翻译 {pid}: 复用上次已译好的 {len(results)}/{n} 页，只译剩下的")
             if envs:
                 cfg_copy = pinned_config(page_root, pid)   # 拦住 key 被写进 pdf2zh 的配置
-            j["pages"] = [0, n]
+            j["pages"] = [len(results), n]
             _RUNNING[pid] = procs
-            results = {}                     # pno(0 基) -> {"dual","mono"}
             lock = threading.Lock()
             auth_error = []                  # 鉴权失败：整本必败，立刻停下
 
@@ -406,8 +520,8 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                          f"（{' / '.join(tail[-2:])}）")
 
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=PAGE_WORKERS) as pool:
-                list(pool.map(worker, range(n)))
+            with ThreadPoolExecutor(max_workers=_page_workers(service)) as pool:
+                list(pool.map(worker, [p for p in range(n) if p not in results]))
 
             if auth_error:
                 j.update(status="error", error=auth_error[0])
@@ -417,39 +531,27 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 j.update(status="error", error="已取消")
                 return
 
-            # ---- 组装：dual=奇页原文偶页译文；mono=纯译文。失败页回退原文 ----
-            stem = os.path.splitext(os.path.basename(pdf_path))[0]
-            dual_path = os.path.join(out_dir, stem + "-dual.pdf")
+            # ---- 组装：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文
+            #      派生，见 derive_dual）。失败页译文=原文页，派生时天然得到两页原文 ----
             mono_path = os.path.join(out_dir, stem + "-mono.pdf")
             failed = []
             src = pymupdf.open(pdf_path)
-            dual = pymupdf.open()
             mono = pymupdf.open()
             try:
                 for pno in range(n):
                     got = results.get(pno)
+                    ok = False
                     if got:
                         try:
-                            # pdf2zh 的 --pages 是"整本文档只译这一页"：mono 产物仍是全本
-                            # n 页（第 pno 页才是译文），dual 是原文/译文交错的全本 2n 页
-                            # （2i=原文、2i+1=译文，没译过的对儿是两页原文）。
-                            # **只取当页**——整本塞进来的话，18 页论文会拼出 648 页、
-                            # 266MB 的怪物（实测），打开即卡死：用户看到的"只翻译了一页"
-                            # 就是这坨重复里混着的一页译文。
-                            with pymupdf.open(got["dual"]) as d:
-                                lo = min(2 * pno, len(d) - 2)
-                                dual.insert_pdf(d, from_page=lo, to_page=lo + 1)
                             with pymupdf.open(got["mono"]) as m:
                                 at = min(pno, len(m) - 1)
                                 mono.insert_pdf(m, from_page=at, to_page=at)
-                            continue
+                            ok = True
                         except Exception:
                             pass     # 产物坏掉（半截文件等）：跟没译成一样，回退原文
-                    failed.append(pno + 1)
-                    # 双语里这一页放两页原文：保住"奇页原文偶页译文"的页码关系
-                    dual.insert_pdf(src, from_page=pno, to_page=pno)
-                    dual.insert_pdf(src, from_page=pno, to_page=pno)
-                    mono.insert_pdf(src, from_page=pno, to_page=pno)
+                    if not ok:
+                        failed.append(pno + 1)
+                        mono.insert_pdf(src, from_page=pno, to_page=pno)
                 if n and not results:
                     j.update(status="error",
                              error=f"所有页面都没译成（{service} 连不上或被限流）。"
@@ -457,14 +559,19 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     say(f"整本翻译失败 {pid}：全部页面失败")
                     return
                 # garbage=4：页级产物各自内嵌了整本的字体资源，不回收的话成品虚胖一倍多
-                dual.save(dual_path, garbage=4, deflate=True)
                 mono.save(mono_path, garbage=4, deflate=True)
+                # 旧的双语版是按**上一轮**译文派生的，留着会跟新译文错位——删掉，
+                # 首开「双语」时按新译文重派（dual 是派生缓存，不是独立成品）
+                try:
+                    os.remove(os.path.join(out_dir, stem + "-dual.pdf"))
+                except OSError:
+                    pass
             finally:
-                src.close(); dual.close(); mono.close()
+                src.close(); mono.close()
 
             done_note = (note or "") + (f"（第 {', '.join(map(str, failed))} 页没译成，保留原文）"
                                         if failed else "")
-            j.update(status="done", dual=dual_path, mono=mono_path if os.path.exists(mono_path) else "",
+            j.update(status="done", dual="", mono=mono_path,
                      error="", pages=[n, n], note=done_note)
             _say(f"整本翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
                  f" · {len(results)}/{n} 页" + (f" · 失败页 {failed}" if failed else ""))
@@ -473,7 +580,12 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             say(f"整本翻译失败 {pid}：{type(e).__name__}: {str(e)[-300]}")
         finally:
             _RUNNING.pop(pid, None)
-            shutil.rmtree(page_root, ignore_errors=True)   # 页级产物已组装，别留盘
+            # 成功 → 页级产物已组装进成品，整目录回收；失败/取消 → 译成的页留给下次
+            # 重跑复用（48 小时没人回来，启动清扫收走）。一页都没成的没有可复用的东西。
+            if j["status"] == "done" or not results:
+                shutil.rmtree(page_root, ignore_errors=True)
+            else:
+                _sweep_key_copies(page_root, pid)   # 目录留下，key 副本不留
             for proc in procs:
                 try:
                     proc.kill()

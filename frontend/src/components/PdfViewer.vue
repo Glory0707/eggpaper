@@ -304,8 +304,10 @@ async function buildSheets() {
       push([{ key: `o${i}`, doc: 'orig', page: i, origPage: i, w: m.w, h: m.h, margin: true, text: true }])
   } else if (v === 'mono') {
     const d = await getDoc('mono'), m = await meta(d)
+    // 译文页也有文字层：选中/复制译文是高频动作（origPage 仍为 -1——蒙纱、
+    // 页边批注、框选都只认原文页，这个标记不改）
     for (let i = 0; i < m.count; i++)
-      push([{ key: `m${i}`, doc: 'mono', page: i, origPage: -1, w: m.w, h: m.h, margin: false, text: false }])
+      push([{ key: `m${i}`, doc: 'mono', page: i, origPage: -1, w: m.w, h: m.h, margin: false, text: true }])
   } else if (v === 'dual') {
     const td = await getDoc('dual'), tm = await meta(td)
     if (store.viewer.spread === 'spread') {
@@ -313,7 +315,7 @@ async function buildSheets() {
       for (let i = 0; i < om.count && 2 * i + 1 < tm.count; i++)
         push([
           { key: `sl${i}`, doc: 'orig', page: i, origPage: i, w: om.w, h: om.h, margin: false, text: true },
-          { key: `sr${i}`, doc: 'dual', page: 2 * i + 1, origPage: -1, w: tm.w, h: tm.h, margin: false, text: false },
+          { key: `sr${i}`, doc: 'dual', page: 2 * i + 1, origPage: -1, w: tm.w, h: tm.h, margin: false, text: true },
         ])
     } else {
       for (let j = 0; j < tm.count; j++) {
@@ -321,7 +323,7 @@ async function buildSheets() {
         // 交替模式下双语文档的第 j 页：偶数页是**原文第 j/2 页**（不是第 j 页）。
         // 写成 j 的话所有按"原文页号"索引的东西都会错一倍——段落蒙纱、批注卡、
         // 页码读数、查找命中、跳转全落错页（0 基 2i 当成了 i）。
-        push([{ key: `di${j}`, doc: 'dual', page: j, origPage: isOrig ? j / 2 : -1, w: tm.w, h: tm.h, margin: isOrig, text: isOrig }])
+        push([{ key: `di${j}`, doc: 'dual', page: j, origPage: isOrig ? j / 2 : -1, w: tm.w, h: tm.h, margin: isOrig, text: true }])
       }
     }
   }
@@ -839,8 +841,10 @@ function onMouseUp(e) {
   const pageEl = node.closest('.page')
   const it = flatItems.value.find(x => pageEls.value[x.gi] === pageEl)
   // 定位不到段落时不能默认成 ¶0：那会把笔记钉到第一页的页边去。
-  // 用选中文字所在页兜底，para_idx 记 -1（不参与同段重钉去重）
-  let context = '', paraIdx = -1, page = it?.origPage ?? 0
+  // 用选中文字所在页兜底，para_idx 记 -1（不参与同段重钉去重）。
+  // 译文/双语页的 origPage 是 -1：页号回退到它对应的原文页（mono 1:1、dual 奇偶折半），
+  // 否则钉卡会带着 page=-1 落库，永远翻不到。
+  let context = '', paraIdx = -1, page = it ? (it.origPage >= 0 ? it.origPage : origPageOf(it)) : 0
   if (it && it.origPage >= 0) {
     const localY = r.top - pageEl.getBoundingClientRect().top
     for (const p of parasByPage.value[it.origPage] || []) {
@@ -1035,7 +1039,8 @@ async function runSearch() {
   searchAt.value = hits.length ? 0 : -1
   searchBusy.value = false
   if (hits.length) gotoHit(0)
-  else toast('没找到「' + q + '」')
+  // 没找到不弹 toast：输入是防抖逐字触发的，中间态（"自组"→"自组装"）会弹假警报；
+  // 结果条本身的「无结果」就是答案
 }
 function gotoHit(i) {
   const hits = searchHits.value

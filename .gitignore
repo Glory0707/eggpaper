@@ -42,3 +42,4 @@ installer/eggpaper-256.png
 # 真实文库抽查用的临时 vite 配置（指到 8430）
 frontend/vite.config.real.js
 frontend/vite.config.fixture.js
+frontend/vite.config.zh.js

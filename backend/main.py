@@ -95,13 +95,37 @@ PDF_DIR = os.path.join(config.DATA_DIR, "library")
 TRANSLATED_DIR = os.path.join(config.DATA_DIR, "translated")
 
 
+def _backfill_pdf_hashes():
+    """给旧库论文慢慢补内容指纹（导入判重的第二把钥匙）。
+
+    启动后单独一条低优先级线程：一篇算完歇 2 秒，几百 MB 的库几分钟补完，
+    不跟导入/析读抢 IO。算过的论文不会再来第二遍（判据就是指纹为空）。
+    """
+    import hashlib
+
+    def work():
+        for pid, path in db.papers_missing_hash():
+            h = _pdf_hash_file(path or "")
+            if h:
+                try:
+                    db.update_paper(pid, pdf_hash=h)
+                except Exception:
+                    pass
+            time.sleep(2)       # 一篇算完歇一拍，不跟导入/析读抢盘
+        # 一轮补完就走；补不出的（文件被挪走）下次启动再试
+
+    threading.Thread(target=work, daemon=True).start()
+
+
 @app.on_event("startup")
 def _startup():
     config.ensure_dirs()
     os.makedirs(PDF_DIR, exist_ok=True)
     os.makedirs(TRANSLATED_DIR, exist_ok=True)
     translate_full.sweep_configs(TRANSLATED_DIR)   # 清掉可能残留的 pdf2zh --config 副本（里面有 key）
+    translate_full.sweep_page_dirs(TRANSLATED_DIR) # 回收没人回来认领的页级中间产物（留给重跑复用的那批）
     _clear_zombie_jobs()
+    _backfill_pdf_hashes()
 
 
 def _sweep_orphan_translations():
@@ -133,7 +157,7 @@ def _sweep_orphan_translations():
             if fp and os.path.exists(fp):
                 stems.add(stem_of(fp))
         stem = stem_of(p.get("path"))
-        if stem and (stem + "-dual.pdf") in names:
+        if stem and ((stem + "-dual.pdf") in names or (stem + "-mono.pdf") in names):
             stems.add(stem)          # 还没落库但确实属于这篇
     n = 0
     for fn in names:
@@ -175,7 +199,7 @@ def _adopt_orphan_translation():
     """收留"孤儿译文"。
 
     pdf2zh 是我们起的**独立进程**：eggpaper 关掉/装新版本时它不会被一起带走，
-    会接着把 `<pid>-dual.pdf` 写完。但那条 running 状态被上面的清理归零了，
+    会接着把 `<pid>-mono.pdf` 写完。但那条 running 状态被上面的清理归零了，
     用户回来看到的还是「整本翻译」——白译一场，还得再等两分钟。启动时看一眼文件在不在，
     在就直接认领成 done。只认「看起来完整」的文件（有 %%EOF 收尾），
     免得把写到一半就被杀掉的那份当成成品。
@@ -188,14 +212,14 @@ def _adopt_orphan_translation():
     # 那份列表是要发给浏览器的，不该把用户的本地路径捎出去）
     for row in db.list_papers():
         p = db.get_paper(row["id"]) or {}
-        if p.get("translate_status") == "done" and p.get("dual_path"):
+        if p.get("translate_status") == "done" and (p.get("mono_path") or p.get("dual_path")):
             continue
         got = translate_full.adopt_existing(p["id"], p.get("path") or "", TRANSLATED_DIR)
         if not got:
             continue
-        db.update_paper(p["id"], dual_path=got["dual"], mono_path=got["mono"],
+        db.update_paper(p["id"], dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
                         translate_status="done", translate_error="")
-        _applog(f"认领上次没结算的译文：{p['id']} → {os.path.basename(got['dual'])}")
+        _applog(f"认领上次没结算的译文：{p['id']} → {os.path.basename(got.get('mono') or got.get('dual'))}")
 
 
 # ---------------- 设置 ----------------
@@ -345,7 +369,25 @@ def papers():
 # 它头上曾经挂着一个装饰器，而 FastAPI 按注册顺序匹配——于是 POST /api/papers 命中的是它，
 # 要求 pid/filename/path 三个查询参数，**浏览器拖入/点击导入永远 422**（双击打开那条路不经过
 # 这个路由，所以一直正常，问题就被掩盖了）。
-def _ingest(pid: str, filename: str, path: str) -> dict:
+def _pdf_hash_file(path: str) -> str:
+    """流式算一份 PDF 的 sha256（几百 MB 也就一两秒，内存只占一块 1MB 的缓冲）。"""
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return ""
+
+
+def _pdf_hash_bytes(raw: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     """把已经落在 PDF_DIR 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
 
     解析失败要收拾干净：留着半篇没有段落的"论文"，用户点开只能看见一个空书架。
@@ -363,6 +405,8 @@ def _ingest(pid: str, filename: str, path: str) -> dict:
             pass
         raise HTTPException(400, f"这份 PDF 读不了：{_human_msg(e)}")
     db.create_paper(pid, filename, title, path, n_pages, authors)
+    if pdf_hash:
+        db.update_paper(pid, pdf_hash=pdf_hash)
     db.replace_paragraphs(pid, paras)
     _ensure_paper_type(pid)     # 导入时就判好类型：析读提示词、略读、③、谱系卡都吃这一位
     row = db.get_paper(pid)
@@ -385,9 +429,10 @@ async def upload(file: UploadFile = File(...)):
     if len(raw) < 256:
         raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
     name = (file.filename or "paper.pdf").split("/")[-1].split("\\")[-1]
-    dup = db.find_duplicate(name, len(raw))
+    # 内容指纹优先：改名重导的同一份文件也认得出（不占第二份库空间、不重跑析读）
+    dup = db.find_duplicate(name, len(raw), _pdf_hash_bytes(raw))
     if dup:
-        # 同一份文件（同名同大小）已经在库里：不建第二篇，直接把它交出去。
+        # 同一份文件已经在库里：不建第二篇，直接把它交出去。
         # 两条导入路径（双击打开 / 拖入点选）都要判重，否则同一篇会进库两遍。
         return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
                 "duplicate": True}
@@ -397,7 +442,7 @@ async def upload(file: UploadFile = File(...)):
         f.write(raw)
     # 解析（抽标题/段落）是**同步阻塞**的活，几秒钟起步。直接在 async 路由里做会卡住整个
     # 事件循环——界面那几条轮询全部停摆，用户看到的是"导入时界面死了"。丢进线程池。
-    return await run_in_threadpool(_ingest, pid, name, path)
+    return await run_in_threadpool(_ingest, pid, name, path, _pdf_hash_bytes(raw))
 
 
 @app.post("/api/papers/import-path")
@@ -405,7 +450,7 @@ def import_path(body: dict):
     """从本机路径导入 PDF：双击 PDF、右键「用 eggpaper 打开」走这条。
 
     和上传的区别是**不经过浏览器**——文件已经在磁盘上，直接复制进库。
-    同一个文件双击两次不该得到两篇：同名同大小就当成同一份，直接打开它。
+    同一个文件双击两次不该得到两篇：同名同大小（或内容指纹相同）就当成同一份，直接打开它。
     """
     src = os.path.expanduser(((body or {}).get("path") or "").strip().strip('"'))
     if not src or not os.path.isfile(src):
@@ -413,7 +458,8 @@ def import_path(body: dict):
     if not src.lower().endswith(".pdf"):
         raise HTTPException(400, "eggpaper 只认 PDF")
     name, size = os.path.basename(src), os.path.getsize(src)
-    dup = db.find_duplicate(name, size)          # 判重口径与上传那条路共用一份
+    pdf_hash = _pdf_hash_file(src)
+    dup = db.find_duplicate(name, size, pdf_hash)          # 判重口径与上传那条路共用一份
     if dup:
         _pending_open["pid"] = dup               # 已经在库里：让界面切过去就行
         return {"paper": db.get_paper(dup), "duplicate": True}
@@ -423,7 +469,7 @@ def import_path(body: dict):
         shutil.copyfile(src, dest)
     except OSError as e:
         raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
-    out = _ingest(pid, name, dest)
+    out = _ingest(pid, name, dest, pdf_hash)
     _pending_open["pid"] = pid
     return out
 
@@ -527,20 +573,53 @@ def delete_paper(pid: str):
     return {"ok": True}
 
 
+# 派生译文/双语文件的互斥锁：首开双语的两个并发请求只该派生一次（写同一文件会写花）
+_variant_locks: dict = {}
+_variant_guard = threading.Lock()
+
+
+def _variant_lock(key: str) -> threading.Lock:
+    with _variant_guard:
+        return _variant_locks.setdefault(key, threading.Lock())
+
+
+def _translated_stem(p: dict) -> str:
+    """这篇论文的译文文件名主干（= 库文件名主干）。"""
+    return os.path.splitext(os.path.basename(p.get("path") or ""))[0]
+
+
 @app.get("/api/papers/{pid}/pdf")
 def paper_pdf(pid: str, variant: str = "original"):
     p = _paper_or_404(pid)
     if variant == "dual":
-        if p["translate_status"] != "done" or not p["dual_path"] or not os.path.exists(p["dual_path"]):
-            raise HTTPException(404, "双语版尚未生成")
-        return FileResponse(p["dual_path"], media_type="application/pdf")
+        dual = p.get("dual_path") or ""
+        if dual and os.path.exists(dual):
+            return FileResponse(dual, media_type="application/pdf")
+        # 省盘策略：盘上只落译文版，双语版（它的两倍大）**首次点开时**由 原文+译文 派生并缓存
+        mono = p.get("mono_path") or os.path.join(TRANSLATED_DIR, _translated_stem(p) + "-mono.pdf")
+        src = p.get("path") or ""
+        if (mono and os.path.exists(mono) and src and os.path.exists(src)):
+            with _variant_lock(pid + ":dual"):
+                dual = os.path.join(TRANSLATED_DIR, _translated_stem(p) + "-dual.pdf")
+                if not os.path.exists(dual):
+                    translate_full.derive_dual(src, mono, dual)
+                db.update_paper(pid, dual_path=dual)
+            return FileResponse(dual, media_type="application/pdf")
+        raise HTTPException(404, "双语版尚未生成")
     if variant == "mono":
-        mono = p.get("mono_path")
-        if not mono and p["dual_path"]:
-            mono = p["dual_path"].replace("-dual.pdf", "-mono.pdf")
-        if not mono or not os.path.exists(mono):
-            raise HTTPException(404, "译文版尚未生成")
-        return FileResponse(mono, media_type="application/pdf")
+        mono = p.get("mono_path") or ""
+        if mono and os.path.exists(mono):
+            return FileResponse(mono, media_type="application/pdf")
+        # 旧版存量只有双语版：抽偶数页合成译文版，补上之后与新品同构
+        dual = p.get("dual_path") or ""
+        if dual and os.path.exists(dual):
+            with _variant_lock(pid + ":mono"):
+                mono = os.path.join(TRANSLATED_DIR, _translated_stem(p) + "-mono.pdf")
+                if not os.path.exists(mono):
+                    translate_full.derive_mono(dual, mono)
+                db.update_paper(pid, mono_path=mono)
+            return FileResponse(mono, media_type="application/pdf")
+        raise HTTPException(404, "译文版尚未生成")
     if not os.path.exists(p["path"]):
         # 用户在资源管理器里挪走/删掉库里的 PDF 了。必须自己判：交给 FileResponse 会抛
         # RuntimeError("File at path ... does not exist") → 500 + 一句英文黑话。
@@ -574,11 +653,19 @@ def paragraphs(pid: str):
 # ---------------- 骨架分析 ----------------
 
 def _run_analysis(pid: str, paras: list):
+    ex = None
     try:
         title = db.get_paper(pid)["title"]
         use = [p for p in paras if not p.get("in_refs")]
         kind = _ensure_paper_type(pid)      # 旧论文升级上来没判过类型，这里兜底补一次
-        if _demo_mode():
+        demo = _demo_mode()
+        # 术语表跟骨架**互不依赖**，却曾排在骨架后面串行——骨架跑多久，术语就白等多久
+        # （术语是 48k 字进、8k token 出的一次大调用）。先把它发出去，与骨架同时跑。
+        # 传的是**全部**段落而不是 use：里面的"正文里有没有这个词"要跟界面上的
+        # 判据同源（界面拿的就是全篇），否则会出现界面画"—"、库里其实有。
+        ex = ThreadPoolExecutor(max_workers=5)
+        tfut = ex.submit(_demo_terms if demo else llm.extract_terms, title, paras)
+        if demo:
             data = llm.mock_analyze(paras)
         else:
             data = llm.analyze_skeleton(title, use, kind=kind)
@@ -607,31 +694,49 @@ def _run_analysis(pid: str, paras: list):
         # 骨架的 problem 字段是"顺手写的"，模型经常不给 → 少了它六问就永远缺第一问
         # （线上就是这样：三篇论文都有 why/next/lens，却都没有 problem）。缺了就补跑。
         todo = ["why", "next", "lens"] + ([] if prob else ["problem"])
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            futs = {ex.submit(_mock_six, k) if _demo_mode() else ex.submit(_gen_six, p2, k): k
-                    for k in todo}
-            # 术语表也是**按篇**的：析读时让模型把这篇自己的说法发掘出来（用户口径：
-            # 每篇只要它独有的术语，不要全库共用的词表；缩写也跟着这一批一起走）。
-            # 传的是**全部**段落而不是 use：里面的"正文里有没有这个词"要跟界面上的
-            # 判据同源（界面拿的就是全篇），否则会出现界面画"—"、库里其实有。
-            futs[ex.submit(_demo_terms if _demo_mode() else llm.extract_terms, title, paras)] = "terms"
-            for fut in as_completed(futs):
-                k = futs[fut]
-                try:
-                    got = fut.result()
-                    if k == "terms":
-                        n = _save_terms(pid, got)
-                        print(f"[eggpaper] 本篇术语 {n} 条" if n else "[eggpaper] 术语这次是空的")
-                    elif got.get("text") or got.get("items"):
-                        db.answer_put(pid, k, got)
+        futs = {ex.submit(_mock_six, k) if demo else ex.submit(_gen_six, p2, k): k
+                for k in todo}
+        if not demo:
+            # 一眼卡也在这里顺手写掉：原来它由前端在析读完成的下一拍再要一次，
+            # 用户得对着"正在写一眼卡…"多等一次调用的工夫。现在析读完即就绪。
+            futs[ex.submit(llm.summarize, p2["title"], paras)] = "summary"
+            # 推荐问题同理：它吃骨架的主张，原来要等用户第一次进"提问"页才现场生成
+            # （4~10 秒的干等，空态里只有四个通用问题）。这里一并写掉。
+            _, claims2, annos2 = db.get_analysis(pid)
+            futs[ex.submit(llm.suggest_questions, p2["title"], claims2, annos2)] = "suggest"
+        futs[tfut] = "terms"
+        for fut in as_completed(futs):
+            k = futs[fut]
+            try:
+                got = fut.result()
+                if k == "terms":
+                    n = _save_terms(pid, got)
+                    _applog(f"析读 {pid}: 本篇术语 {n} 条" if n else f"析读 {pid}: 术语这次是空的")
+                elif k == "summary":
+                    if isinstance(got, dict) and got.get("one_line"):
+                        db.update_paper(pid, summary=json.dumps(got, ensure_ascii=False))
                     else:
-                        print(f"[eggpaper] 六问·{k} 这次是空的")
-                except Exception as e:
-                    print(f"[eggpaper] {k} 没生成：{_human_msg(e)}")
+                        _applog(f"析读 {pid}: 一眼卡这次是空的（速览页会再试一次）")
+                elif k == "suggest":
+                    if isinstance(got, dict) and got.get("questions"):
+                        db.update_paper(pid, suggest=json.dumps(got, ensure_ascii=False))
+                    else:
+                        _applog(f"析读 {pid}: 推荐问题这次是空的（提问页会再试一次）")
+                elif got.get("text") or got.get("items"):
+                    db.answer_put(pid, k, got)
+                else:
+                    _applog(f"析读 {pid}: 六问·{k} 这次是空的")
+            except Exception as e:
+                # 单条失败只记日志：限流/格式错不该让整次析读陪葬，那一问留空待补
+                _applog(f"析读 {pid}: {k} 没生成（{_human_msg(e)}）")
     except Exception as e:
         # 人话 + **不清空**已有结果：一次限流不该让上次读出来的骨架陪葬
-        db.fail_analysis(pid, _human_msg(e))
+        hint = _human_msg(e)
+        _applog(f"析读失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
+        db.fail_analysis(pid, hint)
     finally:
+        if ex:
+            ex.shutdown(wait=False, cancel_futures=True)   # 失败路径上没跑完的（术语）就别等了
         _job_done("analysis", pid)
 
 
@@ -650,9 +755,8 @@ def analyze(pid: str):
 
 @app.get("/api/papers/{pid}/analysis")
 def analysis(pid: str):
-    _paper_or_404(pid)
-    status, claims, annos = db.get_analysis(pid)
     p = _paper_or_404(pid)
+    status, claims, annos = db.get_analysis(pid)
     if status in ("running", "queued") and not _analysis_inflight(pid):
         db.update_paper(pid, analysis_status="none")        # 僵尸状态：归零
         status = "none"
@@ -807,12 +911,24 @@ def _analysis_loop():
 
 def _applog(msg: str):
     """往 app.log 写一行。打包版（console=False）没有 stdout，print 出去的东西一个字都留不下——
-    而"这次到底花了多久、卡在哪一段"恰恰是用户最常问的。和 window.py 写的是同一份日志。"""
+    而"这次到底花了多久、卡在哪一段"恰恰是用户最常问的。和 window.py 写的是同一份日志。
+    文件超过 1MB 就截到尾部的 1/4：日志只增不删的话，跑上一年能吃掉几十 MB。"""
     try:
         import time as _t
         d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
         os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "app.log"), "a", encoding="utf-8") as f:
+        path = os.path.join(d, "app.log")
+        try:
+            if os.path.getsize(path) > 1_000_000:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    f.seek(-250_000, 2)
+                    f.readline()                    # 扔掉截断的半行
+                    tail = f.read()
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("[eggpaper] （日志超 1MB，只保留最近一段）\n" + tail)
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8") as f:
             f.write("[%s] %s\n" % (_t.strftime("%Y-%m-%d %H:%M:%S"), msg))
     except OSError:
         pass
@@ -1652,7 +1768,7 @@ def translate_full_start(pid: str, force: bool = False):
     if not force:
         got = translate_full.adopt_existing(pid, p["path"], TRANSLATED_DIR)
         if got:
-            db.update_paper(pid, dual_path=got["dual"], mono_path=got["mono"],
+            db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
                             translate_status="done", translate_error="")
             _applog(f"整本翻译 {pid}: 发现上次已经译好的成品，直接认领")
             return {"status": "done", "service": "", "note": "上次已经译好了，直接用了那份成品"}
@@ -1670,10 +1786,16 @@ def translate_full_status(pid: str):
     p = _paper_or_404(pid)
     j = translate_full.job(pid)
     if j["status"] == "done":
-        # 双语/译文两个模式的入口看的就是这两列——不落库，界面上的「译文/双语」永远点不动
-        if j["dual"] != p["dual_path"] or (j["mono"] or "") != (p["mono_path"] or ""):
-            db.update_paper(pid, dual_path=j["dual"], mono_path=j["mono"] or "",
+        # 盘上只落译文版（省盘），dual 在这里是空串——别拿它去清掉旧版留下的双语文件：
+        # 只有 mono 变了才落库；mono 没动就不写，dual_path 保持原样（派生缓存继续有效）
+        if (j["mono"] or "") != (p["mono_path"] or ""):
+            old_dual = p.get("dual_path") or ""
+            db.update_paper(pid, mono_path=j["mono"] or "", dual_path="",
                             translate_status="done", translate_error="")
+            # 重译过的论文，上一版的双语文件就是**旧译文**：不删的话「双语」按 dual_path
+            # 还在盘上会直接端出来，用户看着旧译文以为重译没生效。删掉让首开按新 mono 重派生。
+            if old_dual:
+                _rm(old_dual)
     elif j["status"] == "error" and p["translate_status"] != "error":
         db.update_paper(pid, translate_status="error", translate_error=j["error"])
     return j

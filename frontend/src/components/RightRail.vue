@@ -546,7 +546,7 @@ watch(() => store.currentId, () => {
               <!-- ② 为什么要解决：析读时已经写好（含依据段号） -->
               <template v-else-if="s.k === 'q2'">
                 <MdLite v-if="six.why?.text" class="six-txt" :text="six.why.text" @cite="jumpPara" />
-                <div v-else class="six-note">{{ sixBusy.problem ? '…' : '未生成' }}</div>
+                <div v-else class="six-note">{{ sixBusy.why ? '…' : '未生成' }}</div>
               </template>
 
               <!-- ③ 研究型：主张 → 证据链；综述：由模型说清"它把文献怎么组织的"

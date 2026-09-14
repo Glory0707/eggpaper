@@ -189,7 +189,7 @@ async function pollTranslate() {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
     rollOnce()
-    toast('双语已生成')
+    toast('整本翻译完成')   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
   } else if (j.status === 'error') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()
@@ -221,6 +221,7 @@ async function onImport(list) {
     try {
       const r = await api.upload(f)
       ok.push(r)
+      if (r.duplicate) toast('库里已有这篇——直接打开原来那份')
       // 正在看某个分类时导入的，就顺手归到那个分类里——Zotero 的"导入到分类"一个意思
       const c = store.lib.coll
       if (typeof c === 'number') {
