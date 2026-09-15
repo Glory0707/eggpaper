@@ -91,9 +91,9 @@ onUnmounted(() => {
   window.removeEventListener('blur', endDrag)
 })
 
-/* 升级自检：这个标签页是哪个版本的界面，轮询发现后端版本变了就催刷新。
-   静默升级后旧标签页还活着、跑的还是旧 JS——用户看到的就是"改了没生效"，
-   这条提示把"升级了但界面是旧的"这层窗户纸捅破。 */
+/* 升级自检：这个标签页是哪个版本的界面。静默升级后旧标签页还活着、跑的还是旧 JS，
+   而版本号是实时查后端的——于是出现最迷惑人的那种现象：**设置里的版本号更新了，
+   别的修改一点没生效**。刷新是无损的（阅读位置存在本地），所以直接替他刷。 */
 let bootVersion = ''
 let verTick = 0
 let verHintShown = false
@@ -109,15 +109,19 @@ async function poll() {
       toast('已打开：' + (store.paper?.title || '').slice(0, 30))
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
-  // 每 30 秒问一次后端版本（10 拍 × 3 秒）：对不上就说明软件被升级过
-  if (bootVersion && !verHintShown && ++verTick % 10 === 0) {
+  // 每 15 秒问一次后端版本（5 拍 × 3 秒）：对不上就说明软件被升级过，而这个标签页
+  // 跑的还是升级前的界面——**版本号会变、界面不会变**（用户看到的正是这个：
+  // "设置里的版本号更新了，但其他修改没生效"）。刷新是无损的（阅读位置存在本地），
+  // 所以直接替他刷，别让他自己去想"为什么没生效"。
+  if (bootVersion && !verHintShown && ++verTick % 5 === 0) {
     try {
       const v = await api.version()
       if (v.version && v.version !== bootVersion) {
         verHintShown = true
-        toast(`eggpaper 已更新到 ${v.version}，这个页面还是升级前打开的——刷新一下（Ctrl+R）用新版`, 8000)
+        toast(`eggpaper 已更新到 ${v.version}，正在刷新界面…`, 6000)
+        setTimeout(() => window.location.reload(), 1200)
       }
-    } catch { /* 下个 30 秒再问 */ }
+    } catch { /* 下个 15 秒再问 */ }
   }
   if (!store.currentId) return
   // 状态刷新各自兜住：后端正在重启/瞬时失败时，轮询本身不能死——

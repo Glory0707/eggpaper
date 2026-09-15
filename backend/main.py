@@ -2083,6 +2083,17 @@ def guide_page():
 DIST = appinfo.dist_dir()
 if os.path.isdir(DIST):
     from fastapi.staticfiles import StaticFiles
+
+    # index.html 不能缓存：它里面写着这次构建的 chunk 文件名，缓存住旧的就会去要
+    # 已经不存在的 chunk（新装的 _internal 里旧 chunk 已被清掉）。chunk 自己带
+    # 内容 hash，可以放心长缓存——**只有这个壳必须每次问服务器**。
+    @app.get("/", include_in_schema=False)
+    @app.get("/index.html", include_in_schema=False)
+    def _index():
+        return FileResponse(os.path.join(DIST, "index.html"),
+                            media_type="text/html; charset=utf-8",
+                            headers={"Cache-Control": "no-cache, must-revalidate"})
+
     app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
 
 

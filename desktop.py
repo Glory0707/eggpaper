@@ -220,7 +220,7 @@ def _instance_file() -> str:
 
 
 def _running_instance():
-    """已经有一个 eggpaper 在跑吗？有就返回它记下的端口。
+    """已经有一个 eggpaper 在跑吗？有就返回 (端口, 它记下的版本号)。
 
     读的是它自己写的 instance.json（含 pid），再确认那个 pid 还活着。
     **不用"连一下端口试试"那种判断**：实测在有的机器上，进程连自己的
@@ -237,7 +237,28 @@ def _running_instance():
         return None
     if not _alive(pid):
         return None
-    return int(info.get("port") or 0) or None
+    port = int(info.get("port") or 0) or None
+    if not port:
+        return None
+    return port, str(info.get("version") or "")
+
+
+def _ver_tuple(v: str):
+    out = []
+    for part in str(v or "").split("."):
+        digits = "".join(c for c in part if c.isdigit())
+        out.append(int(digits) if digits else 0)
+    return tuple(out + [0, 0, 0])[:4]
+
+
+def _ask_quit(port: int) -> bool:
+    """请那个实例退出（它自己有 /api/quit）。"""
+    try:
+        import httpx
+        return httpx.post(f"http://{HOST}:{port}/api/quit", timeout=5).status_code == 200
+    except Exception as e:
+        _log(f"请旧实例退出失败：{type(e).__name__}: {e}")
+        return False
 
 
 def _port_free(port: int) -> bool:
@@ -313,14 +334,31 @@ def main():
     want_tray = "--no-tray" not in sys.argv
 
     running = _running_instance()
-    if running:                              # 已经有实例在跑：只开浏览器
-        log(f"已有一个 eggpaper 在跑（端口 {running}），打开界面即可")
+    if running:
+        old_port, old_ver = running
+        # 跑着的那个比我这一版还老：**用户刚装完新版、点开的却是旧界面**。
+        # 旧进程占着端口，单实例逻辑只开了浏览器指向它——"我在别的电脑上装的是
+        # 0.1.27，怎么还是老版本"就是这么来的（踩过）。请它下去，自己接管；
+        # 版本相同（用户重复双击图标）才照旧只开浏览器。
+        if old_ver and _ver_tuple(old_ver) < _ver_tuple(appinfo.version()):
+            log(f"发现旧版本 {old_ver} 还在跑（端口 {old_port}），请它退出，这次用 {appinfo.version()}")
+            _ask_quit(old_port)
+            for _ in range(24):                  # 退出是异步的：等它把端口放出来
+                if _port_free(old_port):
+                    break
+                time.sleep(0.5)
+            else:
+                log(f"旧版本没退出（端口 {old_port} 仍被占）——在托盘菜单里点「退出 eggpaper」再打开一次")
+            running = _running_instance()        # 请过了：它退了这里就没有实例了
+    if running:
+        port = running[0]
+        log(f"已有一个 eggpaper 在跑（端口 {port}），打开界面即可")
         if pdf:
             log(f"把这份 PDF 交给它：{pdf}")
-            _handoff(running, pdf)
-        if want_window and _open_window(f"http://{HOST}:{running}/", log):
+            _handoff(port, pdf)
+        if want_window and _open_window(f"http://{HOST}:{port}/", log):
             return 0
-        _open(f"http://{HOST}:{running}/", log)
+        _open(f"http://{HOST}:{port}/", log)
         return 0
 
     port = next((p for p in PORTS if _port_free(p)), None)
