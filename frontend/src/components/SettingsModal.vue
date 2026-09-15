@@ -150,7 +150,8 @@ function save() {
         <select v-model="f.service">
           <option value="bing">bing（免费，不用填 key）</option>
           <option value="openai">openai（用上面填的模型与端点，按量计费）</option>
-          <option value="deepseek">deepseek（用上面填的 key）</option>
+          <!-- 老配置还存着 deepseek 的人要看得见它才换得走；新用户不再给这个选项 -->
+          <option v-if="f.service === 'deepseek'" value="deepseek">deepseek（已不推荐，请换一个）</option>
           <option value="google">google（免费，国内多数网络连不通）</option>
           <option value="deepl">deepl（另需 DEEPL_AUTH_KEY 环境变量）</option>
         </select>

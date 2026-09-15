@@ -61,7 +61,10 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
         if hit and not force and time.time() - hit["at"] < cache_hours * 3600:
             return hit["data"]
     try:
-        r = httpx.get(f"{feed_url}/latest.json", timeout=6,
+        # follow_redirects 必须开：GitHub Releases 的永久链接
+        # （github.com/<user>/<repo>/releases/latest/download/latest.json）是 302，
+        # 不跟的话拿到的是空重定向体，永远"没读到更新源"
+        r = httpx.get(f"{feed_url}/latest.json", timeout=6, follow_redirects=True,
                       headers={"Cache-Control": "no-cache"})
         r.raise_for_status()
         info = r.json()

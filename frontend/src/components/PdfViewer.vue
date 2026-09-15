@@ -45,6 +45,7 @@ const rendering = ref(false)     // 正在出图：顶部一条细线，不遮�
 const flash = ref(null)          // { idx, gi } 标出整段；或 { boxes, gi } 精确标出引文
 const pageInputEl = ref(null)
 const searchInputEl = ref(null)
+const visInputEl = ref(null)
 
 const canvases = ref([]), textLayers = ref([]), pageEls = ref([])
 const doneKeys = new Set()
@@ -1008,7 +1009,7 @@ function gotoPage(p) {
   pageNum.value = pno
   backChip.value = true
   clearTimeout(applyJump._t)
-  applyJump._t = setTimeout(() => (backChip.value = false), 5000)
+  applyJump._t = setTimeout(() => (backChip.value = false), 3000)
 }
 function stepPage(d) { gotoPage(pageNum.value + d) }
 
@@ -1025,23 +1026,41 @@ function scrollToY(y, instant = false) {
 // 所以跳过去落在哪、亮多长，都跟原文对得上。
 async function runSearch() {
   const q = searchQ.value.trim()
-  if (q.length < 2) { searchHits.value = []; searchAt.value = -1; return }
+  if (q.length < 2) { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; return }
   searchBusy.value = true
+  // 上一轮的"当前命中"：同一查询的重跑（缩放/换姿势后的渲染收尾）不该把用户
+  // 从第 17 条拽回第 1 条，重跑完要落回原来那条。换了查询自然照旧从头来。
+  const prev = lastSearchQ === q && searchAt.value >= 0 ? searchHits.value[searchAt.value] : null
   const hits = []
   for (const it of flatItems.value) {
     if (it.origPage < 0) continue
     const el = pageEls.value[it.gi]
     if (!el?.querySelector('.textLayer')) continue
-    for (const h of findAllRects(el, q)) hits.push({ ...h, page: it.origPage, gi: it.gi })
+    // k = 测量时的缩放：重渲染期间框按比例实时换算（见 hitK），不等收尾重跑
+    for (const h of findAllRects(el, q)) hits.push({ ...h, page: it.origPage, gi: it.gi, k: scale.value })
   }
   hits.sort((a, b) => (a.page - b.page) || (a.y - b.y))
   searchHits.value = hits
-  searchAt.value = hits.length ? 0 : -1
+  lastSearchQ = q
+  let at = -1
+  if (hits.length) {
+    at = 0
+    if (prev) {
+      const oldY = prev.rects[0].y * (scale.value / prev.k)
+      let best = Infinity
+      for (let i = 0; i < hits.length; i++) {
+        const d = Math.abs(hits[i].page - prev.page) * 1e4 + Math.abs(hits[i].rects[0].y - oldY)
+        if (d < best) { best = d; at = i }
+      }
+    }
+  }
+  searchAt.value = at
   searchBusy.value = false
-  if (hits.length) gotoHit(0)
+  if (hits.length) gotoHit(at)
   // 没找到不弹 toast：输入是防抖逐字触发的，中间态（"自组"→"自组装"）会弹假警报；
   // 结果条本身的「无结果」就是答案
 }
+let lastSearchQ = ''
 function gotoHit(i) {
   const hits = searchHits.value
   if (!hits.length) return
@@ -1051,11 +1070,16 @@ function gotoHit(i) {
   const el = it && pageEls.value[it.gi]
   if (!el) return
   // 查找命中一律即时落位：平滑滚动在长距离上要滚一两秒，而且落位不准就没法核对了
-  scrollToY(el.offsetTop + h.rects[0].y - scroller().clientHeight * 0.3, true)
+  scrollToY(el.offsetTop + h.rects[0].y * hitK(h) - scroller().clientHeight * 0.3, true)
 }
 // 命中的高亮：给当前搜到的那条一个更大的底
 function searchStep(d) { if (searchHits.value.length) gotoHit(searchAt.value + d) }
-function closeSearch() { searchOpen.value = false; searchQ.value = ''; searchHits.value = []; searchAt.value = -1 }
+function closeSearch() { searchOpen.value = false; searchQ.value = ''; searchHits.value = []; searchAt.value = -1; lastSearchQ = '' }
+/* 命中框的实时比例：框是按测量那一刻的缩放（h.k）量的，页面现在活在 scale 档。
+   缩放后的整轮重渲染要好几秒（大 PDF 更久），期间文字层已经是新档、框还是旧档
+   的——按比例一换算，框就一直钉在词上，不用等渲染收尾的重跑（同一布局纯放大
+   缩小，坐标严格按比例走，这个换算是精确的）。 */
+function hitK(h) { return scale.value / (h.k || scale.value) }
 
 function translateSelectionKey() {
   const s = window.getSelection()
@@ -1092,7 +1116,7 @@ async function applyJump() {
   setTimeout(() => (flash.value = null), 2400)     // 2400 > 入场 180 + 停留 1600 + 淡出 520
   backChip.value = true
   clearTimeout(applyJump._t)
-  applyJump._t = setTimeout(() => (backChip.value = false), 5000)
+  applyJump._t = setTimeout(() => (backChip.value = false), 3000)
 }
 
 /* 眉批卡片上的引文：点一下跳到纸上那句话，位置就是划线的位置 */
@@ -1332,6 +1356,19 @@ async function askVisual() {
   vis.busy = false
 }
 
+/* 「分析此图/公式/表格」三个按钮只预填不发：用户多半要改两句再问（Enter 发送）。
+   填完把光标挪到输入框末尾——改提示词从那里开始。 */
+function visFill(q) {
+  vis.question = q
+  nextTick(() => {
+    const el = visInputEl.value
+    if (!el) return
+    el.focus({ preventScroll: true })
+    const n = el.value.length
+    el.setSelectionRange(n, n)
+  })
+}
+
 async function pinVisual() {
   if (vis.busy) return
   if (!vis.answer) await askVisual()
@@ -1456,7 +1493,8 @@ watch(() => store.marginalia.notes, (n, o) => {
                    class="para-fade hot boxed" :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
               <template v-for="(h, hi) in searchHitsOnPage(it.origPage)" :key="'s' + hi">
                 <div v-for="(b, bi) in h.rects" :key="bi" class="find-hit" :class="{ cur: h === currentHit }"
-                     :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
+                     :style="{ left: b.x * hitK(h) + 'px', top: b.y * hitK(h) + 'px',
+                               width: b.w * hitK(h) + 'px', height: b.h * hitK(h) + 'px' }"></div>
               </template>
 
               <!-- 眉批引文：按句子落行，划了几行就是几个块；框选钉子按区域画。
@@ -1613,12 +1651,13 @@ watch(() => store.marginalia.notes, (n, o) => {
         <button class="vp-x" title="关闭（Esc）" @click="closeVis">×</button>
       </div>
       <img class="vis-img" :src="vis.img" />
-      <input type="text" v-model="vis.question" style="width:100%; margin-top:8px"
+      <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" placeholder="问这个选区…" />
       <div class="sp-actions">
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '讲解这张图：画了什么、支持什么结论'; askVisual() }">讲解此图</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '这个公式每一步的含义和推导逻辑'; askVisual() }">讲公式</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="() => { vis.question = '挖一下这张表里的数据：趋势、异常和可疑之处'; askVisual() }">挖表格</button>
+        <!-- 只把提示词放进输入框，不发：用户多半要改两句再问（Enter 发送） -->
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill('分析这张图：画了什么、支持什么结论')">分析此图</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill('分析这个公式：每一步的含义和推导逻辑')">分析公式</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill('分析这张表：趋势、异常和可疑之处')">分析表格</button>
       </div>
       <div v-if="vis.busy" class="vp-state">正在看图</div>
       <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>

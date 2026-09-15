@@ -765,7 +765,7 @@ watch(() => store.currentId, () => {
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
           <!-- 只有本文出现过的词才有这个箭头：别的论文的术语点进去必然查不到 -->
-          <button v-if="inPaper(t)" class="t-go" title="在论文里找这个词（跳过去、并高亮命中）"
+          <button v-if="inPaper(t)" class="t-go" title="在论文中查找该词"
                   @click="findTerm(t.term_en)">↗</button>
           <span v-else class="t-no" title="这篇论文的正文里没有这个词">—</span>
           <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>

@@ -116,6 +116,8 @@ async function toggleIn(pid, cid) {
     await api.paperColls(pid, next)
     await refreshCollections()
     if (c) toast(on ? `已移出「${c.name}」` : `已归入「${c.name}」`)
+    // 归类完成就该收口：不然"从未分类勾一笔 → 切到那个分类"，弹窗还挂在那篇上
+    menuFor.value = null
   } catch (e) { toast(e.message) }
 }
 const dragPid = ref(null)
