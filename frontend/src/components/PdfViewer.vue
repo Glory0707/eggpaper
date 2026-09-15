@@ -1305,7 +1305,7 @@ function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
   // 译文/双语页（origPage = -1）上不许框选：那里没有原文段落，页边也摆不出对应的卡片，
   // 钉下去的结果是"AI 的回答存了但永远看不到"，还会顺手覆盖 ¶0 上已有的那条。
-  if (it.origPage < 0) { toast('译文页上不能框选：切回「原文」再圈，钉的位置才对得上'); return }
+  if (it.origPage < 0) { toast('译文页不能框选，切回「原文」再圈'); return }
   e.preventDefault()
   const el = pageEls.value[it.gi]
   const base = el.getBoundingClientRect()

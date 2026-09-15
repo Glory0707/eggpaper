@@ -305,7 +305,7 @@ function save() {
       </div>
       <div class="f-actions">
         <button v-if="store.update.packaged" class="quit-btn"
-                @click="quitApp" title="关闭后台服务并退出">退出 eggpaper</button>
+                @click="quitApp">退出 eggpaper</button>
         <button class="primary" @click="save">保存</button>
       </div>
     </div>

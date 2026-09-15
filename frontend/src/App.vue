@@ -282,9 +282,9 @@ async function onImport(list) {
   if (many && ok.length > 1) {
     toast(`已导入 ${ok.length} 篇；其余 ${ok.length - 1} 篇在后台排队通读，列表里能看进度`)
   } else if (first.no_text) {
-    toast('这份 PDF 没有文字层（扫描件）：只能读，析读与眉批用不了')
+    toast('扫描件：只能读，析读与眉批用不了')
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
-    toast('这份 PDF 只认出 ' + first.n_paragraphs + ' 段，析读结果可能很粗')
+    toast('只认出 ' + first.n_paragraphs + ' 段，析读会比较粗')
   }
 }
 

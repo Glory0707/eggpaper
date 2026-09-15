@@ -634,7 +634,7 @@ watch(() => store.currentId, () => {
             <div class="blk-head">
               <span class="mono-label">眉批<span v-if="mnotes.length"> · {{ mnotes.length }}</span></span>
               <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')"
-                      :title="mnotes.length ? '重写全文眉批（旧的会被替换）' : ''">
+                      :title="mnotes.length ? '替换现有眉批' : ''">
                 {{ mnotes.length ? '重写' : 'AI 眉批' }}
               </button>
               <span v-else class="blk-busy">写批注中<span class="r-dots">…</span></span>

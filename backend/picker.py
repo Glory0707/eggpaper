@@ -20,7 +20,7 @@ class BROWINFOW(ctypes.Structure):
                 ("ulFlags", wintypes.UINT),
                 ("lpfn", wintypes.LPVOID),
                 ("lParam", wintypes.LPARAM),
-                ("iImage", wintypes.c_int)]
+                ("iImage", ctypes.c_int)]
 
 
 def pick_folder(title: str = "选择数据目录") -> str:
