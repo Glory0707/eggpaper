@@ -25,6 +25,9 @@ hiddenimports = [
     "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on", "uvicorn.lifespan.off",
     "appinfo", "citation", "config", "db", "llm", "mark", "pdfparse",
     "update", "window",
+    # 整本翻译这条链：translate_full 由 main 静态导入、engine_install 由 translate_full
+    # 在函数里导入——静态分析通常扫得到，但这是"缺了整本翻译就废"的命门，显式列出。
+    "translate_full", "engine_install",
 ]
 
 a = Analysis(
