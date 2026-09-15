@@ -2089,7 +2089,8 @@ def glossary_delete(gid: int):
 def guide_page():
     """使用指南：一页静态 HTML。设置里可打开；砍界面文案时的安全网。"""
     return FileResponse(os.path.join(os.path.dirname(__file__), "guide.html"),
-                        media_type="text/html; charset=utf-8")
+                        media_type="text/html; charset=utf-8",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 DIST = appinfo.dist_dir()

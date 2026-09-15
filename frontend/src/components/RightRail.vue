@@ -524,7 +524,7 @@ watch(() => store.currentId, () => {
         </template>
 
         <template v-else>
-          <!-- 六个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
+          <!-- 五个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
           <div class="six-head">
             <span v-if="store.readingPara" class="mono-num">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
           </div>

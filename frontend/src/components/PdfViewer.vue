@@ -1013,6 +1013,9 @@ function gotoPage(p) {
   if (!el) return
   backStack.push(scroller().scrollTop)
   scrollToY(el.offsetTop - 8, true)
+  // 跳页就是换语境：划词气泡、框选问答别再钉在原地挡新一页的视线
+  if (sel.visible) closeSel()
+  if (vis.visible) closeVis()
   pageNum.value = pno
   backChip.value = true
   clearTimeout(applyJump._t)
