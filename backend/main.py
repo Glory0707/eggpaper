@@ -1401,34 +1401,49 @@ def figures(pid: str):
                 out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
                             "x1": round(r.x1, 1), "y1": round(r.y1, 1), "kind": "figure"})
             # 表格：图只认位图，矢量画的表（论文里的表几乎都是）它一个都看不见。
-            # 表的骨架是一组横线（booktabs 顶/中/底线）：把整页的细横线按「x 相互重叠、
-            # y 相邻」聚簇，≥3 条、够宽、有行距的那簇就是一张表。实测这比 find_tables
-            # 准：lines 策略认不出 booktabs 的横线（0 命中），text 策略把整页双栏正文
-            # 都当成表（9 页"检出"8 张）。行距上限 130：数据行不画中间线，隔得远也是同一张。
+            # 光看横线不行——Nature 系的图形面板轴线、刊头线、标题页元数据线也会聚成
+            # 一模一样的簇（实测 9 篇用户论文 34 个簇全是噪声）。真表格旁边一定有
+            # 「Table N」题注（图形的题注是 Fig./Figure，永不混淆）：横线簇必须挨着
+            # 一条题注才认，裁剪框把题注一起包进来，缩略图自带表号。
             try:
-                rules = sorted((d["rect"] for d in page.get_drawings()
-                                if d["rect"].height < 3 and d["rect"].width > 40),
-                               key=lambda r: r.y0)
-                groups: list = []
-                for r in rules:
-                    best = None
+                caps = []
+                for blk in page.get_text("dict").get("blocks", []):
+                    for ln in blk.get("lines", []):
+                        t = "".join(sp["text"] for sp in ln["spans"]).strip()
+                        if TAB_CAPTION.match(t):
+                            caps.append(pymupdf.Rect(ln["bbox"]))
+                if caps:
+                    rules = sorted((d["rect"] for d in page.get_drawings()
+                                    if d["rect"].height < 3 and d["rect"].width > 40),
+                                   key=lambda r: r.y0)
+                    groups: list = []
+                    for r in rules:
+                        best = None
+                        for g in groups:
+                            if r.x0 <= g["x1"] + 10 and r.x1 >= g["x0"] - 10 and r.y0 - g["y1"] < 130:
+                                if best is None or g["y1"] < best["y1"]:
+                                    best = g
+                        if best is not None:
+                            best["x0"] = min(best["x0"], r.x0)
+                            best["x1"] = max(best["x1"], r.x1)
+                            best["y0"] = min(best["y0"], r.y0)
+                            best["y1"] = max(best["y1"], r.y1)
+                            best["n"] += 1
+                        else:
+                            groups.append({"x0": r.x0, "x1": r.x1, "y0": r.y0, "y1": r.y1, "n": 1})
                     for g in groups:
-                        if r.x0 <= g["x1"] + 10 and r.x1 >= g["x0"] - 10 and r.y0 - g["y1"] < 130:
-                            if best is None or g["y1"] < best["y1"]:
-                                best = g
-                    if best is not None:
-                        best["x0"] = min(best["x0"], r.x0)
-                        best["x1"] = max(best["x1"], r.x1)
-                        best["y1"] = max(best["y1"], r.y1)
-                        best["n"] += 1
-                    else:
-                        groups.append({"x0": r.x0, "x1": r.x1, "y0": r.y0, "y1": r.y1, "n": 1})
-                for g in groups:
-                    if g["n"] >= 3 and g["y1"] - g["y0"] >= 20 and g["x1"] - g["x0"] >= 80:
-                        out.append({"page": pno,
-                                    "x0": round(g["x0"] - 8), "y0": round(g["y0"] - 16),
-                                    "x1": round(g["x1"] + 8), "y1": round(g["y1"] + 30),
-                                    "kind": "table"})
+                        if not (g["n"] >= 3 and g["y1"] - g["y0"] >= 20 and g["x1"] - g["x0"] >= 80):
+                            continue
+                        for cr in caps:
+                            zone = pymupdf.Rect(g["x0"] - 15, g["y0"] - 70, g["x1"] + 15, g["y1"] + 70)
+                            if zone.intersects(cr):
+                                out.append({"page": pno,
+                                            "x0": round(min(g["x0"], cr.x0) - 6),
+                                            "y0": round(min(g["y0"], cr.y0) - 6),
+                                            "x1": round(max(g["x1"], cr.x1) + 6),
+                                            "y1": round(max(g["y1"], cr.y1) + 6),
+                                            "kind": "table"})
+                                break
             except Exception:
                 pass
     finally:
@@ -1440,6 +1455,8 @@ def figures(pid: str):
 
 
 _fig_cache = {}
+# 表格题注：Table 1 / Tab. 2（Nature 竖线风格 "Table 1 | ..." 也匹配）
+TAB_CAPTION = re.compile(r"^\s*(?:Table|Tab\.?)\s*\d+", re.I)
 
 
 @app.get("/api/papers/{pid}/figure.png")

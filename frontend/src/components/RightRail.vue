@@ -687,12 +687,15 @@ watch(() => store.currentId, () => {
           <div class="ce-kw"><span class="chip" v-for="k in store.summary.keywords" :key="k">{{ k }}</span></div>
         </div>
 
-        <!-- 图表：紧跟着一眼卡。读完结论就想看图，这是读论文的自然顺序 -->
+        <!-- 图表：紧跟着一眼卡。读完结论就想看图，这是读论文的自然顺序。
+             表格裁剪和图形裁剪长得很像（都是纸上的一块），角标把话说死。 -->
         <div class="blk" v-if="figures.length">
           <div class="blk-head"><span class="mono-label">图表速览 · {{ figures.length }}</span></div>
           <div class="fig-strip">
-            <img v-for="(f, i) in figures" :key="i" class="fig-thumb" :src="api.figureUrl(store.currentId, f)"
-                 :title="`第 ${f.page + 1} 页`" @click="figIdx = i" />
+            <span v-for="(f, i) in figures" :key="i" class="fig-cell" :title="`${f.kind === 'table' ? '表' : '图'} · 第 ${f.page + 1} 页`" @click="figIdx = i">
+              <img class="fig-thumb" :src="api.figureUrl(store.currentId, f)" alt="" />
+              <i class="fig-kind">{{ f.kind === 'table' ? '表' : '图' }}</i>
+            </span>
           </div>
         </div>
 
@@ -799,9 +802,9 @@ watch(() => store.currentId, () => {
         <button class="lb-nav" :disabled="figures.length < 2" title="下一张（→）" @click="figStep(1)">›</button>
       </div>
       <div class="lb-actions" @click.stop>
-        <span class="mono-label">{{ figIdx + 1 }} / {{ figures.length }}</span>
+        <span class="mono-label">{{ lightbox.kind === 'table' ? '表' : '图' }} · {{ figIdx + 1 }} / {{ figures.length }} · 第 {{ lightbox.page + 1 }} 页</span>
         <button @click="figJump(lightbox)">在原文查看</button>
-        <button @click="askFigure(lightbox)">问这张图</button>
+        <button @click="askFigure(lightbox)">问这张{{ lightbox.kind === 'table' ? '表' : '图' }}</button>
         <button @click="figIdx = -1">关闭</button>
       </div>
     </div>

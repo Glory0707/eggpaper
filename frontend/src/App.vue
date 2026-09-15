@@ -78,6 +78,7 @@ onMounted(async () => {
   // 更新：先问自己是哪个版本，再等 6 秒做一次安静探测。故意不抢首屏——
   // 用户先看到论文，更新提示随后自己浮出来；源里没东西就什么都不会发生。
   loadVersion().then(() => {
+    bootVersion = store.update.current
     if (store.settings?.update?.auto_check !== false) {
       setTimeout(() => checkUpdate(false, true), 6000)
     }
@@ -90,6 +91,13 @@ onUnmounted(() => {
   window.removeEventListener('blur', endDrag)
 })
 
+/* 升级自检：这个标签页是哪个版本的界面，轮询发现后端版本变了就催刷新。
+   静默升级后旧标签页还活着、跑的还是旧 JS——用户看到的就是"改了没生效"，
+   这条提示把"升级了但界面是旧的"这层窗户纸捅破。 */
+let bootVersion = ''
+let verTick = 0
+let verHintShown = false
+
 async function poll() {
   // "双击 PDF / 右键用它打开"：导入是在后端做的，界面这边只是被通知切过去。
   // 挂在原来这个 3 秒轮询上——为一次打开请求新起一条轮询不值得。
@@ -101,6 +109,16 @@ async function poll() {
       toast('已打开：' + (store.paper?.title || '').slice(0, 30))
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
+  // 每 30 秒问一次后端版本（10 拍 × 3 秒）：对不上就说明软件被升级过
+  if (bootVersion && !verHintShown && ++verTick % 10 === 0) {
+    try {
+      const v = await api.version()
+      if (v.version && v.version !== bootVersion) {
+        verHintShown = true
+        toast(`eggpaper 已更新到 ${v.version}，这个页面还是升级前打开的——刷新一下（Ctrl+R）用新版`, 8000)
+      }
+    } catch { /* 下个 30 秒再问 */ }
+  }
   if (!store.currentId) return
   // 状态刷新各自兜住：后端正在重启/瞬时失败时，轮询本身不能死——
   // 死了的话翻译进度、析读状态就永远不更新了，看起来像"卡住"
