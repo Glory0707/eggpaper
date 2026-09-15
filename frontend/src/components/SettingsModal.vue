@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, store, FS_SCALE, toast, checkUpdate } from '../store'
 import { vDrag } from '../drag'
 
@@ -18,6 +18,7 @@ const f = reactive({
   api_key: (S.provider || {}).key_masked || '',
   mock: !!S.mock,
   service: (S.pdf2zh || {}).service || 'bing',
+  engine_path: (S.pdf2zh || {}).path || '',
   feed: (S.update || {}).feed_url || '',
   auto_check: (S.update || {}).auto_check !== false,
   layers: { ...store.viewer.layers },
@@ -84,10 +85,82 @@ async function quitApp() {
 /* 使用指南：一页纸，后端直接发；砍界面文案时它是安全网 */
 function openGuide() { window.open('/guide', '_blank') }
 
+/* 整本翻译引擎（pdf2zh）：不在安装包里（AGPL 引擎另装），所以"找到没有、能不能跑"
+   必须看得见。给别人装的时候，这一行就是"整本翻译为什么不能用"的答案——
+   从前它报的是"bing 连不上"，指错了方向。
+   一键装：从官方源下自包含包（约 308MB，免 Python），下完解压进数据目录的 engines/。 */
+const eng = reactive({ busy: false, ok: false, path: '', why: '', checked: false })
+const inst = reactive({ state: 'idle', pct: 0, got: 0, total: 0, error: '' })
+let instTimer = null
+
+async function checkEngine() {
+  eng.busy = true
+  try {
+    const r = await api.pdf2zhEngine(f.engine_path.trim())
+    Object.assign(eng, { ok: r.ok, path: r.path, why: r.why, checked: true })
+  } catch (e) {
+    Object.assign(eng, { ok: false, path: '', why: e.message, checked: true })
+  }
+  eng.busy = false
+}
+
+function mb(n) { return (n / 1024 / 1024).toFixed(0) }
+
+async function pollInstall() {
+  try {
+    const s = await api.pdf2zhInstallStatus()
+    Object.assign(inst, { state: s.state, pct: s.pct, got: s.got, total: s.total, error: s.error })
+    if (s.state === 'done') {
+      clearInterval(instTimer); instTimer = null
+      f.engine_path = ''                 // 让它走自动查找（engines/ 已就位）
+      await checkEngine()
+      toast('翻译引擎装好了，整本翻译可以用了')
+    } else if (s.state === 'error') {
+      clearInterval(instTimer); instTimer = null
+    }
+  } catch { /* 下一拍再问 */ }
+}
+
+async function installEngine() {
+  Object.assign(inst, { state: 'downloading', pct: 0, got: 0, total: 0, error: '' })
+  try {
+    await api.pdf2zhInstall()
+    if (!instTimer) instTimer = setInterval(pollInstall, 1000)
+  } catch (e) {
+    Object.assign(inst, { state: 'error', error: e.message })
+  }
+}
+
+/* 从本地 zip 装：网络到不了 GitHub 时的正路——下好一份引擎包跟安装包一起发出去，
+   对方在这里选文件就行（不需要 Python、不需要能上外网）。上传走 127.0.0.1，很快。 */
+const zipInput = ref(null)
+async function installFromFile(ev) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!file) return
+  Object.assign(inst, { state: 'uploading', pct: 0, got: 0, total: file.size, error: '' })
+  try {
+    await api.pdf2zhInstallFromFile(file)
+    if (!instTimer) instTimer = setInterval(pollInstall, 1000)
+  } catch (e) {
+    Object.assign(inst, { state: 'error', error: e.message })
+  }
+}
+
+onMounted(async () => {
+  await checkEngine()
+  // 上次会话装到一半（关掉了软件）：装好了但还没探测到的话，这里补认一次
+  try {
+    const s = await api.pdf2zhInstallStatus()
+    if (s.state === 'done' && !eng.ok) await checkEngine()
+  } catch { /* 无所谓 */ }
+})
+onUnmounted(() => clearInterval(instTimer))
+
 function save() {
   Object.assign(store.viewer.layers, f.layers)
   emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key, vision_model: f.vision_model },
-                 mock: f.mock, pdf2zh: { service: f.service },
+                 mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim() },
                  update: { feed_url: f.feed, auto_check: f.auto_check } })
 }
 </script>
@@ -156,6 +229,28 @@ function save() {
           <option value="deepl">deepl（另需 DEEPL_AUTH_KEY 环境变量）</option>
         </select>
         </div>
+      <!-- 引擎状态：整本翻译能不能用、为什么不能用，一行说完 -->
+      <div class="f-row">
+        <label class="mono-label">翻译引擎（pdf2zh）
+          <button class="eng-check" @click="checkEngine" :disabled="eng.busy">
+            {{ eng.busy ? '…' : '检测' }}</button>
+        </label>
+        <input type="text" v-model="f.engine_path" placeholder="pdf2zh.exe 路径（留空自动找）" />
+        <div class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
+          <template v-if="inst.state === 'downloading'">下载中 {{ inst.pct }}%<span v-if="inst.total">（{{ mb(inst.got) }}/{{ mb(inst.total) }}MB）</span></template>
+          <template v-else-if="inst.state === 'unpacking'">解压中…</template>
+          <template v-else-if="inst.state === 'uploading'">读取中…</template>
+          <template v-else-if="inst.state === 'error'">{{ inst.error }}</template>
+          <template v-else-if="!eng.checked">未检测</template>
+          <template v-else-if="eng.ok">可用（{{ eng.why }}）</template>
+          <template v-else>{{ eng.path ? '不可用：' : '未安装' }}{{ eng.path ? eng.why : '' }}</template>
+        </div>
+        <div class="eng-actions" v-if="!eng.ok && inst.state !== 'downloading' && inst.state !== 'unpacking' && inst.state !== 'uploading'">
+          <button class="eng-install" @click="installEngine">下载安装 308MB</button>
+          <button class="eng-file" @click="zipInput?.click()">选 zip 安装</button>
+        </div>
+        <input ref="zipInput" type="file" accept=".zip" hidden @change="installFromFile" />
+      </div>
       <div class="f-row">
         <label class="mono-label">更新源（静态目录地址，留空不检查）</label>
         <input type="text" v-model="f.feed" placeholder="http://192.168.1.5:8440 或 https://…/eggpaper" />

@@ -85,7 +85,7 @@ const sixHas = computed(() => ({
   q1: !!six.motive?.text,
   q2: isReview.value ? !!six.how?.text : !!store.analysis.claims.length,
   q3: !!(limitParas.value.length + warnNotes.value.length),
-  q4: !!six.next?.items?.length, q5: !!six.lens?.text,
+  q4: !!six.next?.items?.length, q5: !!six.lens?.items?.length,
 }))
 
 async function loadSix() {
@@ -97,10 +97,9 @@ async function loadSix() {
     const r = await api.sixAnswers(store.currentId)
     if (!samePaper(mine)) return        // 回来时已经换篇：这是上一篇的答案
     // 旧口径的缓存不认：problem/why 已并入 motive（服务端不再认这两个 key），
-    // lens 从"几条视角"换成了"一段话"、next 换成"两条腿"（服务端会重新生成）。
-    // 删掉让它们走下面的静默补跑，别占着位置挡住补跑。
+    // lens/next 换过口径（服务端按 v 判定、会重新生成）。删掉让它们走下面的静默补跑。
     delete r.problem; delete r.why
-    if (r.lens && !r.lens.text) delete r.lens
+    if (r.lens && !r.lens.v) delete r.lens
     if (r.next && !r.next.v) delete r.next
     Object.assign(six, r)
   } catch { /* 没缓存很正常 */ }
@@ -613,11 +612,15 @@ watch(() => store.currentId, () => {
                 <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : '未生成' }}</div>
               </template>
 
-              <!-- ⑤ 换个学科怎么看：一段话——论文涉及的学科 + 没涉及但沾边的学科，
-                   读到这篇是什么感受、有什么想法意见 -->
+              <!-- ⑤ 换个学科怎么看：一条一个学科（含没沾边但有关联的），每条说那个人
+                   读到这篇的想法/意见，并配一句他会问的 -->
               <template v-else-if="s.k === 'q5'">
-                <MdLite v-if="six.lens?.text" class="six-txt" :text="six.lens.text" @cite="jumpPara" />
-                <div v-else class="six-note">{{ sixBusy.lens ? '…' : '未生成' }}</div>
+                <div class="six-item" v-for="(it, i) in (six.lens?.items || [])" :key="i">
+                  <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
+                  <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
+                  <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
+                </div>
+                <div v-if="!six.lens?.items?.length" class="six-note">{{ sixBusy.lens ? '…' : '未生成' }}</div>
               </template>
             </div>
              </div>

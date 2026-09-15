@@ -104,15 +104,113 @@ def choose_service(service: str, host: str = ""):
                   f"或者先连上外网再试。")
 
 
+# ---------------- 引擎：在哪、能不能跑 ----------------
+
+def engine_path(explicit: str = "") -> str:
+    """找 pdf2zh 引擎可执行文件；找不到返回空串。
+
+    **只查 PATH 和 exe 同目录是不够的**——pip 装的 pdf2zh 落在 Python 的 Scripts
+    目录，而那个目录不保证在 PATH 里（pip 自己都会提醒"不在 PATH"）。实测本机
+    `%LOCALAPPDATA%\\Programs\\Python\\Python312\\Scripts\\pdf2zh.exe` 就躺在那儿，
+    而 `shutil.which` 一个都看不见——"明明装了却说没装"就是这么来的。
+
+    顺序：设置里指定的 → PATH → exe 同目录 → 数据目录 engines/ → 常见 Python Scripts。
+    最后一处（数据目录 engines/）是给"手动放一个进来"留的稳位：那目录升级、卸载都不动。
+    """
+    import glob
+    want = (explicit or "").strip().strip('"')
+    if want and os.path.exists(want):
+        return want
+    cand = []
+    w = shutil.which("pdf2zh")
+    if w:
+        cand.append(w)
+    here = os.path.dirname(os.path.abspath(sys.executable))
+    cand.append(os.path.join(here, "pdf2zh.exe"))
+    # 我们的"引擎舱"：一键下载装的、或用户自己解压进来的官方 zip（解出来是带版本号
+    # 子目录，所以递归找），都在 {数据目录}/engines/ 下——那目录升级、卸载都不动
+    try:
+        import engine_install
+        got = engine_install.find_installed()
+        if got:
+            cand.insert(0, got)
+    except Exception:
+        pass
+    for pat in (r"%LOCALAPPDATA%\Programs\Python\Python3*\Scripts\pdf2zh.exe",
+                r"%APPDATA%\Python\Python3*\Scripts\pdf2zh.exe",
+                r"C:\Python3*\Scripts\pdf2zh.exe",
+                r"C:\Program Files\Python3*\Scripts\pdf2zh.exe"):
+        try:
+            cand.extend(glob.glob(os.path.expandvars(pat)))
+        except Exception:
+            pass
+    for p in cand:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def engine_probe(path: str) -> tuple:
+    """跑一次 `pdf2zh --version`，确认它**真的能跑**。返回 (可用, 说明)。
+
+    为什么不能只看文件在不在：pip 卸载后残留的 .exe 壳照样在，运行时报
+    `ModuleNotFoundError: No module named 'pdf2zh'`（本机实测就有一个）。那种
+    "引擎看着在、每页都失败"的现场，只查文件存在永远查不出来。
+    """
+    if not path:
+        return False, "没找到"
+    if not os.path.exists(path):
+        return False, "路径下没有文件"
+    flags, si = _no_window()
+    try:
+        r = subprocess.run([path, "--version"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=120,
+                           creationflags=flags, startupinfo=si)
+    except Exception as e:
+        return False, "起不来"
+    out = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
+    low = out.lower()
+    if "no module named 'pdf2zh'" in low or "modulenotfounderror" in low:
+        return False, "空壳：exe 在，包已丢失"
+    if r.returncode == 0 and "pdf2zh" in low:
+        line = next((ln.strip() for ln in out.splitlines() if "pdf2zh" in ln.lower()), "")
+        return True, line[:60]
+    tail = out.splitlines()[-1].strip()[:160] if out else ""
+    return False, tail or f"退出码 {r.returncode}"
+
+
+_ENGINE = {}     # path -> {"mtime": float, "ok": bool, "why": str, "at": float}
+
+
+def engine_probe_cached(path: str, ttl: float = 900) -> tuple:
+    """engine_probe 的缓存版。`--version` 实测要 3 秒（pdf2zh 得 import 整套依赖），
+    而这是**点一下按钮就要过的一道门**——每次等 3 秒不值。同一个文件 15 分钟内只探
+    一次；文件被换掉（重装、改路径）mtime 一变立刻重探，不会拿着旧结论骗人。"""
+    if not path:
+        return engine_probe(path)
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return engine_probe(path)
+    hit = _ENGINE.get(path)
+    if hit and hit["mtime"] == mt and time.time() - hit["at"] < ttl:
+        return hit["ok"], hit["why"]
+    ok, why = engine_probe(path)
+    _ENGINE[path] = {"mtime": mt, "ok": ok, "why": why, "at": time.time()}
+    return ok, why
+
+
 # ---------------- 起进程 ----------------
 
-def _cmd(pdf_path, out_dir, service, extra, cfg_path=""):
-    exe = shutil.which("pdf2zh") or os.path.join(os.path.dirname(sys.executable), "pdf2zh.exe")
-    if os.path.exists(exe):
+def _cmd(pdf_path, out_dir, service, extra, cfg_path="", engine: str = ""):
+    exe = engine_path(engine)
+    if exe:
         base = [exe]
     elif getattr(sys, "frozen", False):
-        # 打包版没带 pdf2zh（AGPL 引擎另装）：这里直接抛 FileNotFoundError，
-        # 由下面翻成人话，别让它去试"用打包出来的 exe 当 python 跑模块"那种怪命令
+        # 打包版没带 pdf2zh（AGPL 引擎另装）：这里直接抛 FileNotFoundError。
+        # **调用方必须先做 engine_probe 自检**，把"引擎没找到/跑不起来"在人话里说清；
+        # 让这个异常冒泡到页级流水线的兜底 except，用户拿到的是
+        # "所有页面都没译成（bing 连不上或被限流）"——把他往网络问题上引（踩过）。
         raise FileNotFoundError("pdf2zh")
     else:                                    # 兜底：模块方式（新版 pdf2zh-next 支持）
         base = [sys.executable, "-m", "pdf2zh"]
@@ -353,12 +451,12 @@ def _sweep_key_copies(page_root: str, pid: str):
 
 
 def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
-              envs: dict, cfg: str, proc_reg: list, auth_out: list) -> tuple:
+              envs: dict, cfg: str, proc_reg: list, auth_out: list, engine: str = "") -> tuple:
     """翻译一页。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
     proc_reg：正在跑的进程都登记进来，删论文时 cancel() 能把它们掐掉。
     auth_out：一旦在输出里看到鉴权失败就**立刻**杀进程并记到这里——
     pdf2zh 对 401 是无限重试，等它自己结束要磨到天荒地老。"""
-    cmd = _cmd(pdf_path, out_dir, service, extra, cfg) + ["--pages", str(pno)]
+    cmd = _cmd(pdf_path, out_dir, service, extra, cfg, engine) + ["--pages", str(pno)]
     tail = collections.deque(maxlen=5)
     flags, si = _no_window()
     proc = None
@@ -427,7 +525,7 @@ def _pdf_complete(path: str) -> bool:
 
 
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
-          envs: dict = None, log=None, note: str = "") -> dict:
+          envs: dict = None, log=None, note: str = "", engine: str = "") -> dict:
     """按页流水线翻译整本：进度=完成页数，坏页回退原文，一页卡不住整本。"""
     j = job(pid)
     if j["status"] == "running":
@@ -442,6 +540,19 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         cfg_copy = ""
         procs = []                           # 在跑的页进程，cancel() 按这个掐
         results = {}                         # pno(0 基) -> {"dual","mono"}：先装复用的，再装新译的
+        # **先自检引擎，再谈翻译**。引擎不行的话每一页都会失败，最后报出来的却是
+        # "所有页面都没译成（bing 连不上或被限流）"——把用户支去换服务、查网络，
+        # 而真正的原因跟网络毫无关系（踩过：别的电脑上整本翻译"一直报错、换 openai
+        # 也不行"，就是 pdf2zh 没装好）。宁可在门口说清楚。
+        exe = engine_path(engine)
+        ok, why = engine_probe_cached(exe)
+        if not ok:
+            msg = (f"整本翻译要用 pdf2zh 引擎，它没准备好（{why}）。"
+                   "本安装包不含它；在「设置 → 翻译引擎」里下载安装，或填上 pdf2zh.exe 的路径。")
+            j.update(status="error", error=msg)
+            say(f"整本翻译失败 {pid}：pdf2zh 引擎不可用（{why}）")
+            return
+        say(f"整本翻译 {pid}: 用引擎 {exe}（{why}）")
         try:
             import pymupdf
             os.makedirs(out_dir, exist_ok=True)
@@ -503,7 +614,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     pdir_t = _page_dir(out_dir, pid, pno, t)
                     os.makedirs(pdir_t, exist_ok=True)
                     got, tail = _run_page(pdf_path, pno + 1, pdir_t, service, extra,
-                                          envs, cfg, procs, auth_out)
+                                          envs, cfg, procs, auth_out, engine)
                     if auth_out:
                         auth_error.append(auth_out[0])
                         return

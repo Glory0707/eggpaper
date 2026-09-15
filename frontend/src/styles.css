@@ -867,6 +867,32 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .f-row { margin-bottom: 12px; }
 .modal .f-row label { display: block; margin-bottom: 5px; }
 .modal .f-row input, .modal .f-row select { width: 100%; }
+/* 翻译引擎状态：一行小字说清"能不能用、在哪、不能用怎么办" */
+.modal .eng-check {
+  float: right; padding: 1px 8px; font-size: var(--fs-xs);
+  font-family: inherit; font-weight: 500;
+}
+.modal .eng-state {
+  margin-top: 6px; font-size: var(--fs-xs); line-height: 1.6;
+  color: var(--ink-3); word-break: break-all;
+}
+.modal .eng-state code { font-family: var(--mono); font-size: 0.95em; }
+.modal .eng-state.ok { color: var(--ink-2); }
+.modal .eng-state.bad { color: var(--vermilion); }
+/* 一键装引擎：没引擎时它是这一栏最该点的东西 */
+.modal .eng-actions { margin-top: 8px; }
+.modal .eng-install {
+  padding: 4px 12px; font-size: var(--fs-sm); font-family: inherit;
+  background: var(--ink); color: var(--card); border-color: var(--ink);
+}
+.modal .eng-install:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+.modal .eng-file {
+  margin-left: 8px; padding: 4px 12px; font-size: var(--fs-sm); font-family: inherit;
+}
+.modal .eng-hint {
+  display: block; margin-top: 6px; font-size: var(--fs-xs);
+  color: var(--ink-3); line-height: 1.6; word-break: break-all;
+}
 /* 选项下面的一行小字：说清"选了它会发生什么"。字号比标签小一档，不抢视线 */
 .modal .f-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; align-items: center; }
 /* 应用内对话框（确认 / 输入）：比设置窄一点，正文一行一句，确定键可以是朱红 */

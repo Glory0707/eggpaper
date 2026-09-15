@@ -88,6 +88,21 @@ export const api = {
   nativeWindow: () => req('POST', '/api/window'),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
+  // 整本翻译引擎（pdf2zh）在哪、能不能跑：设置里显示状态用
+  pdf2zhEngine: (path = '') =>
+    req('GET', '/api/pdf2zh/engine' + (path ? `?path=${encodeURIComponent(path)}` : '')),
+  pdf2zhInstall: (url = '') => req('POST', '/api/pdf2zh/install', { url }),
+  pdf2zhInstallStatus: () => req('GET', '/api/pdf2zh/install-status'),
+  // 从本地 zip 装引擎：multipart 上传（走 127.0.0.1，300MB 十几秒）
+  pdf2zhInstallFromFile: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return fetch('/api/pdf2zh/install-from-file', { method: 'POST', body: fd })
+      .then(async r => {
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`)
+        return r.json()
+      })
+  },
 }
 
 /* SSE 流式回答。EventSource 不能 POST，所以用 fetch + ReadableStream 自己拆帧。

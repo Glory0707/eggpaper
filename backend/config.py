@@ -28,6 +28,11 @@ DEFAULTS = {
         # openai/deepseek 会用「设置」里已填的那套 key 和模型（见 main._pdf2zh_env）。
         "service": "bing",
         "options": "",         # 透传给 pdf2zh CLI 的额外参数
+        # pdf2zh.exe 的位置。留空 = 自动找（PATH → 安装目录 → 数据目录 engines/
+        # → 常见 Python Scripts）。**给别人装的时候常常需要填**：pip 装的 pdf2zh
+        # 落在 Python 的 Scripts 目录里，那目录不保证在 PATH 里——现场表现就是
+        # "明明装了，整本翻译却报 bing 连不上"。
+        "path": "",
     },
     "update": {
         # 更新源：一个静态目录的地址，里面放 latest.json 和安装包（见 tools/build_installer.py）
