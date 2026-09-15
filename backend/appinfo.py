@@ -88,13 +88,6 @@ def write_pointer(path: str):
         f.write(os.path.abspath(path))
 
 
-def clear_pointer():
-    try:
-        os.remove(pointer_file())
-    except OSError:
-        pass
-
-
 def _has_db(d: str) -> bool:
     return os.path.isfile(os.path.join(d, "eggpaper.db"))
 

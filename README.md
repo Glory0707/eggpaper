@@ -141,11 +141,11 @@ python tools/serve_update.py
 
 - 安装包**没有代码签名**，Windows 首次运行会提示「未知发布者」——点"仍要运行"即可。
   要消掉它得买一张代码签名证书，然后在 `installer/eggpaper.iss` 里填 `SignTool`。
-- **整本翻译（pdf2zh）没打进包**（AGPL 引擎，另装）。它在系统 PATH 里就能用；
-  没有的话，点「整本翻译」会明说"这一版安装包里没带 pdf2zh"，而不是报一堆 traceback。
+- **整本翻译（pdf2zh）没打进包**（AGPL 引擎，不随包分发）。设置 → 翻译引擎里可以
+  一键下载安装（官方自包含包，免 Python），或从本地 zip 装；已装好的会在状态里显示。
 
-**打包版的数据目录和源码运行是两处**：安装版读 `%LOCALAPPDATA%\eggpaper\data`，
-源码运行读 `backend/data`。想把开发时的库带过去，把后者整个复制到前者即可。
+**打包版的数据目录和源码运行是两处**：安装版默认读 `%LOCALAPPDATA%\eggpaper\data`，
+源码运行读 `backend/data`；设置里可把数据目录迁到任意位置（如 D 盘），重启后自动搬迁。
 
 ## 运行
 

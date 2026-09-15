@@ -880,8 +880,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .modal .viz-sub { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .modal .test-btn { padding: 3px 12px; font-size: var(--fs-sm); font-family: inherit; white-space: nowrap; }
-.modal .test-btn.ok, .modal .tmark-ok { color: #2e7d43; font-weight: 700; }
-.modal .test-btn.bad, .modal .tmark-bad { color: var(--vermilion); font-weight: 700; }
+.modal .test-btn.ok, .modal .tmark.ok { color: #2e7d43; font-weight: 700; }
+.modal .test-btn.bad, .modal .tmark.bad { color: var(--vermilion); font-weight: 700; }
 .modal .quit-btn { margin-right: auto; padding: 2px 10px; font-size: var(--fs-sm); font-family: inherit; color: var(--vermilion); border-color: var(--hairline); }
 .modal .quit-btn:hover { border-color: var(--vermilion); }
 /* 翻译引擎状态：一行小字说清"能不能用、在哪、不能用怎么办" */
