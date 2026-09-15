@@ -60,47 +60,53 @@ function jumpNote(n) {
   jumpPara(n.para_idx)
 }
 
-/* ---------- 六个问题（「问题」页签） ----------
+/* ---------- 五个问题（「问题」页签） ----------
    段落角色退到幕后：页边书签、略读蒙纱、点段改判、跳转定位一律照旧，
-   但"图例 + 计数"那块 UI 换成读者真正会问的六个问题。
+   但"图例 + 计数"那块 UI 换成读者真正会问的五个问题。
    故意不把答案摊开：问题先出现，点哪条才展开哪条。
-   六条答案都在**首次析读时一次写完**并按篇缓存，进这一页就有，不需要点任何按钮。 */
+   五条答案都在**首次析读时一次写完**并按篇缓存，进这一页就有，不需要点任何按钮。
+   （原来的①要解决什么/②为什么要解决重合度太高——同一件事的两种说法，合成了一问。） */
 const SIX = [
-  { k: 'q1', n: 1, q: '要解决什么？' },
-  { k: 'q2', n: 2, q: '为什么要解决？', gen: 'why' },
-  { k: 'q3', n: 3, q: '怎么解决的？' },
-  { k: 'q4', n: 4, q: '还有什么没解决？' },
-  { k: 'q5', n: 5, q: '还能做什么？', gen: 'next' },
-  { k: 'q6', n: 6, q: '换个学科怎么看？', gen: 'lens' },
+  { k: 'q1', n: 1, q: '要解决什么、为什么？', gen: 'motive' },
+  { k: 'q2', n: 2, q: '怎么解决的？' },
+  { k: 'q3', n: 3, q: '还有什么没解决？' },
+  { k: 'q4', n: 4, q: '还能做什么？', gen: 'next' },
+  { k: 'q5', n: 5, q: '换个学科怎么看？', gen: 'lens' },
 ]
-const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false, q6: false })
+const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false })
 function toggleSix(k) { openSix[k] = !openSix[k] }
 
-const six = reactive({ problem: null, why: null, how: null, next: null, lens: null })
-const sixBusy = reactive({ problem: false, why: false, how: false, next: false, lens: false })
-/* 六问各自的"答没答出来"。免费的 ③④ 看骨架，①②⑤⑥ 看有没有取过。
-   综述的 ③ 走模型生成的"谱系问"（研究型没有实验证据层，那条链对综述是空壳）。
+const six = reactive({ motive: null, how: null, next: null, lens: null })
+const sixBusy = reactive({ motive: false, how: false, next: false, lens: false })
+/* 五问各自的"答没答出来"。免费的 ②③ 看骨架，①④⑤ 看有没有取过。
+   综述的 ② 走模型生成的"谱系问"（研究型没有实验证据层，那条链对综述是空壳）。
    有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
 const sixHas = computed(() => ({
-  q1: !!six.problem?.text, q2: !!six.why?.text,
-  q3: isReview.value ? !!six.how?.text : !!store.analysis.claims.length,
-  q4: !!(limitParas.value.length + warnNotes.value.length),
-  q5: !!six.next?.items?.length, q6: !!six.lens?.items?.length,
+  q1: !!six.motive?.text,
+  q2: isReview.value ? !!six.how?.text : !!store.analysis.claims.length,
+  q3: !!(limitParas.value.length + warnNotes.value.length),
+  q4: !!six.next?.items?.length, q5: !!six.lens?.text,
 }))
 
 async function loadSix() {
-  Object.assign(six, { problem: null, why: null, how: null, next: null, lens: null })
+  Object.assign(six, { motive: null, how: null, next: null, lens: null })
   Object.keys(openSix).forEach(k => (openSix[k] = false))   // 换篇回到"只有问题"的样子
   if (!store.currentId) return
   const mine = paperEpoch()
   try {
     const r = await api.sixAnswers(store.currentId)
     if (!samePaper(mine)) return        // 回来时已经换篇：这是上一篇的答案
+    // 旧口径的缓存不认：problem/why 已并入 motive（服务端不再认这两个 key），
+    // lens 从"几条视角"换成了"一段话"、next 换成"两条腿"（服务端会重新生成）。
+    // 删掉让它们走下面的静默补跑，别占着位置挡住补跑。
+    delete r.problem; delete r.why
+    if (r.lens && !r.lens.text) delete r.lens
+    if (r.next && !r.next.v) delete r.next
     Object.assign(six, r)
   } catch { /* 没缓存很正常 */ }
   // 还缺的那几问自己补上：新的析读会一次写全，但**早先析读过的论文**（生成逻辑上线之前）
   // 或者当时没写成的那一问，这里静默重取一次——界面上不再有「获取」按钮
-  const wanted = ['problem', 'why', 'next', 'lens'].concat(isReview.value ? ['how'] : [])
+  const wanted = ['motive', 'next', 'lens'].concat(isReview.value ? ['how'] : [])
   for (const k of wanted) {
     if (six[k] || sixBusy[k]) continue
     sixBusy[k] = true
@@ -272,7 +278,7 @@ watch(() => store.analysis.status, s => {
   loadSuggest(); loadCachedBlocks()
   termsTried.value = ''              // 重算析读 = 词表也重发了一批，允许再补一次空白
   loadTerms()
-  loadSix()          // 服务端重算析读时把六问的答案一并清了（answers_clear），
+  loadSix()          // 服务端重算析读时把五问的答案一并清了（answers_clear），
                      // 前端留着旧的就会显示上一个世代的内容，而"已有答案"又把
                      // 「获取 / 补全」按钮全藏起来 —— 只能换篇才能再取一次
 })
@@ -510,12 +516,12 @@ watch(() => store.currentId, () => {
         <!-- 没析读时只陈述状态：顶栏那颗「析读」就在上面，同一屏里放第二个同名按钮是重复 -->
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? '还没析读：读完全文才有这六个问题的答案。' : '这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这六问答不了。' }}
+            {{ store.paras.length ? '还没析读：读完全文才有这五个问题的答案。' : '这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这五问答不了。' }}
           </div>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这六问答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图。</span></div>
+          <div class="r-note">这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这五问答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图表。</span></div>
         </template>
 
         <template v-else>
@@ -535,30 +541,24 @@ watch(() => store.currentId, () => {
             <div class="six-fold" :class="{ open: openSix[s.k] }">
              <div class="six-fold-in">
             <div class="six-a">
-              <!-- ① 要解决什么：**直接说出来**。原文里没有哪一句现成写着"我们要解决什么"，
-                   那是要从引言里综合出来的——所以这一问的答案是模型的一句话，段落只作为依据
+              <!-- ① 要解决什么、为什么：**直接说出来**。原文里没有哪一句现成写着"我们要解决什么"，
+                   那是要从引言里综合出来的——所以这一问的答案是模型的几句话，段落只作为依据
                    标在句尾（原文在纸上，点 ¶ 就到，不必在这里再抄一遍）。 -->
               <template v-if="s.k === 'q1'">
-                <MdLite v-if="six.problem?.text" class="six-txt" :text="six.problem.text" @cite="jumpPara" />
-                <div v-else class="six-note">{{ sixBusy.problem ? '…' : '未生成' }}</div>
+                <MdLite v-if="six.motive?.text" class="six-txt" :text="six.motive.text" @cite="jumpPara" />
+                <div v-else class="six-note">{{ sixBusy.motive ? '…' : '未生成' }}</div>
               </template>
 
-              <!-- ② 为什么要解决：析读时已经写好（含依据段号） -->
-              <template v-else-if="s.k === 'q2'">
-                <MdLite v-if="six.why?.text" class="six-txt" :text="six.why.text" @cite="jumpPara" />
-                <div v-else class="six-note">{{ sixBusy.why ? '…' : '未生成' }}</div>
-              </template>
-
-              <!-- ③ 研究型：主张 → 证据链；综述：由模型说清"它把文献怎么组织的"
+              <!-- ② 研究型：主张 → 证据链；综述：由模型说清"它把文献怎么组织的"
                    （综述没有实验证据层，主张-证据链在那儿是空壳，见后端 answer_how_review） -->
-              <template v-else-if="s.k === 'q3' && isReview">
+              <template v-else-if="s.k === 'q2' && isReview">
                 <MdLite v-if="six.how?.text" class="six-txt" :text="six.how.text" @cite="jumpPara" />
                 <div v-else class="six-note">{{ sixBusy.how ? '…' : '未生成' }}</div>
                 <div class="six-foot">
                   <button @click="openMethod">谱系卡 ↗</button>
                 </div>
               </template>
-              <template v-else-if="s.k === 'q3'">
+              <template v-else-if="s.k === 'q2'">
                 <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id">
                   <div class="c-head" @click="c.anchors.length && jumpPara(c.anchors[0])">
                     <span class="c-id">{{ c.id }}</span>
@@ -580,8 +580,8 @@ watch(() => store.currentId, () => {
                 </div>
               </template>
 
-              <!-- ④ 还有什么没解决：局限段 + 眉批里标"有坑"的句子 -->
-              <template v-else-if="s.k === 'q4'">
+              <!-- ③ 还有什么没解决：局限段 + 眉批里标"有坑"的句子 -->
+              <template v-else-if="s.k === 'q3'">
                 <div v-for="p in limitParas" :key="p.idx" class="gap-node">
                   <div class="gap-row" @click="jumpPara(p.idx)">
                     <span class="g-tag">¶{{ p.idx }}</span>
@@ -602,14 +602,22 @@ watch(() => store.currentId, () => {
                 </div>
               </template>
 
-              <!-- ⑤⑥ 生成型：几条方向 / 几个学科视角，每条都能顺下去问 -->
-              <template v-else>
+              <!-- ④ 还能做什么：几条方向（论文自己承认的 + AI 自己想的新研究），
+                   每条都能顺下去问 -->
+              <template v-else-if="s.k === 'q4'">
                 <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
                   <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
                 <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : '未生成' }}</div>
+              </template>
+
+              <!-- ⑤ 换个学科怎么看：一段话——论文涉及的学科 + 没涉及但沾边的学科，
+                   读到这篇是什么感受、有什么想法意见 -->
+              <template v-else-if="s.k === 'q5'">
+                <MdLite v-if="six.lens?.text" class="six-txt" :text="six.lens.text" @cite="jumpPara" />
+                <div v-else class="six-note">{{ sixBusy.lens ? '…' : '未生成' }}</div>
               </template>
             </div>
              </div>
@@ -672,7 +680,7 @@ watch(() => store.currentId, () => {
         </div>
         <div class="card-eye" v-else>
           <div class="ce-one">{{ prettyChem(store.summary.one_line) }}</div>
-          <div class="ce-row go" @click="gotoSix('q3')" title="去「问题」页第 3 问：主张与证据链">
+          <div class="ce-row go" @click="gotoSix('q2')" title="去「问题」页第 2 问：主张与证据链">
             <span class="ce-k">发现</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>

@@ -148,7 +148,7 @@ export async function refreshCollections() {
 }
 
 /* 按篇请求的统一口径：发之前记下"现在是哪一篇"（store.epoch），回来时对不上就丢掉。
-   为什么要有它：一眼卡/六问/导师三问/方法卡都是**秒级**的模型调用，用户"打开 A 看一眼
+   为什么要有它：一眼卡/五问/导师三问/方法卡都是**秒级**的模型调用，用户"打开 A 看一眼
    就点 B"时，A 的答案会落在 B 上（B 的速览页显示 A 的发现、A 的角色套到 B 的段落上），
    而 store.openPaper 是手写清场的——漏一个字段就漏一个洞。 */
 export function paperEpoch() { return store.epoch }
@@ -157,7 +157,7 @@ export function samePaper(mine) { return store.epoch === mine }
 export async function openPaper(pid) {
   store.currentId = pid
   // "现在看的是哪一篇"的版本号：每换一篇 +1。按篇发的请求回来时对不上就丢掉——
-  // 一眼卡/析读/眉批/六问这些请求是**秒级**的，用户"打开 A 看一眼就点 B"时，
+  // 一眼卡/析读/眉批/五问这些请求是**秒级**的，用户"打开 A 看一眼就点 B"时，
   // A 的结果会落在 B 身上（B 的速览页显示 A 的发现、A 的角色套到 B 的段落上）。
   store.epoch++
   const pos = lsGet(`pos:${pid}`, {})

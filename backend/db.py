@@ -97,7 +97,7 @@ def _migrate(c: sqlite3.Connection):
         # 眉批类型从"九选一"放开成开放词表：label 是自造的短标签，band 决定它的笔触档位
         "ALTER TABLE marginalia ADD COLUMN label TEXT",
         "ALTER TABLE marginalia ADD COLUMN band TEXT",
-        # 文献类型：research / review（导入时启发式判定；综述走另一套六问③、谱系卡与略读护栏）
+        # 文献类型：research / review（导入时启发式判定；综述走另一套五问②、谱系卡与略读护栏）
         "ALTER TABLE papers ADD COLUMN paper_type TEXT DEFAULT ''",
         # 内容指纹（sha256）：改了名的同一份文件不再占第二份库空间，批注/译文全复用已有那篇
         "ALTER TABLE papers ADD COLUMN pdf_hash TEXT DEFAULT ''",

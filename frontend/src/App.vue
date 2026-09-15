@@ -132,7 +132,7 @@ watch(() => store.analysis.status, (n, o) => {
   // 只认 running→done 会在"排队→读完"这条路径上漏掉这一拍。
   if (n === 'done' && o && o !== 'done') {
     rollOnce(); reloadSummary()
-    // 析读的产出全在右栏（骨架、六问、一眼卡）：这一局真的跑完了就把它展开，
+    // 析读的产出全在右栏（骨架、五问、一眼卡）：这一局真的跑完了就把它展开，
     // 别让用户读完再去找那颗 ◂。只在**这一局是本会话发起/见过在跑**时动手——
     // 打开一篇早就析读完的论文不算，用户特意收起的右栏不该每次换篇都被强行撑开。
     const mine = analyzeReq.id === store.currentId && Date.now() - analyzeReq.at < 600000

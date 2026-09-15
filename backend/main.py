@@ -676,24 +676,20 @@ def _run_analysis(pid: str, paras: list):
                 data["purposes"][str(p["idx"])] = "参考文献"
         db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
                                               for k, v in data["roles"].items()})
-        # 主张换了一批，所有"由主张派生的东西"就都是旧结论了：六问②⑤⑥、一眼卡、
+        # 主张换了一批，所有"由主张派生的东西"就都是旧结论了：五问②④⑤、一眼卡、
         # 推荐问题、导师三问、方法卡。只清其中一半是最难看的——一眼卡说 A，骨架里
-        # 已经没有 A 了，或者三问还在问一个被删掉的主张。宁可再生一次。
+        # 已经没有 A 了，或者三问还在问一个被删掉的主张。宁再生一次。
         db.answers_clear(pid)
-        prob = str(data.get("problem") or "").strip()
-        if prob:
-            db.answer_put(pid, "problem", {"text": prob, "cites": llm.cites_of(prob)})
         db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
                         abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
-        # 六问剩下的三条在**首次析读时一次备齐**：读者点开"为什么 / 还能做什么 / 换个学科"
+        # 五问剩下的三条在**首次析读时一次备齐**：读者点开"动机 / 还能做什么 / 换个学科"
         # 的时候不该再等一次模型调用，界面上也就不需要那个「获取」按钮了。
         # 三条互不依赖 → 并行跑；单条失败只记一行日志，绝不让整次析读陪葬
-        # （那一问留空，重新析读会再来一次）。
+        # （那一问留空，重新析读会再来一次）。旧口径的①②两问（problem/why）已合成
+        # motive，不再依赖骨架顺手写的 problem 字段——它由模型对着缺口段现场生成。
         p2 = db.get_paper(pid)
-        # 骨架的 problem 字段是"顺手写的"，模型经常不给 → 少了它六问就永远缺第一问
-        # （线上就是这样：三篇论文都有 why/next/lens，却都没有 problem）。缺了就补跑。
-        todo = ["why", "next", "lens"] + ([] if prob else ["problem"])
+        todo = ["motive", "next", "lens"]
         futs = {ex.submit(_mock_six, k) if demo else ex.submit(_gen_six, p2, k): k
                 for k in todo}
         if not demo:
@@ -725,7 +721,7 @@ def _run_analysis(pid: str, paras: list):
                 elif got.get("text") or got.get("items"):
                     db.answer_put(pid, k, got)
                 else:
-                    _applog(f"析读 {pid}: 六问·{k} 这次是空的")
+                    _applog(f"析读 {pid}: 五问·{k} 这次是空的")
             except Exception as e:
                 # 单条失败只记日志：限流/格式错不该让整次析读陪葬，那一问留空待补
                 _applog(f"析读 {pid}: {k} 没生成（{_human_msg(e)}）")
@@ -1103,7 +1099,7 @@ def _require_shape(data, keys: tuple, what: str):
     为什么：`parse_json` 取"第一个 { 到最后一个 }"，模型把结果包成 `[{...}]` 时能解析成
     里面那个对象，于是 `data.get("questions", [])` 得到 `[]`——而路由会把这个空壳
     `json.dumps` 存进 papers，从此永远命中缓存（速览页空着、而且不会自愈，因为"重新析读"
-    也不一定清得到它）。六问与引用早就做了这个判断，这里是把它补成统一的一道闸。
+    也不一定清得到它）。五问与引用早就做了这个判断，这里是把它补成统一的一道闸。
     """
     if not isinstance(data, dict) or not any(data.get(k) for k in keys):
         raise HTTPException(503, f"{what}没生成出来（模型这次返回的是空的），过一会儿再点一次")
@@ -1156,7 +1152,7 @@ def ask_visual(body: dict):
 # 这三问按需生成、按篇缓存，和「获取」同一个纪律。语料只喂相关的几类段落。
 
 # problem 也走这条：析读时会顺带产出（骨架提示词的 problem 字段），没有缓存时现生成
-SIX_KEYS = ("problem", "why", "how", "next", "lens")
+SIX_KEYS = ("motive", "how", "next", "lens")
 
 
 def _paras_of_role(pid: str, roles: set, cap: int = 8):
@@ -1175,16 +1171,13 @@ def _gen_six(p: dict, key: str):
         if p.get("paper_type") == "review":
             return llm.answer_how_review(p["title"], claims, db.get_paragraphs(pid))
         raise HTTPException(400, "研究型论文的这一问由骨架的主张-证据链直接拼出，无需生成")
-    if key == "problem":
-        return llm.answer_problem(p["title"],
-                                  _paras_of_role(pid, {"gap"}),
-                                  _paras_of_role(pid, {"background"}, 6),
-                                  claims)
-    if key == "why":
-        return llm.answer_why(p["title"],
-                              _paras_of_role(pid, {"gap"}),
-                              _paras_of_role(pid, {"background"}, 6),
-                              claims)
+    if key == "motive":
+        # ①「要解决什么、为什么」：原来的①②两问产出高度重合（都吃缺口段+背景段+主张），
+        # 读者也分不清该点哪个——合成一问，两三句话说清"解决什么 + 为什么非解决不可"
+        return llm.answer_motive(p["title"],
+                                 _paras_of_role(pid, {"gap"}),
+                                 _paras_of_role(pid, {"background"}, 6),
+                                 claims)
     if key == "next":
         warns = [n["note"] for n in db.get_marginalia(pid) if _band(n) == "warn"][:6]
         return llm.answer_next(p["title"],
@@ -1215,17 +1208,19 @@ def _mock_six(key: str) -> dict:
     if key == "how":
         return {"text": "〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
                         "最后落到位开放问题上 [¶5]。", "cites": [5]}
-    if key == "problem":
-        return {"text": "〔演示模式〕现有做法依赖随机、不可控的缺陷位点，因此这篇论文要用本征有序的"
-                        "结构位点来实现可控的高活性 [¶3]。", "cites": [3]}
-    if key == "why":
-        return {"text": "〔演示模式〕这件事之所以重要，是因为它卡住了下游一整类应用 [¶2]；"
-                        "而到现在没解决，是因为常规做法要引入不可控的缺陷 [¶3]。", "cites": [2, 3]}
+    if key == "motive":
+        return {"text": "〔演示模式〕现有做法依赖随机、不可控的缺陷位点，做出来的活性没法设计 [¶3]；"
+                        "这件事卡住了下游一整类应用，而这到今天没有好解法 [¶2]——"
+                        "所以这篇要用本征有序的结构位点来实现可控的高活性。", "cites": [2, 3]}
+    if key == "lens":
+        return {"text": "〔演示模式〕做表征的人会觉得样品的说辞漂亮但原位数据给得太少；"
+                        "隔壁做计算的会想拿这套实验数字先验一验自己的力场；"
+                        "离得最远的做政策的人看到的是成本表里那笔没算进去的外部性。", "cites": []}
     return {"items": [
-        {"lead": "演示方向", "text": "〔演示模式〕换一组对照样品把这条路径单离出来 [¶12]。",
+        {"lead": "它承认的", "text": "〔演示模式〕换一组对照样品把这条路径单离出来 [¶12]。",
          "ask": "怎么设计对照才能单离这条路径？", "cites": [12]},
-        {"lead": "演示方向二", "text": "〔演示模式〕把同样的判据搬到另一族氧化物上验证 [¶18]。",
-         "ask": "换到另一族氧化物要先验证什么？", "cites": [18]},
+        {"lead": "新方向", "text": "〔演示模式〕把这套判据搬去另一族氧化物，够撑一篇新论文："
+         "体系换了、结论还没人验证过 [¶18]。", "ask": "换到另一族氧化物要先验证什么？", "cites": [18]},
     ]}
 
 
@@ -1242,6 +1237,13 @@ def six_answer(pid: str, key: str):
     if key not in SIX_KEYS:
         raise HTTPException(404, "没有这个问题")
     cached = db.answer_get(pid, key)
+    # ⑤⑥换过口径：lens 从"几条视角"改成"一段话"（旧缓存是 items 没有 text），
+    # next 换成"两条腿"（旧缓存没有 v 标记）——旧口径留着只会照旧显示，当它不存在，
+    # 走下面的重新生成把这条缓存覆盖掉。
+    if cached and key == "lens" and not cached.get("text"):
+        cached = None
+    if cached and key == "next" and not cached.get("v"):
+        cached = None
     if cached:
         return cached
     _require_paras(pid)
@@ -1381,7 +1383,8 @@ def figures(pid: str):
     doc = pymupdf.open(p["path"])
     try:
         for pno in range(len(doc)):
-            rects = [pymupdf.Rect(i["bbox"]) for i in doc[pno].get_image_info()
+            page = doc[pno]
+            rects = [pymupdf.Rect(i["bbox"]) for i in page.get_image_info()
                      if i["bbox"][2] - i["bbox"][0] > 80 and i["bbox"][3] - i["bbox"][1] > 60]
             merged = []
             for r in rects:
@@ -1396,7 +1399,38 @@ def figures(pid: str):
                     merged.append(r)
             for r in merged:
                 out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
-                            "x1": round(r.x1, 1), "y1": round(r.y1, 1)})
+                            "x1": round(r.x1, 1), "y1": round(r.y1, 1), "kind": "figure"})
+            # 表格：图只认位图，矢量画的表（论文里的表几乎都是）它一个都看不见。
+            # 表的骨架是一组横线（booktabs 顶/中/底线）：把整页的细横线按「x 相互重叠、
+            # y 相邻」聚簇，≥3 条、够宽、有行距的那簇就是一张表。实测这比 find_tables
+            # 准：lines 策略认不出 booktabs 的横线（0 命中），text 策略把整页双栏正文
+            # 都当成表（9 页"检出"8 张）。行距上限 130：数据行不画中间线，隔得远也是同一张。
+            try:
+                rules = sorted((d["rect"] for d in page.get_drawings()
+                                if d["rect"].height < 3 and d["rect"].width > 40),
+                               key=lambda r: r.y0)
+                groups: list = []
+                for r in rules:
+                    best = None
+                    for g in groups:
+                        if r.x0 <= g["x1"] + 10 and r.x1 >= g["x0"] - 10 and r.y0 - g["y1"] < 130:
+                            if best is None or g["y1"] < best["y1"]:
+                                best = g
+                    if best is not None:
+                        best["x0"] = min(best["x0"], r.x0)
+                        best["x1"] = max(best["x1"], r.x1)
+                        best["y1"] = max(best["y1"], r.y1)
+                        best["n"] += 1
+                    else:
+                        groups.append({"x0": r.x0, "x1": r.x1, "y0": r.y0, "y1": r.y1, "n": 1})
+                for g in groups:
+                    if g["n"] >= 3 and g["y1"] - g["y0"] >= 20 and g["x1"] - g["x0"] >= 80:
+                        out.append({"page": pno,
+                                    "x0": round(g["x0"] - 8), "y0": round(g["y0"] - 16),
+                                    "x1": round(g["x1"] + 8), "y1": round(g["y1"] + 30),
+                                    "kind": "table"})
+            except Exception:
+                pass
     finally:
         doc.close()
     _fig_cache[key] = out

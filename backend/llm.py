@@ -440,7 +440,8 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
             "好的问题具体到这篇的内容：怎么做的、数字在什么条件下得的、这个结论能不能用到别的体系、"
             "某个术语在这里到底指什么。你比他更懂这篇，什么最值得问由你判断——"
             "只要别停在'这篇讲了什么'这种翻开摘要就能回答的层面。"
-            "每条一两句说完，别写成一段（面板里是竖排按钮，太长读着累）。"
+            "每条是**一个**短问题：一句话、十五到二十五字问完，别加铺垫，也别一口气问两件事"
+            "（面板里是竖排按钮，长句读着累）。"
             "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。"},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
     ], max_tokens=4000, temperature=0.5)
@@ -453,13 +454,14 @@ def _clip_q(q: str) -> str:
     """问题的长度上限只做兜底，且断在标点处。
 
     原来直接 `[:80]`——四个问题末尾全是半句（"…是否包含 vdW 色散修正与零点能"），
-    读者拿到的是残句，比长一点糟糕得多。"""
+    读者拿到的是残句，比长一点糟糕得多。口径收窄成"短问题"后，兜底也跟着收：
+    超 60 字按用户的标准已经是长的了。"""
     q = q.strip()
-    if len(q) <= 150:
+    if len(q) <= 60:
         return q
-    cut = q[:150]
+    cut = q[:60]
     stop = max(cut.rfind("？"), cut.rfind("。"), cut.rfind("；"), cut.rfind("? "))
-    return cut[:stop + 1] if stop > 60 else cut + "…"
+    return cut[:stop + 1] if stop > 18 else cut + "…"
 
 
 # ---------------- 一眼卡 ----------------
@@ -977,28 +979,25 @@ def _items(raw) -> dict:
     return {"items": items[:3]}
 
 
-def answer_problem(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
-    """要解决什么：**直接说出来**，不摘抄原文。
-
-    ① 原来是"列出缺口段"，读者看到的是段落号加一截原文——可原文里根本没有哪一句写着
-    "我们要解决什么"，那是要从引言里综合出来的。所以这一问现在由模型给一句明确的陈述，
-    段落只作为依据标在句尾（读者要的原文在纸上，点 ¶ 就到）。
-    给旧论文补这一问时走这条；重新析读之后，骨架提示词已经把 problem 一起产出了。
-    """
+def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
+    """①「要解决什么、为什么」：原来的①②两问（要解决什么 / 为什么要解决）各吃一遍
+    缺口段+背景段+主张，出来的常是同一件事的两种说法——合并成一问，两三句话说清
+    "要解决什么"和"为什么非解决不可"（多重要、为什么到现在还没解决）。"""
     out = chat([
         {"role": "system", "content":
-            "你在帮一位研究生说清一篇论文'要解决什么'。看下面给出的缺口段、背景段与主张，"
-            "用你自己的话给出一句明确的陈述：谁在什么条件下还没做到什么，因此这篇论文要回答什么。"
-            "要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；一到两句；"
+            "你在帮一位研究生说清一篇论文'要解决什么、为什么值得解决'。看下面给出的缺口段、"
+            "背景段与主张，用你自己的话说清两件事：这篇要解决什么（谁在什么条件下还没做到什么，"
+            "因此这篇论文要回答什么）；为什么非解决不可（对领域意味着什么、为什么到现在还没解决"
+            "或有争议）。要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；一共两三句；"
             "句尾用 [¶n] 标出你是从哪几段看出来的。"
-            '只输出 JSON：{"text":"<一两句话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
+            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n\n"
             f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
             f"[背景]\n{_paras_block(backgrounds, 400)}\n\n"
             "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
     ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(parse_json(out).get("text") or "").strip()[:400]
+    text = str(parse_json(out).get("text") or "").strip()[:500]
     return {"text": text, "cites": cites_of(text)}
 
 
@@ -1021,26 +1020,12 @@ def answer_how_review(title: str, claims: list, paras: list) -> dict:
     return {"text": text, "cites": cites_of(text)}
 
 
-def answer_why(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
-    """为什么要解决：为什么重要、为什么到现在还没解决。只吃缺口段 + 背景段 + 主张。"""
-    out = chat([
-        {"role": "system", "content":
-            "你在帮一位研究生说清一篇论文'为什么值得做'。只依据给你的段落，说两句话："
-            "这件事为什么重要（对领域、对什么有影响），以及为什么到现在还没解决或有争议。"
-            "能标依据的句子都标上段号（如 [¶3]）。"
-            '只输出 JSON：{"text":"<两句话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
-        {"role": "user", "content":
-            f"论文标题：{title or ''}\n\n"
-            f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
-            f"[背景]\n{_paras_block(backgrounds, 400)}\n\n"
-            "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
-    ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(parse_json(out).get("text") or "").strip()[:400]
-    return {"text": text, "cites": cites_of(text)}
-
-
 def answer_next(title: str, limits: list, exts: list, claims: list, warns: list) -> dict:
-    """还能做什么：从作者承认的局限、他做的延伸、以及可疑之处往前推 2~3 条。"""
+    """还能做什么：两条腿都要有——论文自己承认的局限/延伸里长出来的方向，以及你顺着这篇
+    想出来的新研究（可以是一篇新论文的体量：新问题、新体系、新方法）。
+
+    v=2：口径换过（旧版只从论文自身往前推，没有"你的新方向"）。带着版本戳，
+    服务端见到旧版缓存就当没有、重新生成——老论文打开时自动换到新口径。"""
     payload = (f"论文标题：{title or ''}\n\n"
                f"[作者承认的局限]\n{_paras_block(limits)}\n\n"
                f"[作者做的延伸]\n{_paras_block(exts, 400)}\n\n"
@@ -1049,36 +1034,39 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
         payload += "\n\n[可疑之处]\n" + "\n".join(f"- {w}" for w in warns)
     out = chat([
         {"role": "system", "content":
-            "你是带学生读论文的师兄。基于这篇论文承认的局限、它自己做的延伸、以及被标出的可疑之处，"
-            "说出 2~3 条'接下来可以做什么'——要具体、可执行、有指向（该做哪个材料、该补哪组对照、"
-            "该换哪种方法），每条尽量一两句话说清；'进一步研究''拓宽应用'这类话不算方向。"
-            "这一栏的落点是**接下来做什么**：已经在别处说过的判断不必再交代一遍，"
-            "直接说做什么、做了能拿到什么。"
-            "每条配一句能直接拿去问模型的追问。"
-            '只输出 JSON：{"items":[{"lead":"<方向名，≤10字>",'
+            "你是带学生读论文的师兄。给出 2~3 条'接下来可以做什么'，两条腿都要有："
+            "①从论文自己承认的局限、它做的延伸或被标出的可疑之处长出来的方向；"
+            "②至少一条是你**自己的思考**：顺着这篇的结论还能做什么新研究——可以是一篇新论文的体量"
+            "（新问题、新体系、新方法都行），说清新在哪、为什么值得做、大概要动哪些工。"
+            "要具体、可执行、有指向（该做哪个材料、该补哪组对照、该换哪种方法）；"
+            "'进一步研究''拓宽应用'这类话不算方向。已经在别处说过的判断不必再交代。"
+            "每条配一句能直接拿去问模型的追问；lead 里点明这条是「它承认的」还是「你的新方向」。"
+            '只输出 JSON：{"items":[{"lead":"<方向名，≤10字，注明是它承认的还是你的新方向>",'
             '"text":"<做什么、为什么，句尾带依据段号 [¶n]，有依据就标>",'
             '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。'},
         {"role": "user", "content": payload},
     ], max_tokens=4000, temperature=0.45, no_think=True)
-    return _items(parse_json(out).get("items"))
+    out = _items(parse_json(out).get("items"))
+    out["v"] = 2
+    return out
 
 
 def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
-    """换个学科怎么看：同一篇论文，别的领域的人会盯什么、会问什么。"""
+    """换个学科怎么看：**一段话**。既请论文涉及的学科发言，也请没涉及但沾边、有关联的
+    学科来看——他们读到这篇是什么感受、有什么想法、意见、联想。"""
     body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
     out = chat([
         {"role": "system", "content":
-            "同一个问题，不同学科的人盯的地方不一样。这篇论文如果落到别的领域的人手里，"
-            "他会盯它哪一部分、为什么。给出 2~3 个**真的不同**的领域视角"
-            "（比如做催化的、做理论计算的、做表征的、做工程的、做产业化的），"
-            "每个视角说清'他盯什么'和'他会问什么'——从这一行自己的判据出发，"
-            "越具体越像真的。不必复述论文内容本身。"
-            '只输出 JSON：{"items":[{"lead":"<领域名，≤10字>",'
-            '"text":"<他会盯这篇的哪一点、为什么>",'
-            '"ask":"<他会提出的那个问题，≤40字>"}]}，不要代码块。'},
+            "你在帮一位研究生听一听'别的学科读这篇论文是什么感受'。写**一段话**（四五句以内），"
+            "里面既要有论文涉及的学科的视角，也要有它没涉及、但可能沾边或有关联的学科"
+            "（哪怕隔得比较远）的看法——那个人读到这篇会注意什么、会有什么想法、意见或联想，"
+            "觉得哪里有意思、哪里不买账。视角要具体、像真的有那么一个人，"
+            "不要泛泛地说'跨学科很重要'。能标依据的句子标段号（如 [¶3]）。"
+            '只输出 JSON：{"text":"<一段话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
             "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) +
             f"\n\n[正文节选]\n{body}"},
     ], max_tokens=4000, temperature=0.6, no_think=True)
-    return _items(parse_json(out).get("items"))
+    text = str(parse_json(out).get("text") or "").strip()[:800]
+    return {"text": text, "cites": cites_of(text)}
