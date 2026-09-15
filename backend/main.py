@@ -19,11 +19,15 @@ from starlette.concurrency import run_in_threadpool
 
 import appinfo
 import citation
+
+appinfo.migrate_if_needed()   # 数据目录迁移必须在 config/db 打开数据库之前完成
+
 import config
 import db
 import engine_install
 import llm
 import pdfparse
+import picker
 import translate_full
 import update
 
@@ -127,6 +131,17 @@ def _startup():
     translate_full.sweep_page_dirs(TRANSLATED_DIR) # 回收没人回来认领的页级中间产物（留给重跑复用的那批）
     _clear_zombie_jobs()
     _backfill_pdf_hashes()
+
+    def _warm_engine():
+        # 后台预热 pdf2zh 探测（--version 要 3 秒）：用户打开设置时状态已经在手，
+        # 不用看着"未安装"闪两秒才变"可用"
+        time.sleep(3)
+        try:
+            exe = translate_full.engine_path((config.load()["pdf2zh"].get("path") or "").strip())
+            translate_full.engine_probe_cached(exe)
+        except Exception:
+            pass
+    threading.Thread(target=_warm_engine, daemon=True).start()
 
 
 def _sweep_orphan_translations():
@@ -232,7 +247,8 @@ def get_settings():
     return {"provider": {"base_url": p["base_url"], "model": p["model"],
                          "vision_model": p.get("vision_model", ""),
                          "has_key": bool(p["api_key"]), "key_masked": (p["api_key"][:6] + "…") if p["api_key"] else ""},
-            "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {})}
+            "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
+            "data_dir": appinfo.data_dir()}
 
 
 @app.put("/api/settings")
@@ -283,6 +299,41 @@ def pdf2zh_engine(path: str = ""):
     exe = translate_full.engine_path(want)
     ok, why = translate_full.engine_probe_cached(exe)
     return {"ok": ok, "path": exe, "why": why, "configured": bool(want)}
+
+
+@app.post("/api/data/pick")
+def data_pick():
+    """弹原生目录选择框，返回选中的路径（取消返回空串）。"""
+    return {"path": picker.pick_folder("选择数据目录")}
+
+
+@app.post("/api/data/location")
+def set_data_location(body: dict):
+    """改数据目录：写指针，重启后 migrate_if_needed() 自动把数据整体搬过去。
+
+    当场能拦的都拦下（绝对路径、非程序目录、翻译进行中）；剩下的交给启动时的迁移。
+    """
+    target = str((body or {}).get("path") or "").strip().strip('"')
+    if not target:
+        raise HTTPException(400, "路径为空")
+    if not os.path.isabs(target):
+        raise HTTPException(400, "要填完整路径（如 D:\Papers\Eggpaper）")
+    target = os.path.abspath(target)
+    low = target.lower()
+    if low.startswith(os.path.join(appinfo.exe_dir(), "_internal").lower() + os.sep):
+        raise HTTPException(400, "不能放在程序目录里")
+    if any(running["status"] == "running" for running in translate_full.JOBS.values()):
+        raise HTTPException(400, "整本翻译正在进行，结束后再迁")
+    probe = os.path.join(target, ".probe")
+    try:
+        os.makedirs(target, exist_ok=True)
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except Exception as e:
+        raise HTTPException(400, f"这个位置写不进去（{type(e).__name__}）")
+    appinfo.write_pointer(target)
+    return {"ok": True, "restart": True, "path": target}
 
 
 @app.post("/api/pdf2zh/install")

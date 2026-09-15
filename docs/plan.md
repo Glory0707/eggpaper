@@ -2312,3 +2312,10 @@ fixture Mistral 12 项（Figure 1-6 + Table 1-5）全对。叠框目检 8 个关
 版本 0.1.29。
 
 文案精简（用户要求）：整本翻译缺引擎报错、探针话术、安装错误、扫描件空态等全部收紧成短句。
+
+**数据目录**（用户：文献与析读/翻译数据要规范、好找、不能被更新卸载误删、尽量别在 C 盘）：
+数据根目录可迁移——默认 %LOCALAPPDATA%\eggpaper\data；设置里「数据目录」填新路径写指针
+（%LOCALAPPDATA%\eggpaper\data.location），重启时 migrate_if_needed() 在任何模块打开
+数据库之前把 db/文献库/译文/home/引擎整体搬过去（同盘改名瞬间完成）。另有便携模式：
+exe 旁的 data\（含 eggpaper.db 即认）。升级只清 _internal、卸载只删程序文件，数据两者
+都不沾。pdf2zh 的散写（~/.config）重定向进数据目录 home/。

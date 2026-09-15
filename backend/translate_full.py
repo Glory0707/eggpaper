@@ -450,6 +450,23 @@ def _sweep_key_copies(page_root: str, pid: str):
                     pass
 
 
+def _page_env(envs: dict) -> dict:
+    """pdf2zh 子进程的环境。HOME/USERPROFILE 指到 eggpaper 数据目录下的 home/：
+    pdf2zh 会往 ~/.config/PDFMathTranslate/ 写自己的配置——不指过去就散落在
+    C 盘用户目录（用户要求：我们装的和写的都规范在 eggpaper 的文件夹里）。
+    传给它的 --config 副本照旧生效，key 不落明文。"""
+    env = {**os.environ, **(envs or {})}
+    try:
+        import appinfo
+        home = os.path.join(appinfo.data_dir(), "home")
+        os.makedirs(home, exist_ok=True)
+        env["HOME"] = home
+        env["USERPROFILE"] = home
+    except Exception:
+        pass
+    return env
+
+
 def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
               envs: dict, cfg: str, proc_reg: list, auth_out: list, engine: str = "") -> tuple:
     """翻译一页。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
@@ -474,7 +491,7 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace",
-                                cwd=out_dir, env={**os.environ, **(envs or {})},
+                                cwd=out_dir, env=_page_env(envs),
                                 creationflags=flags, startupinfo=si)
         proc_reg.append(proc)
         threading.Thread(target=_kill_when_stale, daemon=True).start()

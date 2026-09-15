@@ -94,6 +94,8 @@ export const api = {
   pdf2zhInstall: (url = '') => req('POST', '/api/pdf2zh/install', { url }),
   pdf2zhInstallStatus: () => req('GET', '/api/pdf2zh/install-status'),
   // 从本地 zip 装引擎：multipart 上传（走 127.0.0.1，300MB 十几秒）
+  setDataLocation: (path) => req('POST', '/api/data/location', { path }),
+  dataPick: () => req('POST', '/api/data/pick', {}),
   pdf2zhInstallFromFile: (file) => {
     const fd = new FormData()
     fd.append('file', file)

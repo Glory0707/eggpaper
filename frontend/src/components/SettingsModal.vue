@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
-import { api, store, FS_SCALE, toast, checkUpdate } from '../store'
+import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
 import { vDrag } from '../drag'
 
 const emit = defineEmits(['close', 'save'])
@@ -12,17 +12,39 @@ const S = store.settings || { provider: {}, pdf2zh: {}, update: {} }
 const f = reactive({
   base_url: (S.provider || {}).base_url || '',
   model: (S.provider || {}).model || '',
-  // 这一栏原来没初始化：表单读的是 undefined，于是**配置里明明有 vision_model，
-  // 弹窗里也永远是空的**（看着像没保存上，重填一遍也填不进去）。
-  vision_model: (S.provider || {}).vision_model || '',
   api_key: (S.provider || {}).key_masked || '',
+  vision: !!(S.provider || {}).vision_model,   // 勾上 = 就用上面这个模型做视觉问答
   mock: !!S.mock,
   service: (S.pdf2zh || {}).service || 'bing',
   engine_path: (S.pdf2zh || {}).path || '',
   feed: (S.update || {}).feed_url || '',
   auto_check: (S.update || {}).auto_check !== false,
   layers: { ...store.viewer.layers },
+  data_dir: (S.data_dir || '').replace(/\$/, ''),
+  data_new: '',
 })
+const savingData = ref(false)
+const picking = ref(false)
+async function browseData() {
+  picking.value = true
+  try {
+    const r = await api.dataPick()
+    if (r.path) f.data_new = r.path
+  } catch { /* 取消或失败：留在原样 */ }
+  picking.value = false
+}
+async function moveData() {
+  const target = f.data_new.trim()
+  if (!target) { toast('先填新目录'); return }
+  savingData.value = true
+  try {
+    await api.setDataLocation(target)
+    toast('已迁移：重启 eggpaper 后生效')
+    f.data_dir = target
+    f.data_new = ''
+  } catch (e) { toast(e.message) }
+  savingData.value = false
+}
 
 /* 护眼底纹：豆沙绿 / 浅青绿 / 米黄是三个公认的经典护眼色。
    点一下立刻生效（选颜色不看效果等于没选），所以不进「保存」，直接改 store。 */
@@ -34,9 +56,7 @@ const CARES = [
 ]
 function pickCare(k) { store.viewer.care = k }
 
-/* 字号：四档，乘在 <html> 的 --fs-scale 上。大小看到才知道合不合适，所以跟护眼底纹
-   一样点一下立刻生效，不进「保存」。芯片里那个 A 的大小直接取真实倍率（em），
-   不做"看起来差很多"的示意——图跟事实对不上就是骗人。 */
+/* 字号：四档，乘在 <html> 的 --fs-scale 上。点一下立刻生效，不进「保存」。 */
 const FSS = [
   { k: 'sm', zh: '小' },
   { k: 'std', zh: '标准' },
@@ -45,16 +65,23 @@ const FSS = [
 ]
 function pickFs(k) { store.viewer.fs = k }
 const testing = ref(false)
-const reply = ref('')
+const testMark = ref('')          // 'ok' | 'bad' | ''
+const testDetail = ref('')
 
 async function test() {
   testing.value = true
-  reply.value = ''
+  testMark.value = ''
   // 先保存再测，保证测的是刚填的配置
-  await api.saveSettings({ provider: { base_url: f.base_url, model: f.model, api_key: f.api_key }, mock: f.mock })
-  store.settings = await api.settings()
-  const r = await api.testSettings()
-  reply.value = (r.ok ? '✓ ' : '✗ ') + r.reply
+  try {
+    await api.saveSettings({ provider: { base_url: f.base_url, model: f.model, api_key: f.api_key }, mock: f.mock })
+    store.settings = await api.settings()
+    const r = await api.testSettings()
+    testMark.value = r.ok ? 'ok' : 'bad'
+    testDetail.value = r.reply
+  } catch (e) {
+    testMark.value = 'bad'
+    testDetail.value = e.message
+  }
   testing.value = false
 }
 
@@ -70,8 +97,7 @@ async function checkNow() {
   toast(r?.ok ? `已经是最新的（${r.current}）` : '没读到更新源：' + (r?.reason || '地址为空'))
 }
 
-/* 在独立窗口打开：没有地址栏/标签页的一个窗口，任务栏里就是 eggpaper 自己。
-   实现是 Edge/Chrome 的应用模式——同一个引擎，不用背 WebView 运行时。 */
+/* 在独立窗口打开：没有地址栏/标签页的一个窗口，任务栏里就是 eggpaper 自己。 */
 async function openWindow() {
   try { const r = await api.nativeWindow(); toast('已用' + r.how + '打开独立窗口') }
   catch (e) { toast(e.message) }
@@ -82,13 +108,10 @@ async function quitApp() {
   try { await api.quit(); toast('正在退出…') } catch (e) { toast(e.message) }
 }
 
-/* 使用指南：一页纸，后端直接发；砍界面文案时它是安全网 */
 function openGuide() { window.open('/guide', '_blank') }
 
-/* 整本翻译引擎（pdf2zh）：不在安装包里（AGPL 引擎另装），所以"找到没有、能不能跑"
-   必须看得见。给别人装的时候，这一行就是"整本翻译为什么不能用"的答案——
-   从前它报的是"bing 连不上"，指错了方向。
-   一键装：从官方源下自包含包（约 308MB，免 Python），下完解压进数据目录的 engines/。 */
+/* 整本翻译引擎（pdf2zh）：不在安装包里（AGPL 引擎另装）。
+   状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。 */
 const eng = reactive({ busy: false, ok: false, path: '', why: '', checked: false })
 const inst = reactive({ state: 'idle', pct: 0, got: 0, total: 0, error: '' })
 let instTimer = null
@@ -98,6 +121,7 @@ async function checkEngine() {
   try {
     const r = await api.pdf2zhEngine(f.engine_path.trim())
     Object.assign(eng, { ok: r.ok, path: r.path, why: r.why, checked: true })
+    lsSet('engState', { ok: r.ok, path: r.path, why: r.why })
   } catch (e) {
     Object.assign(eng, { ok: false, path: '', why: e.message, checked: true })
   }
@@ -112,7 +136,7 @@ async function pollInstall() {
     Object.assign(inst, { state: s.state, pct: s.pct, got: s.got, total: s.total, error: s.error })
     if (s.state === 'done') {
       clearInterval(instTimer); instTimer = null
-      f.engine_path = ''                 // 让它走自动查找（engines/ 已就位）
+      f.engine_path = s.path || ''       // 装好后把路径填上
       await checkEngine()
       toast('翻译引擎装好了')
     } else if (s.state === 'error') {
@@ -131,8 +155,7 @@ async function installEngine() {
   }
 }
 
-/* 从本地 zip 装：网络到不了 GitHub 时的正路——下好一份引擎包跟安装包一起发出去，
-   对方在这里选文件就行（不需要 Python、不需要能上外网）。上传走 127.0.0.1，很快。 */
+/* 从本地 zip 装：网络到不了 GitHub 时的正路（下好一份跟安装包一起发）。 */
 const zipInput = ref(null)
 async function installFromFile(ev) {
   const file = ev.target.files?.[0]
@@ -148,55 +171,61 @@ async function installFromFile(ev) {
 }
 
 onMounted(async () => {
-  await checkEngine()
-  // 上次会话装到一半（关掉了软件）：装好了但还没探测到的话，这里补认一次
+  const cached = lsGet('engState', null)
+  if (cached) Object.assign(eng, cached, { checked: true })   // 先显示上次的结论，不闪按钮
+  checkEngine()
   try {
     const s = await api.pdf2zhInstallStatus()
-    if (s.state === 'done' && !eng.ok) await checkEngine()
+    if (s.state === 'done' && !eng.ok) checkEngine()
   } catch { /* 无所谓 */ }
 })
 onUnmounted(() => clearInterval(instTimer))
 
 function save() {
   Object.assign(store.viewer.layers, f.layers)
-  emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key, vision_model: f.vision_model },
+  emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key,
+                             vision_model: f.vision ? f.model : '' },
                  mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim() },
                  update: { feed_url: f.feed, auto_check: f.auto_check } })
 }
 </script>
 
 <template>
-  <!-- 这一层**不接点击关闭**：设置里可能填了一半（base_url、key、模型号），
-       点到窗外就丢掉是最气人的那种"手一滑"。出口只有两个：右上角 × 和「保存」。
-       （Esc 也在 App 的全局键盘处理里专门排除了这一项。） -->
+  <!-- 这一层**不接点击关闭**：设置里可能填了一半，点到窗外就丢掉最气人。
+       出口只有右上角 × 和「保存」。 -->
   <div class="modal-mask">
     <Transition name="pop" appear>
     <div class="modal" v-drag>
       <div class="modal-head" data-drag>
         <h3>设置</h3>
+        <span class="head-ver">{{ store.update.current }}</span>
+        <button class="head-link" @click="openGuide">使用指南</button>
         <button class="modal-x" title="关闭" @click="emit('close')">×</button>
       </div>
       <div class="f-row">
-        <label class="mono-label">LLM BASE URL</label>
+        <label class="mono-label">BASE URL</label>
         <input type="text" v-model="f.base_url" placeholder="https://api.deepseek.com/v1" />
-      </div>
-      <div class="f-row">
-        <label class="mono-label">模型</label>
-        <input type="text" v-model="f.model" placeholder="deepseek-chat / glm-4.7 / ..." />
       </div>
       <div class="f-row">
         <label class="mono-label">API KEY</label>
         <input type="text" v-model="f.api_key" placeholder="sk-…" />
       </div>
       <div class="f-row">
-        <label class="mono-label">视觉模型（留空禁用）</label>
-        <input type="text" v-model="f.vision_model" placeholder="glm-4.6v / gpt-4o-mini / ..." />
+        <label class="mono-label">模型</label>
+        <div class="model-row">
+          <input type="text" v-model="f.model" placeholder="deepseek-chat / glm-4.7 / ..." />
+          <label class="viz-ck"><input type="checkbox" v-model="f.vision" />视觉</label>
+        </div>
+        <div class="viz-sub">
+          <button class="test-btn" :class="testMark" @click="test" :disabled="testing"
+                  :title="testDetail">{{ testing ? '测试中…' : '测试连接' }}</button>
+          <span v-if="testMark" class="tmark" :class="testMark" :title="testDetail">{{ testMark === 'ok' ? '✓' : '✗' }}</span>
+        </div>
       </div>
-      <!-- 图层 + 演示模式并到一行：原来两个复选框各占一整行，白吃版面 -->
       <div class="f-line">
         <span class="mono-label" style="margin:0">图层</span>
         <label class="ck"><input type="checkbox" v-model="f.layers.marginalia" />AI 眉批</label>
-        <label class="ck" style="margin-left:14px" title="你自己钉的查译与批注"><input type="checkbox" v-model="f.layers.mine" />我的钉卡</label>
+        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.mine" />我的钉卡</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.skim" />略读</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.mock" />演示模式</label>
       </div>
@@ -210,7 +239,7 @@ function save() {
         </div>
       </div>
       <div class="f-row">
-        <label class="mono-label">字号（论文正文不受影响）</label>
+        <label class="mono-label">字号</label>
         <div class="care-row">
           <button v-for="s in FSS" :key="s.k" class="care-chip fs-chip" :class="{ on: store.viewer.fs === s.k }"
                   @click="pickFs(s.k)">
@@ -219,41 +248,50 @@ function save() {
         </div>
       </div>
       <div class="f-row">
-        <label class="mono-label">整本翻译服务（pdf2zh）</label>
+        <label class="mono-label">整本翻译服务</label>
         <select v-model="f.service">
-          <option value="bing">bing（免费，不用填 key）</option>
-          <option value="openai">openai（用上面填的模型与端点，按量计费）</option>
-          <!-- 老配置还存着 deepseek 的人要看得见它才换得走；新用户不再给这个选项 -->
+          <option value="bing">bing（免费）</option>
+          <option value="openai">openai（用上面的模型与端点）</option>
           <option v-if="f.service === 'deepseek'" value="deepseek">deepseek（已不推荐，请换一个）</option>
-          <option value="google">google（免费，国内多数网络连不通）</option>
-          <option value="deepl">deepl（另需 DEEPL_AUTH_KEY 环境变量）</option>
+          <option value="google">google</option>
+          <option value="deepl">deepl（另需 DEEPL_AUTH_KEY）</option>
         </select>
-        </div>
-      <!-- 引擎状态：整本翻译能不能用、为什么不能用，一行说完 -->
-      <div class="f-row">
-        <label class="mono-label">翻译引擎（pdf2zh）
-          <button class="eng-check" @click="checkEngine" :disabled="eng.busy">
-            {{ eng.busy ? '…' : '检测' }}</button>
-        </label>
-        <input type="text" v-model="f.engine_path" placeholder="pdf2zh.exe 路径（留空自动找）" />
-        <div class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
-          <template v-if="inst.state === 'downloading'">下载中 {{ inst.pct }}%<span v-if="inst.total">（{{ mb(inst.got) }}/{{ mb(inst.total) }}MB）</span></template>
-          <template v-else-if="inst.state === 'unpacking'">解压中…</template>
-          <template v-else-if="inst.state === 'uploading'">读取中…</template>
+      </div>
+      <div class="f-line">
+        <span class="mono-label" style="margin:0">翻译引擎</span>
+        <span class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
+          <template v-if="inst.state === 'downloading'">下载中 {{ inst.pct }}%</template>
+          <template v-else-if="inst.state === 'unpacking' || inst.state === 'uploading'">解压中…</template>
           <template v-else-if="inst.state === 'error'">{{ inst.error }}</template>
-          <template v-else-if="!eng.checked">未检测</template>
-          <template v-else-if="eng.ok">可用（{{ eng.why }}）</template>
-          <template v-else>{{ eng.path ? '不可用：' : '未安装' }}{{ eng.path ? eng.why : '' }}</template>
+          <template v-else-if="!eng.checked">…</template>
+          <template v-else-if="eng.ok">可用（{{ eng.why.replace('pdf2zh', '').trim() }}）</template>
+          <template v-else>未安装</template>
+        </span>
+        <button class="eng-check" style="margin-left:auto" @click="checkEngine" :disabled="eng.busy">
+          {{ eng.busy ? '…' : '检测' }}</button>
+      </div>
+      <div class="f-row">
+        <label class="mono-label">数据目录
+          <button class="eng-check" style="margin-left:8px" @click="api.revealUpdate(f.data_dir)">打开</button>
+        </label>
+        <div class="eng-state">{{ f.data_dir }}</div>
+        <div class="model-row" style="margin-top:6px">
+          <input type="text" v-model="f.data_new" placeholder="填新目录，保存后数据自动迁过去" />
+          <button class="eng-file" @click="browseData" :disabled="picking">浏览…</button>
+          <button class="eng-file" @click="moveData" :disabled="savingData">{{ savingData ? '迁移中…' : '迁移' }}</button>
         </div>
-        <div class="eng-actions" v-if="!eng.ok && inst.state !== 'downloading' && inst.state !== 'unpacking' && inst.state !== 'uploading'">
+      </div>
+      <div class="f-row" v-if="!eng.ok && inst.state !== 'downloading' && inst.state !== 'unpacking' && inst.state !== 'uploading'">
+        <div class="model-row">
+          <input type="text" v-model="f.engine_path" placeholder="pdf2zh.exe 路径（留空自动找）" />
           <button class="eng-install" @click="installEngine">下载安装 308MB</button>
           <button class="eng-file" @click="zipInput?.click()">选 zip 安装</button>
         </div>
         <input ref="zipInput" type="file" accept=".zip" hidden @change="installFromFile" />
       </div>
       <div class="f-row">
-        <label class="mono-label">更新源（静态目录地址，留空不检查）</label>
-        <input type="text" v-model="f.feed" placeholder="http://192.168.1.5:8440 或 https://…/eggpaper" />
+        <label class="mono-label">更新源</label>
+        <input type="text" v-model="f.feed" placeholder="http://… 或 https://…（留空不检查）" />
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">更新</span>
@@ -263,19 +301,11 @@ function save() {
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">窗口</span>
-        <span style="font-size:var(--fs-sm);color:var(--ink-3)">托盘图标里有「打开界面 / 检查更新 / 退出」</span>
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openWindow">在独立窗口打开</button>
-        <button style="padding:2px 10px;font-size:var(--fs-sm)" @click="openGuide">使用指南</button>
-      </div>
-      <div class="f-line" v-if="store.update.packaged">
-        <span class="mono-label" style="margin:0">版本</span>
-        <span style="font-size:var(--fs-sm);color:var(--ink-2)">{{ store.update.current }}</span>
-        <button class="danger" style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
-                @click="quitApp" title="关掉后台服务（打包版靠这个退出）">退出 eggpaper</button>
       </div>
       <div class="f-actions">
-        <span class="test-reply">{{ reply }}</span>
-        <button @click="test" :disabled="testing">{{ testing ? '测试中…' : '测试连接' }}</button>
+        <button v-if="store.update.packaged" class="quit-btn"
+                @click="quitApp" title="关闭后台服务并退出">退出 eggpaper</button>
         <button class="primary" @click="save">保存</button>
       </div>
     </div>

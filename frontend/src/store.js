@@ -8,10 +8,10 @@ export { api, askStream, ROLE_ZH, CORE_ROLES, ROLE_COLOR, ROLE_TEXT_COLOR,
 
 const LS = 'eggpaper:'
 
-function lsGet(k, d) {
+export function lsGet(k, d) {
   try { return JSON.parse(localStorage.getItem(LS + k)) ?? d } catch { return d }
 }
-function lsSet(k, v) { localStorage.setItem(LS + k, JSON.stringify(v)) }
+export function lsSet(k, v) { localStorage.setItem(LS + k, JSON.stringify(v)) }
 
 export const store = reactive({
   vw: window.innerWidth,     // 视口宽度：窄窗要换一套排布（右栏改浮层、栏位让给论文）
