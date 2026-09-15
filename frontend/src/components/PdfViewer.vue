@@ -998,6 +998,13 @@ function stepZoom(d) {
   zoom.value = Math.min(3, Math.max(0.2, next))
   saveLater()
 }
+function commitPage() {
+  // 页码框里手滑打进非数字（"abc"、清成了空格）：Number() 会得到 NaN，
+  // 直接放行会把框填成 "NaN"。不合法就退回当前页。
+  const n = Number(pageIn.value)
+  if (Number.isFinite(n) && n >= 1) gotoPage(n)
+  else pageIn.value = String(pageNum.value)
+}
 function gotoPage(p) {
   const pno = Math.min(store.paper?.n_pages || 1, Math.max(1, Math.round(p)))
   pageIn.value = String(pno)
@@ -1565,7 +1572,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <button title="上一页（PageUp）" @click="stepPage(-1)">‹</button>
       <span class="zb-page">
         <input ref="pageInputEl" v-model="pageIn" class="zb-input" title="跳到第几页"
-               @keydown.enter="gotoPage(Number(pageIn)); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
+               @keydown.enter="commitPage(); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
         <em>/ {{ store.paper?.n_pages || 0 }}</em>
       </span>
       <button title="下一页（PageDown）" @click="stepPage(1)">›</button>
