@@ -515,12 +515,12 @@ watch(() => store.currentId, () => {
         <!-- 没析读时只陈述状态：顶栏那颗「析读」就在上面，同一屏里放第二个同名按钮是重复 -->
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? '还没析读：读完全文才有这五个问题的答案。' : '这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这五问答不了。' }}
+            {{ store.paras.length ? '还没析读：析读后才有这五个答案。' : '扫描件：能读、能框选问 AI，五问答不了。' }}
           </div>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">这份 PDF 没有文字层（扫描件）：能读、能框选问 AI，但这五问答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图表。</span></div>
+          <div class="r-note">扫描件：能读、能框选问 AI，五问答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图表。</span></div>
         </template>
 
         <template v-else>

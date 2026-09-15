@@ -171,7 +171,7 @@ def engine_probe(path: str) -> tuple:
     out = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
     low = out.lower()
     if "no module named 'pdf2zh'" in low or "modulenotfounderror" in low:
-        return False, "空壳：exe 在，包已丢失"
+        return False, "exe 在但包已丢（空壳）"
     if r.returncode == 0 and "pdf2zh" in low:
         line = next((ln.strip() for ln in out.splitlines() if "pdf2zh" in ln.lower()), "")
         return True, line[:60]
@@ -547,8 +547,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         exe = engine_path(engine)
         ok, why = engine_probe_cached(exe)
         if not ok:
-            msg = (f"整本翻译要用 pdf2zh 引擎，它没准备好（{why}）。"
-                   "本安装包不含它；在「设置 → 翻译引擎」里下载安装，或填上 pdf2zh.exe 的路径。")
+            msg = f"缺 pdf2zh 引擎（{why}）。到「设置 → 翻译引擎」安装，或填写路径。"
             j.update(status="error", error=msg)
             say(f"整本翻译失败 {pid}：pdf2zh 引擎不可用（{why}）")
             return

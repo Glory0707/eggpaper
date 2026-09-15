@@ -98,7 +98,7 @@ def _unpack(zpath: str):
         shutil.rmtree(tmp_root, ignore_errors=True)
         exe = find_installed()
         if not exe:
-            _set(state="error", error="包里没找到 pdf2zh.exe（下错了文件？要的是官方的 win64 包）")
+            _set(state="error", error="包里没有 pdf2zh.exe")
             return
         _set(state="done", path=exe)
     except Exception as e:
@@ -161,7 +161,7 @@ def start_from_zip(zip_path: str) -> dict:
 def _from_zip(zip_path: str):
     try:
         if not os.path.isfile(zip_path):
-            _set(state="error", error="文件不在了")
+            _set(state="error", error="文件不存在")
             return
         _unpack(zip_path)
     except Exception as e:

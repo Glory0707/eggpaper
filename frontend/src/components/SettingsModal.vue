@@ -114,7 +114,7 @@ async function pollInstall() {
       clearInterval(instTimer); instTimer = null
       f.engine_path = ''                 // 让它走自动查找（engines/ 已就位）
       await checkEngine()
-      toast('翻译引擎装好了，整本翻译可以用了')
+      toast('翻译引擎装好了')
     } else if (s.state === 'error') {
       clearInterval(instTimer); instTimer = null
     }

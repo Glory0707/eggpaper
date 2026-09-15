@@ -305,7 +305,7 @@ async def pdf2zh_install_from_file(file: UploadFile = File(...)):
     """从本地 zip 装引擎：网络到不了 GitHub 时，这条路才是真正可用的分发方式——
     下好一份引擎包，和安装包一起发给别人，对方在这里选那个文件即可（零基础）。"""
     if not (file.filename or "").lower().endswith(".zip"):
-        raise HTTPException(400, "要的是官方 win64 的那个 .zip")
+        raise HTTPException(400, "要选 .zip 文件")
     tmp = os.path.join(engine_install.install_dir() + ".upload", "engine.zip")
     os.makedirs(os.path.dirname(tmp), exist_ok=True)
     size = 0
@@ -316,7 +316,7 @@ async def pdf2zh_install_from_file(file: UploadFile = File(...)):
                 break
             size += len(chunk)
             if size > 2 * 1024 * 1024 * 1024:
-                raise HTTPException(400, "这个文件太大了（引擎包约 300MB）")
+                raise HTTPException(400, "文件过大")
             f.write(chunk)
     return engine_install.start_from_zip(tmp)
 
@@ -1417,16 +1417,15 @@ def glossary_export(pid: str):
 
 @app.get("/api/papers/{pid}/figures")
 def figures(pid: str):
-    """图的位置是**这份 PDF 的纯函数**：同一份文件算一次就够。
+    """图的位置是**这份 PDF 的纯函数**：同一份文件算一次就够（缓存按 路径+mtime）。
 
-    原来每次请求都重开一次 PDF 扫全篇（实测 23 页要 50~72ms，返回的却只有 499 字节），
-    而速览页一进来就问一次、切回页签还可能再问一次；上百页的学位论文只会更慢。
-    缓存按 (路径, 修改时间) 认，文件被换掉自动失效；只留最近几篇，不把整库记住。
+    怎么定裁剪框：**以文本为基石 + 二维聚类**。论文里每张图/表都带题注（Fig. 1a /
+    Table 2…），把页面上所有"图的内容"——位图、矢量图元、短文本行（长正文行排除，
+    它们是分隔物）——按二维邻近（25pt）聚成簇；题注就近挂簇，簇框就是图/表区域。
+    通栏图、并排图、多面板图都天然正确：面板之间距离近聚成一簇，两栏正文因为
+    是"长行"不参与聚类，不会把区域拉到别人家。
 
-    怎么定裁剪框：**以文本为基石**。论文里每张图/每张表都带着题注（Fig. 1a / Table 2 /
-    图 3…），题注的 x 范围就是它那一栏；图形题注在图下方、表格题注在表上方，从题注往
-    另一头走，遇到「正文行」（够长够字数的排印行）就停——中间那块就是图/表。位图只给
-    找不到题注的兜底（有题注的连位图带矢量一起进裁剪，且自带编号标签）。
+    孤零零没题注、也没进任何簇的大位图自己当一张图；小块（面板碎片）不单列。
     """
     import pymupdf
     p = _paper_or_404(pid)
@@ -1443,145 +1442,112 @@ def figures(pid: str):
     try:
         for pno in range(len(doc)):
             page = doc[pno]
-            pw = page.rect.width
-            ph = page.rect.height
+            pw, ph = page.rect.width, page.rect.height
             dtext = page.get_text("dict")
-            line_rects = []      # 全部文本行：判区域里有没有内容
-            caps = []            # 题注块：{rect, kind, label, lines:[行矩形]}
+            items, caps = [], []
             for blk in dtext.get("blocks", []):
                 blines = [ln for ln in blk.get("lines", []) if ln.get("spans")]
                 if not blines:
                     continue
                 rects = [pymupdf.Rect(ln["bbox"]) for ln in blines]
-                line_rects.extend(rects)
                 first = "".join(sp["text"] for sp in blines[0]["spans"]).strip()
                 m = CAPTION_RE.match(first)
                 if m:
                     prefix = m.group(1)
                     caps.append({"rect": pymupdf.Rect(blk["bbox"]), "lines": rects,
+                                 "cy0": rects[0].y0,
                                  "kind": "table" if prefix[:3].lower().startswith(("tab", "表")) else "figure",
                                  "label": prefix.rstrip(".")})
-            rules = [d["rect"] for d in page.get_drawings()
-                     if d["rect"].height < 3 and d["rect"].width > 40]
-            entries = []
-            for c in caps:
-                cr = c["rect"]
-                col0, col1 = cr.x0 - 4, cr.x1 + 4
-                # 这一栏的"正文行"：够字数、宽度至少有题注栏的六成（双栏排印的栏宽
-                # 大约是页宽四成，写死页宽比例在双栏页上找不到任何正文行）
-                colw = max(cr.width, 0.35 * pw)
-                body = [r for r in line_rects
-                        if r not in c["lines"] and r.width >= 0.6 * colw
-                        and min(r.x1, col1) - max(r.x0, col0) > 0.5 * r.width]
-                others = [x["rect"] for x in caps if x is not c]
-                if c["kind"] == "figure":
-                    # 图形题注在图**下方**：往上找最近的边界
-                    cand = [r.y1 for r in body + others if r.y1 <= cr.y0 + 2]
-                    top = max(cand + [26]) + 4
-                    region = pymupdf.Rect(col0, top, col1, cr.y1 + 3)
-                    core = pymupdf.Rect(col0, top, col1, cr.y0 - 2)
-                    if region.height < 45:
+                    continue                     # 题注行不进聚类（否则会把全页的图串成一簇）
+                for ln in blines:
+                    t = "".join(sp["text"] for sp in ln["spans"])
+                    r = pymupdf.Rect(ln["bbox"])
+                    # 正文行长且字多：不进聚类
+                    if len(t.strip()) >= 30 and r.width >= 0.3 * pw:
                         continue
-                    has = sum(1 for r in line_rects if core.contains(r)) >= 2
-                    if not has:
-                        has = any(region.intersects(pymupdf.Rect(i["bbox"])) for i in page.get_image_info())
-                    if not has:
-                        has = any(region.intersects(d["rect"]) for d in page.get_drawings())
-                    if not has:
-                        continue
-                else:
-                    # 表格题注可能在表上方也可能在下方。有横线的表：题注 ±90pt 内的
-                    # 横线起步、沿 y 每次最多 130pt 生长成簇——簇就是表身，最准。
-                    # 向上生长要求横线不窄于簇宽的一半：表线与表同宽，图形轴线窄得多
-                    # （实测 689f2af0：不设这条，右栏 Fig.4 的轴线会被并进 Table 1）。
-                    band_lo, band_hi = cr.y0 - 90, cr.y1 + 90
-
-                    def xok(rl):
-                        return min(rl.x1, col1) - max(rl.x0, col0) > min(30, 0.5 * rl.width)
-
-                    cluster = [rl for rl in rules if band_lo <= (rl.y0 + rl.y1) / 2 <= band_hi and xok(rl)]
-                    region = None
-                    if cluster:
-                        lo = min((rl.y0 + rl.y1) / 2 for rl in cluster)
-                        hi = max((rl.y0 + rl.y1) / 2 for rl in cluster)
-                        cx0 = min(rl.x0 for rl in cluster)
-                        cx1 = max(rl.x1 for rl in cluster)
-                        changed = True
-                        while changed:
-                            changed = False
-                            for rl in rules:
-                                if rl in cluster:
-                                    continue
-                                cy = (rl.y0 + rl.y1) / 2
-                                if not (lo - 130 <= cy <= hi + 130):
-                                    continue
-                                if min(rl.x1, cx1) - max(rl.x0, cx0) <= min(30, 0.5 * rl.width):
-                                    continue
-                                if cy < lo and rl.width < 0.5 * (cx1 - cx0):
-                                    continue
-                                cluster.append(rl)
-                                lo, hi = min(lo, cy), max(hi, cy)
-                                cx0, cx1 = min(cx0, rl.x0), max(cx1, rl.x1)
-                                changed = True
-                        if len(cluster) >= 2:
-                            region = pymupdf.Rect(cr.x0 - 6, cr.y0 - 8, cr.x1 + 6, cr.y1 + 4)
-                            for rl in cluster:
-                                region |= rl
-                            region = pymupdf.Rect(region.x0 - 6, region.y0 - 6, region.x1 + 6, region.y1 + 6)
-                    if region is None:
-                        # 无边表：上下两个方向开候选，格子短行多的一侧胜
-                        up_top = max([r.y1 for r in body + others if r.y1 <= cr.y0 + 2] + [26]) + 4
-                        dn_bot = min([r.y0 for r in body + others if r.y0 >= cr.y1 - 2] + [ph - 26]) - 4
-
-                        def score(reg):
-                            if reg.height < 30 or reg.width < 40:
-                                return -1
-                            return sum(1 for r in line_rects if reg.contains(r) and r.width < 0.8 * colw)
-
-                        s_up = score(pymupdf.Rect(col0, up_top, col1, cr.y0 - 2))
-                        s_dn = score(pymupdf.Rect(col0, cr.y1 + 2, col1, dn_bot))
-                        if max(s_up, s_dn) <= 1:
+                    items.append(r)
+            for i in page.get_image_info():
+                r = pymupdf.Rect(i["bbox"])
+                if r.width > 60 and r.height > 40:
+                    items.append(r)
+            for drect in page.get_drawings():
+                r = drect["rect"]
+                if r.width > 8 and r.height > 3:
+                    items.append(r)
+            # 二维邻近聚类（每侧外扩 PAD 求交，BFS 连通）
+            PAD = 11.0
+            n = len(items)
+            seen = [False] * n
+            clusters = []
+            for i in range(n):
+                if seen[i]:
+                    continue
+                box = pymupdf.Rect(items[i]) + (-PAD, -PAD, PAD, PAD)
+                seen[i] = True
+                members = [items[i]]
+                stack = [i]
+                while stack:
+                    j = stack.pop()
+                    for k in range(n):
+                        if seen[k]:
                             continue
-                        if s_up >= s_dn:
-                            region = pymupdf.Rect(col0, up_top, col1, cr.y1 + 3)
-                        else:
-                            region = pymupdf.Rect(col0, cr.y0 - 3, col1, dn_bot)
-                c["cy0"] = cr.y0
+                        if box.intersects(pymupdf.Rect(items[k]) + (-PAD, -PAD, PAD, PAD)):
+                            seen[k] = True
+                            members.append(items[k])
+                            box |= (pymupdf.Rect(items[k]) + (-PAD, -PAD, PAD, PAD))
+                            stack.append(k)
+                full = pymupdf.Rect(members[0])
+                for r in members[1:]:
+                    full |= r
+                clusters.append({"rect": full, "n": len(members)})
+            # 题注挂簇：60pt 内最近的簇；簇框 ∪ 题注 = 区域
+            entries = []
+            used = set()
+            for c in sorted(caps, key=lambda x: x["cy0"]):
+                cr = c["rect"]
+                best, bd = None, 1e9
+                for ci, cl in enumerate(clusters):
+                    if ci in used:
+                        continue
+                    grow = cl["rect"] + (-60, -60, 60, 60)
+                    if not grow.intersects(cr):
+                        continue
+                    dist = (max(cr.y0 - cl["rect"].y1, cl["rect"].y0 - cr.y1, 0)
+                            + max(cr.x0 - cl["rect"].x1, cl["rect"].x0 - cr.x1, 0))
+                    if dist < bd:
+                        bd, best = dist, ci
+                if best is None:
+                    continue
+                used.add(best)
+                region = clusters[best]["rect"] | cr
+                # 题注近旁的表格横线收进来（顶线常在题注上方 ~20pt）
+                for rl in page.get_drawings():
+                    r = rl["rect"]
+                    if r.height < 3 and r.width > 40 and (region + (-40, -40, 40, 40)).intersects(r):
+                        region |= r
+                region = pymupdf.Rect(max(20, region.x0 - 4), max(20, region.y0 - 4),
+                                      min(pw - 20, region.x1 + 4), min(ph - 20, region.y1 + 4))
+                if region.height < 45 or region.width < 60:
+                    continue
                 c["region"] = region
                 entries.append(c)
-            # 同一幅图的多条题注（Fig. 1a / Fig. 1b 挨着写）裁出来高度重叠：合成一条
-            kept = []
-            for c in sorted(entries, key=lambda x: x["cy0"]):
-                r = c["region"]
-                for k in kept:
-                    inter = (k["region"] & r)
-                    if inter.get_area() > 0.6 * min(k["region"].get_area(), r.get_area()):
-                        k["region"] |= r
-                        break
-                else:
-                    kept.append(c)
-            # 位图：跟题注区沾边的并进那个区（多面板混排图的小片不再是独立条目）；
-            # 孤零零没题注的位图要够大才自己当一张图
+            # 没被题注认领的大位图：自己当一张图（面板碎片不单列）
             rects = [pymupdf.Rect(i["bbox"]) for i in page.get_image_info()
                      if i["bbox"][2] - i["bbox"][0] > 80 and i["bbox"][3] - i["bbox"][1] > 60]
-            merged = []
             for r in rects:
-                for m2 in merged:
-                    if m2.intersects(r):
-                        # 必须用 include_rect：pymupdf 的 Rect **没有实现 __ior__**，
-                        # `m |= r` 只是把循环变量指向一个新矩形，列表里那个元素一字未动——
-                        # 于是"合并重叠的图块"从来没生效过，多面板的图只裁到第一块（实测确认）。
-                        m2.include_rect(r)
-                        break
-                else:
-                    merged.append(r)
-            for r in merged:
-                covered = any("region" in c and (c["region"] & r).get_area() > 0.6 * r.get_area()
-                              for c in kept)
-                if not covered:
-                    kept.append({"rect": r, "kind": "figure", "label": ""})
-            for c in kept:
-                r = c.get("region") or c["rect"]
+                covered = any((c["region"] & r).get_area() > 0.5 * r.get_area() for c in entries)
+                if covered:
+                    continue
+                in_cluster = any((cl["rect"] & r).get_area() > 0.5 * r.get_area() and ci in used
+                                 for ci, cl in enumerate(clusters))
+                if in_cluster:
+                    continue
+                if r.width >= 200 and r.height >= 100:
+                    entries.append({"rect": r, "region": r, "kind": "figure",
+                                    "label": "", "cy0": r.y0})
+            entries.sort(key=lambda x: x["cy0"])
+            for c in entries:
+                r = c["region"]
                 out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
                             "x1": round(r.x1, 1), "y1": round(r.y1, 1),
                             "kind": c["kind"], "label": c.get("label") or ""})
@@ -1589,17 +1555,14 @@ def figures(pid: str):
     finally:
         doc.close()
     _fig_cache[key] = out
-    while len(_fig_cache) > 8:                    # 最近八篇够了，别把整库图的位置都留在内存里
+    while len(_fig_cache) > 8:
         _fig_cache.pop(next(iter(_fig_cache)))
     return {"figures": out}
 
 
 _fig_cache = {}
 # 题注：Fig. 4 / Figure 2a / Table 1 / Tab. 2 / Scheme 3 / 图 3 / 表 1
-# （Nature 竖线风格 "Table 1 | ..." 同样匹配）
 CAPTION_RE = re.compile(r"^\s*((?:Fig(?:ure)?s?\.?|Table|Tab\.?|Scheme|图|表)\s*\d+\s*[a-z]?)", re.I)
-
-
 @app.get("/api/papers/{pid}/figure.png")
 def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, dpi: int = 130):
     import pymupdf
@@ -1973,9 +1936,7 @@ def translate_full_start(pid: str, force: bool = False):
     exe = translate_full.engine_path(engine)
     ok, why = translate_full.engine_probe_cached(exe)
     if not ok:
-        raise HTTPException(400, (
-            f"整本翻译要用 pdf2zh 引擎，它没准备好（{why}）。本安装包不含它；"
-            "在「设置 → 翻译引擎」里下载安装，或填上 pdf2zh.exe 的路径。"))
+        raise HTTPException(400, f"缺 pdf2zh 引擎（{why}）。到「设置 → 翻译引擎」安装，或填写路径。")
     translate_full.start(pid, p["path"], TRANSLATED_DIR, used,
                          cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                          note=note, engine=engine)
