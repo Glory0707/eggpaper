@@ -120,6 +120,7 @@ def contact_sheet(out_path: str) -> str:
         big = i.resize((i.width * zoom, i.height * zoom), Image.NEAREST)
         sheet.alpha_composite(big, (x, pad))
         x += big.width + pad
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     sheet.convert("RGB").save(out_path)
     return out_path
 
