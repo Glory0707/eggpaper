@@ -67,6 +67,8 @@ onMounted(async () => {
     toast('出错了：' + msg.slice(0, 120), 5000)
   })
   pollTimer = setInterval(poll, 3000)
+  sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后
+  // 跨进/跨出深夜那一拍的检查搭轮询的车（3 秒一次足够），不单开计时器
   try {
     store.settings = await api.settings()
     await refreshPapers()
@@ -99,6 +101,7 @@ let verTick = 0
 let verHintShown = false
 
 async function poll() {
+  sleepGreet()
   // "双击 PDF / 右键用它打开"：导入是在后端做的，界面这边只是被通知切过去。
   // 挂在原来这个 3 秒轮询上——为一次打开请求新起一条轮询不值得。
   try {
@@ -158,6 +161,23 @@ function pageQuit() {
 async function onQuitApp() {
   try { await api.quit({ reason: 'user' }) } catch (e) { toast(e.message); return }
   pageQuit()
+}
+
+/* 深夜彩蛋：0–5 点 eggpaper 还开着，蛋就躺下睡了（纯 CSS 躺倒，印章几何不变），
+   问候一晚只说一次（本地记日期）。开着跨进零点的那一拍由 3 秒轮询接住；天亮自己醒。 */
+const sleepEgg = ref(false)
+const _deepNight = () => new Date().getHours() < 5
+function sleepGreet() {
+  if (_deepNight()) {
+    sleepEgg.value = true
+    const today = new Date().toDateString()
+    if (localStorage.getItem('egg:sleep-greet') !== today) {
+      localStorage.setItem('egg:sleep-greet', today)
+      toast('蛋都睡了，你还在读。', 8000)
+    }
+  } else if (sleepEgg.value) {
+    sleepEgg.value = false
+  }
 }
 
 /* 本会话点过「析读」的凭据（哪篇、几点点的）：秒完的演示析读第一次拉状态就直接是
@@ -398,7 +418,8 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark">
-        <EggMark class="egg" :class="{ roll }" />
+        <EggMark class="egg" :class="[{ roll }, { sleep: sleepEgg }]" />
+        <span class="egg-z" v-if="sleepEgg" aria-hidden="true">z</span>
         <span class="name">eggpaper</span>
       </div>
       <div class="doc-head" v-if="store.paper">

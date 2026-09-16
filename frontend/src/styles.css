@@ -230,8 +230,25 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   transition: width .45s var(--ease-smooth);
 }
 .tran-line i.det { animation: none; }
-.wordmark { display: flex; align-items: center; gap: 9px; user-select: none; }
+.wordmark { display: flex; align-items: center; gap: 9px; user-select: none; position: relative; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
+/* 深夜彩蛋：蛋躺下睡——只转方向，印章几何一个笔画都不动；呼吸=在躺姿上轻轻晃 */
+.wordmark .egg.sleep { animation: eggSleep 4.2s var(--ease-smooth) infinite; }
+@keyframes eggSleep {
+  0%, 100% { transform: rotate(90deg); }
+  50% { transform: rotate(98deg); }
+}
+.wordmark .egg-z {
+  position: absolute; left: 22px; top: -9px;
+  font-family: var(--brand); font-style: italic; font-weight: 600;
+  font-size: 13px; color: var(--ink-3); pointer-events: none;
+  animation: eggZ 3.6s ease-in-out infinite;
+}
+@keyframes eggZ {
+  0% { opacity: 0; transform: translateY(3px); }
+  35% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateY(-7px); }
+}
 .wordmark .name { font-family: var(--brand); font-style: italic; font-weight: 600; font-size: var(--fs-display); }
 .doc-head { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .doc-head .t {
