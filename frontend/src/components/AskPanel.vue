@@ -274,7 +274,7 @@ onUnmounted(() => { stop(true) })
          三个图标是同一套线条 SVG（一个细 ＋、一个实心 ✎、一个彩色 emoji 🗑 混在一起
          看着像三个人画的），删除键悬停才转朱红 -->
     <div class="cv-bar">
-      <select class="cv-pick" :value="convId ?? ''" title="切换会话"
+      <select class="cv-pick" :value="convId ?? ''"
               @change="e => (convId = Number(e.target.value))">
         <option v-for="c in shownConvs" :key="c.id" :value="c.id">{{ c.title }}</option>
         <option v-if="!shownConvs.length" :value="''">新对话</option>
@@ -320,10 +320,10 @@ onUnmounted(() => { stop(true) })
         <!-- 这里原来还有一行「依据 ¶1 ¶5 ¶6…」。删了：它列的就是正文里那些已经可点的 ¶，
              一字不差地再说一遍（后端 cites_of 就是从答案正文里正则抓的）。 -->
         <div class="qa-acts" v-if="!m.streaming">
-          <button @click="copy(m)" title="复制">复制</button>
+          <button @click="copy(m)">复制</button>
           <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen(i)"
-                  :disabled="busy" title="重新生成">重新生成</button>
-          <button @click="delMsg(i)" title="删除">删除</button>
+                  :disabled="busy">重新生成</button>
+          <button @click="delMsg(i)">删除</button>
         </div>
       </div>
 

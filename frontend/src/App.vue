@@ -106,7 +106,6 @@ async function poll() {
     if (r?.pid && r.pid !== store.currentId) {
       await refreshPapers()
       await openPaper(r.pid)
-      toast('已打开：' + (store.paper?.title || '').slice(0, 30))
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
   // 每 15 秒问一次后端版本（5 拍 × 3 秒）：对不上就说明软件被升级过，而这个标签页
@@ -215,8 +214,7 @@ async function doTranslateFull() {
     await refreshPapers()
     // 服务被自动换掉（比如 google 在这台机器的网络下不通）要说出来——
     // 用户设的是 google、跑的是 bing，不吭声等于骗人
-    toast(r.note || (again ? '重新整本翻译：已开始，完成后自动提示'
-                           : `${r.service || '整本翻译'}：已开始，完成后自动提示`))
+    toast(r.note || (again ? '已开始重新整本翻译' : '整本翻译已开始'))
   } catch (e) { toast('启动失败：' + e.message) }
 }
 
@@ -280,7 +278,7 @@ async function onImport(list) {
   const first = ok[0]
   if (!first) return
   if (many && ok.length > 1) {
-    toast(`已导入 ${ok.length} 篇；其余 ${ok.length - 1} 篇在后台排队通读，列表里能看进度`)
+    toast(`已导入 ${ok.length} 篇，其余在后台排队通读`)
   } else if (first.no_text) {
     toast('扫描件：只能读，析读与眉批用不了')
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
@@ -291,7 +289,6 @@ async function onImport(list) {
 async function saveSettings(body) {
   store.settings = await api.saveSettings(body)
   showSettings.value = false
-  toast('设置已保存（仅本机）')
   if (store.currentId) refreshAnalysis()
 }
 
@@ -325,9 +322,9 @@ const tranLabel = computed(() => {
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
     return `正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}`
-         + ` · 已用 ${tranElapsed.value || '刚刚'} · 页间偶尔会慢，进度在走就是在译`
+         + ` · 已用 ${tranElapsed.value || '刚刚'}`
   }
-  return '整篇译成第二份 PDF，「译文 / 双语」靠它'
+  return '译出第二份 PDF，供「译文 / 双语」'
 })
 
 /* ---------------- 键盘流 ---------------- */
@@ -382,7 +379,7 @@ function onKey(e) {
 <template>
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
-      <div class="wordmark" title="eggpaper">
+      <div class="wordmark">
         <EggMark class="egg" :class="{ roll }" />
         <span class="name">eggpaper</span>
       </div>
@@ -461,7 +458,6 @@ function onKey(e) {
              "拖进来"三个字只交代了一半——手边没有拖拽习惯的人会去点它。
              所以整块都能点开文件选择，键盘（Enter/Space）与拖入同样有效。 -->
         <div class="empty" v-if="!store.paper" role="button" tabindex="0"
-             title="点击选择 PDF，或直接把文件拖进来"
              @click="pickFiles" @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">
           <EggMark class="egg-big" :class="{ hop: dragOver }" />
           <div class="e-title">论文，启动！</div>

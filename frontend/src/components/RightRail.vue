@@ -357,7 +357,6 @@ const abbrList = computed(() => {
 async function saveAbbr(a) {
   await api.glossaryAdd(store.currentId, { term_en: a.en, term_zh: a.zh, source: 'abbr' })
   loadTerms()                     // 列表里少一条、下面的术语表多一条，动作可见
-  toast(`「${a.en}」已收进术语表`)
 }
 function eqq(idx) {
   const m = store.analysis.evidence_qs || {}
@@ -466,7 +465,6 @@ const termsFiltered = computed(() => {
 function findTerm(en) {
   if (!en) return
   store.viewerApi?.findInPaper(en)
-  toast(`在文中找「${en}」`)
 }
 
 /* 换篇：所有"按篇"的东西都要清干净——它们都带 `if (已有) return` 守卫，不清就会

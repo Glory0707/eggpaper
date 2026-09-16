@@ -99,7 +99,7 @@ async function checkNow() {
 
 /* 在独立窗口打开：没有地址栏/标签页的一个窗口，任务栏里就是 eggpaper 自己。 */
 async function openWindow() {
-  try { const r = await api.nativeWindow(); toast('已用' + r.how + '打开独立窗口') }
+  try { await api.nativeWindow() }
   catch (e) { toast(e.message) }
 }
 

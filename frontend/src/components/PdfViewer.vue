@@ -821,7 +821,6 @@ async function translateParaAndPin(idx) {
     const p = paraByIdx.value[idx]
     await api.pin(store.currentId, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
     await refreshM()
-    toast('译文已钉在页边')
   } catch (e) { toast('翻译失败：' + e.message) }
   finally { pendingPara.value = null }
 }
@@ -1580,13 +1579,13 @@ watch(() => store.marginalia.notes, (n, o) => {
       </span>
       <button title="下一页（PageDown）" @click="stepPage(1)">›</button>
       <span class="zb-sep"></span>
-      <button title="适应宽度" :class="{ on: fit === 'width' }" @click="setFit('width')">适宽</button>
-      <button title="适应页面" :class="{ on: fit === 'page' }" @click="setFit('page')">适页</button>
+      <button :class="{ on: fit === 'width' }" @click="setFit('width')">适宽</button>
+      <button :class="{ on: fit === 'page' }" @click="setFit('page')">适页</button>
       <button class="zb-num" title="实际大小" @click="setFit('none')">{{ zoomPct }}%</button>
       <button title="缩小" @click="stepZoom(-1)">－</button>
       <button title="放大" @click="stepZoom(1)">＋</button>
       <span class="zb-sep"></span>
-      <button title="在论文里查找（Ctrl+F）" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">查找</button>
+      <button title="查找（Ctrl+F）" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">查找</button>
     </div>
     </Transition>
 

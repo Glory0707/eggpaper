@@ -101,8 +101,7 @@ async function copy(row) {
 
           <div class="cite-group" v-for="g in groups" :key="g.k">
             <div class="mono-label">{{ g.name }}</div>
-            <button class="cite-row" v-for="r in g.rows" :key="r.k" @click="copy(r)"
-                    :title="`点一下就复制 · ${r.hint}`">
+            <button class="cite-row" v-for="r in g.rows" :key="r.k" @click="copy(r)">
               <span class="cr-k">{{ r.label }}<i>{{ r.hint }}</i></span>
               <span class="cr-v">{{ r.text }}</span>
               <span class="cr-cp">复制</span>

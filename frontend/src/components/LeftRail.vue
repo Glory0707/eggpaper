@@ -166,7 +166,6 @@ async function del(pid, name) {
   }
   await refreshPapers()
   await refreshCollections()
-  toast('已删除（本地数据一并清掉）')
 }
 function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 </script>
@@ -184,7 +183,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 
     <div class="lib-tools">
       <input type="text" v-model="q" placeholder="搜标题 / 文件名…" class="lib-search" />
-      <select v-model="sort" class="lib-sort" title="排序">
+      <select v-model="sort" class="lib-sort">
         <option value="added">最近导入</option>
         <option value="read">最近阅读</option>
         <option value="title">标题</option>
@@ -207,7 +206,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
                @keydown.enter="doRename(c)" @keydown.esc="editId = null" @blur="doRename(c)" />
         <span v-else class="c-name" :title="c.name">{{ c.name }}</span>
         <b>{{ c.n }}</b>
-        <button class="c-x" title="删掉这个分类" @click.stop="delColl(c)">×</button>
+        <button class="c-x" title="删除分类" @click.stop="delColl(c)">×</button>
       </div>
       <div v-if="adding" class="coll-row">
         <input class="coll-edit" v-model="newName" placeholder="分类名" autofocus
@@ -244,7 +243,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
         <template v-if="!store.papers.length">文库是空的。拖一份 PDF 进来就开始。</template>
         <template v-else-if="q.trim()">没有匹配「{{ q.trim() }}」的文献。</template>
         <template v-else-if="typeof SEL === 'number'">
-          这个分类下还没有文献。切到「全部」，把条目拖到左边的「{{ colls.find(c => c.id === SEL)?.name }}」，或者点条目左边的 ＋ 勾选。
+          还没有文献。到「全部」点条目旁 ＋ 归入，或直接拖进来。
         </template>
         <template v-else-if="SEL === 'none'">每一篇都归类了。</template>
         <template v-else>没有符合条件的文献。</template>
