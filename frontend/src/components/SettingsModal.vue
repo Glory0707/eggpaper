@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
 import { vDrag } from '../drag'
 
-const emit = defineEmits(['close', 'save'])
+const emit = defineEmits(['close', 'save', 'quit'])
 
 /* store.settings 可能是 null（启动时 /api/settings 还没回来或失败），而弹窗随时会被点开：
    兜一个默认值，让弹窗永远打得开——读不到就显示成空。 */
@@ -101,11 +101,6 @@ async function checkNow() {
 async function openWindow() {
   try { await api.nativeWindow() }
   catch (e) { toast(e.message) }
-}
-
-/* 退出程序：打包版没有控制台窗口，用户需要一个"关掉它"的地方 */
-async function quitApp() {
-  try { await api.quit(); toast('正在退出…') } catch (e) { toast(e.message) }
 }
 
 function openGuide() { window.open('/guide', '_blank') }
@@ -305,7 +300,7 @@ function save() {
       </div>
       <div class="f-actions">
         <button v-if="store.update.packaged" class="quit-btn"
-                @click="quitApp">退出 eggpaper</button>
+                @click="emit('quit')">退出 eggpaper</button>
         <button class="primary" @click="save">保存</button>
       </div>
     </div>

@@ -982,6 +982,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--hairline); border-radius: 5px;
   box-shadow: var(--shadow-pop); padding: 14px 16px;
 }
+/* 退出兜底：后端已停、这个标签页浏览器不让脚本关——一句话交代现状 */
+.quit-mask {
+  position: fixed; z-index: 900; inset: 0; background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-md); color: var(--ink-3);
+}
 .keys-card .k-row { display: flex; justify-content: space-between; padding: 4.5px 0; font-size: var(--fs-sm); color: var(--ink-2); border-bottom: 1px solid var(--hairline-soft); }
 .keys-card .k-row:last-child { border: none; }
 .keys-card kbd {

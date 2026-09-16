@@ -103,6 +103,7 @@ async function poll() {
   // 挂在原来这个 3 秒轮询上——为一次打开请求新起一条轮询不值得。
   try {
     const r = await api.openRequest()
+    if (r?.quitting) { pageQuit(); return }
     if (r?.pid && r.pid !== store.currentId) {
       await refreshPapers()
       await openPaper(r.pid)
@@ -141,6 +142,23 @@ async function poll() {
 /* 窄窗：右栏改浮层，进窄窗时自动收起一次，把宽度还给论文
    （只在跨过门槛那一拍动手，否则用户手动展开会被反复关掉） */
 watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
+
+/* 「退出 eggpaper」的页面侧收尾：独立窗口是浏览器 --app 模式，window.close() 有效；
+   普通浏览器标签页浏览器不许脚本关（安全模型），关不掉就亮一层兜底遮罩，
+   别让用户对着一个后端已死的页面发愣。后端会多等一拍轮询才真正退出。 */
+const quitMask = ref(false)
+function pageQuit() {
+  if (quitMask.value) return      // 收尾只做一次：反复 window.close() 只会刷浏览器警告
+  quitMask.value = true
+  window.close()
+}
+
+/* 设置里的「退出 eggpaper」：请后台退出并顺手关掉自己这个窗口/标签页；
+   其余打开着的页面在下一拍轮询里收到 quitting 各自关闭（后端等一拍才退）。 */
+async function onQuitApp() {
+  try { await api.quit({ reason: 'user' }) } catch (e) { toast(e.message); return }
+  pageQuit()
+}
 
 /* 本会话点过「析读」的凭据（哪篇、几点点的）：秒完的演示析读第一次拉状态就直接是
    done（前一拍还是 none），只看 running/queued 会漏掉这条路径，所以留一份记录。
@@ -485,13 +503,15 @@ function onKey(e) {
       <LibPanel v-if="store.viewer.libOpen" @import="onImport" @close="store.viewer.libOpen = false" />
     </Transition>
     <Transition name="fade">
-      <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" />
+      <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" @quit="onQuitApp" />
     </Transition>
     <!-- 全局唯一的应用内对话框：别处 await confirmBox / inputBox 就行。
          别放进上面那个 Transition——Transition 只允许一个子节点，多一个就编译不过 -->
     <Dialog />
     <CiteCard />
     <UpdateCard />
+    <!-- 退出后的兜底：普通浏览器标签页浏览器不许脚本关，亮一层遮罩别让用户对死页面发愣 -->
+    <div class="quit-mask" v-if="quitMask">eggpaper 已退出，这个页面可以关掉了。</div>
     <!-- 应用级文件选择：空态整屏可点、键盘也能用（多选：一次导入多篇） -->
     <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 

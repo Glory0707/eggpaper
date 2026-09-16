@@ -252,10 +252,13 @@ def _ver_tuple(v: str):
 
 
 def _ask_quit(port: int) -> bool:
-    """请那个实例退出（它自己有 /api/quit）。"""
+    """请那个实例退出（它自己有 /api/quit）。升级接管的让位不通知页面关窗——
+    旧页面要留给版本轮询自动刷新到新实例。"""
     try:
         import httpx
-        return httpx.post(f"http://{HOST}:{port}/api/quit", timeout=5).status_code == 200
+        r = httpx.post(f"http://{HOST}:{port}/api/quit",
+                       json={"reason": "upgrade"}, timeout=5)
+        return r.status_code == 200
     except Exception as e:
         _log(f"请旧实例退出失败：{type(e).__name__}: {e}")
         return False

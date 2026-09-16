@@ -429,7 +429,7 @@ def test_settings():
 @app.get("/api/version")
 def version_info():
     return {"version": appinfo.version(), "packaged": update.is_packaged(),
-            "data_dir": config.DATA_DIR}
+            "data_dir": config.DATA_DIR, "quitting": _QUITTING["user"]}
 
 
 @app.get("/api/update/check")
@@ -494,14 +494,26 @@ def open_native_window():
     return {"ok": True, "how": how}
 
 
+# 用户主动退出（设置 → 退出 eggpaper）：置位后各页面在 3 秒轮询里看到 quitting
+# 就自己关窗（独立窗口是浏览器 --app 模式，window.close() 有效；普通标签页尽力），
+# 后端多等一拍轮询再退——不然后台一死，窗口只能靠用户手动一个一个关。
+_QUITTING = {"user": False}
+
+
 @app.post("/api/quit")
-def quit_app():
-    """退出整个程序（打包版：没有控制台窗口，用户需要一个"关掉它"的地方）。"""
+def quit_app(body: dict = None):
+    """退出整个程序（打包版：没有控制台窗口，用户需要一个"关掉它"的地方）。
+
+    body.reason = "user"（设置里的退出按钮）时通知所有页面自行关闭；
+    "upgrade"（desktop 升级接管请旧实例让位）不通知——旧页面要留给
+    版本轮询自动刷新到新实例，弹"已退出"只会打扰。"""
     if not update.is_packaged():
         return {"ok": False, "reason": "开发模式：直接在终端里 Ctrl+C"}
+    if (body or {}).get("reason") != "upgrade":
+        _QUITTING["user"] = True
     import threading as _th
     def bye():
-        time.sleep(0.4)
+        time.sleep(3.2)      # ≥ 一整拍 3s 轮询：所有页面都来得及看到 quitting
         os._exit(0)
     _th.Thread(target=bye, daemon=True).start()
     return {"ok": True}
@@ -634,7 +646,7 @@ _pending_open = {"pid": None}
 def open_request():
     pid = _pending_open["pid"]
     _pending_open["pid"] = None
-    return {"pid": pid}
+    return {"pid": pid, "quitting": _QUITTING["user"]}
 
 
 def _paper_or_404(pid: str) -> dict:
