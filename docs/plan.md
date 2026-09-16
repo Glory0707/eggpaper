@@ -2319,3 +2319,28 @@ fixture Mistral 12 项（Figure 1-6 + Table 1-5）全对。叠框目检 8 个关
 数据库之前把 db/文献库/译文/home/引擎整体搬过去（同盘改名瞬间完成）。另有便携模式：
 exe 旁的 data\（含 eggpaper.db 即认）。升级只清 _internal、卸载只删程序文件，数据两者
 都不沾。pdf2zh 的散写（~/.config）重定向进数据目录 home/。
+
+
+## M4.48 大扫除：依赖 / 死样式 / 数据布局每篇一文件夹
+
+**依赖**：requirements.txt 补上 pillow（mark.py 一直在用，清单漏列）。前端依赖逐一核对全部在用。
+
+**死代码/死样式**：后端函数级扫描无死代码（列出的全是 FastAPI 路由）；前端无未引用
+导出/组件；styles.css 删掉设置改版残留的 .eng-actions / .eng-hint / .test-reply。
+
+**数据布局改成每篇一个文件夹**（用户点名：导入保存的每篇文献及其数据如何存放要清晰）：
+
+    data/papers/<论文id>/  paper.pdf（原件） + mono.pdf（译文版） + dual.pdf（双语缓存）
+                           + .pages/（pdf2zh 页级中间产物，48h 回收）
+
+- 导入落盘、整本翻译产物、按需派生、删论文（=删文件夹）、启动清扫（孤儿文件夹）全部
+  收敛到 paper_dir(pid) 一个入口；`_sweep_orphan_translations` 的 stem 两套口径匹配
+  （40 行易错代码）简化为集合差的孤儿文件夹清理（15 行）。
+- 启动时 `_migrate_paper_layout()` 一次性把旧 library/translated 平铺搬进 papers/，
+  db 路径同步改写；旧目录里 db 引用不到的孤儿一并清掉（实测 fixture 里 3.7MB 孤儿
+  PDF 随迁移消失）。数据目录整体迁移的 _MIGRATE_ITEMS 加 papers。
+- 修一处全局替换误伤：_run_page 里页级双语清理仍按 stem 命名（pdf2zh 按输入文件名输出）。
+
+**回归**：test_api_smoke 全绿（⑨⑩ 断言更新到新布局：删论文=文件夹消失、孤儿文件夹被清）；
+test_sweep_translations 重写为 _sweep_orphan_papers 版本通过；check_backend 通过；
+UI 并发探针 13/13；fixture-zh 真实迁移后原文/译文/双语端点 200，阅读器打开正常。

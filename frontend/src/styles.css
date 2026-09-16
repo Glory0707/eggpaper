@@ -897,7 +897,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .eng-state.ok { color: var(--ink-2); }
 .modal .eng-state.bad { color: var(--vermilion); }
 /* 一键装引擎：没引擎时它是这一栏最该点的东西 */
-.modal .eng-actions { margin-top: 8px; }
 .modal .eng-install {
   padding: 4px 12px; font-size: var(--fs-sm); font-family: inherit;
   background: var(--ink); color: var(--card); border-color: var(--ink);
@@ -906,11 +905,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .eng-file {
   margin-left: 8px; padding: 4px 12px; font-size: var(--fs-sm); font-family: inherit;
 }
-.modal .eng-hint {
-  display: block; margin-top: 6px; font-size: var(--fs-xs);
-  color: var(--ink-3); line-height: 1.6; word-break: break-all;
-}
-/* 选项下面的一行小字：说清"选了它会发生什么"。字号比标签小一档，不抢视线 */
 .modal .f-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; align-items: center; }
 /* 应用内对话框（确认 / 输入）：比设置窄一点，正文一行一句，确定键可以是朱红 */
 .modal.dialog { width: 372px; }
@@ -919,7 +913,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal.dialog .f-actions { margin-top: 16px; }
 .modal .primary.danger { background: var(--vermilion); border-color: #9d3a25; }
 .modal .primary.danger:hover { background: #9d3a25; }
-.modal .test-reply { font-size: var(--fs-sm); color: var(--ink-3); margin-right: auto; max-width: 210px; }
 
 /* ---------- 引用这篇（.modal.cite） ----------
    一张卡片装九种格式，所以比设置宽：长条目要能整条换行读完，不截断。

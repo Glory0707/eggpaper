@@ -45,7 +45,7 @@ DEFAULTS = {
 
 
 def ensure_dirs():
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "papers"), exist_ok=True)
 
 
 def load() -> dict:

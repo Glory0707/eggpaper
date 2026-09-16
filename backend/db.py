@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS marginalia(
 CREATE TABLE IF NOT EXISTS conversations(
   id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id TEXT, title TEXT, created_at TEXT, updated_at TEXT
 );
--- 六个问题里需要模型回答的那三个（为什么重要 / 还能做什么 / 换个学科怎么看）：
+-- 五问里需要现场生成的那几问（还有什么没解决 / 还能做什么 / 换个学科怎么看）：
 -- 按篇缓存，点过一次就不再花钱
 CREATE TABLE IF NOT EXISTS answers(
   paper_id TEXT, key TEXT, json TEXT, PRIMARY KEY(paper_id, key)
@@ -189,7 +189,7 @@ def purge_paper(pid: str):
     q("DELETE FROM papers WHERE id=?", (pid,), commit=True)
 
 
-# ---------- 六个问题的答案缓存 ----------
+# ---------- 现场生成问题的答案缓存 ----------
 
 def answers_all(pid: str) -> dict:
     out = {}
@@ -212,7 +212,7 @@ def answer_get(pid: str, key: str):
 
 
 def answers_clear(pid: str):
-    # 骨架/眉批重算过之后，六个问题里那三问的缓存就是旧结论了——必须作废，
+    # 骨架/眉批重算过之后，这些生成答案的缓存就是旧结论了——必须作废，
     # 否则「还能做什么」会一直引用已经不存在的主张与局限。
     q("DELETE FROM answers WHERE paper_id=?", (pid,), commit=True)
 

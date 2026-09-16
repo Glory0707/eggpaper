@@ -146,6 +146,8 @@ python tools/serve_update.py
 
 **打包版的数据目录和源码运行是两处**：安装版默认读 `%LOCALAPPDATA%\eggpaper\data`，
 源码运行读 `backend/data`；设置里可把数据目录迁到任意位置（如 D 盘），重启后自动搬迁。
+数据目录里每篇文献一个文件夹：`papers/<论文id>/` 下是原件 paper.pdf、译文 mono.pdf、
+双语缓存 dual.pdf 和页级中间产物 .pages/（删论文 = 删文件夹）；库索引在 `eggpaper.db`。
 
 ## 运行
 

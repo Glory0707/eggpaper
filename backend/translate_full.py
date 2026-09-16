@@ -300,7 +300,7 @@ def cancel(pid: str):
     """删论文时用：把还在跑的 pdf2zh 掐掉。
 
     pdf2zh 是独立进程——不掐的话，"删掉这篇论文"之后它还会跑完、还会往
-    translated/ 里写回 <pid>-dual.pdf，用户以为删干净了、盘上却留下孤立的译文文件。
+    已删掉的论文文件夹里写回 mono.pdf，用户以为删干净了、盘上却留下孤立的译文文件。
     """
     j = job(pid)
     j["_abort"] = True                      # 页级流水线：让 worker 别再起下一页
@@ -313,17 +313,16 @@ def cancel(pid: str):
     return bool(procs)
 
 
-def adopt_existing(pid: str, pdf_path: str, out_dir: str):
+def adopt_existing(out_dir: str):
     """盘上已经有"看起来完整"的成品就认领，返回 {"dual","mono"}（缺的一方是空串）或 None。
 
     为什么要有：pdf2zh 是独立进程，eggpaper 关掉/装新版本时它还在跑，写完之后没人认领——
     启动时那次扫描早过了。用户看到界面上还是「整本翻译」，点一次就重译一遍（还覆盖成品）。
     判定"完整"看 %%EOF 收尾，免得把写到一半就被杀掉的半截文件当成成品。
-    0.1.22 起盘上**只落译文版（mono）**省盘，双语版按需派生；旧版留下的成对文件同样认得。
+    盘上**只落译文版（mono）**省盘，双语版按需派生。
     """
-    stem = os.path.splitext(os.path.basename(pdf_path))[0]
-    mono = os.path.join(out_dir, stem + "-mono.pdf")
-    dual = os.path.join(out_dir, stem + "-dual.pdf")
+    mono = os.path.join(out_dir, "mono.pdf")
+    dual = os.path.join(out_dir, "dual.pdf")
     mono_ok = _pdf_complete(mono)
     dual_ok = _pdf_complete(dual)
     if not mono_ok and not dual_ok:
@@ -347,7 +346,7 @@ def job(pid: str) -> dict:
 #   · 失败的页回退用原文（双语里这一页是两页原文），成品永远完整、页码永不错位；
 #   · 页 worker 并行（免费服务 3 页、LLM 服务 2 页），墙钟时间比串行短；
 #   · pdf2zh 自带译文缓存，重试的那页也快；
-#   · 没跑完就中断时，译成的页留在 .pages-<pid>/ 里，重跑直接复用（48h 没人回收）。
+#   · 没跑完就中断时，译成的页留在 .pages/ 里，重跑直接复用（48h 没人回收）。
 
 PAGE_WORKERS_FREE = 3    # bing/google 这类免费服务没有严格限流：三页并行使墙钟短三分之一
 PAGE_WORKERS_LLM = 2     # LLM 翻译一段一次调用，开大了只会更快撞限流（429 → 页失败回退原文）
@@ -369,8 +368,8 @@ def _page_timeout(service: str) -> float:
     return PAGE_TIMEOUT * 2 if service in LLM_SERVICES else PAGE_TIMEOUT
 
 
-def _page_dir(out_dir: str, pid: str, pno: int, t: int) -> str:
-    return os.path.join(out_dir, f".pages-{pid}", f"p{pno}-{t}")
+def _page_dir(out_dir: str, pno: int, t: int) -> str:
+    return os.path.join(out_dir, ".pages", f"p{pno}-{t}")
 
 
 def _page_done(pdir: str, stem: str):
@@ -416,23 +415,21 @@ def derive_mono(dual_path: str, mono_path: str) -> str:
     return mono_path
 
 
-def sweep_page_dirs(out_dir: str, max_age: float = 48 * 3600):
-    """回收陈旧的 .pages-* 页级目录（页级产物各自内嵌整本字体，一份好几 MB）。
+def sweep_page_dirs(papers_root: str, max_age: float = 48 * 3600):
+    """回收陈旧的 .pages/ 页级目录（页级产物各自内嵌整本字体，一份好几 MB）。
 
     翻译没跑完时成功的页**故意留着**（重跑直接复用，不再重译一遍），但用户也可能
-    再也不回来——那就按年龄回收。启动时调一次。
+    再也不回来——那就按年龄回收。启动时对整库调一次。
     """
     now = time.time()
     try:
-        names = os.listdir(out_dir)
+        papers = os.listdir(papers_root)
     except OSError:
         return
-    for fn in names:
-        if not fn.startswith(".pages-"):
-            continue
-        path = os.path.join(out_dir, fn)
+    for pid in papers:
+        path = os.path.join(papers_root, pid, ".pages")
         try:
-            if now - os.path.getmtime(path) > max_age:
+            if os.path.isdir(path) and now - os.path.getmtime(path) > max_age:
                 shutil.rmtree(path, ignore_errors=True)
         except OSError:
             pass
@@ -553,7 +550,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         j.pop("_abort", None)     # 上次取消留下的标志必须清掉，否则这一次一页都起不来
         j.update(status="running", error="", dual="", mono="", service=service,
                  note=note, pages=[0, 0], started=time.time())
-        page_root = os.path.join(out_dir, f".pages-{pid}")
+        page_root = os.path.join(out_dir, ".pages")
         cfg_copy = ""
         procs = []                           # 在跑的页进程，cancel() 按这个掐
         results = {}                         # pno(0 基) -> {"dual","mono"}：先装复用的，再装新译的
@@ -598,7 +595,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             stem = os.path.splitext(os.path.basename(pdf_path))[0]
             for pno in range(n):                     # 找回上次留下的成功页
                 for t in range(PAGE_TRIES):
-                    got = _page_done(_page_dir(out_dir, pid, pno, t), stem)
+                    got = _page_done(_page_dir(out_dir, pno, t), stem)
                     if got:
                         results[pno] = got
                         break
@@ -619,7 +616,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     _say(f"整本翻译 {pid}: 第 {pno + 1} 页异常（{type(e).__name__}），保留原文")
 
             def _worker(pno: int):
-                pdir = _page_dir(out_dir, pid, pno, 0)
+                pdir = _page_dir(out_dir, pno, 0)
                 os.makedirs(pdir, exist_ok=True)
                 cfg = (pinned_config(pdir, pid, overlay=envs) if envs else "") or cfg_copy
                 got, tail = None, []
@@ -627,7 +624,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 for t in range(PAGE_TRIES):
                     if auth_error or j.get("_abort"):
                         return
-                    pdir_t = _page_dir(out_dir, pid, pno, t)
+                    pdir_t = _page_dir(out_dir, pno, t)
                     os.makedirs(pdir_t, exist_ok=True)
                     got, tail = _run_page(pdf_path, pno + 1, pdir_t, service, extra,
                                           envs, cfg, procs, auth_out, engine)
@@ -660,7 +657,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
 
             # ---- 组装：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文
             #      派生，见 derive_dual）。失败页译文=原文页，派生时天然得到两页原文 ----
-            mono_path = os.path.join(out_dir, stem + "-mono.pdf")
+            mono_path = os.path.join(out_dir, "mono.pdf")
             failed = []
             src = pymupdf.open(pdf_path)
             mono = pymupdf.open()
@@ -690,7 +687,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 # 旧的双语版是按**上一轮**译文派生的，留着会跟新译文错位——删掉，
                 # 首开「双语」时按新译文重派（dual 是派生缓存，不是独立成品）
                 try:
-                    os.remove(os.path.join(out_dir, stem + "-dual.pdf"))
+                    os.remove(os.path.join(out_dir, "dual.pdf"))
                 except OSError:
                     pass
             finally:

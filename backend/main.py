@@ -96,8 +96,14 @@ async def _bad_params(request, exc):
     return JSONResponse({"detail": f"{where} 不合法：{errs[0].get('msg', '请求格式不对')}"},
                         status_code=400)
 
-PDF_DIR = os.path.join(config.DATA_DIR, "library")
-TRANSLATED_DIR = os.path.join(config.DATA_DIR, "translated")
+PAPERS_DIR = os.path.join(config.DATA_DIR, "papers")
+
+
+def paper_dir(pid: str) -> str:
+    """一篇论文的全部盘上数据都收在它自己的文件夹里：
+    paper.pdf（原件）+ mono.pdf（译文版）+ dual.pdf（双语缓存）+ .pages/（页级中间产物）。
+    删论文 = 删文件夹，用户在资源管理器里也一眼能对上号。"""
+    return os.path.join(PAPERS_DIR, pid)
 
 
 def _backfill_pdf_hashes():
@@ -122,13 +128,84 @@ def _backfill_pdf_hashes():
     threading.Thread(target=work, daemon=True).start()
 
 
+def _migrate_paper_layout():
+    """旧平铺布局（library/{pid}.pdf、translated/{pid}-mono/dual.pdf、translated/.pages-{pid}/）
+    一次性搬进 papers/{pid}/，db 里的路径同步改写。
+
+    0.1.29 之前原 PDF 和译文平铺在两个公共目录里，论文一多就对不上号；
+    现在每篇一个文件夹：paper.pdf + mono.pdf + dual.pdf + .pages/，删论文 = 删文件夹。
+    搬完后旧目录里剩下的必然是没有论文指向的孤儿，整个清掉；
+    有文件搬不动（被占用）就不删目录，下次启动接着试。"""
+    lib = os.path.join(config.DATA_DIR, "library")
+    tr = os.path.join(config.DATA_DIR, "translated")
+    if not os.path.isdir(lib) and not os.path.isdir(tr):
+        return
+
+    def under(path: str, root: str) -> bool:
+        p = os.path.normcase(os.path.abspath(path)) if path else ""
+        return p.startswith(os.path.normcase(os.path.abspath(root)) + os.sep)
+
+    moved = 0
+    stuck = set()        # 搬不动的文件（被占用等）：虽然已被 db 引用，这次只能留下
+    for row in db.list_papers():
+        pid = row["id"]
+        p = db.get_paper(pid) or {}
+        updates = {}
+        for key, dest in (("path", "paper.pdf"), ("mono_path", "mono.pdf"), ("dual_path", "dual.pdf")):
+            src = p.get(key) or ""
+            root = lib if key == "path" else tr
+            if not under(src, root) or not os.path.isfile(src):
+                continue
+            os.makedirs(paper_dir(pid), exist_ok=True)
+            dst = os.path.join(paper_dir(pid), dest)
+            try:
+                os.replace(src, dst)
+            except OSError:
+                stuck.add(os.path.normcase(os.path.abspath(src)))
+                continue
+            updates[key] = dst
+            moved += 1
+        old_pages = os.path.join(tr, f".pages-{pid}")
+        if os.path.isdir(old_pages):
+            os.makedirs(paper_dir(pid), exist_ok=True)
+            new_pages = os.path.join(paper_dir(pid), ".pages")
+            shutil.rmtree(new_pages, ignore_errors=True)
+            try:
+                os.replace(old_pages, new_pages)
+            except OSError:
+                pass
+        if updates:
+            db.update_paper(pid, **updates)
+    # 旧目录里剩下的只有两类：搬不动的（db 还引用着，留下）和孤儿（没有任何论文指向，
+    # 半截导入/历史残留）——孤儿直接清，旧目录随之整个消失
+    for d in (lib, tr):
+        if not os.path.isdir(d):
+            continue
+        for dirpath, _dirs, files in os.walk(d):
+            for fn in files:
+                fp = os.path.normcase(os.path.abspath(os.path.join(dirpath, fn)))
+                if fp in stuck:
+                    continue
+                try:
+                    os.remove(os.path.join(dirpath, fn))
+                except OSError:
+                    pass
+        shutil.rmtree(d, ignore_errors=True)
+    if moved:
+        _applog(f"数据目录迁移：{moved} 个文件归位到 papers/<论文 id>/ 每篇一个文件夹")
+
+
 @app.on_event("startup")
 def _startup():
     config.ensure_dirs()
-    os.makedirs(PDF_DIR, exist_ok=True)
-    os.makedirs(TRANSLATED_DIR, exist_ok=True)
-    translate_full.sweep_configs(TRANSLATED_DIR)   # 清掉可能残留的 pdf2zh --config 副本（里面有 key）
-    translate_full.sweep_page_dirs(TRANSLATED_DIR) # 回收没人回来认领的页级中间产物（留给重跑复用的那批）
+    os.makedirs(PAPERS_DIR, exist_ok=True)
+    _migrate_paper_layout()
+    try:
+        for pid in os.listdir(PAPERS_DIR):
+            translate_full.sweep_configs(os.path.join(PAPERS_DIR, pid, ".pages"))
+    except OSError:
+        pass
+    translate_full.sweep_page_dirs(PAPERS_DIR)   # 回收没人回来认领的页级中间产物（留给重跑复用的那批）
     _clear_zombie_jobs()
     _backfill_pdf_hashes()
 
@@ -144,52 +221,26 @@ def _startup():
     threading.Thread(target=_warm_engine, daemon=True).start()
 
 
-def _sweep_orphan_translations():
-    """清掉 translated/ 里没有论文指向的产物。
+def _sweep_orphan_papers():
+    """清掉 papers/ 里没有论文指向的文件夹。
 
-    什么时候会有：删论文时翻译还在跑（旧版没掐它）、或者进程被硬杀留下的半截文件。
-    不清的话它们会一直占着几十 MB，而且用户"删过了"的东西还在盘上。
+    什么时候会有：导入写了一半进程被杀（PDF 落了盘、库记录没写上），
+    或者旧平铺布局迁移前留下的残骸。不清的话它们会一直占着几十 MB，
+    而且"删过了"的东西还在盘上。
     """
     try:
-        names = os.listdir(TRANSLATED_DIR)
+        dirs = os.listdir(PAPERS_DIR)
     except OSError:
         return
-    # 判"归谁"的钥匙统一成**库文件名的主干**（不含 -dual/-mono）。
-    # 这里原来是两套口径：从 dual_path 收集时用完整名（`<pid>-dual`），
-    # 而遍历文件时用去掉后缀的主干（`<pid>`）——两边永远对不上，于是**每次启动都把
-    # 已经译好的 PDF 删掉**（用户看到的是"双语版打不开，已切回原文"）。
-    def stem_of(fn):
-        fn = os.path.basename(fn or "")
-        for suf in ("-dual.pdf", "-mono.pdf"):
-            if fn.endswith(suf):
-                return fn[:-len(suf)]
-        return os.path.splitext(fn)[0]
-
-    stems = set()
-    for row in db.list_papers():
-        p = db.get_paper(row["id"]) or {}
-        for key in ("dual_path", "mono_path"):
-            fp = p.get(key) or ""
-            if fp and os.path.exists(fp):
-                stems.add(stem_of(fp))
-        stem = stem_of(p.get("path"))
-        if stem and ((stem + "-dual.pdf") in names or (stem + "-mono.pdf") in names):
-            stems.add(stem)          # 还没落库但确实属于这篇
+    known = {row["id"] for row in db.list_papers()}
     n = 0
-    for fn in names:
-        if not fn.endswith(".pdf"):
+    for d in dirs:
+        if d in known:
             continue
-        stem = fn[:-len("-dual.pdf")] if fn.endswith("-dual.pdf") else (
-            fn[:-len("-mono.pdf")] if fn.endswith("-mono.pdf") else None)
-        if stem is None or stem in stems:
-            continue
-        try:
-            os.remove(os.path.join(TRANSLATED_DIR, fn))
-            n += 1
-        except OSError:
-            pass
+        shutil.rmtree(os.path.join(PAPERS_DIR, d), ignore_errors=True)
+        n += 1
     if n:
-        _applog(f"启动清理：删掉 {n} 个没有论文指向的译文文件")
+        _applog(f"启动清理：删掉 {n} 个没有论文指向的文件夹")
 
 
 def _clear_zombie_jobs():
@@ -203,7 +254,7 @@ def _clear_zombie_jobs():
     按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
     """
     _adopt_orphan_translation()          # 先认领：上一次进程退出时 pdf2zh 可能已经把译完写好了
-    _sweep_orphan_translations()         # 再把没人认领的产物清掉
+    _sweep_orphan_papers()               # 再把没人认领的产物清掉
     for col in ("analysis_status", "marginalia_status", "translate_status"):
         n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col} IN ('running','queued')")[0][0]
         if n:
@@ -215,22 +266,18 @@ def _adopt_orphan_translation():
     """收留"孤儿译文"。
 
     pdf2zh 是我们起的**独立进程**：eggpaper 关掉/装新版本时它不会被一起带走，
-    会接着把 `<pid>-mono.pdf` 写完。但那条 running 状态被上面的清理归零了，
+    会接着把 mono.pdf 写完。但那条 running 状态被上面的清理归零了，
     用户回来看到的还是「整本翻译」——白译一场，还得再等两分钟。启动时看一眼文件在不在，
     在就直接认领成 done。只认「看起来完整」的文件（有 %%EOF 收尾），
     免得把写到一半就被杀掉的那份当成成品。
     """
-    try:
-        names = os.listdir(TRANSLATED_DIR)
-    except OSError:
-        return
     # 用 get_paper 逐篇取（list_papers 的列里**故意没有** path/dual_path——
     # 那份列表是要发给浏览器的，不该把用户的本地路径捎出去）
     for row in db.list_papers():
         p = db.get_paper(row["id"]) or {}
         if p.get("translate_status") == "done" and (p.get("mono_path") or p.get("dual_path")):
             continue
-        got = translate_full.adopt_existing(p["id"], p.get("path") or "", TRANSLATED_DIR)
+        got = translate_full.adopt_existing(paper_dir(p["id"]))
         if not got:
             continue
         db.update_paper(p["id"], dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
@@ -491,7 +538,7 @@ def _pdf_hash_bytes(raw: bytes) -> str:
 
 
 def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
-    """把已经落在 PDF_DIR 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
+    """把已经落在 papers/<pid>/ 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
 
     解析失败要收拾干净：留着半篇没有段落的"论文"，用户点开只能看见一个空书架。
     """
@@ -540,7 +587,8 @@ async def upload(file: UploadFile = File(...)):
         return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
                 "duplicate": True}
     pid = db.new_id()
-    path = os.path.join(PDF_DIR, f"{pid}.pdf")
+    os.makedirs(paper_dir(pid), exist_ok=True)
+    path = os.path.join(paper_dir(pid), "paper.pdf")
     with open(path, "wb") as f:
         f.write(raw)
     # 解析（抽标题/段落）是**同步阻塞**的活，几秒钟起步。直接在 async 路由里做会卡住整个
@@ -567,7 +615,8 @@ def import_path(body: dict):
         _pending_open["pid"] = dup               # 已经在库里：让界面切过去就行
         return {"paper": db.get_paper(dup), "duplicate": True}
     pid = db.new_id()
-    dest = os.path.join(PDF_DIR, f"{pid}.pdf")
+    os.makedirs(paper_dir(pid), exist_ok=True)
+    dest = os.path.join(paper_dir(pid), "paper.pdf")
     try:
         shutil.copyfile(src, dest)
     except OSError as e:
@@ -660,19 +709,14 @@ def _rm(path: str):
 def delete_paper(pid: str):
     p = _paper_or_404(pid)
     db.purge_paper(pid)          # 段落/骨架/眉批/问答会话/分类归属，一张表都不留
-    # 文件也要走干净：原 PDF、双语版、译文版。双语文档是按 pid 命名的，
-    # 万一 mono_path 没记上（翻译中途失败），按文件名把残留的一起扫掉。
-    # 先掐掉还在跑的整本翻译：pdf2zh 是独立进程，不掐的话它会把 <pid>-dual.pdf
-    # 写回 translated/——用户以为"删掉 = 痕迹全消失"，盘上却留着一份孤立的译文。
+    # 文件也要走干净：这篇论文的全部数据就在它自己的文件夹里（paper.pdf + 译文 +
+    # 页级中间产物）。先掐掉还在跑的整本翻译：pdf2zh 是独立进程，不掐的话它会把
+    # mono.pdf 写回来——用户以为"删掉 = 痕迹全消失"，盘上却留着一份孤立的译文。
     if translate_full.cancel(pid):
         _applog(f"删论文 {pid}：同时终止了还在跑的整本翻译")
-    _rm(p["path"]); _rm(p["dual_path"]); _rm(p.get("mono_path"))
-    try:
-        for fn in os.listdir(TRANSLATED_DIR):
-            if fn.startswith(pid):
-                _rm(os.path.join(TRANSLATED_DIR, fn))
-    except OSError:
-        pass
+    shutil.rmtree(paper_dir(pid), ignore_errors=True)
+    _rm(p["path"])               # 库记录指向库外旧位置的兜底（正常都已在 papers/ 里）
+    _rm(p["dual_path"]); _rm(p.get("mono_path"))
     return {"ok": True}
 
 
@@ -686,11 +730,6 @@ def _variant_lock(key: str) -> threading.Lock:
         return _variant_locks.setdefault(key, threading.Lock())
 
 
-def _translated_stem(p: dict) -> str:
-    """这篇论文的译文文件名主干（= 库文件名主干）。"""
-    return os.path.splitext(os.path.basename(p.get("path") or ""))[0]
-
-
 @app.get("/api/papers/{pid}/pdf")
 def paper_pdf(pid: str, variant: str = "original"):
     p = _paper_or_404(pid)
@@ -699,11 +738,11 @@ def paper_pdf(pid: str, variant: str = "original"):
         if dual and os.path.exists(dual):
             return FileResponse(dual, media_type="application/pdf")
         # 省盘策略：盘上只落译文版，双语版（它的两倍大）**首次点开时**由 原文+译文 派生并缓存
-        mono = p.get("mono_path") or os.path.join(TRANSLATED_DIR, _translated_stem(p) + "-mono.pdf")
+        mono = p.get("mono_path") or os.path.join(paper_dir(pid), "mono.pdf")
         src = p.get("path") or ""
         if (mono and os.path.exists(mono) and src and os.path.exists(src)):
             with _variant_lock(pid + ":dual"):
-                dual = os.path.join(TRANSLATED_DIR, _translated_stem(p) + "-dual.pdf")
+                dual = os.path.join(paper_dir(pid), "dual.pdf")
                 if not os.path.exists(dual):
                     translate_full.derive_dual(src, mono, dual)
                 db.update_paper(pid, dual_path=dual)
@@ -717,7 +756,7 @@ def paper_pdf(pid: str, variant: str = "original"):
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
             with _variant_lock(pid + ":mono"):
-                mono = os.path.join(TRANSLATED_DIR, _translated_stem(p) + "-mono.pdf")
+                mono = os.path.join(paper_dir(pid), "mono.pdf")
                 if not os.path.exists(mono):
                     translate_full.derive_mono(dual, mono)
                 db.update_paper(pid, mono_path=mono)
@@ -740,7 +779,7 @@ def paragraphs(pid: str):
     # 至少不动用户已有的东西。
     if db.paragraphs_need_lines(pid):
         p = db.get_paper(pid)
-        path = p.get("path") or os.path.join(PDF_DIR, f"{pid}.pdf")
+        path = p.get("path") or os.path.join(paper_dir(pid), "paper.pdf")
         try:
             if os.path.exists(path):
                 fresh = pdfparse.extract_paragraphs(path)
@@ -1250,7 +1289,7 @@ def ask_visual(body: dict):
     return {"answer": ans}
 
 
-# ---------------- 六个问题里需要生成的那三个 ----------------
+# ---------------- 五问里需要现场生成的那几问 ----------------
 # 免费的两问（要解决什么 / 怎么解决的 / 还没解决什么）直接用骨架数据，不花 token；
 # 这三问按需生成、按篇缓存，和「获取」同一个纪律。语料只喂相关的几类段落。
 
@@ -1972,7 +2011,7 @@ def translate_full_start(pid: str, force: bool = False):
     # 启动扫描已经过去了，状态被清成 none，用户再点一次会**重译一遍并覆盖**刚做好的文件。
     # force=1（界面上的「重新整本翻译」）跳过认领：译文打不开就得重译，认领旧文件没意义。
     if not force:
-        got = translate_full.adopt_existing(pid, p["path"], TRANSLATED_DIR)
+        got = translate_full.adopt_existing(paper_dir(pid))
         if got:
             db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
                             translate_status="done", translate_error="")
@@ -1988,7 +2027,7 @@ def translate_full_start(pid: str, force: bool = False):
     ok, why = translate_full.engine_probe_cached(exe)
     if not ok:
         raise HTTPException(400, f"缺 pdf2zh 引擎（{why}）。到「设置 → 翻译引擎」安装，或填写路径。")
-    translate_full.start(pid, p["path"], TRANSLATED_DIR, used,
+    translate_full.start(pid, p["path"], paper_dir(pid), used,
                          cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                          note=note, engine=engine)
     db.update_paper(pid, translate_status="running", translate_error="")

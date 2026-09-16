@@ -27,7 +27,7 @@ import shutil
 # 一个真实版本号好，后者会让用户永远升不上来还查不出原因
 VERSION_FALLBACK = "0.0.0"
 
-_MIGRATE_ITEMS = ("eggpaper.db", "config.yaml", "library", "translated", "home")
+_MIGRATE_ITEMS = ("eggpaper.db", "config.yaml", "papers", "library", "translated", "home")
 
 
 def is_frozen() -> bool:
