@@ -419,7 +419,7 @@ function onKey(e) {
     <header class="topbar">
       <div class="wordmark">
         <EggMark class="egg" :class="[{ roll }, { sleep: sleepEgg }]" />
-        <span class="egg-z" v-if="sleepEgg" aria-hidden="true">z</span>
+        <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
         <span class="name">eggpaper</span>
       </div>
       <div class="doc-head" v-if="store.paper">

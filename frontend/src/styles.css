@@ -238,12 +238,18 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   0%, 100% { transform: rotate(90deg); }
   50% { transform: rotate(98deg); }
 }
+/* 两个 z 接续飘（第二个晚半拍、稍大、偏右上）——单个 z 看不出"睡着了" */
 .wordmark .egg-z {
-  position: absolute; left: 22px; top: -9px;
+  position: absolute; left: 20px; top: -11px; width: 22px; height: 20px;
+  pointer-events: none; color: var(--ink-3);
   font-family: var(--brand); font-style: italic; font-weight: 600;
-  font-size: 13px; color: var(--ink-3); pointer-events: none;
+}
+.wordmark .egg-z i {
+  position: absolute; font-style: inherit;
   animation: eggZ 3.6s ease-in-out infinite;
 }
+.wordmark .egg-z i:nth-child(1) { left: 0; bottom: 3px; font-size: 10px; }
+.wordmark .egg-z i:nth-child(2) { left: 9px; bottom: 10px; font-size: 13px; animation-delay: 1.8s; }
 @keyframes eggZ {
   0% { opacity: 0; transform: translateY(3px); }
   35% { opacity: 0.85; }
