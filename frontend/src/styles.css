@@ -232,6 +232,15 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .tran-line i.det { animation: none; }
 .wordmark { display: flex; align-items: center; gap: 9px; user-select: none; position: relative; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
+/* 戳一戳：蛋壳上晃两下（连戳三下换 rollOnce 翻滚一圈，逻辑在 App） */
+.egg-wrap { position: relative; display: block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.wordmark .egg.wobble { animation: eggWobble 0.42s var(--ease-spring); transform-origin: 50% 85%; }
+@keyframes eggWobble {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-9deg) scale(1.05); }
+  55% { transform: rotate(8deg); }
+  80% { transform: rotate(-4deg); }
+}
 /* 深夜彩蛋：蛋躺下睡——只转方向，印章几何一个笔画都不动；呼吸=在躺姿上轻轻晃 */
 .wordmark .egg.sleep { animation: eggSleep 4.2s var(--ease-smooth) infinite; }
 @keyframes eggSleep {

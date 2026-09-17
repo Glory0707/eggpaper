@@ -28,6 +28,25 @@ function rollOnce(ms = 700) {
   rollOnce._t = setTimeout(() => (roll.value = false), ms)
 }
 
+/* 戳一戳蛋：点一下晃一下；3 秒内戳满三下翻滚一圈。无声——戳了会动，仅此而已。 */
+const wobbling = ref(false)
+let pokes = 0
+let pokeReset = 0
+function pokeEgg() {
+  pokes++
+  clearTimeout(pokeReset)
+  if (pokes >= 3) {
+    pokes = 0
+    rollOnce()
+    return
+  }
+  wobbling.value = false
+  requestAnimationFrame(() => { wobbling.value = true })
+  clearTimeout(pokeEgg._t)
+  pokeEgg._t = setTimeout(() => (wobbling.value = false), 450)
+  pokeReset = setTimeout(() => (pokes = 0), 3000)
+}
+
 const tranReady = computed(() => store.paper?.translate_status === 'done')
 
 /* ---------------- 拖入导入 ----------------
@@ -418,8 +437,10 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark">
-        <EggMark class="egg" :class="[{ roll }, { sleep: sleepEgg }]" />
-        <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
+        <span class="egg-wrap" @click="pokeEgg">
+          <EggMark class="egg" :class="[{ roll }, { wobble: wobbling }, { sleep: sleepEgg }]" />
+          <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
+        </span>
         <span class="name">eggpaper</span>
       </div>
       <div class="doc-head" v-if="store.paper">
