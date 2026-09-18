@@ -1820,28 +1820,16 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             summary, ctx = _context(pid, conv_id, hist)
             pids = [pid] + [x for x in (ref_pids or []) if x != pid]
             hits = db.glossary_hits_all(pids, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
-            # 引用的其他论文只带摘要级背景（一眼卡是现成的浓缩，几百字/篇），不搬全文——
-            # 两篇全文就顶到上下文天花板了；细节问题仍以当前篇为准。
+            # 渐进式披露：先在勾选范围里挑最相关的几篇（超过 3 篇才需要侦察一次），
+            # 再把这几篇的全文装进上下文——摘要只是挑篇的依据，不是回答的依据。
             others = []
-            for x in (ref_pids or []):
-                if x == pid:
-                    continue
+            cand = [x for x in (ref_pids or []) if x != pid]
+            if len(cand) > 3:
+                cand = _recon_pick(question, [db.get_paper(x) for x in cand]) or cand[:3]
+            for x in cand[:3]:
                 o = db.get_paper(x)
-                if not o:
-                    continue
-                o = dict(o)
-                raw = o.get("summary") or ""
-                try:
-                    j = llm.parse_json(raw)
-                    if isinstance(j, dict):
-                        parts = [v.strip() for v in j.values() if isinstance(v, str) and v.strip()]
-                        for v in (j.get("claims") or []):
-                            parts.append(v.get("text") if isinstance(v, dict) else str(v))
-                        raw = "；".join(p for p in parts if p)
-                except Exception:
-                    pass
-                o["summary"] = re.sub(r"\s+", " ", raw)[:900]
-                others.append(o)
+                if o:
+                    others.append({"title": o.get("title") or o.get("filename") or "未命名", "paras": db.get_paragraphs(x)})
             gen = llm.chat_stream(llm.ask_messages(p["title"], db.get_paragraphs(pid), ctx, question,
                                                    hits, summary, others))
         for piece in gen:
@@ -1887,21 +1875,10 @@ def ask(pid: str, body: dict):
     # 跨文献引用：refs 是《标题》列表（输入框里用 / 勾选的），scope="library" 表示
     # 「全库·自动挑相关」。解析失败就当没引——提问永远能发出去，引用只是增强。
     ref_pids = []
-    for t in (body.get("refs") or [])[:8]:
+    for t in (body.get("refs") or []):
         pid2 = _paper_by_title(t)
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
-    if (body.get("scope") or "").strip() == "library":
-        others = [r for r in db.list_papers() if r["id"] != pid]
-        if len(others) <= 4:
-            for r in others:
-                if r["id"] not in ref_pids:
-                    ref_pids.append(r["id"])
-        else:
-            for pid2 in _recon_pick(question, others):
-                if pid2 not in ref_pids:
-                    ref_pids.append(pid2)
-    ref_pids = ref_pids[:4]
     # 校验都过了再开流：一旦开始 SSE，HTTP 头已经发出去，改不成 4xx 了
     return StreamingResponse(_stream_answer(p, conv_id, question, ref_pids), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",

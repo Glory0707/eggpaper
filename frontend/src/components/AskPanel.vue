@@ -122,9 +122,9 @@ async function send(q) {
     buf += t
     if (!raf) raf = requestAnimationFrame(flush)
   }
-  const body = libScope.value
-    ? { question: q, conv_id: id, scope: 'library' }
-    : { question: q, conv_id: id, refs: pickedTitles.value }
+  const body = picked.value.length
+    ? { question: q, conv_id: id, refs: picked.value }
+    : { question: q, conv_id: id }
   const h = askStream(pid.value, body, ev => {
     if (ev.type === 'delta') queue(ev.text)
     else if (ev.type === 'done') { flush(); gotDone = true; m.citations = ev.citations || []; applyIds(ev) }
@@ -231,8 +231,9 @@ const citeQ = ref('')
 const libPapers = ref([])
 const libColls = ref([])
 const libMap = ref({})
-const picked = ref([])          // [{ id, title }]，最多 6 篇
-const libScope = ref(false)     // 「全库·自动挑相关」：后端先用标题清单侦察出最相关的几篇
+const picked = ref([])          // ['标题', …]——整个文库/分类全选/手选，都是这一份集合
+const allTitles = computed(() => libPapers.value.map(p => (p.title || p.filename || '').trim()).filter(Boolean))
+const libAll = computed(() => allTitles.value.length > 0 && allTitles.value.every(t => picked.value.includes(t)))
 const citeListEl = ref(null)
 const citeFilterEl = ref(null)
 
@@ -244,7 +245,6 @@ async function loadLib() {
     libMap.value = r.map || {}
   } catch { /* 选择器数据拿不到就只影响跨篇，单篇照常 */ }
 }
-const pickedTitles = computed(() => picked.value.map(p => p.title))
 const filtered = computed(() => {
   const q = citeQ.value.trim().toLowerCase()
   return libPapers.value.filter(p => !q || (p.title || '').toLowerCase().includes(q) || (p.filename || '').toLowerCase().includes(q))
@@ -263,28 +263,31 @@ const groups = computed(() => {
   if (rest.length) gs.push({ name: '未分类', items: rest })
   return gs
 })
-function isOn(t) { return picked.value.some(p => p.title === t) }
-function toggleTitle(t, id) {
-  libScope.value = false
-  const i = picked.value.findIndex(p => p.title === t)
-  if (i >= 0) { picked.value.splice(i, 1); return }
-  if (picked.value.length >= 6) { toast('一次最多引用 6 篇'); return }
-  picked.value.push({ id, title: t })
+function isOn(t) { return picked.value.includes(t) }
+function toggleTitle(t) {
+  const i = picked.value.indexOf(t)
+  if (i >= 0) picked.value.splice(i, 1)
+  else picked.value.push(t)
 }
-function toggleLibScope() {
-  libScope.value = !libScope.value
-  if (libScope.value) picked.value = []
+function toggleLibAll() {
+  picked.value = libAll.value ? [] : [...allTitles.value]
+}
+function groupTitles(g) { return g.items.map(p => (p.title || p.filename || '').trim()).filter(Boolean) }
+function groupAll(g) { const ts = groupTitles(g); return ts.length > 0 && ts.every(t => picked.value.includes(t)) }
+function toggleGroup(g) {
+  const ts = groupTitles(g)
+  const all = ts.every(t => picked.value.includes(t))
+  if (all) picked.value = picked.value.filter(t => !ts.includes(t))
+  else for (const t of ts) if (!picked.value.includes(t)) picked.value.push(t)
 }
 function pickFirst() {
   const first = groups.value[0]?.items?.[0]
-  if (first) toggleTitle(first.title, first.id)
+  if (first) toggleTitle(first.title || first.filename)
 }
-const citeCount = computed(() => picked.value.length + (libScope.value ? 1 : 0))
-const citeTitle = computed(() => libScope.value
-  ? '全库 · 自动挑相关'
-  : ('已引用：' + picked.value.map(p => p.title || p.filename).join('、')))
+const citeCount = computed(() => picked.value.length)
+const citeTitle = computed(() => '已引用：' + (picked.value.slice(0, 5).join('、') + (picked.value.length > 5 ? '…' : '')))
 function pickFromPop(p) {
-  toggleTitle(p.title, p.id)
+  toggleTitle((p.title || p.filename || '').trim())
   nextTick(() => citeFilterEl.value?.focus())
 }
 function openCite() {
@@ -432,15 +435,21 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         <div v-if="citeOpen" class="cite-pop">
           <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" placeholder="筛选标题…（Esc 关闭，Enter 选第一个）" @keydown.esc.stop="closeCite">
           <div class="cite-list" ref="citeListEl">
-            <button class="cite-item lib" :class="{ on: libScope }" @click="toggleLibScope">
+            <button class="cite-item lib" :class="{ on: libAll }" @click="toggleLibAll">
               <span class="box">
                 <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
                      stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
               </span>
-              <span class="t">全库 · 自动挑相关</span>
-              <span class="tag">先侦察再作答</span>
+              <span class="t">整个文库</span>
             </button>
             <template v-for="g in groups" :key="g.name">
+              <button class="cite-item ga" :class="{ on: groupAll(g) }" @click="toggleGroup(g)">
+                <span class="box">
+                  <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
+                       stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
+                </span>
+                <span class="t">{{ g.name }}</span>
+              </button>
               <div class="cite-group">{{ g.name }}</div>
               <button v-for="p in g.items" :key="p.id" class="cite-item" :class="{ on: isOn(p.title) }"
                       @click="pickFromPop(p)">
@@ -455,7 +464,6 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
             </template>
             <div v-if="!groups.length" class="cite-group">没有匹配的论文</div>
           </div>
-          <div class="cite-foot">勾选的论文以摘要参与回答 · 一次最多 6 篇 · 「全库」请直接问并写明范围</div>
         </div>
       </Transition>
       <button v-if="citeCount" class="cite-inline" :title="citeTitle" @click="openCite">

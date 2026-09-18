@@ -497,24 +497,26 @@ QA_SYSTEM = """你是论文精读助手，陪研究者读这篇论文，也顺�
 2. 论文内的关键论断标注依据段编号，格式如 [¶5] 或 [¶5,¶12]；论文没有依据的要明说
 3. 引用参考文献列表不作为论文内容的依据
 4. 回答用中文，术语首次出现给出英文
-5. 同时给了其他被引用论文的摘要时，它们只是背景材料：提到它们用《标题》标注、
-   不要给它们编 ¶ 段号；[¶n] 一律指向当前这一篇论文的段落"""
+5. 上下文里可能有多篇论文：每篇前有标记行——【当前论文】是用户正在读的这篇，其余以《标题》标记。
+   ¶ 编号属于它上方最近的标记篇；提到其他论文先写《标题》再写 ¶（如《某论文》¶3）。与问题无关的论文不要硬扯"""
 
 
 def ask_messages(title: str, paras: list, history: list, question: str, hits=None, summary: str = "", others: list = None) -> list:
     """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))[:80000]
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))[:50000 if others else 80000]
     if others:
+        per = max(12000, 60000 // len(others))
         blocks = []
         for o in others:
             t = (o.get("title") or o.get("filename") or "未命名").strip()
-            sm = re.sub(r"\s+", " ", o.get("summary") or "")[:900]
-            if sm:
-                blocks.append(f"《{t}》{sm}")
+            lines = "\n".join(f"¶{p['idx']} {(p['text'] or '')[:1000]}"
+                              for p in o.get("paras") or [] if not p.get("in_refs"))
+            if lines:
+                blocks.append(("《" + t + "》\n" + lines)[:per])
         if blocks:
-            body += ("\n\n【用户同时引用的其他论文——只有摘要级背景，不是当前篇的正文。"
-                     "回答里提到它们时用《标题》标注，不要给它们编 ¶ 段号】\n" + "\n\n".join(blocks))
-    msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n论文标题：{title or ''}\n\n{body}"}]
+            body += ("\n\n【用户同时引用的其他论文全文——每篇的 ¶ 编号是它自己的段落。"
+                     "提到这些论文时先写《标题》再写 ¶ 编号（如《某论文》¶3）】\n" + "\n\n".join(blocks))
+    msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n【当前论文】{title or ''}\n\n{body}"}]
     if summary:
         msgs.append({"role": "system", "content":
                      "以下是本次对话较早部分的摘要（其中的结论、术语译法、用户的关注点都继续有效，"
