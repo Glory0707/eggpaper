@@ -1899,6 +1899,23 @@ def figures(pid: str):
     while len(_fig_cache) > 8:
         _fig_cache.pop(next(iter(_fig_cache)))
     return {"figures": out}
+@app.get("/api/papers/{pid}/toc")
+def paper_toc(pid: str):
+    """PDF 自带的书签目录（get_toc：[层级, 标题, 页码]，页码 1 起）。
+    读取本身很便宜，不值得缓存；没有书签就返回空表，前端给一句空态。"""
+    p = _paper_or_404(pid)
+    if not os.path.exists(p["path"]):
+        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
+    import pymupdf
+    doc = pymupdf.open(p["path"])
+    try:
+        toc = [{"level": lv, "title": title.strip(), "page": page - 1}
+               for lv, title, page in doc.get_toc() if page and 1 <= page <= len(doc)]
+    finally:
+        doc.close()
+    return {"toc": toc}
+
+
 @app.get("/api/papers/{pid}/figure.png")
 def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, dpi: int = 130):
     import pymupdf

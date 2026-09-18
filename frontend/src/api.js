@@ -48,6 +48,8 @@ export const api = {
   figures: (pid) => req('GET', `/api/papers/${pid}/figures`),
   // 论文日历：某个月哪天读了什么、哪天入了什么
   calendar: (month) => req('GET', `/api/calendar?month=${month}`),
+  // PDF 自带书签目录
+  toc: (pid) => req('GET', `/api/papers/${pid}/toc`),
   askVisual: (body) => req('POST', '/api/ask-visual', body),
   figureUrl: (pid, f, dpi = 130) =>
     `/api/papers/${pid}/figure.png?page=${f.page}&x0=${f.x0}&y0=${f.y0}&x1=${f.x1}&y1=${f.y1}&dpi=${dpi}`,

@@ -1838,6 +1838,18 @@ html.dark .sp-shot { background: #fff; }
 .cal-paper:hover { background: var(--btn-hover); box-shadow: none; transform: none; }
 .cal-empty { margin-top: 12px; border-top: 1px solid var(--hairline-soft); padding-top: 10px; font-size: var(--fs-sm); color: var(--ink-3); }
 
+/* 目录：书签自己的层级用缩进表达，右侧页码右对齐；不做折叠——论文目录顶多几十条 */
+.toc-list { margin-top: 4px; overflow-y: auto; }
+.toc-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  width: 100%; text-align: left; padding: 5px 8px; margin-bottom: 1px;
+  font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.4;
+  background: transparent; border: none; border-radius: 3px;
+}
+.toc-row:hover { background: var(--btn-hover); box-shadow: none; transform: none; }
+.toc-row .toc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toc-row .toc-p { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
+
 /* ---------- 全局打磨 ----------
    长串防撑破：论文标题、导出表格、问答里贴的长链接按字符折行，不把栏位挤宽 */
 .md, .qa-msg .q-body, .cal-paper, .paper-item .fn, .ce-v, .six-txt { overflow-wrap: anywhere; }
