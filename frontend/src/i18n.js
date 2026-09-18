@@ -459,6 +459,19 @@ const EN = {
   '核心结论和最硬的证据是什么？': 'What are the core conclusions, and how strong is the evidence?',
   '方法上有什么可挑剔的地方？': 'What are the methodological weaknesses?',
   '作者承认了哪些局限？': 'Which limitations do the authors admit?',
+  // ---- 论文日历 ----
+  '论文日历': 'Calendar',
+  '论文日历 · g c': 'Calendar · g c',
+  '收起日历': 'Hide calendar',
+  '上一个月': 'Previous month',
+  '下一个月': 'Next month',
+  '今天': 'Today',
+  '本月 {n} 天 · {m} 篇': '{n} days · {m} reads this month',
+  '读过 {r} 篇 · 新入库 {a} 篇': '{r} read · {a} added',
+  '读过': 'Read',
+  '新入库': 'Added',
+  '这一天没有记录': 'Nothing recorded this day',
+  '文库 / 论文日历': 'Library / calendar',
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。

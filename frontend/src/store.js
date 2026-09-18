@@ -43,6 +43,7 @@ export const store = reactive({
     noteBands: lsGet('noteBands', { good: true, warn: true, noise: true, mine: true }),
     frame: false,
     libOpen: false,
+    calOpen: false,        // 论文日历抽屉（与文库同侧，互斥打开）
   },
   jump: null,            // {page, y0, y1, at}
   cite: { open: false }, // 「引用」浮层：开在顶栏标题旁，内容由 CiteCard 自己拉

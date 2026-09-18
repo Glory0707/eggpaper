@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS collections(
 CREATE TABLE IF NOT EXISTS paper_collections(
   paper_id TEXT, coll_id INTEGER, PRIMARY KEY(paper_id, coll_id)
 );
+-- 论文日历的阅读日志：每次打开论文按"天"记一笔（一篇一天只有一行）。
+-- 更早的历史没有日志，日历端点用 papers.last_read_at / created_at 的日期做只读推导补齐。
+CREATE TABLE IF NOT EXISTS reading_log(
+  day TEXT, paper_id TEXT, PRIMARY KEY(day, paper_id)
+);
 """
 
 
@@ -646,3 +651,15 @@ def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, ki
 
 def marginalia_delete(mid: int):
     q("DELETE FROM marginalia WHERE id=?", (mid,), commit=True)
+
+
+# ---------- 论文日历 ----------
+
+def log_read(pid: str, day: str):
+    """打开论文时记一笔当天阅读。INSERT OR IGNORE：一天一篇只有一行。"""
+    q("INSERT OR IGNORE INTO reading_log(day, paper_id) VALUES(?,?)", (day, pid), commit=True)
+
+
+def reading_days(month: str):
+    """某个月（'YYYY-MM' 前缀）的全部阅读日志。"""
+    return [dict(r) for r in q("SELECT day, paper_id FROM reading_log WHERE day LIKE ?", (month + "%",))]

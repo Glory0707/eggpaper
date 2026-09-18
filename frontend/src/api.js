@@ -46,6 +46,8 @@ export const api = {
   sixAnswer: (pid, key) => req('GET', `/api/papers/${pid}/six-answers/${key}`),
   advisor: (pid, cached = false) => req('GET', `/api/papers/${pid}/advisor${cached ? '?cached=1' : ''}`),
   figures: (pid) => req('GET', `/api/papers/${pid}/figures`),
+  // 论文日历：某个月哪天读了什么、哪天入了什么
+  calendar: (month) => req('GET', `/api/calendar?month=${month}`),
   askVisual: (body) => req('POST', '/api/ask-visual', body),
   figureUrl: (pid, f, dpi = 130) =>
     `/api/papers/${pid}/figure.png?page=${f.page}&x0=${f.x0}&y0=${f.y0}&x1=${f.x1}&y1=${f.y1}&dpi=${dpi}`,

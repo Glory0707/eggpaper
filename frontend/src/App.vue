@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { goHome, lsGet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
+import CalendarPanel from './components/CalendarPanel.vue'
 import RightRail from './components/RightRail.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import Dialog from './components/Dialog.vue'
@@ -312,6 +313,16 @@ async function poll() {
   } catch { /* 同上 */ }
 }
 
+/* 文库与论文日历同侧互斥：开一个收另一个，永远只有一层抽屉。 */
+function toggleLib() {
+  store.viewer.libOpen = !store.viewer.libOpen
+  if (store.viewer.libOpen) store.viewer.calOpen = false
+}
+function toggleCal() {
+  store.viewer.calOpen = !store.viewer.calOpen
+  if (store.viewer.calOpen) store.viewer.libOpen = false
+}
+
 /* 窄窗：右栏改浮层，进窄窗时自动收起一次，把宽度还给论文
    （只在跨过门槛那一拍动手，否则用户手动展开会被反复关掉） */
 watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
@@ -552,6 +563,7 @@ function onKey(e) {
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
   if (e.key === 'Escape') {
     store.viewer.libOpen = false
+    store.viewer.calOpen = false
     store.shortcutCard = false
     store.cite.open = false
     // 设置**不**在 Esc 里关：里面可能填了一半（base_url / key / 模型号），
@@ -563,7 +575,8 @@ function onKey(e) {
   }
   if (gPending.value) {
     gPending.value = false
-    if (e.key === 'l') { store.viewer.libOpen = true; e.preventDefault() }
+    if (e.key === 'l') { store.viewer.libOpen = true; store.viewer.calOpen = false; e.preventDefault() }
+    if (e.key === 'c') { store.viewer.calOpen = true; store.viewer.libOpen = false; e.preventDefault() }
     if (e.key === 'h') { goHome(); e.preventDefault() }
     return
   }
@@ -659,12 +672,19 @@ function onKey(e) {
       <!-- 左：图标条 -->
       <div class="left-strip">
         <button class="strip-btn" :class="{ on: store.viewer.libOpen }" :title="t('文库 · g l')"
-                @click="store.viewer.libOpen = !store.viewer.libOpen">
+                @click="toggleLib">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M4 4h6v16H4zM14 4h6v16h-6z" />
             <path d="M7 8h.01M7 12h.01M17 8h.01M17 12h.01" stroke-linecap="round" stroke-width="2.4" />
           </svg>
           <span class="badge" v-if="store.papers.length">{{ store.papers.length }}</span>
+        </button>
+        <button class="strip-btn" :class="{ on: store.viewer.calOpen }" :title="t('论文日历 · g c')"
+                @click="toggleCal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="4" y="5.5" width="16" height="14.5" rx="1.5" />
+            <path d="M4 10.5h16M8.5 3.5v3.5M15.5 3.5v3.5" stroke-linecap="round" />
+          </svg>
         </button>
         <div class="strip-sep"></div>
       </div>
@@ -696,10 +716,14 @@ function onKey(e) {
     </div>
 
     <Transition name="fade">
-      <div class="lib-mask" v-if="store.viewer.libOpen" @click="store.viewer.libOpen = false"></div>
+      <div class="lib-mask" v-if="store.viewer.libOpen || store.viewer.calOpen"
+           @click="store.viewer.libOpen = store.viewer.calOpen = false"></div>
     </Transition>
     <Transition name="slide-l">
       <LibPanel v-if="store.viewer.libOpen" @import="onImport" @close="store.viewer.libOpen = false" />
+    </Transition>
+    <Transition name="slide-l">
+      <CalendarPanel v-if="store.viewer.calOpen" />
     </Transition>
     <Transition name="fade">
       <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" @quit="onQuitApp" />
@@ -726,7 +750,8 @@ function onKey(e) {
       <div class="k-row" v-if="!isEn()"><span>{{ t('原文 / 译文 / 双语') }}</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>{{ t('聚焦提问') }}</span><kbd>/</kbd></div>
       <div class="k-row"><span>{{ t('折叠右栏') }}</span><kbd>x</kbd></div>
-      <div class="k-row"><span>{{ t('文库 / 回书桌') }}</span><kbd>g l / g h</kbd></div>
+      <div class="k-row"><span>{{ t('文库 / 论文日历') }}</span><kbd>g l / g c</kbd></div>
+      <div class="k-row"><span>{{ t('回书桌') }}</span><kbd>g h</kbd></div>
       <div class="k-row"><span>{{ t('返回原位') }}</span><kbd>Alt + ←</kbd></div>
       <div class="k-row"><span>{{ t('收起所有浮层 / 退出框选') }}</span><kbd>Esc</kbd></div>
     </div>
