@@ -640,7 +640,7 @@ def calendar_view(month: str = ""):
     读过 = 阅读日志（touch 按天记）∪ 每篇 last_read_at 的日期——日志上线之前的
     旧记录没有逐天历史，用最后读过的那天做只读推导，不造假回填一整段历史。
     新入库 = created_at 的日期。返回的都是库里的篇目，点一下就能打开。"""
-    if not re.match(r"^\d{4}-\d{2}$", month or ""):
+    if not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", month or ""):
         month = time.strftime("%Y-%m")
     papers = db.list_papers()
     by_id = {p["id"]: p for p in papers}
@@ -1650,7 +1650,10 @@ def figures(pid: str):
     ev = threading.Event()
     _fig_inflight[key] = ev
     try:
-        out = _figure_regions(p["path"])
+        try:
+            out = _figure_regions(p["path"])
+        except Exception as e:
+            raise HTTPException(400, f"这份 PDF 解析图表时失败了：{str(e)[:120]}")
     finally:
         ev.set()
         _fig_inflight.pop(key, None)
@@ -1666,7 +1669,10 @@ def paper_toc(pid: str):
     if not os.path.exists(p["path"]):
         raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
     import pymupdf
-    doc = pymupdf.open(p["path"])
+    try:
+        doc = pymupdf.open(p["path"])
+    except Exception as e:
+        raise HTTPException(400, f"这份 PDF 打不开：{str(e)[:120]}")
     try:
         toc = [{"level": lv, "title": title.strip(), "page": page - 1}
                for lv, title, page in doc.get_toc() if page and 1 <= page <= len(doc)]

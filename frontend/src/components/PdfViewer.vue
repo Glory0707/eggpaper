@@ -107,8 +107,12 @@ const skimKeep = ref(loadKeep())
 const figs = ref([])                        // 这一篇的图片框（略读时避开它们）
 async function loadFigs() {
   if (!store.currentId) return
-  try { const r = await api.figures(store.currentId); figs.value = r.figures || [] }
-  catch { figs.value = [] }
+  const pid = store.currentId
+  try {
+    const r = await api.figures(pid)
+    if (store.currentId !== pid) return     // 等待期间换了篇：旧图框不落新篇
+    figs.value = r.figures || []
+  } catch { figs.value = [] }
 }
 const pingId = ref(null)                  // 刚从纸上点回来的那条批注（亮一下）
 const kept = idx => skimKeep.value.has(idx)
@@ -756,6 +760,7 @@ function toggleNote(n) {
 
 async function translateParaAndPin(idx) {
   if (pendingPara.value != null) return
+  const pid = store.currentId
   pendingPara.value = idx
   let zh = ''
   try {
@@ -764,8 +769,9 @@ async function translateParaAndPin(idx) {
       else if (ev.type === 'error') throw new Error(ev.message)
     }).done
     if (!zh.trim()) { toast(t('模型没返回内容，再试一次')); return }
+    if (store.currentId !== pid) return    // 等译文期间换了篇：这段译文属于原来的论文
     const p = paraByIdx.value[idx]
-    await api.pin(store.currentId, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
+    await api.pin(pid, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
     await refreshM()
   } catch (e) { toast(t('翻译失败：{m}', { m: e.message })) }
   finally { pendingPara.value = null }

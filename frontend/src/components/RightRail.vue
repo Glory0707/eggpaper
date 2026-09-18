@@ -178,8 +178,10 @@ const GENERIC = ['这篇论文解决什么问题？', '核心结论和最硬的�
 const suggest = ref([])
 async function loadSuggest() {
   if (!store.currentId || suggest.value.length) return
+  const mine = paperEpoch()
   try {
     const r = await api.suggest(store.currentId)
+    if (!samePaper(mine)) return
     suggest.value = r.questions || []
   } catch { /* 静默，回退到通用问题 */ }
 }
@@ -198,7 +200,9 @@ const termsTried = ref('')          // 已经替**哪一篇**试过生成（试�
 async function loadTerms() {
   if (!store.currentId) { terms.value = []; return }
   const mine = paperEpoch()
-  terms.value = await api.glossary(store.currentId)      // 术语是按篇的
+  const items = await api.glossary(store.currentId)      // 术语是按篇的
+  if (!samePaper(mine)) return                           // 等待期间换了篇：旧词表不落新篇
+  terms.value = items
   maybeGenTerms(mine)
 }
 
@@ -383,10 +387,12 @@ function onFigKey(e) {
 }
 async function loadFigures() {
   if (!store.currentId || figures.value.length) return
+  const mine = paperEpoch()
   figuresLoading.value = true
   try {
     const r = await api.figures(store.currentId)
-    if (samePaper(paperEpoch())) figures.value = r.figures || []
+    if (!samePaper(mine)) return
+    figures.value = r.figures || []
   } catch { /* 无图论文静默 */ }
   figuresLoading.value = false
 }

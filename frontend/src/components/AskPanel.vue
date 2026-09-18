@@ -43,9 +43,13 @@ async function loadConvs(keep = false) {
 async function loadMsgs() {
   if (!pid.value || !convId.value) { msgs.value = []; return }
   if (busy.value) return
+  const reqPid = pid.value
+  const reqCid = convId.value
   loading.value = true
   try {
-    const r = await api.qaHistory(pid.value, convId.value)
+    const r = await api.qaHistory(reqPid, reqCid)
+    // 等待期间换了篇/换了会话：旧历史不落到新地方
+    if (pid.value !== reqPid || convId.value !== reqCid) return
     msgs.value = r.messages || []
   } catch { msgs.value = [] }
   loading.value = false

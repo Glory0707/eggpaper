@@ -9,9 +9,11 @@ const loading = ref(false)
 
 async function load() {
   if (!store.currentId) return
+  const pid = store.currentId
   loading.value = true
   try {
-    const r = await api.toc(store.currentId)
+    const r = await api.toc(pid)
+    if (store.currentId !== pid) return     // 等待期间换了篇：旧目录不落新篇
     toc.value = r.toc || []
   } catch { toc.value = [] }
   loading.value = false
