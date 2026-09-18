@@ -337,7 +337,9 @@ watch(() => store.analysis.status, (n, o) => {
   // 析读把一眼卡一起作废了（服务端清了缓存），所以这里要重新取一次。
   // 写成"进 done"而不是"running→done"：现在中间还多一个 queued（排队），
   // 只认 running→done 会在"排队→读完"这条路径上漏掉这一拍。
-  if (n === 'done' && o && o !== 'done') {
+  // 'none' 不算：那只是初值——打开一篇早就析读完的论文也会走出 none→done，
+  // 那时什么都没完成，不该滚一圈。
+  if (n === 'done' && o && o !== 'done' && o !== 'none') {
     rollOnce(); reloadSummary()
     // 析读的产出全在右栏（骨架、五问、一眼卡）：这一局真的跑完了就把它展开，
     // 别让用户读完再去找那颗 ◂。只在**这一局是本会话发起/见过在跑**时动手——
@@ -570,7 +572,7 @@ function onKey(e) {
               @dragenter="eggDragEnter" @dragover="eggDragOver" @dragleave="eggDragLeave" @drop="onEggDrop">
           <EggMark class="egg"
             :class="[{ hungry }, { roll }, { wobble: wobbling }, surprise, { sleep: sleepEgg }, { busy: eggBusy }, gulping, { cheer: eggCheer }, { doze: dozing }, { spun: spinning }, { free: spinFree }]"
-            :style="spinning ? { transform: `rotate(${spinDeg}deg)` } : null" />
+            :style="spinning ? { transform: `rotate(${spinDeg}deg) scale(${spinFree ? 1 : 0.94})` } : null" />
           <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
         </span>
         <span class="name">eggpaper</span>
