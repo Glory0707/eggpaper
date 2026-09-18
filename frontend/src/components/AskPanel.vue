@@ -122,7 +122,10 @@ async function send(q) {
     buf += t
     if (!raf) raf = requestAnimationFrame(flush)
   }
-  const h = askStream(pid.value, { question: q, conv_id: id }, ev => {
+  const body = libScope.value
+    ? { question: q, conv_id: id, scope: 'library' }
+    : { question: q, conv_id: id, refs: pickedTitles.value }
+  const h = askStream(pid.value, body, ev => {
     if (ev.type === 'delta') queue(ev.text)
     else if (ev.type === 'done') { flush(); gotDone = true; m.citations = ev.citations || []; applyIds(ev) }
     else if (ev.type === 'error') {
@@ -220,6 +223,74 @@ async function delConv() {
   } catch (e) { toast(e.message) }
 }
 
+// ---------- 跨文献引用：/ 拉起选择器，勾选的篇挂在输入框上 ----------
+/* 只带每篇的析读摘要（几百字），不搬全文——两篇全文就顶到上下文天花板了。
+   范围两种：手选几篇；或「全库·自动挑相关」（后端先用标题清单侦察出最相关的 2~4 篇）。 */
+const citeOpen = ref(false)
+const citeQ = ref('')
+const libPapers = ref([])
+const libColls = ref([])
+const libMap = ref({})
+const picked = ref([])          // [{ id, title }]，最多 6 篇
+const libScope = ref(false)     // 「全库·自动挑相关」：后端先用标题清单侦察出最相关的几篇
+const citeListEl = ref(null)
+const citeFilterEl = ref(null)
+
+async function loadLib() {
+  try {
+    const r = await api.libOverview()
+    libPapers.value = r.papers || []
+    libColls.value = r.colls || []
+    libMap.value = r.map || {}
+  } catch { /* 选择器数据拿不到就只影响跨篇，单篇照常 */ }
+}
+const pickedTitles = computed(() => picked.value.map(p => p.title))
+const filtered = computed(() => {
+  const q = citeQ.value.trim().toLowerCase()
+  return libPapers.value.filter(p => !q || (p.title || '').toLowerCase().includes(q) || (p.filename || '').toLowerCase().includes(q))
+})
+const groups = computed(() => {
+  // 「全部」打头，其余按分类；未分类的归进「未分类」
+  const used = new Set()
+  const gs = []
+  for (const c of libColls.value) {
+    const items = filtered.value.filter(p => (libMap.value[p.id] || []).includes(c.id))
+    if (!items.length) continue
+    items.forEach(p => used.add(p.id))
+    gs.push({ name: c.name, items })
+  }
+  const rest = filtered.value.filter(p => !used.has(p.id))
+  if (rest.length) gs.push({ name: '未分类', items: rest })
+  return gs
+})
+function isOn(t) { return picked.value.some(p => p.title === t) }
+function toggleTitle(t, id) {
+  libScope.value = false
+  const i = picked.value.findIndex(p => p.title === t)
+  if (i >= 0) { picked.value.splice(i, 1); return }
+  if (picked.value.length >= 6) { toast('一次最多引用 6 篇'); return }
+  picked.value.push({ id, title: t })
+}
+function toggleLibScope() {
+  libScope.value = !libScope.value
+  if (libScope.value) picked.value = []
+}
+function pickFirst() {
+  const first = groups.value[0]?.items?.[0]
+  if (first) toggleTitle(first.title, first.id)
+}
+function pickFromPop(p) {
+  toggleTitle(p.title, p.id)
+  nextTick(() => citeFilterEl.value?.focus())
+}
+function openCite() {
+  citeQ.value = ''
+  citeOpen.value = true
+  loadLib()
+  nextTick(() => citeFilterEl.value?.focus())
+}
+function closeCite() { citeOpen.value = false; nextTick(() => inputEl.value?.focus()) }
+
 // ---------- 输入框 ----------
 function autoGrow() {
   const t = inputEl.value
@@ -229,7 +300,15 @@ function autoGrow() {
 }
 function onKey(e) {
   // isComposing：中文输入法按 Enter 是在选字，不能当发送
-  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return
+  if (e.isComposing || e.keyCode === 229) return
+  if (citeOpen.value) {
+    if (e.key === 'Escape') { e.preventDefault(); closeCite() }
+    else if (e.key === 'Enter') { e.preventDefault(); pickFirst() }
+    return
+  }
+  // 输入框里按 / = 引用其他论文（和 Codex/ZCode 提 @ 一个肌肉记忆）
+  if (e.key === '/') { e.preventDefault(); openCite(); return }
+  if (e.key !== 'Enter') return
   if (e.shiftKey) return
   e.preventDefault()
   send()
@@ -257,7 +336,18 @@ function takePrefill(pf) {
 watch(() => store.askPrefill, pf => { if (pf) { takePrefill(pf); store.askPrefill = null } })
 watch(() => store.askFocusTick, () => nextTick(() => inputEl.value?.focus({ preventScroll: true })))
 
+function onDocKey(e) {
+  if (e.key === 'Escape' && citeOpen.value) { e.preventDefault(); closeCite() }
+}
+function onDocPointer(e) {
+  if (!citeOpen.value) return
+  const pop = document.querySelector('.cite-pop')
+  const inChips = e.target && e.target.closest && e.target.closest('.cite-chips')
+  if (pop && !pop.contains(e.target) && !inChips) closeCite()
+}
 onMounted(async () => {
+  document.addEventListener('keydown', onDocKey)
+  document.addEventListener('pointerdown', onDocPointer)
   if (store.askPrefill) { pending = store.askPrefill; store.askPrefill = null }
   await loadConvs()
   await loadMsgs()
@@ -265,7 +355,7 @@ onMounted(async () => {
   if (pending) { const pf = pending; pending = null; await nextTick(); applyPrefill(pf) }
   else nextTick(() => inputEl.value?.focus({ preventScroll: true }))
 })
-onUnmounted(() => { stop(true) })
+onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey); document.removeEventListener('pointerdown', onDocPointer) })
 </script>
 
 <template>
@@ -332,10 +422,52 @@ onUnmounted(() => { stop(true) })
       </Transition>
     </div>
 
-    <!-- 输入区：能长高，Enter 发送 / Shift+Enter 换行 -->
+    <!-- 输入区：能长高，Enter 发送 / Shift+Enter 换行；/ 拉起跨文献引用 -->
     <div class="qa-input">
+      <Transition name="fade">
+        <div v-if="citeOpen" class="cite-pop">
+          <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" placeholder="筛选标题…（Esc 关闭，Enter 选第一个）" @keydown.esc.stop="closeCite">
+          <div class="cite-list" ref="citeListEl">
+            <button class="cite-item lib" :class="{ on: libScope }" @click="toggleLibScope">
+              <span class="box">
+                <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
+                     stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
+              </span>
+              <span class="t">全库 · 自动挑相关</span>
+              <span class="tag">先侦察再作答</span>
+            </button>
+            <template v-for="g in groups" :key="g.name">
+              <div class="cite-group">{{ g.name }}</div>
+              <button v-for="p in g.items" :key="p.id" class="cite-item" :class="{ on: isOn(p.title) }"
+                      @click="pickFromPop(p)">
+                <span class="box">
+                  <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
+                       stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
+                </span>
+                <span class="t">{{ p.title || p.filename }}</span>
+                <span class="tag" v-if="p.analysis_status === 'done'">已析读</span>
+                <span class="tag" v-else>未析读</span>
+              </button>
+            </template>
+            <div v-if="!groups.length" class="cite-group">没有匹配的论文</div>
+          </div>
+          <div class="cite-foot">勾选的论文以摘要参与回答 · 一次最多 6 篇 · 「全库」请直接问并写明范围</div>
+        </div>
+      </Transition>
+      <div class="cite-chips" v-if="libScope">
+        <span class="cite-chip lib">
+          全库 · 自动挑相关
+          <i class="rm" @click.stop="libScope = false">×</i>
+        </span>
+      </div>
+      <div class="cite-chips" v-if="picked.length">
+        <span v-for="p in picked" :key="p.id" class="cite-chip">
+          {{ p.title || p.filename }}
+          <i class="rm" @click.stop="toggleTitle(p.title, p.id)">×</i>
+        </span>
+      </div>
       <textarea ref="inputEl" v-model="text" rows="1" class="qa-ta"
-                placeholder="基于这篇论文提问…"
+                placeholder="基于这篇论文提问…（按 / 引用其他论文）"
                 @keydown="onKey"></textarea>
       <button v-if="busy" class="qa-send stop" @click="stop()" title="停止生成">■</button>
       <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" title="发送（Enter）">↑</button>

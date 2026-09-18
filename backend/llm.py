@@ -496,12 +496,24 @@ QA_SYSTEM = """你是论文精读助手，陪研究者读这篇论文，也顺�
    也正常帮忙做——通用性要够，别把人挡回去，只要说明一句"这一点来自原文之外/原文未提及"
 2. 论文内的关键论断标注依据段编号，格式如 [¶5] 或 [¶5,¶12]；论文没有依据的要明说
 3. 引用参考文献列表不作为论文内容的依据
-4. 回答用中文，术语首次出现给出英文"""
+4. 回答用中文，术语首次出现给出英文
+5. 同时给了其他被引用论文的摘要时，它们只是背景材料：提到它们用《标题》标注、
+   不要给它们编 ¶ 段号；[¶n] 一律指向当前这一篇论文的段落"""
 
 
-def ask_messages(title: str, paras: list, history: list, question: str, hits=None, summary: str = "") -> list:
+def ask_messages(title: str, paras: list, history: list, question: str, hits=None, summary: str = "", others: list = None) -> list:
     """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))[:80000]
+    if others:
+        blocks = []
+        for o in others:
+            t = (o.get("title") or o.get("filename") or "未命名").strip()
+            sm = re.sub(r"\s+", " ", o.get("summary") or "")[:900]
+            if sm:
+                blocks.append(f"《{t}》{sm}")
+        if blocks:
+            body += ("\n\n【用户同时引用的其他论文——只有摘要级背景，不是当前篇的正文。"
+                     "回答里提到它们时用《标题》标注，不要给它们编 ¶ 段号】\n" + "\n\n".join(blocks))
     msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n论文标题：{title or ''}\n\n{body}"}]
     if summary:
         msgs.append({"role": "system", "content":

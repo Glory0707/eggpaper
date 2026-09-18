@@ -232,7 +232,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .tran-line i.det { animation: none; }
 /* 蛋与字标之间给足 12px：蛋的所有动作（搓蛋斜躺、咽下鼓起、趔趄）最坏也只向两侧
    探出 ~3.5px，全部落在这条缝里——动效再活泼也不碰邻座的字 */
-.wordmark { display: flex; align-items: center; gap: 12px; user-select: none; position: relative; }
+.wordmark { display: flex; align-items: center; gap: 12px; user-select: none; position: relative; cursor: pointer; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
 /* 有 PDF 悬在蛋头顶：等饭——放大一点、小幅急摆（顺带是「丢这里」的落点暗示）。
    定义在最前：被点/晃/睡/干活时都盖过它 */
@@ -1678,3 +1678,45 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .upd-note { font-size: var(--fs-sm); line-height: 1.7; color: var(--ink-2); margin-bottom: 10px; }
 .upd-note.err { color: var(--vermilion); }
 .upd-note.ok { color: var(--accent-deep); }
+
+/* ---------- 跨文献引用：/ 拉起的选择器与已选 chips ---------- */
+.qa-input { position: relative; }
+.cite-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+.cite-chip {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 220px;
+  font-size: var(--fs-xs); color: var(--ink-2);
+  border: 1px solid var(--hairline); border-radius: 3px; padding: 2px 7px;
+  background: var(--card-2);
+}
+.cite-chip :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cite-chip .rm { font-style: normal; cursor: pointer; color: var(--ink-3); flex: none; }
+.cite-chip .rm:hover { color: var(--vermilion); }
+.cite-pop {
+  position: absolute; left: 10px; right: 10px; bottom: calc(100% + 6px); z-index: 30;
+  background: var(--card); border: 1px solid var(--hairline); border-radius: 5px;
+  box-shadow: var(--shadow-pop); display: flex; flex-direction: column; max-height: 300px;
+}
+.cite-filter {
+  border: none; border-bottom: 1px solid var(--hairline); padding: 9px 12px;
+  font-size: var(--fs-sm); background: transparent; outline: none; color: var(--ink);
+}
+.cite-list { overflow: auto; padding: 4px 0 6px; }
+.cite-group { font-size: 10px; color: var(--ink-3); padding: 7px 12px 3px; }
+.cite-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 6px 12px; border: none; background: transparent; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--ink);
+}
+.cite-item:hover { background: var(--card-2); }
+.cite-item .box {
+  width: 13px; height: 13px; border: 1.4px solid var(--ink-3); border-radius: 3px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; color: transparent;
+}
+.cite-item.on .box { background: var(--ink); border-color: var(--ink); color: var(--card); }
+.cite-item .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cite-item .tag { font-size: 10px; color: var(--ink-3); flex: none; }
+.cite-foot { border-top: 1px dashed var(--hairline); padding: 7px 12px; font-size: 11px; color: var(--ink-3); }
+
+.cite-item.lib { border-bottom: 1px dashed var(--hairline); border-radius: 0; }
+.cite-item.lib .t { font-weight: 600; }
+.cite-chip.lib { color: var(--ink); }

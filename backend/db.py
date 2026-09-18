@@ -454,6 +454,22 @@ def glossary_hit(pid: str, text: str):
     return hits
 
 
+def glossary_hits_all(pids: list, text: str):
+    """跨篇版 glossary_hit：几篇的词一起查，命中时带上所属篇 id——
+    跨文献提问的术语句（"这个缩写在 A 里指什么、在 B 里又指什么"）靠它区分来源。"""
+    pids = [int(x) for x in pids if x]
+    if not pids or not (text or "").strip():
+        return []
+    qmarks = ",".join("?" * len(pids))
+    low = text.lower()
+    hits = []
+    for r in q(f"SELECT paper_id, term_en, term_zh FROM glossary WHERE paper_id IN ({qmarks}) ORDER BY paper_id",
+               tuple(pids)):
+        if (r["term_en"] or "").lower() in low:
+            hits.append({"paper_id": r["paper_id"], "en": r["term_en"], "zh": r["term_zh"]})
+    return hits
+
+
 # ---------- QA ----------
 
 def _now() -> str:

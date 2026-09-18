@@ -17,6 +17,8 @@ async function req(method, url, body) {
 
 export const api = {
   papers: () => req('GET', '/api/papers'),
+  // 跨文献引用选择器的数据：全部论文（标题/类型/是否已析读）+ 分类映射
+  libOverview: () => req('GET', '/api/library/overview'),
   upload: (file) => { const fd = new FormData(); fd.append('file', file); return req('POST', '/api/papers', fd) },
   paper: (pid) => req('GET', `/api/papers/${pid}`),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),

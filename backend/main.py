@@ -1748,7 +1748,62 @@ def _context(pid: str, conv_id: int, history: list):
     return prev, short + rest
 
 
-def _stream_answer(p: dict, conv_id: int, question: str):
+RECON_SYSTEM = """你在为一次跨论文的提问挑选相关文献。给你一份编号清单（标题、有没有析读摘要）。
+从中挑出与问题最相关的 2~4 篇。只输出一个 JSON 数组（元素是编号整数），不要输出任何别的文字；
+一篇都不相关就输出 []。"""
+
+
+def _paper_by_title(title: str):
+    """按标题找论文（大小写不敏感）。全等优先；其次唯一包含；都不中返回 None。
+    跨文献提问的《标题》引用是模型/用户手打的，容得起一点点不齐，但不该撞错篇。"""
+    t = (title or "").strip().lower()
+    if not t:
+        return None
+    rows = db.list_papers()
+    for r in rows:
+        if (r["title"] or "").strip().lower() == t:
+            return r["id"]
+    contains = [r for r in rows
+                if t in (r["title"] or "").strip().lower()
+                or (r["title"] or "").strip().lower() in t]
+    return contains[0]["id"] if contains else None
+
+
+def _recon_pick(question: str, papers: list):
+    """范围是全库/分类时的第一拍"侦察"：只喂标题清单（几十篇也才几千字），
+    让模型挑出最相关的 2~4 篇，第二拍再按摘要级上下文作答——库再大也不会把全文塞爆。
+    失败/演示模式返回演示性挑选，绝不抛错：侦察失败顶多选得不准，不该把提问打断。"""
+    if not papers:
+        return []
+    if _demo_mode():
+        return [p["id"] for p in papers[:3]]
+    lines = "\n".join(
+        f"{i}. {(p['title'] or p['filename'] or '').strip()}"
+        f"（{'已析读' if p['analysis_status'] == 'done' else '未析读'}）"
+        for i, p in enumerate(papers))
+    try:
+        out = llm.chat([{"role": "system", "content": RECON_SYSTEM},
+                        {"role": "user", "content": "文献清单：\n{lines}\n\n问题：{question}"}],
+                       max_tokens=150, temperature=0)
+        nums = [int(n) for n in re.findall(r"\d+", out)]
+        picked = []
+        for n in nums:
+            if 0 <= n < len(papers) and papers[n]["id"] not in picked:
+                picked.append(papers[n]["id"])
+        return picked[:4]
+    except Exception:
+        return [p["id"] for p in papers[:3]]
+        nums = [int(n) for n in re.findall(r"\d+", out)]
+        picked = []
+        for n in nums:
+            if 0 <= n < len(papers) and papers[n]["id"] not in picked:
+                picked.append(papers[n]["id"])
+        return picked[:4]
+    except Exception:
+        return [p["id"] for p in papers[:3]]
+
+
+def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
 
     落库的时机有两处：正常结束在这里写；用户中途点"停止生成"由前端调 qa-save 写，
@@ -1763,9 +1818,32 @@ def _stream_answer(p: dict, conv_id: int, question: str):
             gen = _mock_stream(question)
         else:
             summary, ctx = _context(pid, conv_id, hist)
-            hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+            pids = [pid] + [x for x in (ref_pids or []) if x != pid]
+            hits = db.glossary_hits_all(pids, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+            # 引用的其他论文只带摘要级背景（一眼卡是现成的浓缩，几百字/篇），不搬全文——
+            # 两篇全文就顶到上下文天花板了；细节问题仍以当前篇为准。
+            others = []
+            for x in (ref_pids or []):
+                if x == pid:
+                    continue
+                o = db.get_paper(x)
+                if not o:
+                    continue
+                o = dict(o)
+                raw = o.get("summary") or ""
+                try:
+                    j = llm.parse_json(raw)
+                    if isinstance(j, dict):
+                        parts = [v.strip() for v in j.values() if isinstance(v, str) and v.strip()]
+                        for v in (j.get("claims") or []):
+                            parts.append(v.get("text") if isinstance(v, dict) else str(v))
+                        raw = "；".join(p for p in parts if p)
+                except Exception:
+                    pass
+                o["summary"] = re.sub(r"\s+", " ", raw)[:900]
+                others.append(o)
             gen = llm.chat_stream(llm.ask_messages(p["title"], db.get_paragraphs(pid), ctx, question,
-                                                   hits, summary))
+                                                   hits, summary, others))
         for piece in gen:
             buf.append(piece)
             yield _sse({"type": "delta", "text": piece})
@@ -1784,6 +1862,13 @@ def _stream_answer(p: dict, conv_id: int, question: str):
         yield _sse({"type": "error", "message": hint, "user_id": uid, "assistant_id": aid})
 
 
+@app.get("/api/library/overview")
+def library_overview():
+    """跨文献引用选择器的数据源：全部论文 + 分类映射。
+    一次请求带全（库是本地的，几百篇也只是几十 KB），前端按分类分组勾选。"""
+    return {"papers": db.list_papers(), "colls": db.collections_list(), "map": db.collection_map()}
+
+
 @app.post("/api/papers/{pid}/ask")
 def ask(pid: str, body: dict):
     p = _paper_or_404(pid)
@@ -1799,8 +1884,26 @@ def ask(pid: str, body: dict):
         conv_id = int(conv_id)
     else:
         conv_id = db.conv_list(pid)[0]["id"]
+    # 跨文献引用：refs 是《标题》列表（输入框里用 / 勾选的），scope="library" 表示
+    # 「全库·自动挑相关」。解析失败就当没引——提问永远能发出去，引用只是增强。
+    ref_pids = []
+    for t in (body.get("refs") or [])[:8]:
+        pid2 = _paper_by_title(t)
+        if pid2 and pid2 != pid and pid2 not in ref_pids:
+            ref_pids.append(pid2)
+    if (body.get("scope") or "").strip() == "library":
+        others = [r for r in db.list_papers() if r["id"] != pid]
+        if len(others) <= 4:
+            for r in others:
+                if r["id"] not in ref_pids:
+                    ref_pids.append(r["id"])
+        else:
+            for pid2 in _recon_pick(question, others):
+                if pid2 not in ref_pids:
+                    ref_pids.append(pid2)
+    ref_pids = ref_pids[:4]
     # 校验都过了再开流：一旦开始 SSE，HTTP 头已经发出去，改不成 4xx 了
-    return StreamingResponse(_stream_answer(p, conv_id, question), media_type="text/event-stream",
+    return StreamingResponse(_stream_answer(p, conv_id, question, ref_pids), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                                       "Connection": "keep-alive"})
 
