@@ -154,7 +154,23 @@ export async function refreshCollections() {
 export function paperEpoch() { return store.epoch }
 export function samePaper(mine) { return store.epoch === mine }
 
+/* 回书桌：当前论文清场、文库不动。阅读位置本来就存在本地，回来随时接上。
+   这也是「主页」的正式入口：字标点击 / g h / 启动时按上次的记录。 */
+export function goHome() {
+  lsSet('lastPaper', '')
+  store.currentId = null
+  store.epoch++
+  store.paper = null
+  store.paras = []
+  store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
+  store.marginalia = { status: 'none', notes: [], progress: null }
+  store.readingPara = null
+  store.summary = null
+  store.summaryErr = ''
+}
+
 export async function openPaper(pid) {
+  lsSet('lastPaper', pid)
   store.currentId = pid
   // "现在看的是哪一篇"的版本号：每换一篇 +1。按篇发的请求回来时对不上就丢掉——
   // 一眼卡/析读/眉批/五问这些请求是**秒级**的，用户"打开 A 看一眼就点 B"时，

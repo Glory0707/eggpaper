@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis,
-         refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
+import { goHome, lsGet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import RightRail from './components/RightRail.vue'
@@ -215,7 +214,11 @@ onMounted(async () => {
     store.settings = await api.settings()
     await refreshPapers()
     await refreshCollections()
-    if (store.papers.length) openPaper(store.papers[0].id)
+    // 上次停在哪儿就回哪儿：记录的篇还在就开它，不在了（被删过）停在书桌，
+    // 不自作主张替用户开别的篇。双击 PDF 的打开请求是显式动作，照旧覆盖。
+    const lastId = lsGet('lastPaper', '')
+    const last = store.papers.find(p => p.id === lastId)
+    if (last) openPaper(last.id)
   } catch (e) {
     toast('初始化失败：' + e.message + '（后台可能刚起来，稍后会自动恢复）', 6000)
   }
@@ -541,6 +544,7 @@ function onKey(e) {
   if (gPending.value) {
     gPending.value = false
     if (e.key === 'l') { store.viewer.libOpen = true; e.preventDefault() }
+    if (e.key === 'h') { goHome(); e.preventDefault() }
     return
   }
   if (!store.paper) return
@@ -567,8 +571,8 @@ function onKey(e) {
 <template>
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
-      <div class="wordmark">
-        <span class="egg-wrap" ref="eggEl" @click="pokeEgg" @wheel="onEggWheel"
+      <div class="wordmark" title="回书桌" @click="goHome">
+        <span class="egg-wrap" ref="eggEl" @click.stop="pokeEgg" @wheel="onEggWheel"
               @dragenter="eggDragEnter" @dragover="eggDragOver" @dragleave="eggDragLeave" @drop="onEggDrop">
           <EggMark class="egg"
             :class="[{ hungry }, { roll }, { wobble: wobbling }, surprise, { sleep: sleepEgg }, { busy: eggBusy }, gulping, { cheer: eggCheer }, { doze: dozing }, { spun: spinning }, { free: spinFree }]"
@@ -703,7 +707,7 @@ function onKey(e) {
       <div class="k-row"><span>原文 / 译文 / 双语</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>聚焦提问</span><kbd>/</kbd></div>
       <div class="k-row"><span>折叠右栏</span><kbd>x</kbd></div>
-      <div class="k-row"><span>文库</span><kbd>g l</kbd></div>
+      <div class="k-row"><span>文库 / 回书桌</span><kbd>g l / g h</kbd></div>
       <div class="k-row"><span>返回原位</span><kbd>Alt + ←</kbd></div>
       <div class="k-row"><span>收起所有浮层 / 退出框选</span><kbd>Esc</kbd></div>
     </div>
