@@ -450,7 +450,6 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
                 </span>
                 <span class="t">{{ g.name }}</span>
               </button>
-              <div class="cite-group">{{ g.name }}</div>
               <button v-for="p in g.items" :key="p.id" class="cite-item" :class="{ on: isOn(p.title) }"
                       @click="pickFromPop(p)">
                 <span class="box">
