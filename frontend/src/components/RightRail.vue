@@ -689,13 +689,16 @@ watch(() => store.currentId, () => {
         </div>
 
         <!-- 图表：紧跟着一眼卡。读完结论就想看图，这是读论文的自然顺序。
-             表格裁剪和图形裁剪长得很像（都是纸上的一块），角标把话说死。 -->
+             表格裁剪和图形裁剪长得很像（都是纸上的一块），角标把话说死；
+             底下跟论文原生题注（Figure 3…），两行截断，悬停看全文。 -->
         <div class="blk" v-if="figures.length">
           <div class="blk-head"><span class="mono-label">图表速览 · {{ figures.length }}</span></div>
           <div class="fig-strip">
-            <span v-for="(f, i) in figures" :key="i" class="fig-cell" :title="`${f.kind === 'table' ? '表' : '图'} · 第 ${f.page + 1} 页`" @click="figIdx = i">
+            <span v-for="(f, i) in figures" :key="i" class="fig-cell"
+                  :title="f.caption || `${f.kind === 'table' ? '表' : '图'} · 第 ${f.page + 1} 页`" @click="figIdx = i">
               <img class="fig-thumb" :src="api.figureUrl(store.currentId, f)" alt="" />
               <i class="fig-kind">{{ f.kind === 'table' ? '表' : '图' }}</i>
+              <span class="fig-cap" v-if="f.caption">{{ f.caption }}</span>
             </span>
           </div>
         </div>
@@ -802,6 +805,8 @@ watch(() => store.currentId, () => {
         <img :src="api.figureUrl(store.currentId, lightbox, 200)" />
         <button class="lb-nav" :disabled="figures.length < 2" title="下一张（→）" @click="figStep(1)">›</button>
       </div>
+      <!-- 论文原生题注放最显眼的一行：这张图是什么，论文自己说过 -->
+      <div class="lb-cap" v-if="lightbox.caption" @click.stop>{{ lightbox.caption }}</div>
       <div class="lb-actions" @click.stop>
         <span class="mono-label">{{ lightbox.kind === 'table' ? '表' : '图' }} · {{ figIdx + 1 }} / {{ figures.length }} · 第 {{ lightbox.page + 1 }} 页</span>
         <button @click="figJump(lightbox)">在原文查看</button>

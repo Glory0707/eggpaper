@@ -1516,20 +1516,297 @@ def glossary_export(pid: str):
 
 
 # ---------------- 图表速览 ----------------
+#
+# 方法（题注锚定 + 双向带状填充）：
+#   论文里的图/表几乎必带题注，题注自己就交代了内容贴在哪边——图题通常在下，
+#   表题通常在上（也有在下，Mistral 这篇就是）。所以不再全页聚类（旧版会把页眉
+#   横线、隔壁栏的正文粘进来，裁出一堆四不像），改为以题注为锚：
+#   ① 认题注：正则 + 分隔符校验，"Figure 3 shows…" 这种正文里顺嘴引用过不了关；
+#   ② 从题注向上/向下各做一次带状填充，把紧邻的图元（位图/矢量/横线/图内短文字）
+#      吸进来；正文段落块和别的题注是屏障，撞上即停——这是"精确贴边"的来源；
+#   ③ 两侧比较吸到的图形质量（表格看横线框、图看图元面积），择大者；难分伯仲时
+#      按题注种类猜方向（图题→内容在上，表题→内容在下）；
+#   ④ 长横线是表格的边框：吸到长横线之后，文字要贴到 8pt 内才继续吸收——
+#      表格底线下方的正文小标题不会再被吞进来。
+#   没题注的一律从严（logo、作者照片、整页扫描件都不该算图表）：首页大图不要、
+#   覆盖率过半的整页位图不要；其余的中等位图才收进来兜底。
+
+FIG_GFX_GAP = 18.0      # 图元/位图/横线离区域多近算"贴着"
+FIG_TXT_GAP = 16.0      # 图内短文字（轴标签、图例、子图题）
+FIG_WIDE_GAP = 9.0      # 宽文字行（表格行、图内段落）要贴得更近
+FIG_RULE_TXT_GAP = 8.0  # 表格吸到长横线后，文字的继续门槛（底线终止器）
+FIG_HDR_FOOT = 46.0     # 页眉页脚带：里面的东西既不当内容也不当屏障
+FIG_MIN_W, FIG_MIN_H = 60.0, 40.0
+
+CAPTION_RE = re.compile(
+    r"^\s*(Fig(?:ure)?s?\.?|Table|Tab\.?|Scheme|Algorithm|Chart|Plate|图|表|算法|附图|附表)"
+    r"\s*\.?\s*(\d+)\s*([a-z])?\s*[:.．|—–－—:，,]?\s*", re.I)
+
+
+def _caption_of(first_text):
+    """块首行像不像题注。返回 (kind, label)；不是题注返回 None。
+    "Table 3"（裸标签）、"Fig. 1. …"、"图 1：…" 都算；"Figure 3 shows"（正文
+    开头顺嘴提到图）不算——数字后面得是分隔符、行尾、大写词或 CJK 才行。"""
+    m = CAPTION_RE.match(first_text)
+    if not m:
+        return None
+    rest = first_text[m.end():]
+    if rest and not (rest[0].isupper() or ord(rest[0]) > 0x2e7f):
+        return None          # "Figure 3 shows"：数字后直接跟小写动词，是正文
+    prefix = m.group(1).lower()
+    kind = "table" if prefix.startswith(("tab", "表", "附表", "算法")) else "figure"
+    label = m.group(0).strip().rstrip(":.．|—–－—:，, ").strip()
+    return kind, label
+
+
+def _two_columns(page, lines):
+    """正文长行的分布像不像双栏。跨栏长行（通栏图表、页眉）占太多则是单栏。"""
+    pw = page.rect.width
+    longs = [r for r, t in lines if r.width > 0.35 * pw and len(t.strip()) >= 20]
+    cross = sum(1 for r in longs if r.x0 < pw * 0.47 and r.x1 > pw * 0.53)
+    left = sum(1 for r in longs if r.x1 <= pw * 0.53)
+    right = sum(1 for r in longs if r.x0 >= pw * 0.47)
+    return left >= 8 and right >= 8 and cross < 0.3 * (left + right)
+
+
+def _wide_flags(rects, colw_of, lm, rm):
+    """逐行判"宽行"：超过栏宽七成；或者 140pt 以上、顶到页边还和邻行同宽同头
+    （半栏排版的正文段落）。后者是为了认出单栏页里左右并排的两段正文——
+    它们是屏障；表格里的单元格段落（缩在页面中间）不算。"""
+    flags = []
+    for i, r in enumerate(rects):
+        f = r.width >= 0.7 * max(colw_of(r), 60)
+        if not f and r.width >= 140 and (r.x0 <= lm + 8 or r.x1 >= rm - 8):
+            for r2 in rects:
+                if r2 is r:
+                    continue
+                if (abs(r2.x0 - r.x0) <= 6 and abs(r2.width - r.width) <= 0.25 * r.width
+                        and max(r.y0 - r2.y1, r2.y0 - r.y1) <= 1.8 * max(r.height, 1)):
+                    f = True
+                    break
+        flags.append(f)
+    return flags
+
+
+def _band_fill(up, cap_rect, cands, blockers, y_clip, table_kind):
+    """从题注往一个方向吸收紧邻的图元。cands: [(rect, 是图元, 是宽文字行)]；
+    blockers: 正文块/别的题注（撞上就当没看见，整个填充到此为止）。
+    返回 (吸收并集, 图形面积, 吸收的文字总高)。"""
+    import pymupdf
+    R = pymupdf.Rect(cap_rect)
+    graphic, txt_h = 0.0, 0.0
+    rule_hit = False
+    used = [False] * len(cands)
+    while True:
+        best, best_gap = None, 1e9
+        for ci, (rect, gfx, wide) in enumerate(cands):
+            if used[ci]:
+                continue
+            if up:
+                if rect.y1 > R.y0 + 2 or rect.y1 < y_clip:
+                    continue
+                gap = R.y0 - rect.y1
+            else:
+                if rect.y0 < R.y1 - 2 or rect.y0 > y_clip:
+                    continue
+                gap = rect.y0 - R.y1
+            if gap < -2 or gap >= best_gap:
+                continue
+            lim = FIG_GFX_GAP if gfx else (FIG_WIDE_GAP if wide else FIG_TXT_GAP)
+            if rule_hit and not gfx:
+                lim = min(lim, FIG_RULE_TXT_GAP)   # 吸过表格边框后，文字要贴得更近
+            if gap > lim:
+                continue
+            inside = rect.x0 >= R.x0 - 2 and rect.x1 <= R.x1 + 2
+            if not inside:
+                xov = min(R.x1, rect.x1) - max(R.x0, rect.x0)
+                if xov < (0.15 if gfx else 0.25) * rect.width:
+                    # 图元的例外：整幅图的外框线（虚线框、图框）会横向罩住整个
+                    # 区域，重叠比例天然很小——横向罩满又贴到 8pt 内的照收。
+                    spans = (gfx and gap <= 8 and rect.x0 <= R.x0 + 4
+                             and rect.x1 >= R.x1 - 4)
+                    if not spans:
+                        continue   # 和区域横向不挨着的是别家的东西。
+                                   # 图元 0.15：翻译版题注窄，长横线、图标链
+                                   # 与题注重叠的比例本来就小，0.2 会卡掉
+            blocked = False
+            for b in blockers:
+                if min(R.x1, b.x1) - max(R.x0, b.x0) <= 0.3 * b.width:
+                    continue
+                if up:
+                    blocked = b.y1 <= R.y0 + 1 and b.y0 >= rect.y1 - 1
+                else:
+                    blocked = b.y0 >= R.y1 - 1 and b.y1 <= rect.y0 + 1
+                if blocked:
+                    break
+            if blocked:
+                continue
+            best, best_gap = ci, gap
+        if best is None:
+            break
+        ci = best
+        used[ci] = True
+        rect, gfx, wide = cands[ci]
+        R |= rect
+        if gfx:
+            # 横线是零高度矩形，面积恒为 0——按"宽 × 名义粗细"计质量，
+            # 否则纯线条图表（表格框、坐标系）会在内容校验那关被当成空地丢掉
+            graphic += max(rect.get_area(), rect.width * 1.5 if rect.height <= 2.5 else 0.0)
+            if rect.height <= 2.5 and rect.width >= 0.55 * max(R.width, 200):
+                rule_hit = True                    # 长横线：表格的边框线
+        else:
+            txt_h += rect.height
+    return R, graphic, txt_h
+
+
+def _iou(a, b):
+    inter = (a & b).get_area()
+    return inter / max(a.get_area() + b.get_area() - inter, 1e-6)
+
+
+def _figure_regions(path):
+    """一份 PDF 里的全部图表区域。图的位置是**这份 PDF 的纯函数**，
+    端点层按 路径+mtime 缓存，同一份文件算一次就够。"""
+    import pymupdf
+    out = []
+    doc = pymupdf.open(path)
+    try:
+        for pno in range(len(doc)):
+            page = doc[pno]
+            pw, ph = page.rect.width, page.rect.height
+            dtext = page.get_text("dict")
+            lines = []
+            for blk in dtext.get("blocks", []):
+                if blk.get("type") != 0:
+                    continue
+                for ln in blk.get("lines", []):
+                    if ln.get("spans"):
+                        lines.append((pymupdf.Rect(ln["bbox"]),
+                                      "".join(sp["text"] for sp in ln["spans"])))
+            two_col = _two_columns(page, lines)
+            lm = min((r.x0 for r, t in lines), default=36.0)
+            rm = max((r.x1 for r, t in lines), default=pw - 36.0)
+            mid = pw / 2
+
+            def colw_of(r):
+                if not two_col:
+                    return rm - lm
+                return (mid - 6 - lm) if (r.x0 + r.x1) / 2 < mid else (rm - mid - 6)
+
+            ytop, ybot = FIG_HDR_FOOT, ph - FIG_HDR_FOOT
+            caps, cands, blockers = [], [], []
+            for blk in dtext.get("blocks", []):
+                if blk.get("type") != 0:
+                    continue
+                blines = [ln for ln in blk.get("lines", []) if ln.get("spans")]
+                if not blines:
+                    continue
+                brect = pymupdf.Rect(blk["bbox"])
+                if brect.y1 < ytop or brect.y0 > ybot:
+                    continue                        # 页眉页脚与图表无关
+                rects = [pymupdf.Rect(ln["bbox"]) for ln in blines]
+                texts = ["".join(sp["text"] for sp in ln["spans"]) for ln in blines]
+                cap = _caption_of(texts[0].strip())
+                if cap:
+                    caps.append({"rect": brect, "kind": cap[0], "label": cap[1],
+                                 "caption": re.sub(r"\s+", " ", " ".join(t.strip() for t in texts))[:260]})
+                    continue                        # 题注是锚点，自己不进候选
+                if sum(_wide_flags(rects, colw_of, lm, rm)) * 2 >= len(rects):
+                    blockers.append(brect)          # 正文段落：屏障，行也不许冒充图内文字
+                else:
+                    cands.extend((r, False, w) for r, w in zip(rects, _wide_flags(rects, colw_of, lm, rm)))
+            for info in page.get_image_info():
+                r = pymupdf.Rect(info["bbox"])
+                if r.width < 12 or r.height < 8 or r.get_area() > 0.85 * pw * ph:
+                    continue                        # 小图标和整页背景层都不是图表内容
+                if r.y1 < ytop or r.y0 > ybot:
+                    continue
+                cands.append((r, True, False))
+            for dr in page.get_drawings():
+                r = dr["rect"]
+                if r.width < 5 or (r.height < 3 and r.width < 18) or r.get_area() > 0.85 * pw * ph:
+                    continue
+                if r.y1 < ytop or r.y0 > ybot:
+                    continue
+                if r.height < 1:
+                    # 横线是零高度矩形，pymupdf 的并集会把"空矩形"直接吞掉——
+                    # 垫一层名义厚度，表格边框线才撑得动区域
+                    r = pymupdf.Rect(r.x0, r.y0 - 0.75, r.x1, r.y1 + 0.75)
+                cands.append((r, True, False))
+            # 正文引用框（两根同宽长横线、中间夹着一段正文，论文里常用来放
+            # 完整 prompt）是排版装饰，不是图表内容——从候选里拿掉，
+            # 省得它把紧邻图表的区域一下撑到整页宽
+            long_rules = [(i, r) for i, (r, g, w) in enumerate(cands)
+                          if g and r.height <= 4.5 and r.width >= 0.5 * (rm - lm)]
+            drop = set()
+            for i1, r1 in long_rules:
+                for i2, r2 in long_rules:
+                    if i2 == i1 or abs(r1.x0 - r2.x0) > 8 or abs(r1.x1 - r2.x1) > 8:
+                        continue
+                    span = pymupdf.Rect(r1.x0, min(r1.y0, r2.y0), r1.x1, max(r1.y1, r2.y1))
+                    if 12 < span.height < 130 and any(
+                            (b & span).get_area() > 0.5 * b.get_area() for b in blockers):
+                        drop.update((i1, i2))
+            if drop:
+                cands = [c for i, c in enumerate(cands) if i not in drop]
+
+            entries = []
+            for c in sorted(caps, key=lambda x: x["rect"].y0):
+                tkind = c["kind"] == "table"
+                up_R, up_g, up_t = _band_fill(True, c["rect"], cands, blockers, ytop, tkind)
+                dn_R, dn_g, dn_t = _band_fill(False, c["rect"], cands, blockers, ybot, tkind)
+                if up_g or dn_g:
+                    pick_up = (c["kind"] == "figure") if up_g == dn_g else up_g > dn_g
+                elif up_t != dn_t:
+                    pick_up = up_t > dn_t          # 两侧都没图形：内容多的一侧是表格/图
+                else:
+                    pick_up = (c["kind"] == "figure")  # 真空：按图题在上/表题在下的常理猜
+                R, g, t = (up_R, up_g, up_t) if pick_up else (dn_R, dn_g, dn_t)
+                if g < 250 and t < 18:
+                    continue                        # 附近根本没有像图表的内容：是正文里的引用
+                R = (pymupdf.Rect(R.x0 - 3, R.y0 - 3, R.x1 + 3, R.y1 + 3)
+                     & pymupdf.Rect(3, 3, pw - 3, ph - 3))
+                if R.width < FIG_MIN_W or R.height < FIG_MIN_H:
+                    continue
+                c["region"] = R
+                entries.append(c)
+            # 两张题注抢到同一块内容：留先到的（页面顺序靠上的），重复的丢掉
+            entries.sort(key=lambda x: x["rect"].y0)
+            keep = []
+            for e in entries:
+                if any(_iou(e["region"], k["region"]) > 0.45 for k in keep):
+                    continue
+                keep.append(e)
+            # 没题注的大位图兜底：logo/作者照片/整页扫描件都够不上这个门槛
+            for info in page.get_image_info():
+                if pno == 0:
+                    break                           # 首页大图几乎都是 logo/封面
+                r = pymupdf.Rect(info["bbox"])
+                if r.width < 180 or r.height < 110 or r.get_area() > 0.55 * pw * ph:
+                    continue
+                if r.y1 < ytop or r.y0 > ybot:
+                    continue
+                if any((rg & r).get_area() > 0.4 * r.get_area() for rg in
+                       [e["region"] for e in keep]):
+                    continue
+                keep.append({"region": r, "kind": "figure", "label": "", "caption": ""})
+            for c in keep:
+                r = c["region"]
+                out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
+                            "x1": round(r.x1, 1), "y1": round(r.y1, 1),
+                            "kind": c["kind"], "label": c.get("label") or "",
+                            "caption": c.get("caption") or ""})
+        out.sort(key=lambda e: (e["page"], e["y0"]))
+    finally:
+        doc.close()
+    return out
+
+
+_fig_cache = {}
+
 
 @app.get("/api/papers/{pid}/figures")
 def figures(pid: str):
-    """图的位置是**这份 PDF 的纯函数**：同一份文件算一次就够（缓存按 路径+mtime）。
-
-    怎么定裁剪框：**以文本为基石 + 二维聚类**。论文里每张图/表都带题注（Fig. 1a /
-    Table 2…），把页面上所有"图的内容"——位图、矢量图元、短文本行（长正文行排除，
-    它们是分隔物）——按二维邻近（25pt）聚成簇；题注就近挂簇，簇框就是图/表区域。
-    通栏图、并排图、多面板图都天然正确：面板之间距离近聚成一簇，两栏正文因为
-    是"长行"不参与聚类，不会把区域拉到别人家。
-
-    孤零零没题注、也没进任何簇的大位图自己当一张图；小块（面板碎片）不单列。
-    """
-    import pymupdf
     p = _paper_or_404(pid)
     try:
         key = (p["path"], os.path.getmtime(p["path"]))
@@ -1537,134 +1814,13 @@ def figures(pid: str):
         key = (p["path"], 0)
     if key in _fig_cache:
         return {"figures": _fig_cache[key]}
-    out = []
     if not os.path.exists(p["path"]):
         raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
-    doc = pymupdf.open(p["path"])
-    try:
-        for pno in range(len(doc)):
-            page = doc[pno]
-            pw, ph = page.rect.width, page.rect.height
-            dtext = page.get_text("dict")
-            items, caps = [], []
-            for blk in dtext.get("blocks", []):
-                blines = [ln for ln in blk.get("lines", []) if ln.get("spans")]
-                if not blines:
-                    continue
-                rects = [pymupdf.Rect(ln["bbox"]) for ln in blines]
-                first = "".join(sp["text"] for sp in blines[0]["spans"]).strip()
-                m = CAPTION_RE.match(first)
-                if m:
-                    prefix = m.group(1)
-                    caps.append({"rect": pymupdf.Rect(blk["bbox"]), "lines": rects,
-                                 "cy0": rects[0].y0,
-                                 "kind": "table" if prefix[:3].lower().startswith(("tab", "表")) else "figure",
-                                 "label": prefix.rstrip(".")})
-                    continue                     # 题注行不进聚类（否则会把全页的图串成一簇）
-                for ln in blines:
-                    t = "".join(sp["text"] for sp in ln["spans"])
-                    r = pymupdf.Rect(ln["bbox"])
-                    # 正文行长且字多：不进聚类
-                    if len(t.strip()) >= 30 and r.width >= 0.3 * pw:
-                        continue
-                    items.append(r)
-            for i in page.get_image_info():
-                r = pymupdf.Rect(i["bbox"])
-                if r.width > 60 and r.height > 40:
-                    items.append(r)
-            for drect in page.get_drawings():
-                r = drect["rect"]
-                if r.width > 8 and r.height > 3:
-                    items.append(r)
-            # 二维邻近聚类（每侧外扩 PAD 求交，BFS 连通）
-            PAD = 11.0
-            n = len(items)
-            seen = [False] * n
-            clusters = []
-            for i in range(n):
-                if seen[i]:
-                    continue
-                box = pymupdf.Rect(items[i]) + (-PAD, -PAD, PAD, PAD)
-                seen[i] = True
-                members = [items[i]]
-                stack = [i]
-                while stack:
-                    j = stack.pop()
-                    for k in range(n):
-                        if seen[k]:
-                            continue
-                        if box.intersects(pymupdf.Rect(items[k]) + (-PAD, -PAD, PAD, PAD)):
-                            seen[k] = True
-                            members.append(items[k])
-                            box |= (pymupdf.Rect(items[k]) + (-PAD, -PAD, PAD, PAD))
-                            stack.append(k)
-                full = pymupdf.Rect(members[0])
-                for r in members[1:]:
-                    full |= r
-                clusters.append({"rect": full, "n": len(members)})
-            # 题注挂簇：60pt 内最近的簇；簇框 ∪ 题注 = 区域
-            entries = []
-            used = set()
-            for c in sorted(caps, key=lambda x: x["cy0"]):
-                cr = c["rect"]
-                best, bd = None, 1e9
-                for ci, cl in enumerate(clusters):
-                    if ci in used:
-                        continue
-                    grow = cl["rect"] + (-60, -60, 60, 60)
-                    if not grow.intersects(cr):
-                        continue
-                    dist = (max(cr.y0 - cl["rect"].y1, cl["rect"].y0 - cr.y1, 0)
-                            + max(cr.x0 - cl["rect"].x1, cl["rect"].x0 - cr.x1, 0))
-                    if dist < bd:
-                        bd, best = dist, ci
-                if best is None:
-                    continue
-                used.add(best)
-                region = clusters[best]["rect"] | cr
-                # 题注近旁的表格横线收进来（顶线常在题注上方 ~20pt）
-                for rl in page.get_drawings():
-                    r = rl["rect"]
-                    if r.height < 3 and r.width > 40 and (region + (-40, -40, 40, 40)).intersects(r):
-                        region |= r
-                region = pymupdf.Rect(max(20, region.x0 - 4), max(20, region.y0 - 4),
-                                      min(pw - 20, region.x1 + 4), min(ph - 20, region.y1 + 4))
-                if region.height < 45 or region.width < 60:
-                    continue
-                c["region"] = region
-                entries.append(c)
-            # 没被题注认领的大位图：自己当一张图（面板碎片不单列）
-            rects = [pymupdf.Rect(i["bbox"]) for i in page.get_image_info()
-                     if i["bbox"][2] - i["bbox"][0] > 80 and i["bbox"][3] - i["bbox"][1] > 60]
-            for r in rects:
-                covered = any((c["region"] & r).get_area() > 0.5 * r.get_area() for c in entries)
-                if covered:
-                    continue
-                in_cluster = any((cl["rect"] & r).get_area() > 0.5 * r.get_area() and ci in used
-                                 for ci, cl in enumerate(clusters))
-                if in_cluster:
-                    continue
-                if r.width >= 200 and r.height >= 100:
-                    entries.append({"rect": r, "region": r, "kind": "figure",
-                                    "label": "", "cy0": r.y0})
-            entries.sort(key=lambda x: x["cy0"])
-            for c in entries:
-                r = c["region"]
-                out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
-                            "x1": round(r.x1, 1), "y1": round(r.y1, 1),
-                            "kind": c["kind"], "label": c.get("label") or ""})
-        out.sort(key=lambda e: (e["page"], e["y0"]))
-    finally:
-        doc.close()
+    out = _figure_regions(p["path"])
     _fig_cache[key] = out
     while len(_fig_cache) > 8:
         _fig_cache.pop(next(iter(_fig_cache)))
     return {"figures": out}
-
-
-_fig_cache = {}
-# 题注：Fig. 4 / Figure 2a / Table 1 / Tab. 2 / Scheme 3 / 图 3 / 表 1
-CAPTION_RE = re.compile(r"^\s*((?:Fig(?:ure)?s?\.?|Table|Tab\.?|Scheme|图|表)\s*\d+\s*[a-z]?)", re.I)
 @app.get("/api/papers/{pid}/figure.png")
 def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, dpi: int = 130):
     import pymupdf
