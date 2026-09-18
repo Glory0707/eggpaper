@@ -279,6 +279,10 @@ function pickFirst() {
   const first = groups.value[0]?.items?.[0]
   if (first) toggleTitle(first.title, first.id)
 }
+const citeCount = computed(() => picked.value.length + (libScope.value ? 1 : 0))
+const citeTitle = computed(() => libScope.value
+  ? '全库 · 自动挑相关'
+  : ('已引用：' + picked.value.map(p => p.title || p.filename).join('、')))
 function pickFromPop(p) {
   toggleTitle(p.title, p.id)
   nextTick(() => citeFilterEl.value?.focus())
@@ -454,18 +458,9 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
           <div class="cite-foot">勾选的论文以摘要参与回答 · 一次最多 6 篇 · 「全库」请直接问并写明范围</div>
         </div>
       </Transition>
-      <div class="cite-chips" v-if="libScope">
-        <span class="cite-chip lib">
-          全库 · 自动挑相关
-          <i class="rm" @click.stop="libScope = false">×</i>
-        </span>
-      </div>
-      <div class="cite-chips" v-if="picked.length">
-        <span v-for="p in picked" :key="p.id" class="cite-chip">
-          {{ p.title || p.filename }}
-          <i class="rm" @click.stop="toggleTitle(p.title, p.id)">×</i>
-        </span>
-      </div>
+      <button v-if="citeCount" class="cite-inline" :title="citeTitle" @click="openCite">
+        引用 {{ citeCount }}
+      </button>
       <textarea ref="inputEl" v-model="text" rows="1" class="qa-ta"
                 placeholder="基于这篇论文提问…（按 / 引用其他论文）"
                 @keydown="onKey"></textarea>

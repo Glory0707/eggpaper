@@ -589,9 +589,6 @@ function onKey(e) {
           <button class="cite-btn" @click="store.cite.open = true">引用</button>
         </div>
       </div>
-      <div class="doc-head" v-else>
-        <div class="t">本地文献批注台</div>
-      </div>
       <div class="actions" v-if="store.paper">
         <div class="segmented" :style="{ '--n': 3, '--i': VARIANTS.indexOf(store.viewer.variant) }">
           <span class="seg-thumb" />
@@ -659,8 +656,8 @@ function onKey(e) {
              @click="pickFiles" @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">
           <EggMark class="egg-big" :class="{ hop: dragOver }" />
           <div class="e-title">论文，启动！</div>
-          <div class="e-sub">把 PDF 拖进来，或<b>点这里选择文件</b></div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
+          <div class="desk-hint">拖入PDF或点击任意位置选择文件</div>
         </div>
         <PdfViewer v-else :key="store.currentId" @override="onOverride" />
       </main>
