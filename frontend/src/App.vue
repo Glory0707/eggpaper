@@ -30,6 +30,12 @@ function rollOnce(ms = 700) {
 
 /* 戳一戳蛋：点一下晃一下；3 秒内戳满三下翻滚一圈。无声——戳了会动，仅此而已。 */
 const wobbling = ref(false)
+function wobbleOnce(ms = 450) {
+  wobbling.value = false
+  requestAnimationFrame(() => { wobbling.value = true })
+  clearTimeout(wobbleOnce._t)
+  wobbleOnce._t = setTimeout(() => (wobbling.value = false), ms)
+}
 let pokes = 0
 let pokeReset = 0
 function pokeEgg() {
@@ -40,11 +46,39 @@ function pokeEgg() {
     rollOnce()
     return
   }
-  wobbling.value = false
-  requestAnimationFrame(() => { wobbling.value = true })
-  clearTimeout(pokeEgg._t)
-  pokeEgg._t = setTimeout(() => (wobbling.value = false), 450)
+  wobbleOnce()
   pokeReset = setTimeout(() => (pokes = 0), 3000)
+}
+
+/* 干活与庆祝：整本翻译跑着的时候，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）。
+   这一篇译完跳两下（cheerEgg，pollTranslate 的完成拍调用）——整本书翻完比析读完
+   更有分量，跳两下；析读完成仍是滚一圈。轮询只看当前论文，人不在场就不庆祝。 */
+const eggBusy = computed(() => tranSt.value === 'running' && !sleepEgg.value)
+const eggCheer = ref(false)
+function cheerEgg() {
+  if (sleepEgg.value) return          // 深夜它睡着干的活，不吵醒它庆祝
+  eggCheer.value = true
+  clearTimeout(cheerEgg._t)
+  cheerEgg._t = setTimeout(() => (eggCheer.value = false), 1250)
+}
+
+/* 发呆打盹：3 分钟没有键鼠/滚轮的动静，蛋歪着头打盹（没有 z——z 是深夜专属）；
+   一动就惊醒（晃一下）。翻页、滚动都算「动」——真正一动不动盯着一页读时才打盹。
+   深夜它另有躺平睡觉、翻译时它在埋头干活，这两种状态不打盹。 */
+const dozing = ref(false)
+const IDLE_MS = 180000
+let idleTimer = 0
+function napCheck() {
+  if (sleepEgg.value || tranSt.value === 'running') return
+  dozing.value = true
+}
+function wakeEgg() {
+  clearTimeout(idleTimer)
+  idleTimer = setTimeout(napCheck, IDLE_MS)
+  if (dozing.value) {
+    dozing.value = false
+    wobbleOnce()
+  }
 }
 
 const tranReady = computed(() => store.paper?.translate_status === 'done')
@@ -88,6 +122,12 @@ onMounted(async () => {
   pollTimer = setInterval(poll, 3000)
   sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后
   // 跨进/跨出深夜那一拍的检查搭轮询的车（3 秒一次足够），不单开计时器
+  // 发呆打盹的「动」：键、鼠、滚轮随便哪个都算
+  window.addEventListener('pointermove', wakeEgg, { passive: true })
+  window.addEventListener('pointerdown', wakeEgg, { passive: true })
+  window.addEventListener('keydown', wakeEgg)
+  window.addEventListener('wheel', wakeEgg, { passive: true })
+  wakeEgg()                  // 先把打盹的表立起来
   try {
     store.settings = await api.settings()
     await refreshPapers()
@@ -107,9 +147,14 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   clearInterval(pollTimer)
+  clearTimeout(idleTimer)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('dragend', endDrag)
   window.removeEventListener('blur', endDrag)
+  window.removeEventListener('pointermove', wakeEgg)
+  window.removeEventListener('pointerdown', wakeEgg)
+  window.removeEventListener('keydown', wakeEgg)
+  window.removeEventListener('wheel', wakeEgg)
 })
 
 /* 升级自检：这个标签页是哪个版本的界面。静默升级后旧标签页还活着、跑的还是旧 JS，
@@ -284,7 +329,7 @@ async function pollTranslate() {
   if (j.status === 'done') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
-    rollOnce()
+    cheerEgg()                            // 整本书翻完了：跳两下（析读完成才是滚一圈）
     toast('整本翻译完成')   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
   } else if (j.status === 'error') {
     tranProg.value = { done: 0, total: 0, svc: '' }
@@ -438,7 +483,7 @@ function onKey(e) {
     <header class="topbar">
       <div class="wordmark">
         <span class="egg-wrap" @click="pokeEgg">
-          <EggMark class="egg" :class="[{ roll }, { wobble: wobbling }, { sleep: sleepEgg }]" />
+          <EggMark class="egg" :class="[{ roll }, { wobble: wobbling }, { sleep: sleepEgg }, { busy: eggBusy }, { cheer: eggCheer }, { doze: dozing }]" />
           <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
         </span>
         <span class="name">eggpaper</span>

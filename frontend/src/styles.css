@@ -232,6 +232,20 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .tran-line i.det { animation: none; }
 .wordmark { display: flex; align-items: center; gap: 9px; user-select: none; position: relative; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
+/* 整本翻译跑着时：蛋轻轻晃着埋头干活（±2.6°、慢周期，不抢注意力）。
+   定义放在 wobble/sleep/roll 之前——戳它（wobble）、睡觉（sleep）、翻滚（roll）都要能盖过它 */
+.wordmark .egg.busy { animation: eggBusy 2.6s ease-in-out infinite; transform-origin: 50% 85%; }
+@keyframes eggBusy {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-2.6deg); }
+  75% { transform: rotate(2.6deg); }
+}
+/* 发呆打盹：歪着头小幅起伏（区别于深夜躺平的 sleep；没有 z——z 是深夜专属） */
+.wordmark .egg.doze { animation: eggDoze 4.2s var(--ease-smooth) infinite; transform-origin: 50% 85%; }
+@keyframes eggDoze {
+  0%, 100% { transform: rotate(12deg); }
+  50% { transform: rotate(18deg); }
+}
 /* 戳一戳：蛋壳上晃两下（连戳三下换 rollOnce 翻滚一圈，逻辑在 App） */
 .egg-wrap { position: relative; display: block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .wordmark .egg.wobble { animation: eggWobble 0.42s var(--ease-spring); transform-origin: 50% 85%; }
@@ -1519,7 +1533,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
    三处都不加文案、不加颜色，只是让东西动得像活的。
    ============================================================ */
 
-/* ① 印章滚一下：析读/整本翻译完成时。半圈来回 + 一点点挤压。
+/* ① 印章滚一下：析读完成时（还有戳满三下）。半圈来回 + 一点点挤压。
    transform-origin 压到 85% 高度，它是"底边着地滚"，不是原地自转 */
 .wordmark .egg.roll { animation: markRoll 0.68s var(--ease-spring); transform-origin: 50% 85%; }
 @keyframes markRoll {
@@ -1528,6 +1542,19 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   58%  { transform: translateY(0) scale(0.96, 1.04) rotate(10deg) }
   80%  { transform: translateY(-1px) scale(1.02, 0.98) rotate(-3.5deg) }
   100% { transform: none }
+}
+
+/* ①′ 译完庆祝：整本翻译完成跳两下，第二下矮些、落地轻轻一压（析读完成仍是滚一圈）。
+   定义排在 roll 之后——正在庆祝的那一下要盖过一切常态动画 */
+.wordmark .egg.cheer { animation: eggCheer 1.15s var(--ease-spring); transform-origin: 50% 92%; }
+@keyframes eggCheer {
+  0%   { transform: translateY(0) }
+  13%  { transform: translateY(-7px) }
+  26%  { transform: translateY(0) scale(1.05, 0.93) }
+  40%  { transform: translateY(-5px) }
+  54%  { transform: translateY(0) scale(1.04, 0.95) }
+  70%  { transform: translateY(0) }
+  100% { transform: translateY(0) }
 }
 
 /* ② 空态那颗大标记：拖文件进来时原地弹跳（蓄力→起跳→落地压扁） */
