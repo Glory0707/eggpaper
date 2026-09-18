@@ -400,6 +400,7 @@ async function loadCachedBlocks() {
 
 // ---------- 图表速览 ----------
 const figures = ref([])
+const figuresLoading = ref(false)
 // 灯箱用序号而不是对象：这样能左右翻图，像看图片一样一张张过
 const figIdx = ref(-1)
 const lightbox = computed(() => (figIdx.value >= 0 ? figures.value[figIdx.value] || null : null))
@@ -415,10 +416,12 @@ function onFigKey(e) {
 }
 async function loadFigures() {
   if (!store.currentId || figures.value.length) return
+  figuresLoading.value = true
   try {
     const r = await api.figures(store.currentId)
-    figures.value = r.figures || []
+    if (samePaper(paperEpoch())) figures.value = r.figures || []
   } catch { /* 无图论文静默 */ }
+  figuresLoading.value = false
 }
 async function askFigure(f) {
   try {
@@ -436,6 +439,22 @@ async function askFigure(f) {
 function figJump(f) {
   jumpTo(f.page, f.y0, f.y1)
   figIdx.value = -1
+}
+
+/* 写笔记要贴图：把这张裁剪图复制/存下来，不用再截图 */
+async function copyFig() {
+  try {
+    const blob = await (await fetch(api.figureUrl(store.currentId, lightbox.value, 200))).blob()
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
+    toast(t('图片已复制'))
+  } catch { toast(t('复制失败，手动选吧')) }
+}
+function downloadFig() {
+  const name = (lightbox.value.label || lightbox.value.caption || 'figure').replace(/[\s/]+/g, '_').slice(0, 40)
+  const a = document.createElement('a')
+  a.href = api.figureUrl(store.currentId, lightbox.value, 300)
+  a.download = `fig_p${lightbox.value.page + 1}_${name}.png`
+  a.click()
 }
 
 /* 术语表是全库共用的，但"跳去原文"这件事**只对本文出现过的词成立**：
@@ -692,13 +711,16 @@ watch(() => store.currentId, () => {
         <!-- 图表：紧跟着一眼卡。读完结论就想看图，这是读论文的自然顺序。
              表格裁剪和图形裁剪长得很像（都是纸上的一块），角标把话说死；
              底下跟论文原生题注（Figure 3…），两行截断，悬停看全文。 -->
-        <div class="blk" v-if="figures.length">
-          <div class="blk-head"><span class="mono-label">{{ t('图表速览 · {n}', { n: figures.length }) }}</span></div>
-          <div class="fig-strip">
+        <div class="blk" v-if="figures.length || figuresLoading">
+          <div class="blk-head">
+            <span class="mono-label" v-if="figures.length">{{ t('图表速览 · {n}', { n: figures.length }) }}</span>
+            <span class="blk-busy" v-else>{{ t('正在找图表…') }}</span>
+          </div>
+          <div class="fig-strip" v-if="figures.length">
             <span v-for="(f, i) in figures" :key="i" class="fig-cell"
                   :title="f.caption || `${t(f.kind === 'table' ? '表' : '图')} · ${t('第 {p} 页', { p: f.page + 1 })}`" @click="figIdx = i">
-              <img class="fig-thumb" :src="api.figureUrl(store.currentId, f)" alt="" />
-              <i class="fig-kind">{{ f.kind === 'table' ? '表' : '图' }}</i>
+              <img class="fig-thumb" :src="api.figureUrl(store.currentId, f)" loading="lazy" decoding="async" alt="" />
+              <i class="fig-kind">{{ f.kind === 'table' ? t('表') : t('图') }}</i>
               <span class="fig-cap" v-if="f.caption">{{ f.caption }}</span>
             </span>
           </div>
@@ -812,6 +834,8 @@ watch(() => store.currentId, () => {
         <span class="mono-label">{{ t(lightbox.kind === 'table' ? '表' : '图') }} · {{ figIdx + 1 }} / {{ figures.length }} · {{ t('第 {p} 页', { p: lightbox.page + 1 }) }}</span>
         <button @click="figJump(lightbox)">{{ t('在原文查看') }}</button>
         <button @click="askFigure(lightbox)">{{ t(lightbox.kind === 'table' ? '问这张表' : '问这张图') }}</button>
+        <button @click="copyFig"> {{ t('复制图片') }}</button>
+        <button @click="downloadFig">{{ t('下载图片') }}</button>
         <button @click="figIdx = -1">{{ t('关闭') }}</button>
       </div>
     </div>

@@ -472,6 +472,10 @@ const EN = {
   '新入库': 'Added',
   '这一天没有记录': 'Nothing recorded this day',
   '文库 / 论文日历': 'Library / calendar',
+  '正在找图表…': 'Finding figures…',
+  '复制图片': 'Copy image',
+  '下载图片': 'Download image',
+  '图片已复制': 'Image copied',
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。

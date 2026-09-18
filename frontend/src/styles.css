@@ -1837,3 +1837,28 @@ html.dark .sp-shot { background: #fff; }
 }
 .cal-paper:hover { background: var(--btn-hover); box-shadow: none; transform: none; }
 .cal-empty { margin-top: 12px; border-top: 1px solid var(--hairline-soft); padding-top: 10px; font-size: var(--fs-sm); color: var(--ink-3); }
+
+/* ---------- 全局打磨 ----------
+   长串防撑破：论文标题、导出表格、问答里贴的长链接按字符折行，不把栏位挤宽 */
+.md, .qa-msg .q-body, .cal-paper, .paper-item .fn, .ce-v, .six-txt { overflow-wrap: anywhere; }
+
+/* 图片进场淡入：图表条和灯箱里的裁剪图不再"啪"一下出现 */
+@keyframes imgIn { from { opacity: 0; } }
+.fig-thumb { animation: imgIn 360ms var(--ease-out) both; }
+.lightbox img { animation: imgIn 200ms var(--ease-out) both; }
+
+/* 系统开了"减少动态效果"：全站动画只保留首末帧——蛋不再无限动，
+   蒙纱/抽屉/弹层直接落位。尊重系统偏好，不另设开关 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 日历图标上的小点：今天已经读过点什么。轻提醒，不弹任何东西 */
+.strip-dot {
+  position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+}

@@ -1504,7 +1504,19 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
 
 @app.get("/api/papers/{pid}/export.md")
 def export_md(pid: str):
+    """导出笔记 .md。栏目标题跟随界面语言（ui_lang），内容本身保持原文
+    （摘要/眉批是生成时的语言，问答是你说过的话——导出不做翻译）。"""
     p = _paper_or_404(pid)
+    en = (config.load().get("ui_lang") or "zh") == "en"
+    T = {
+        "skeleton": ("论证骨架", "Argument skeleton"),
+        "notes": ("眉批与查译", "Margin notes & lookups"),
+        "qa": ("问答", "Q&A"),
+        "you": ("你", "You"),
+    }
+    def L(key):
+        return T[key][1] if en else T[key][0]
+
     paras = {x["idx"]: x for x in db.get_paragraphs(pid)}
     lines = [f"# {p['title'] or p['filename']}", ""]
     if p["summary"]:
@@ -1515,7 +1527,7 @@ def export_md(pid: str):
                   f"- 发现：{s.get('findings', '')}", ""]
     status, claims, annos = db.get_analysis(pid)
     if claims:
-        lines += ["## 论证骨架", ""]
+        lines += [f"## {L('skeleton')}", ""]
         for c in claims:
             lines.append(f"- **{c['id']} {c['text']}**")
             for a in c["anchors"]:
@@ -1525,13 +1537,27 @@ def export_md(pid: str):
             lines.append("")
     notes = db.get_marginalia(pid)
     if notes:
-        lines += ["## 眉批与查译", ""]
+        lines += [f"## {L('notes')}", ""]
         for n in notes:
             # 类型名与界面口径一致：自造款用模型给的短标签，自己钉的三种算"你 ·"，
             # 其余查同一张表——导出里写的是"前后打架 / 你 · 选区问答"，不是 [conflict]。
             zh = (n.get("label") or "").strip() or KIND_ZH.get(n["kind"], n["kind"])
-            who = "你 · " + zh if n["kind"] in ("lookup", "region", "note") else zh
+            who = ("你 · " if en else "你 · ") + zh if n["kind"] in ("lookup", "region", "note") else zh
             lines.append(f"- **[{who}] {n['note']}** — “{n['quote'][:48]}”")
+        lines.append("")
+    # 问答：按会话分组导出——当初问了什么、得到了什么，是笔记里最值钱的部分之一
+    convs = db.conv_list(pid)
+    for c in convs:
+        msgs = db.qa_history(pid, c["id"])
+        if not msgs:
+            continue
+        if not any(m["content"] for m in msgs):
+            continue
+        lines += [f"## {L('qa')} · {c['title']}", ""]
+        for m in msgs:
+            role = ("EGGPAPER") if m["role"] == "assistant" else L("you")
+            lines.append(f"**{role}:** {m['content']}")
+            lines.append("")
         lines.append("")
     md = "\n".join(lines)
     return Response(content=md, media_type="text/markdown; charset=utf-8",
@@ -1841,6 +1867,7 @@ def _figure_regions(path):
 
 
 _fig_cache = {}
+_fig_inflight = {}
 
 
 @app.get("/api/papers/{pid}/figures")
@@ -1852,9 +1879,22 @@ def figures(pid: str):
         key = (p["path"], 0)
     if key in _fig_cache:
         return {"figures": _fig_cache[key]}
+    # 首算要扫全页矢量，大论文要几秒；速览页和阅读器会先后各拉一次——
+    # 并发去重：后来者等先来者算完直接读缓存，不重复扫
+    ev = _fig_inflight.get(key)
+    if ev:
+        ev.wait(120)
+        if key in _fig_cache:
+            return {"figures": _fig_cache[key]}
     if not os.path.exists(p["path"]):
         raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
-    out = _figure_regions(p["path"])
+    ev = threading.Event()
+    _fig_inflight[key] = ev
+    try:
+        out = _figure_regions(p["path"])
+    finally:
+        ev.set()
+        _fig_inflight.pop(key, None)
     _fig_cache[key] = out
     while len(_fig_cache) > 8:
         _fig_cache.pop(next(iter(_fig_cache)))

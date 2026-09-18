@@ -516,6 +516,12 @@ async function saveSettings(body) {
 
 // 析读在忙：排队与在读都算（后台排队时按钮也该按不动、并说清是在排队）
 const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.status))
+/* 日历图标上的小点：今天已经读过点什么——轻提醒，不弹任何东西 */
+const readToday = computed(() => {
+  const d = new Date()
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return store.papers.some(p => (p.last_read_at || '').startsWith(day))
+})
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
 // 整本翻译的进度（回填自 /translate-status 的 pages）。total 为 0 = 还没解析出页数
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0 })
@@ -685,6 +691,7 @@ function onKey(e) {
             <rect x="4" y="5.5" width="16" height="14.5" rx="1.5" />
             <path d="M4 10.5h16M8.5 3.5v3.5M15.5 3.5v3.5" stroke-linecap="round" />
           </svg>
+          <i class="strip-dot" v-if="readToday && !store.viewer.calOpen"></i>
         </button>
         <div class="strip-sep"></div>
       </div>
