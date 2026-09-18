@@ -1,10 +1,4 @@
 <script setup>
-/* 文库：分类 + 搜索 + 排序（Zotero 的左栏那套，但只留真正用得上的）
- *
- * Zotero 的分类有两个要点值得抄：一篇文献可以同时属于多个分类（所以它像"标签"
- * 而不像文件夹）；分类不是唯一入口，随手能搜、能按最近读排序。其余（层级、保存的
- * 检索式、自动标签）在这个体量下都是负担，不做。
- */
 import { computed, nextTick, ref } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper } from '../store'
 import { confirmBox } from '../dialog'
@@ -106,8 +100,6 @@ async function delColl(c) {
 }
 
 /* ---------- 归入分类：勾选 + 拖拽两条路 ---------- */
-// 行上只有一个"＋"，归没归进去不看行（那会变成一串看不懂的数字），
-// 归的动作即时回一句 toast——反馈要给，但不留在界面上占地方
 async function toggleIn(pid, cid) {
   const cur = collOf(pid)
   const c = colls.value.find(x => x.id === cid)
@@ -117,7 +109,6 @@ async function toggleIn(pid, cid) {
     await api.paperColls(pid, next)
     await refreshCollections()
     if (c) toast(on ? t('已移出「{name}」', { name: c.name }) : t('已归入「{name}」', { name: c.name }))
-    // 归类完成就该收口：不然"从未分类勾一笔 → 切到那个分类"，弹窗还挂在那篇上
     menuFor.value = null
   } catch (e) { toast(e.message) }
 }
@@ -139,7 +130,6 @@ async function dropOn(cid) {
 
 /* ---------- 导入 / 删除 ---------- */
 function onFile(e) {
-  // 一次可以选多篇：emit 整个 FileList（导入与"逐篇上传"的节流在 App 那边做）
   emit('import', Array.from(e.target.files || []))
   e.target.value = ''
 }
@@ -177,8 +167,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
          @mousedown="startResize" @dblclick="libW = LIB_DEF"></div>
 
     <div class="rail-head">
-      <!-- 篇数在这块里已经说过了（左条的角标 + 下面「全部 N」），标题不再重复第三个 -->
-      <span class="mono-label">{{ t('文库') }}</span>
+            <span class="mono-label">{{ t('文库') }}</span>
       <button class="ghost head-x" :title="t('收起文库')" @click="emit('close')">‹</button>
     </div>
 
@@ -191,8 +180,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
       </select>
     </div>
 
-    <!-- 分类：一条"全部"、一条"未分类"，然后是用户建的 -->
-    <div class="coll-list">
+        <div class="coll-list">
       <div class="coll-row" :class="{ on: SEL === 'all' }" @click="pickColl('all')">
         <span class="c-name">{{ t('全部') }}</span><b>{{ store.papers.length }}</b>
       </div>
@@ -224,13 +212,11 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
                 @click.stop="menuFor = menuFor === p.id ? null : p.id">＋</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
         <div class="p-author" v-if="p.authors">{{ p.authors }}</div>
-        <!-- 后台在忙什么，列表里得看得见——一次导入多篇时，"还剩哪几篇没读完"只能靠这一行 -->
-        <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
+                <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
         <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
         <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败，可重试') }}</div>
 
-        <!-- 归入分类：勾选即存，不用"确定" -->
-        <div class="coll-menu" v-if="menuFor === p.id" @click.stop>
+                <div class="coll-menu" v-if="menuFor === p.id" @click.stop>
           <div class="cm-head">{{ t('归入分类') }}</div>
           <label v-for="c in colls" :key="c.id" class="cm-row">
             <input type="checkbox" :checked="collOf(p.id).includes(c.id)" @change="toggleIn(p.id, c.id)" />

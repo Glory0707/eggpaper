@@ -29,7 +29,6 @@ import webbrowser
 HOST = "127.0.0.1"
 PORTS = (8430, 8431, 8432)
 
-
 def _setup_paths():
     """冻结后把自带的 backend 目录挂到 sys.path 上（模块都在那儿）。"""
     if getattr(sys, "frozen", False):
@@ -40,13 +39,11 @@ def _setup_paths():
     else:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend"))
 
-
 def _log_path() -> str:
     import appinfo
     d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, "app.log")
-
 
 def _log(msg: str):
     line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
@@ -58,28 +55,23 @@ def _log(msg: str):
     if not getattr(sys, "frozen", False):
         print(line)
 
-
 def _dpi_aware():
     """先声明 DPI 感知，再问系统"托盘图标要多大"——否则问到的永远是 96 DPI 下的 16px，
     在 125%/150% 缩放的屏幕上被系统放大，看着就是糊的。"""
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)      # PROCESS_SYSTEM_DPI_AWARE
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         try:
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass
 
-
 def start_tray(url: str, port: int, log) -> bool:
     """托盘图标：打开界面 / 查更新 / 退出。打包版默认开——否则用户想关掉这个
     "后台服务"只能进设置里点，或者去任务管理器。"""
     try:
         import pystray
-        # 这一句同时是 Pillow 的探针：mark.draw / pystray 的后端都要用它，而 pystray
-        # 自己**不** import PIL——缺了 Pillow 时若只 import pystray，会在画托盘图时才炸，
-        # 那就不是"托盘不可用"，是软件打不开
-        from PIL import Image  # noqa: F401
+        from PIL import Image
     except ImportError as e:
         log(f"托盘不可用（{e}）")
         return False
@@ -94,13 +86,11 @@ def start_tray(url: str, port: int, log) -> bool:
         """
         import mark
         try:
-            size = ctypes.windll.user32.GetSystemMetrics(49) or 16   # 49 = SM_CXSMICON
+            size = ctypes.windll.user32.GetSystemMetrics(49) or 16
         except Exception:
             size = 16
-        size = max(16, min(64, size))            # 系统说多大就按多大画（DPI 感知之后是真值）
+        size = max(16, min(64, size))
         log(f"托盘图标按 {size}px 原生绘制")
-        # 必须跟另外三条管线一个样子：白垫不能省，否则深色任务栏上墨色环几乎看不见
-        # （用户原话："不垫 → 深色任务栏上看不清"，别只改图标文件忘了这里）
         return mark.draw(size, tile=True)
 
     def guard(name, fn):
@@ -152,12 +142,10 @@ def start_tray(url: str, port: int, log) -> bool:
     log("托盘图标已就绪")
     return True
 
-
 def _window_only_mode(url: str) -> int:
     """`--window-only`：本进程只开一个窗口（独立进程，不干扰服务进程）。"""
     import window as winmod
     return winmod.run_window_only(url)
-
 
 def _open_window(url: str, log) -> bool:
     """独立窗口：实现放在 backend/window.py（界面里那颗「在独立窗口打开」走同一份）。
@@ -172,10 +160,9 @@ def _open_window(url: str, log) -> bool:
         log("独立窗口不可用（模块没打进包）：")
         log(traceback.format_exc())
         return False
-    how = winmod.open_window(url)               # 开发模式：直接开
+    how = winmod.open_window(url)
     log(f"独立窗口：{how}" if how else "没找到可用的浏览器（Edge/Chrome），退回默认浏览器")
     return bool(how)
-
 
 def _open(url: str, log):
     """打开浏览器。EGGPAPER_NO_BROWSER=1 时只打印地址——无头机器、CI、
@@ -185,17 +172,13 @@ def _open(url: str, log):
         return
     webbrowser.open(url)
 
-
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-# **必须声明类型**：64 位下 HANDLE 是 64 位，ctypes 默认按 c_int 收返回值，句柄会被截断，
-# 之后传回去就是 WinError 6「句柄无效」——整个启动流程崩在探活这一步（实测踩过）。
 _kernel32.OpenProcess.restype = wintypes.HANDLE
 _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
 _kernel32.WaitForSingleObject.restype = wintypes.DWORD
 _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 _kernel32.CloseHandle.restype = wintypes.BOOL
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-
 
 def _alive(pid: int) -> bool:
     """这个 pid 还活着吗。
@@ -213,11 +196,9 @@ def _alive(pid: int) -> bool:
     finally:
         _kernel32.CloseHandle(h)
 
-
 def _instance_file() -> str:
     import appinfo
     return os.path.join(os.path.dirname(appinfo.data_dir()), "instance.json")
-
 
 def _running_instance():
     """已经有一个 eggpaper 在跑吗？有就返回 (端口, 它记下的版本号)。
@@ -242,14 +223,12 @@ def _running_instance():
         return None
     return port, str(info.get("version") or "")
 
-
 def _ver_tuple(v: str):
     out = []
     for part in str(v or "").split("."):
         digits = "".join(c for c in part if c.isdigit())
         out.append(int(digits) if digits else 0)
     return tuple(out + [0, 0, 0])[:4]
-
 
 def _ask_quit(port: int) -> bool:
     """请那个实例退出（它自己有 /api/quit）。升级接管的让位不通知页面关窗——
@@ -263,7 +242,6 @@ def _ask_quit(port: int) -> bool:
         _log(f"请旧实例退出失败：{type(e).__name__}: {e}")
         return False
 
-
 def _port_free(port: int) -> bool:
     """这个端口能不能绑上。用 bind 而不是 connect——绑定是本机操作，
     不会像"回连自己"那样在某些机器上卡住。"""
@@ -274,7 +252,6 @@ def _port_free(port: int) -> bool:
         except OSError:
             return False
 
-
 def _write_instance(port: int):
     try:
         with open(_instance_file(), "w", encoding="utf-8") as f:
@@ -283,7 +260,6 @@ def _write_instance(port: int):
     except OSError as e:
         _log(f"写 instance.json 失败：{e}")
 
-
 def _pdf_arg(argv) -> str:
     """命令行里那一个 PDF 路径（双击/右键菜单传进来的 %1）。没有就返回空串。"""
     for a in argv[1:]:
@@ -291,7 +267,6 @@ def _pdf_arg(argv) -> str:
         if a.lower().endswith(".pdf") and os.path.isfile(a):
             return a
     return ""
-
 
 def _handoff(port: int, pdf: str) -> bool:
     """把"要打开的文件"交给已经开着的那个实例：它自己会切过去。"""
@@ -303,7 +278,6 @@ def _handoff(port: int, pdf: str) -> bool:
     except Exception as e:
         _log(f"投递给已有实例失败：{type(e).__name__}: {e}")
         return False
-
 
 def _install_crash_log(log):
     """未捕获的异常一律写日志。
@@ -320,11 +294,10 @@ def _install_crash_log(log):
     except Exception:
         pass
 
-
 def main():
     _setup_paths()
     _dpi_aware()
-    if "--window-only" in sys.argv:                 # 只开窗口的那个进程
+    if "--window-only" in sys.argv:
         port = _running_instance() or PORTS[0]
         return _window_only_mode(f"http://{HOST}:{port}/")
     import appinfo
@@ -339,20 +312,16 @@ def main():
     running = _running_instance()
     if running:
         old_port, old_ver = running
-        # 跑着的那个比我这一版还老：**用户刚装完新版、点开的却是旧界面**。
-        # 旧进程占着端口，单实例逻辑只开了浏览器指向它——"我在别的电脑上装的是
-        # 0.1.27，怎么还是老版本"就是这么来的（踩过）。请它下去，自己接管；
-        # 版本相同（用户重复双击图标）才照旧只开浏览器。
         if old_ver and _ver_tuple(old_ver) < _ver_tuple(appinfo.version()):
             log(f"发现旧版本 {old_ver} 还在跑（端口 {old_port}），请它退出，这次用 {appinfo.version()}")
             _ask_quit(old_port)
-            for _ in range(24):                  # 退出是异步的：等它把端口放出来
+            for _ in range(24):
                 if _port_free(old_port):
                     break
                 time.sleep(0.5)
             else:
                 log(f"旧版本没退出（端口 {old_port} 仍被占）——在托盘菜单里点「退出 eggpaper」再打开一次")
-            running = _running_instance()        # 请过了：它退了这里就没有实例了
+            running = _running_instance()
     if running:
         port = running[0]
         log(f"已有一个 eggpaper 在跑（端口 {port}），打开界面即可")
@@ -370,15 +339,12 @@ def main():
         return 1
 
     try:
-        import main as backend              # noqa: E402  导入即建好 app 与数据目录
+        import main as backend
     except Exception:
         log("后端模块导入失败：")
         log(traceback.format_exc())
         return 1
     def _serve():
-        # 线程里的异常在无控制台的打包版里**一个字都看不到**（console=False，
-        # stderr 没有去处），所以这里必须自己接住并写日志——否则症状只有
-        # "服务没起来"，原因永远查不出。
         try:
             backend.serve(port=port, log_level="warning")
         except Exception:
@@ -388,11 +354,10 @@ def main():
     threading.Thread(target=_serve, daemon=True).start()
 
     url = f"http://{HOST}:{port}/"
-    # 就绪判定走**进程内事件**（backend.READY），不问网络：这台机器上"连自己"可能被丢包
     if not backend.READY.wait(45):
         log(f"服务 45 秒内没起来（端口 {port}）——如果上面没有别的错，把这份日志发给作者")
         return 1
-    if _port_free(port):        # 服务都报 ready 了，这个端口就该是"被自己占着"的；还空着说明没绑上
+    if _port_free(port):
         log(f"服务报告已启动，但 {port} 还是空的——端口可能被别的程序抢了，重开一次即可")
         return 1
     _write_instance(port)
@@ -405,12 +370,11 @@ def main():
         pass
     else:
         _open(url, log)
-    try:                                     # 主线程守着：Ctrl+C（开发）或退出接口
+    try:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
         return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

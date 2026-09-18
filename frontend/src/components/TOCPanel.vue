@@ -1,8 +1,4 @@
 <script setup>
-/* 目录：PDF 自带书签的跳转列表。
- * 树就是书签自己的层级（缩进表达），不做折叠/搜索——论文目录顶多几十条，
- * 一屏扫完比任何交互都快。点击跳到那一页（原文页号换算交给 viewer 的 gotoPage）。
- */
 import { computed, ref, watch } from 'vue'
 import { api, store } from '../store'
 import { t } from '../i18n'

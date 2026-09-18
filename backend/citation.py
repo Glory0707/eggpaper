@@ -9,18 +9,14 @@
 """
 import re
 
-# 分组：先给人写论文用的长条目，再给 PPT 用的短引用，最后是给软件吃的导入格式
 GROUP_ZH = {"ref": "参考文献条目", "short": "短引用（PPT / 图注）", "import": "导入与链接"}
-
 
 def _s(v) -> str:
     return str(v or "").strip()
 
-
 def _dash(s: str, d: str) -> str:
     """页码里的连字符统一成该格式要的那个（APA/Nature 用 en dash，BibTeX 用 --）。"""
     return re.sub(r"\s*[-\u2010-\u2015\u2212]+\s*", d, _s(s))
-
 
 def _flat(s: str) -> str:
     """比对用的归一形：去空白、各种横线统一成 -、变小写。
@@ -30,7 +26,6 @@ def _flat(s: str) -> str:
     """
     s = re.sub(r"[\u2010-\u2015\u2212]", "-", _s(s))
     return re.sub(r"[\s\u00a0\u2009]+", "", s).lower()
-
 
 def _authors(meta: dict) -> list:
     out = []
@@ -44,7 +39,6 @@ def _authors(meta: dict) -> list:
             out.append({"family": fam or giv, "given": giv if fam else ""})
     return out
 
-
 def _ini(given: str, spaced: bool = True, dots: bool = True) -> str:
     """"Wei-Ming" → "W.-M."；"Wei Ming" → "W. M."；已经是 "W." 的原样收下。
 
@@ -57,11 +51,9 @@ def _ini(given: str, spaced: bool = True, dots: bool = True) -> str:
             toks.append("-".join(b[0].upper() + ("." if dots else "") for b in bits))
     return (" " if spaced else "").join(toks)
 
-
 def _fam_ini(a: dict) -> str:
     ini = _ini(a["given"])
     return f"{a['family']}, {ini}".rstrip(", ")
-
 
 def _au_gbt(aus: list) -> str:
     """GB/T 7714：姓全大写 + 名缩写（缩写之间留空格、不带点）；超过三个只列前三个，加"等"。"""
@@ -69,7 +61,6 @@ def _au_gbt(aus: list) -> str:
     if not names:
         return ""
     return ", ".join(names[:3]) + (", 等" if len(names) > 3 else "")
-
 
 def _au_apa(aus: list) -> str:
     """APA 7：姓 + 名缩写，末位前一个 &；超过六位列前六 + … + 末位。"""
@@ -82,7 +73,6 @@ def _au_apa(aus: list) -> str:
         return ", ".join(names[:6] + ["…"] + [names[-1]])
     return ", ".join(names[:-1]) + ", & " + names[-1]
 
-
 def _au_nature(aus: list) -> str:
     """Nature：五位以内列全（末位前 &），超过五位只写第一位 + et al.。"""
     names = [_fam_ini(a) for a in aus]
@@ -94,7 +84,6 @@ def _au_nature(aus: list) -> str:
         return names[0]
     return ", ".join(names[:-1]) + " & " + names[-1]
 
-
 def _au_short(aus: list) -> str:
     if not aus:
         return ""
@@ -104,44 +93,37 @@ def _au_short(aus: list) -> str:
         return aus[0]["family"] + " & " + aus[1]["family"]
     return aus[0]["family"] + " et al."
 
-
 def _bib_tag(journal: str) -> str:
     """"Journal of the American Chemical Society" → "jacs"：取实词首字母。"""
     words = [w for w in re.findall(r"[A-Za-z]+", journal)
              if w.lower() not in ("of", "the", "and", "for", "in", "on")]
     return "".join(w[0] for w in words)[:5].lower()
 
-
 def _bib_key(meta: dict, aus: list) -> str:
     fam = re.sub(r"[^a-z0-9]", "", (aus[0]["family"].lower() if aus else "")) or "ref"
     year = re.sub(r"[^0-9]", "", _s(meta.get("year")))
     tag = _bib_tag(_s(meta.get("journal_abbr")) or _s(meta.get("journal")))
-    if not tag:                       # 没刊名：拿题目第一个实词顶上
+    if not tag:
         words = [w for w in re.findall(r"[A-Za-z]{3,}", _s(meta.get("title")))]
         tag = (words[0].lower()[:5] if words else "paper")
     return f"{fam}{year}{tag}"
 
-
 def _journal(meta: dict, abbr_first: bool = False) -> str:
     full, ab = _s(meta.get("journal")), _s(meta.get("journal_abbr"))
     return (ab or full) if abbr_first else (full or ab)
-
 
 def _preprint_id(meta: dict) -> str:
     """预印本裸编号：2609.06350（模型可能写成 arXiv:2609.06350v1，统一掉）。"""
     v = re.sub(r"^arxiv[:\s]*", "", _s(meta.get("preprint")), flags=re.I)
     return re.sub(r"v\d+$", "", v.strip()).strip()
 
-
 def _preprint(meta: dict) -> str:
     pid = _preprint_id(meta)
     return f"arXiv:{pid}" if pid else ""
 
-
 def _venue(meta: dict, abbr_first: bool = False) -> str:
     """短引用那一行的"出处"：有刊名用刊名，没有就用 arXiv——预印本的出处就是它。"""
     return _journal(meta, abbr_first) or ("arXiv" if _preprint_id(meta) else "")
-
 
 # ---------------- 长条目 ----------------
 
@@ -169,7 +151,6 @@ def gbt(meta: dict) -> str:
         s += (", " if venue else " ") + loc
     return s + "."
 
-
 def apa(meta: dict) -> str:
     """APA 7：作者 (年). 题名. 刊名, 卷(期), 起止页码. https://doi.org/xxx"""
     t = _s(meta.get("title"))
@@ -190,10 +171,8 @@ def apa(meta: dict) -> str:
     if _s(meta.get("doi")):
         s += f" https://doi.org/{_s(meta['doi'])}"
     elif pp:
-        # arXiv 给每篇预印本分配了这个 DOI，比自己拼 abs 链接更稳（将来也能解析）
         s += f" arXiv. https://doi.org/10.48550/arXiv.{pp}"
     return s
-
 
 def nature(meta: dict) -> str:
     """Nature 体：作者. 题名. 刊名缩写 卷, 起止页码 (年).　预印本按 Nature 自己的写法。"""
@@ -215,7 +194,6 @@ def nature(meta: dict) -> str:
         s += f" ({_s(meta['year'])})"
     return s.strip().rstrip(",") + "."
 
-
 def bibtex(meta: dict) -> str:
     aus = _authors(meta)
     pp = _preprint_id(meta)
@@ -232,7 +210,6 @@ def bibtex(meta: dict) -> str:
     pad = max(len(k) for k, _ in rows) + 1
     body = "\n".join(f"  {k:<{pad}}= {{{v}}}," for k, v in rows)
     return "@%s{%s,\n%s\n}" % (typ, _bib_key(meta, aus), body)
-
 
 def ris(meta: dict) -> str:
     aus = _authors(meta)
@@ -252,7 +229,6 @@ def ris(meta: dict) -> str:
     rows = [(k, v) for k, v in rows if v]
     return "\n".join(f"{k}  - {v}" for k, v in rows) + "\nER  -"
 
-
 # ---------------- 短引用 ----------------
 
 def short_year(meta: dict) -> str:
@@ -261,18 +237,15 @@ def short_year(meta: dict) -> str:
     parts = [x for x in (au, _s(meta.get("year"))) if x]
     return ", ".join(parts)
 
-
 def short_journal_year(meta: dict) -> str:
     """PPT 页脚：Zhang et al., J. Am. Chem. Soc., 2023"""
     au = _au_short(_authors(meta))
     return ", ".join(x for x in (au, _venue(meta, abbr_first=True), _s(meta.get("year"))) if x)
 
-
 def inline(meta: dict) -> str:
     """正文括注：(Zhang et al., 2023)"""
     inner = short_year(meta)
     return f"({inner})" if inner else ""
-
 
 ROWS = [
     ("ref", "gbt7714", "GB/T 7714", "中文期刊 / 学位论文", gbt),
@@ -287,7 +260,6 @@ ROWS = [
     ("import", "preprint", "预印本编号", "arXiv", _preprint),
 ]
 
-
 def groups(meta: dict) -> list:
     """排好的格式，按组返回；排不出来的（缺关键字段）直接不出现。"""
     if not meta:
@@ -300,11 +272,10 @@ def groups(meta: dict) -> list:
             text = ""
         if not text:
             continue
-        if not out or out[-1]["k"] != gk:      # 同组连排，换组才起新块
+        if not out or out[-1]["k"] != gk:
             out.append({"k": gk, "name": GROUP_ZH.get(gk, gk), "rows": []})
         out[-1]["rows"].append({"k": k, "label": label, "hint": hint, "text": text})
     return out
-
 
 def sanity(meta: dict, src: str, fallback_title: str = "", fallback_author: str = "") -> dict:
     """把模型"顺手编出来"的字段擦掉：源文里没出现过的，一律清空。
@@ -331,12 +302,12 @@ def sanity(meta: dict, src: str, fallback_title: str = "", fallback_author: str 
         out["title"] = fallback_title or title
     doi = _s(out.get("doi")).rstrip(".")
     if doi and _flat(doi) not in src_f:
-        doi = ""                       # DOI 格式严格，编一个出来必然是 404
-    if not doi:                        # 首页印着但模型漏抄：自己正则捞一遍
+        doi = ""
+    if not doi:
         m = re.search(r"10\.\d{4,9}/[^\s\"'<>)\]]+", src)
         doi = m.group(0).rstrip(".,;") if m else ""
     out["doi"] = doi
-    if not _s(out.get("preprint")):     # 同理：水印上印着 arXiv:2609.06350v1，模型有时会当噪音跳过
+    if not _s(out.get("preprint")):
         m = re.search(r"arXiv[:\s]*(\d{4}\.\d{4,5})", src, re.I)
         out["preprint"] = f"arXiv:{m.group(1)}" if m else ""
     return out

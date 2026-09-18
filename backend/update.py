@@ -31,10 +31,9 @@ import httpx
 
 import appinfo
 
-_cache = {}          # feed_url -> {"at": ts, "data": dict}
+_cache = {}
 _lock = threading.Lock()
 _progress = {"state": "idle", "pct": 0, "got": 0, "total": 0, "path": "", "error": "", "message": ""}
-
 
 def _ver_tuple(v: str):
     """版本号比较用：0.10.2 → (0,10,2)。非数字段一律当 0，不抛异常。"""
@@ -44,10 +43,8 @@ def _ver_tuple(v: str):
         out.append(int(digits) if digits else 0)
     return tuple(out + [0, 0, 0])[:4]
 
-
 def newer(latest: str, current: str) -> bool:
     return _ver_tuple(latest) > _ver_tuple(current)
-
 
 def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
     """读更新源，回答"有没有新版本"。网络只是"查一下"，失败一律当"没有更新"处理——
@@ -61,9 +58,6 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
         if hit and not force and time.time() - hit["at"] < cache_hours * 3600:
             return hit["data"]
     try:
-        # follow_redirects 必须开：GitHub Releases 的永久链接
-        # （github.com/<user>/<repo>/releases/latest/download/latest.json）是 302，
-        # 不跟的话拿到的是空重定向体，永远"没读到更新源"
         r = httpx.get(f"{feed_url}/latest.json", timeout=6, follow_redirects=True,
                       headers={"Cache-Control": "no-cache"})
         r.raise_for_status()
@@ -77,12 +71,11 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
     latest = str(info.get("version") or "")
     url = str(info.get("url") or "")
     if url and not url.lower().startswith(("http://", "https://")):
-        url = f"{feed_url}/{url.lstrip('/')}"          # 允许只写文件名
+        url = f"{feed_url}/{url.lstrip('/')}"
     data = {
         "ok": True, "current": cur, "latest": latest, "has_update": bool(latest) and newer(latest, cur),
         "notes": info.get("notes") or "", "url": url, "size": int(info.get("size") or 0),
         "sha256": (info.get("sha256") or "").lower(), "pub_date": info.get("pub_date") or "",
-        # 低于这个版本必须先升级（协议不兼容那种），前端据此不给"稍后"
         "required": bool(info.get("min_version")) and newer(info["min_version"], cur),
         "feed": feed_url,
     }
@@ -90,20 +83,16 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
         _cache[feed_url] = {"at": time.time(), "data": data}
     return data
 
-
 def progress() -> dict:
     return dict(_progress)
-
 
 def _set(**kw):
     with _lock:
         _progress.update(kw)
 
-
 def download_dir() -> str:
     """安装包只允许落在这里、也只允许装这里的文件。"""
     return os.path.join(tempfile.gettempdir(), "eggpaper-update")
-
 
 def download(url: str, sha256: str = "", size: int = 0):
     """把安装包下到临时目录，校验哈希。后台线程里跑，进度用 progress() 轮。"""
@@ -124,8 +113,6 @@ def download(url: str, sha256: str = "", size: int = 0):
                     h.update(chunk)
                     got += len(chunk)
                     _set(got=got, total=total, pct=round(got * 100 / total) if total else 0)
-        # 没有 sha256 就不认：写成 `if sha256 and ...` 的话，发布方漏写 sha256（或旧格式
-        # latest.json）时整段校验被跳过，一个被改动过的包会被直接标成 ready。
         if not sha256:
             os.remove(out)
             _set(state="error", error="更新源没给 sha256，无法校验完整性（发布方需要补上这一项）")
@@ -138,12 +125,10 @@ def download(url: str, sha256: str = "", size: int = 0):
     except Exception as e:
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:160]}")
 
-
 def start_download(url: str, sha256: str = "", size: int = 0):
     if _progress["state"] == "downloading":
         return
     threading.Thread(target=download, args=(url, sha256, size), daemon=True).start()
-
 
 def install(path: str) -> bool:
     """把安装包交给系统，然后自己退出。
@@ -171,20 +156,17 @@ def install(path: str) -> bool:
         return False
 
     if not is_packaged():
-        return True          # 开发模式：跑的是源码，装完也不该把这边的进程杀掉
+        return True
 
-    # 给安装器一点点时间拿到文件句柄，然后把自己关掉
     def bye():
         time.sleep(1.2)
         os._exit(0)
     threading.Thread(target=bye, daemon=True).start()
     return True
 
-
 def is_packaged() -> bool:
     """打包版才有"下载并安装"这条路（开发模式下正在跑的是源码，装它没有意义）。"""
     return appinfo.is_frozen()
-
 
 def open_folder(path: str) -> None:
     """下好了但用户不想现在装：把文件所在的文件夹打开，别让安装包无声无息躺在 temp 里。"""

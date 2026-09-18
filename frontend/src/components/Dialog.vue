@@ -1,6 +1,4 @@
 <script setup>
-/* 应用内对话框本体：样式沿用 .modal（和设置同一套皮肤），可拖动、可 Esc 退出。
-   全局只挂一个（App.vue 末尾），调用方 await confirmBox / inputBox 就行。 */
 import { nextTick, ref, watch } from 'vue'
 import { dlg, dlgOk, dlgCancel } from '../dialog'
 import { t } from '../i18n'
@@ -15,7 +13,6 @@ function onKey(e) {
 watch(() => store.escTick, () => { if (dlg.open) dlgCancel() })
 watch(() => dlg.open, v => {
   if (!v) return
-  // 输入框要选中原文：改名时多半只想改一部分
   nextTick(() => { inputEl.value?.focus({ preventScroll: true }); inputEl.value?.select() })
 })
 </script>

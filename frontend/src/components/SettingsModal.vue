@@ -80,7 +80,6 @@ const testDetail = ref('')
 async function test() {
   testing.value = true
   testMark.value = ''
-  // 先保存再测，保证测的是刚填的配置
   try {
     await api.saveSettings({ provider: { base_url: f.base_url, model: f.model, api_key: f.api_key }, mock: f.mock })
     store.settings = await api.settings()
@@ -132,7 +131,6 @@ async function checkEngine() {
   eng.busy = false
 }
 
-function mb(n) { return (n / 1024 / 1024).toFixed(0) }
 
 async function pollInstall() {
   try {
@@ -195,9 +193,7 @@ function save() {
 </script>
 
 <template>
-  <!-- 这一层**不接点击关闭**：设置里可能填了一半，点到窗外就丢掉最气人。
-       出口只有右上角 × 和「保存」。 -->
-  <div class="modal-mask">
+    <div class="modal-mask">
     <Transition name="pop" appear>
     <div class="modal" v-drag>
       <div class="modal-head" data-drag>

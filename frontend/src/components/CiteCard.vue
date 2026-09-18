@@ -1,13 +1,4 @@
 <script setup>
-/* 「引用这篇」浮层：长条目 / 短引用 / 导入格式，点一行就复制走。
- *
- * 为什么开在顶栏标题旁边（不是塞进右栏某个页签里）：引用格式是论文的**身份信息**
- * （作者、刊名、卷期页、DOI），和标题是同一族数据；而右栏四个页签都属于"读"，
- * 把它放进任一个都会污染那一栏的语义。它也不是"读"的信息——是"把这篇带走"。
- *
- * 字段是从首页印刷块里抄的（后端 llm.extract_citation），排版在后端 citation.py 做。
- * 这里只负责显示和复制；缺哪个字段就明着空着，不猜。
- */
 import { computed, ref, watch } from 'vue'
 import { api, store, toast } from '../store'
 import { copyText } from '../clip'
@@ -30,7 +21,6 @@ const FIELDS = [
 ]
 const meta = computed(() => data.value?.meta || null)
 const groups = computed(() => data.value?.groups || [])
-// 这一行是给自己核对的：哪些字段认出来了（认不出来的虚着显示），一眼就看得出
 const fields = computed(() => meta.value
   ? FIELDS.map(([k, zh, get]) => ({ k, zh, v: String(get(meta.value) || '').trim() }))
   : [])
@@ -54,7 +44,6 @@ async function load() {
 
 watch(() => store.cite.open, v => { if (v) { data.value = null; load() } })
 watch(() => store.currentId, () => { if (store.cite.open) { data.value = null; load() } })
-// Esc：全局那个按键处理器负责开关（App.vue），这里跟着 escTick 收一下就够了
 watch(() => store.escTick, () => { if (store.cite.open) store.cite.open = false })
 
 async function recognize() {
@@ -83,8 +72,7 @@ async function copy(row) {
 
         <div class="cite-note" v-if="err">{{ err }}</div>
 
-        <!-- 还没认过：把花不花这次调用交给用户决定（一次模型调用 = 一次授权） -->
-        <div class="cite-empty" v-if="!meta && !err">
+                <div class="cite-empty" v-if="!meta && !err">
           <div v-if="busy">{{ t('正在认首页…') }}</div>
           <template v-else>
             <div style="margin-top:2px">

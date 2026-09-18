@@ -37,14 +37,12 @@ CANDIDATES = (
     r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe",
 )
 
-
 def browser_exe() -> str:
     for p in CANDIDATES:
         p = os.path.expandvars(p)
         if os.path.isfile(p):
             return p
     return ""
-
 
 def icon_path() -> str:
     """随程序分发的多尺寸 ICO（桌面快捷方式/exe 用的是同一份）。"""
@@ -55,7 +53,6 @@ def icon_path() -> str:
         if os.path.isfile(p):
             return p
     return ""
-
 
 def _hicon_from_pil(img):
     """一张 RGBA 位图 → HICON（32bpp 带 alpha）。
@@ -81,10 +78,10 @@ def _hicon_from_pil(img):
     for y in range(h):
         for x in range(w):
             r, g, b, a = px[x, y]
-            buf += bytes((b, g, r, a))          # 颜色位图要 BGRA
+            buf += bytes((b, g, r, a))
     hcolor = gdi.CreateBitmap(w, h, 1, 32, bytes(buf))
-    row = ((w + 31) // 32) * 4                   # 1bpp AND 掩码，每行按 4 字节对齐
-    hmask = gdi.CreateBitmap(w, h, 1, 1, bytes(row * h))   # 全 0 = 不挖洞，alpha 走颜色位图
+    row = ((w + 31) // 32) * 4
+    hmask = gdi.CreateBitmap(w, h, 1, 1, bytes(row * h))
 
     class ICONINFO(ctypes.Structure):
         _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD),
@@ -97,7 +94,6 @@ def _hicon_from_pil(img):
     gdi.DeleteObject(hcolor)
     gdi.DeleteObject(hmask)
     return hicon or None
-
 
 def _give_window_icon(pid: int):
     """**从外部把我们的多尺寸 ICO 塞进 Edge 应用模式窗口**（任务栏 + 标题栏图标）。
@@ -118,7 +114,7 @@ def _give_window_icon(pid: int):
             import ctypes
             from ctypes import wintypes
             try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)   # per-monitor v2，拿物理像素
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
             except OSError:
                 pass
             u = ctypes.windll.user32
@@ -138,7 +134,7 @@ def _give_window_icon(pid: int):
             li.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
                            ctypes.c_int, ctypes.c_int, wintypes.UINT]
 
-            ico = icon_path()                 # 只作退路；主路径用 mark 现画，不依赖这个文件
+            ico = icon_path()
             WM_SETICON, IMAGE_ICON, LR_LOADFROMFILE = 0x0080, 1, 0x10
             SM_CXICON, SM_CXSMICON = 11, 49
             CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -166,7 +162,7 @@ def _give_window_icon(pid: int):
                     u.EnumWindows(CB(cb), 0)
                     if exact:
                         return exact[0]
-                    if titled:                 # 个别版本窗口挂在子进程上：退回按标题找
+                    if titled:
                         return titled[0]
                     time.sleep(0.5)
                 return 0
@@ -183,7 +179,6 @@ def _give_window_icon(pid: int):
                     return u.GetSystemMetrics(idx)
 
             bx, sx = metrics(SM_CXICON), metrics(SM_CXSMICON)
-            # 首选：按窗口 DPI 的精确物理像素现画，1:1 交出去，不重采样。
             hbig = hsmall = 0
             try:
                 import mark
@@ -191,7 +186,6 @@ def _give_window_icon(pid: int):
                 hsmall = _hicon_from_pil(mark.draw(sx, tile=True))
             except Exception:
                 _window_log("现画窗口图标失败，退回 LoadImage：\n" + traceback.format_exc())
-            # 退路：从多尺寸 ICO 取
             if not hbig:
                 ico = icon_path()
                 hbig = li(0, ico, IMAGE_ICON, bx, bx, LR_LOADFROMFILE) if ico else 0
@@ -204,16 +198,12 @@ def _give_window_icon(pid: int):
 
             def apply():
                 if hbig:
-                    u.SendMessageW(hwnd, WM_SETICON, 1, hbig)      # ICON_BIG
+                    u.SendMessageW(hwnd, WM_SETICON, 1, hbig)
                 if hsmall:
-                    u.SendMessageW(hwnd, WM_SETICON, 0, hsmall)   # ICON_SMALL：标题栏
-                # ICON_SMALL2：**Windows 11 任务栏读的是这个**（分色实验量出来：红 48 放 BIG、
-                # 绿 24 放 SMALL、蓝 32 放 SMALL2，任务栏显蓝）。给它满物理尺寸的大图，
-                # 1:1 落进任务栏槽位，而不是让系统把 24 小图放大两倍。
+                    u.SendMessageW(hwnd, WM_SETICON, 0, hsmall)
                 if hbig:
                     u.SendMessageW(hwnd, WM_SETICON, 2, hbig)
 
-            # favicon 一般 1~4 秒加载并重设图标；压 20 秒，再在 30 秒补一刀
             for _ in range(27):
                 apply()
                 time.sleep(0.75)
@@ -225,9 +215,7 @@ def _give_window_icon(pid: int):
 
     threading.Thread(target=work, daemon=True).start()
 
-
 _last_proc = None
-
 
 def open_window(url: str, size=(1440, 940)) -> str:
     """开一个独立窗口。返回用了哪种方式（给日志/界面提示用），失败返回空串。"""
@@ -244,7 +232,6 @@ def open_window(url: str, size=(1440, 940)) -> str:
     _give_window_icon(_last_proc.pid)
     return os.path.basename(exe).replace(".exe", "") + " 应用模式"
 
-
 def _window_log(msg: str):
     """窗口进程是 console=False 的，print 到不了任何地方——失败只能靠日志说话。"""
     try:
@@ -256,7 +243,6 @@ def _window_log(msg: str):
             f.write("[%s] [window] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
     except OSError:
         pass
-
 
 def run_window_only(url: str) -> int:
     """`--window-only`：只开一个窗口（独立进程，不干扰服务进程）。"""

@@ -70,7 +70,6 @@ function pokeEgg() {
     return
   }
   pokeReset = setTimeout(() => (pokes = 0), 3000)
-  // 睡着被戳：在躺姿上抖一下——不会醒，也不算进三连戳
   if (sleepEgg.value) { sleepPokeOnce(); return }
   if (Math.random() < 1 / 24) {
     surpriseOnce(Math.random() < 0.5 ? 'sneeze' : 'stumble')
@@ -118,7 +117,6 @@ const spinFree = ref(false)     // 停手回正的这一段才挂弹性过渡
 let spinTimer = 0
 function onEggWheel(e) {
   if (e.ctrlKey) return         // Ctrl+滚轮是页面缩放，不抢浏览器的
-  // 睡着/干活/馋着/咽食时搓不动：别跟这些动画抢 transform
   if (sleepEgg.value || eggBusy.value || hungry.value || gulping.value) return
   e.preventDefault()
   spinFree.value = false
@@ -182,7 +180,6 @@ function gulpOnce(kind) {
   gulpOnce._t = setTimeout(() => (gulping.value = ''), kind === 'stuff' ? 1350 : 850)
 }
 
-const tranReady = computed(() => store.paper?.translate_status === 'done')
 
 /* ---------------- 拖入导入 ----------------
    之前只挂 dragover/dragleave，所以浮层「进得来、出不去」：dragleave 会为每个子元素
@@ -203,15 +200,9 @@ function onDrop(e) {
 function endDrag() { dragOver.value = false; hungry.value = false }   // 中途在窗口外松手也得收：否则蛋一直馋着
 
 onMounted(async () => {
-  // 监听与轮询**先装上**：它们不该依赖任何一次网络请求成功。
-  // 原来这一串 await 是连着的，第一个（/api/settings）一失败，后面全不执行——
-  // 文库不加载、3 秒轮询不开（双击打开 PDF、翻译进度、析读状态全哑）、键盘也没挂上，
-  // 界面停在"论文，启动！"却一个字都不解释；此时点设置还会因为 settings 是 null 直接报错。
   window.addEventListener('keydown', onKey)
   window.addEventListener('dragend', endDrag)
   window.addEventListener('blur', endDrag)
-  // 兜底的最后一道网：哪条链路漏了 catch，也别静默死掉——报给用户（限流：同一句
-  // 30 秒内只报一次，轮询类的重复失败不刷屏）。拦过之后控制台里照样能看全栈。
   window.addEventListener('unhandledrejection', ev => {
     const msg = String(ev.reason?.message || ev.reason || t('未知错误'))
     const now = Date.now()
@@ -222,8 +213,6 @@ onMounted(async () => {
   })
   pollTimer = setInterval(poll, 3000)
   sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后
-  // 跨进/跨出深夜那一拍的检查搭轮询的车（3 秒一次足够），不单开计时器
-  // 发呆打盹的「动」：键、鼠、滚轮随便哪个都算
   window.addEventListener('pointermove', wakeEgg, { passive: true })
   window.addEventListener('pointerdown', wakeEgg, { passive: true })
   window.addEventListener('keydown', wakeEgg)
@@ -231,20 +220,15 @@ onMounted(async () => {
   wakeEgg()                  // 先把打盹的表立起来
   try {
     store.settings = await api.settings()
-    // 界面语言以后端设置为准（它同时决定 LLM 的产出语言）；本地记录只是后端没回话时的兜底
     if (store.settings?.ui_lang) setLang(store.settings.ui_lang)
     await refreshPapers()
     await refreshCollections()
-    // 上次停在哪儿就回哪儿：记录的篇还在就开它，不在了（被删过）停在书桌，
-    // 不自作主张替用户开别的篇。双击 PDF 的打开请求是显式动作，照旧覆盖。
     const lastId = lsGet('lastPaper', '')
     const last = store.papers.find(p => p.id === lastId)
     if (last) openPaper(last.id)
   } catch (e) {
     toast(t('初始化失败：{m}', { m: e.message }), 6000)
   }
-  // 更新：先问自己是哪个版本，再等 6 秒做一次安静探测。故意不抢首屏——
-  // 用户先看到论文，更新提示随后自己浮出来；源里没东西就什么都不会发生。
   loadVersion().then(() => {
     bootVersion = store.update.current
     if (store.settings?.update?.auto_check !== false) {
@@ -274,8 +258,6 @@ let verHintShown = false
 
 async function poll() {
   sleepGreet()
-  // "双击 PDF / 右键用它打开"：导入是在后端做的，界面这边只是被通知切过去。
-  // 挂在原来这个 3 秒轮询上——为一次打开请求新起一条轮询不值得。
   try {
     const r = await api.openRequest()
     if (r?.quitting) { pageQuit(); return }
@@ -284,10 +266,6 @@ async function poll() {
       await openPaper(r.pid)
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
-  // 每 15 秒问一次后端版本（5 拍 × 3 秒）：对不上就说明软件被升级过，而这个标签页
-  // 跑的还是升级前的界面——**版本号会变、界面不会变**（用户看到的正是这个：
-  // "设置里的版本号更新了，但其他修改没生效"）。刷新是无损的（阅读位置存在本地），
-  // 所以直接替他刷，别让他自己去想"为什么没生效"。
   if (bootVersion && !verHintShown && ++verTick % 5 === 0) {
     try {
       const v = await api.version()
@@ -299,8 +277,6 @@ async function poll() {
     } catch { /* 下个 15 秒再问 */ }
   }
   if (!store.currentId) return
-  // 状态刷新各自兜住：后端正在重启/瞬时失败时，轮询本身不能死——
-  // 死了的话翻译进度、析读状态就永远不更新了，看起来像"卡住"
   try { if (anaBusy.value) await refreshAnalysis() } catch { /* 下一个 3 秒再试 */ }
   try {
     if (store.marginalia.status === 'running') {
@@ -372,16 +348,8 @@ function sleepGreet() {
 let analyzeReq = { id: '', at: 0 }
 
 watch(() => store.analysis.status, (n, o) => {
-  // 析读把一眼卡一起作废了（服务端清了缓存），所以这里要重新取一次。
-  // 写成"进 done"而不是"running→done"：现在中间还多一个 queued（排队），
-  // 只认 running→done 会在"排队→读完"这条路径上漏掉这一拍。
-  // 'none' 不算：那只是初值——打开一篇早就析读完的论文也会走出 none→done，
-  // 那时什么都没完成，不该滚一圈。
   if (n === 'done' && o && o !== 'done' && o !== 'none') {
     rollOnce(); reloadSummary()
-    // 析读的产出全在右栏（骨架、五问、一眼卡）：这一局真的跑完了就把它展开，
-    // 别让用户读完再去找那颗 ◂。只在**这一局是本会话发起/见过在跑**时动手——
-    // 打开一篇早就析读完的论文不算，用户特意收起的右栏不该每次换篇都被强行撑开。
     const mine = analyzeReq.id === store.currentId && Date.now() - analyzeReq.at < 600000
     if (o === 'running' || o === 'queued' || mine) store.viewer.railUser = true
   }
@@ -392,8 +360,6 @@ async function doAnalyze() {
   analyzeReq = { id: store.currentId, at: Date.now() }
   await api.analyze(store.currentId)
   await refreshAnalysis()
-  // 演示模式的析读是秒完的：POST 回来再拉状态就已经是 done（前一拍也是 done），
-  // 上面的 watch 看不到"进 done"这一拍，这里补上同样的收尾（重复执行无害）。
   if (store.analysis.status === 'done') {
     rollOnce(); reloadSummary()
     store.viewer.railUser = true
@@ -432,14 +398,11 @@ onUnmounted(() => clearInterval(marginFastTimer))
 
 async function doTranslateFull() {
   if (!store.currentId) return
-  // 译过一次也允许再来：有的译文打不开（文件写坏/服务抽风），用户要的就是"重译一遍"
   const again = tranSt.value === 'done'
   try {
     const r = await api.translateFull(store.currentId, again)
     tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0 }
     await refreshPapers()
-    // 服务被自动换掉（比如 google 在这台机器的网络下不通）要说出来——
-    // 用户设的是 google、跑的是 bing，不吭声等于骗人
     toast(r.note || (again ? t('已开始重新整本翻译') : t('整本翻译已开始')))
   } catch (e) { toast(t('启动失败：{m}', { m: e.message })) }
 }
@@ -488,7 +451,6 @@ async function onImport(list) {
       const r = await api.upload(f)
       ok.push(r)
       if (r.duplicate) toast(t('库里已有这篇——直接打开原来那份'))
-      // 正在看某个分类时导入的，就顺手归到那个分类里——Zotero 的"导入到分类"一个意思
       const c = store.lib.coll
       if (typeof c === 'number') {
         try { await api.paperColls(r.paper.id, [c]); await refreshCollections() } catch { /* 归类失败不影响导入 */ }
@@ -519,7 +481,6 @@ async function saveSettings(body) {
   if (store.currentId) refreshAnalysis()
 }
 
-// 析读在忙：排队与在读都算（后台排队时按钮也该按不动、并说清是在排队）
 const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.status))
 /* 日历图标上的小点：今天已经读过点什么——轻提醒，不弹任何东西 */
 const readToday = computed(() => {
@@ -528,11 +489,9 @@ const readToday = computed(() => {
   return store.papers.some(p => (p.last_read_at || '').startsWith(day))
 })
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
-// 整本翻译的进度（回填自 /translate-status 的 pages）。total 为 0 = 还没解析出页数
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0 })
 const tranPct = computed(() => tranProg.value.total
   ? Math.round(tranProg.value.done * 100 / tranProg.value.total) : 0)
-// 已用时：页与页之间可能隔好久（服务限流会自动重试），把"在走"明明白白写给用户看
 const tranTick = ref(0)
 let tranTimer = null
 watch(tranSt, s => {
@@ -563,12 +522,8 @@ const tranTip = computed(() => {
 /* ---------------- 键盘流 ---------------- */
 function onKey(e) {
   const t = e.target
-  // 对话框是最上面一层：Esc 先关它，别的浮层这一拍都别动
-  // （否则"删分类"弹窗开着按 Esc，会把整个文库也一起收掉）
   if (dlg.open) { if (e.key === 'Escape') { e.preventDefault(); dlgCancel() } return }
   if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) return
-  // 设置弹窗开着就**一个键都不接**（含 Esc，它按设计只有 × 和「保存」两个出口）：
-  // 焦点在弹窗按钮上时按 t / 2 / r 会在弹窗背后真的去翻译、切变体、进框选。
   if (showSettings.value) return
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
@@ -578,8 +533,6 @@ function onKey(e) {
     store.viewer.tocOpen = false
     store.shortcutCard = false
     store.cite.open = false
-    // 设置**不**在 Esc 里关：里面可能填了一半（base_url / key / 模型号），
-    // 一键关掉就把输入丢了。出口只有右上角 × 和「保存」（用户明确要求）。
     dragOver.value = false
     store.viewer.frame = false     // 框选模式永远能一键退出
     store.escTick++                // PDF 侧的划词/框选/查找浮层收起
@@ -594,7 +547,6 @@ function onKey(e) {
     return
   }
   if (!store.paper) return
-  // 英文模式不带翻译模块：译段（t）、划译（s）、译文（2）、双语（3）都不接
   if (isEn() && ['t', 's', '2', '3'].includes(e.key)) return
   switch (e.key) {
     case 'j': e.preventDefault(); store.viewerApi?.step(1); break
@@ -632,9 +584,7 @@ function onKey(e) {
       <div class="doc-head" v-if="store.paper">
         <div class="t-row">
           <div class="t">{{ store.paper.title || store.paper.filename }}</div>
-          <!-- 引用格式是这篇的身份信息，跟标题同一族数据 → 就挂在标题旁边。
-               任何页签下都够得着，不占右栏那四栏的版面 -->
-          <button class="cite-btn" @click="store.cite.open = true">{{ t('引用') }}</button>
+                    <button class="cite-btn" @click="store.cite.open = true">{{ t('引用') }}</button>
         </div>
       </div>
       <div class="actions" v-if="store.paper">
@@ -652,17 +602,12 @@ function onKey(e) {
             <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">{{ t('交替') }}</button>
           </div>
         </Transition>
-        <!-- 略读：只蒙不用细读的正文，图与图注永不蒙；悬停掀开，点一下=这段也要读 -->
-        <button class="toggle" :class="{ on: store.viewer.layers.skim }"
+                <button class="toggle" :class="{ on: store.viewer.layers.skim }"
                 :title="t('略读（f）')"
                 @click="store.viewer.layers.skim = !store.viewer.layers.skim">{{ t('略读') }}</button>
         <button class="toggle" :class="{ on: store.viewer.frame }" :title="t('框选问 AI（r）')"
                 @click="store.viewer.frame = !store.viewer.frame">{{ t('框选') }}</button>
-        <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
-             译完就没必要再露出来了——留一个永远点不动的按钮只会让人猜它还能干什么。 -->
-        <!-- 整本翻译常驻：译过一次也要能再来（有的译文打不开，重译一遍就好）。
-             译完后的按钮是「重新整本翻译」，点了会覆盖现有译文重译。 -->
-        <button v-if="!isEn()" @click="doTranslateFull" :disabled="tranSt === 'running'"
+                        <button v-if="!isEn()" @click="doTranslateFull" :disabled="tranSt === 'running'"
                 :title="tranTip">
           {{ tranLabel }}
         </button>
@@ -674,16 +619,13 @@ function onKey(e) {
       <div class="actions">
         <button class="ghost" @click="showSettings = true" :title="t('设置')">⚙</button>
       </div>
-      <!-- 整本翻译的进度：一条发丝墨线压在工具栏下沿，译完/失败自己消失。
-           它是唯一要跑分钟级的活（这篇 18 页实测 2 分钟），不给点动静用户只会以为卡了。 -->
-      <div class="tran-line" v-if="tranSt === 'running' && !isEn()">
+            <div class="tran-line" v-if="tranSt === 'running' && !isEn()">
         <i :class="{ det: tranPct > 0 }" :style="tranPct > 0 ? { width: tranPct + '%' } : null"></i>
       </div>
     </header>
 
     <div class="main">
-      <!-- 左：图标条 -->
-      <div class="left-strip">
+            <div class="left-strip">
         <button class="strip-btn" :class="{ on: store.viewer.libOpen }" :title="t('文库 · g l')"
                 @click="toggleLib">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -709,12 +651,8 @@ function onKey(e) {
         <div class="strip-sep"></div>
       </div>
 
-      <!-- 中：书桌。drop 不拦在这里：让它冒到 .app 统一收，拖到纸上也能导入 -->
-      <main class="desk">
-        <!-- 空态整屏都可以点：第一次打开软件时，用户面对的就是这一屏，
-             "拖进来"三个字只交代了一半——手边没有拖拽习惯的人会去点它。
-             所以整块都能点开文件选择，键盘（Enter/Space）与拖入同样有效。 -->
-        <div class="empty" v-if="!store.paper" role="button" tabindex="0"
+            <main class="desk">
+                <div class="empty" v-if="!store.paper" role="button" tabindex="0"
              @click="pickFiles" @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">
           <EggMark class="egg-big" :class="{ hop: dragOver }" />
           <div class="e-title">{{ t('论文，启动！') }}</div>
@@ -724,12 +662,9 @@ function onKey(e) {
         <PdfViewer v-else :key="store.currentId" @override="onOverride" />
       </main>
 
-      <!-- 右栏折叠把手 -->
-      <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
+            <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
               @click="store.viewer.railUser = true">◂</button>
-      <!-- 没有论文就没有右栏：一个只有页签的空栏目会让人以为它坏了，
-           而且里面的问答会对着一个不存在的 paper_id 发请求 -->
-      <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight }"
+            <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight }"
            :style="{ '--rail-w': store.viewer.railW + 'px' }">
         <RightRail @analyze="doAnalyze" @marginalia="doMarginalia" />
       </div>
@@ -751,18 +686,13 @@ function onKey(e) {
     <Transition name="fade">
       <SettingsModal v-if="showSettings" @close="showSettings = false" @save="saveSettings" @quit="onQuitApp" />
     </Transition>
-    <!-- 全局唯一的应用内对话框：别处 await confirmBox / inputBox 就行。
-         别放进上面那个 Transition——Transition 只允许一个子节点，多一个就编译不过 -->
-    <Dialog />
+        <Dialog />
     <CiteCard />
     <UpdateCard />
-    <!-- 退出后的兜底：普通浏览器标签页浏览器不许脚本关，亮一层遮罩别让用户对死页面发愣 -->
-    <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，这个页面可以关掉了。') }}</div>
-    <!-- 应用级文件选择：空态整屏可点、键盘也能用（多选：一次导入多篇） -->
-    <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
+        <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，这个页面可以关掉了。') }}</div>
+        <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 
-    <!-- 键盘卡 -->
-    <Transition name="pop">
+        <Transition name="pop">
     <div class="keys-card" v-if="store.shortcutCard" @click="store.shortcutCard = false">
       <div class="mono-label" style="margin-bottom:8px">{{ t('键盘') }}</div>
       <div class="k-row"><span>{{ t('略读开 / 关') }}</span><kbd>f</kbd></div>
@@ -783,8 +713,7 @@ function onKey(e) {
     <Transition name="pop">
       <div class="toast" v-if="store.toast">{{ store.toast }}</div>
     </Transition>
-    <!-- 喂蛋的纸片：从松手的位置翻着跟头飞进蛋里（fixed 定位，挂在哪层都行） -->
-    <i class="feed-ghost" v-for="g in ghosts" :key="g.id" aria-hidden="true"
+        <i class="feed-ghost" v-for="g in ghosts" :key="g.id" aria-hidden="true"
        :style="{ left: g.x + 'px', top: g.y + 'px', '--dx': (g.tx - g.x) + 'px', '--dy': (g.ty - g.y) + 'px', animationDelay: g.delay + 'ms' }" />
     <Transition name="fade">
     <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(29,27,23,.22)">

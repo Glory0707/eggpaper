@@ -1,16 +1,3 @@
-/* 让浮窗能被拖走。
- *
- * 用法：给浮层根元素加 v-drag，拖它的 [data-drag] 子元素（没有就拖元素本身）。
- *   <div class="modal" v-drag>            <!-- 整个弹窗可拖 -->
- *   <div class="keys-card" v-drag="{ key: 'keys' }">   <!-- 位置记进 localStorage -->
- *   <div class="role-card" v-drag="{ onStart: () => (dragged = true) }">
- *
- * 三条实现约定：
- * 1. 位移写在 transform 上，不改 left/top——.desk-float 用的是 translate 属性、
- *    气泡用的是 left/top、弹窗靠 flex 居中，改 left/top 会把它们各自那套定位弄乱。
- * 2. 拖到哪儿都行，但至少留 48×40 露在视口里，别把自己拖没了。
- * 3. 真拖过（位移 > 4px）就吞掉随之而来的那次 click：拖完不该顺手把浮层关掉。
- */
 const EDGE = 8
 
 export const vDrag = {
@@ -24,7 +11,6 @@ export const vDrag = {
       el.style.transform = off.x || off.y ? `translate(${off.x}px, ${off.y}px)` : ''
     }
 
-    // 量"没被 transform 推过"的基准位置：只在按下那一刻量，避开入场动画和后续重排
     function baseRect() {
       const keep = el.style.transform
       el.style.transform = 'none'
@@ -59,8 +45,6 @@ export const vDrag = {
       el.classList.remove('dragging')
       st = null
       if (moved > 4) {
-        // 拖完那一下不该被当成点击。父元素也要吞：弹窗被拖到遮罩上松手时，
-        // click 的 target 是遮罩，遮罩上正好挂着"点外部关闭"。
         for (const node of [el, el.parentElement]) {
           if (!node) continue
           node.addEventListener('click', swallow, { capture: true, once: true })

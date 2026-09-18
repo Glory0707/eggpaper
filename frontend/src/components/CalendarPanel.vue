@@ -1,10 +1,4 @@
 <script setup>
-/* 论文日历：哪天读了什么、哪天入了什么。
- *
- * 数据是自动的：打开论文时 touch 按天记一笔阅读日志（一篇一天一行），
- * 入库日期取 created_at。这里不做任何手动输入——读就是记录，没有别的仪式。
- * 面板与文库同侧互斥；点列表里的论文直接打开（openPaper 又会 touch，日历自证）。
- */
 import { computed, ref, watch } from 'vue'
 import { api, store, openPaper } from '../store'
 import { t, ui } from '../i18n'
@@ -63,7 +57,6 @@ function show(yy, mm, select) {
   y.value = yy; m.value = mm
   load().then(() => {
     if (!select) return
-    // 默认选中：今天在本月就选今天，否则选最近一个有阅读记录的日子
     const tk = todayKey()
     sel.value = tk.startsWith(`${yy}-${pad(mm)}`) && days.value[tk] ? tk
       : (Object.keys(days.value).filter(k => days.value[k].reads?.length).sort().pop() || '')

@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 import appinfo
 import citation
 
-appinfo.migrate_if_needed()   # 数据目录迁移必须在 config/db 打开数据库之前完成
+appinfo.migrate_if_needed()
 
 import config
 import db
@@ -32,17 +32,11 @@ import translate_full
 import update
 
 app = FastAPI(title="eggpaper", version="0.1.0")
-# 只放行本机来源：界面与服务同源，不需要 CORS，这条只为让 `npm run dev`（Vite 5173）能用。
-# 放开成 * 等于任何网页都能读 /api/settings 与论文正文，还能 POST /api/update/install。
 app.add_middleware(CORSMiddleware,
                    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost)(:\d+)?$",
                    allow_methods=["*"], allow_headers=["*"])
 
-# 服务"已经能接请求了"的信号。启动器靠它判断就绪——**故意不用"回连自己一次"那种探测**：
-# 实测有的机器上（安全软件在管链路），进程连自己 127.0.0.1 的连接会卡在 SYN_SENT（丢包而不是拒绝），
-# 于是"服务起来了但探不通"，启动器等 15 秒就把自己退掉——用户看到的就是"双击没反应"。
 READY = threading.Event()
-
 
 def _demo_mode(cfg: dict = None) -> bool:
     """现在这几件事走不走演示数据。**只留这一个判断口。**
@@ -52,8 +46,6 @@ def _demo_mode(cfg: dict = None) -> bool:
     """
     cfg = cfg or config.load()
     return bool(cfg["mock"]) or not (cfg.get("provider", {}).get("api_key") or "").strip()
-
-
 
 def _human_msg(exc: Exception) -> str:
     """把模型服务最常见的几种失败翻成人话。异常处理器与新加的流式问答共用这一份，
@@ -78,14 +70,12 @@ def _human_msg(exc: Exception) -> str:
         return str(exc.detail)
     return f"{exc.__class__.__name__}: {msg[:160]}"
 
-
 @app.exception_handler(Exception)
 async def _any_error(request, exc):
     """别让异常裸奔——前端只会拿到一个"500"，用户看到的就是这个数字。"""
     hint = _human_msg(exc)
     print(f"[eggpaper] {request.url.path} 出错 → {hint}")
     return JSONResponse({"detail": hint}, status_code=500)
-
 
 @app.exception_handler(RequestValidationError)
 async def _bad_params(request, exc):
@@ -98,13 +88,11 @@ async def _bad_params(request, exc):
 
 PAPERS_DIR = os.path.join(config.DATA_DIR, "papers")
 
-
 def paper_dir(pid: str) -> str:
     """一篇论文的全部盘上数据都收在它自己的文件夹里：
     paper.pdf（原件）+ mono.pdf（译文版）+ dual.pdf（双语缓存）+ .pages/（页级中间产物）。
     删论文 = 删文件夹，用户在资源管理器里也一眼能对上号。"""
     return os.path.join(PAPERS_DIR, pid)
-
 
 def _backfill_pdf_hashes():
     """给旧库论文慢慢补内容指纹（导入判重的第二把钥匙）。
@@ -122,11 +110,9 @@ def _backfill_pdf_hashes():
                     db.update_paper(pid, pdf_hash=h)
                 except Exception:
                     pass
-            time.sleep(2)       # 一篇算完歇一拍，不跟导入/析读抢盘
-        # 一轮补完就走；补不出的（文件被挪走）下次启动再试
+            time.sleep(2)
 
     threading.Thread(target=work, daemon=True).start()
-
 
 def _migrate_paper_layout():
     """旧平铺布局（library/{pid}.pdf、translated/{pid}-mono/dual.pdf、translated/.pages-{pid}/）
@@ -146,7 +132,7 @@ def _migrate_paper_layout():
         return p.startswith(os.path.normcase(os.path.abspath(root)) + os.sep)
 
     moved = 0
-    stuck = set()        # 搬不动的文件（被占用等）：虽然已被 db 引用，这次只能留下
+    stuck = set()
     for row in db.list_papers():
         pid = row["id"]
         p = db.get_paper(pid) or {}
@@ -176,8 +162,6 @@ def _migrate_paper_layout():
                 pass
         if updates:
             db.update_paper(pid, **updates)
-    # 旧目录里剩下的只有两类：搬不动的（db 还引用着，留下）和孤儿（没有任何论文指向，
-    # 半截导入/历史残留）——孤儿直接清，旧目录随之整个消失
     for d in (lib, tr):
         if not os.path.isdir(d):
             continue
@@ -194,7 +178,6 @@ def _migrate_paper_layout():
     if moved:
         _applog(f"数据目录迁移：{moved} 个文件归位到 papers/<论文 id>/ 每篇一个文件夹")
 
-
 @app.on_event("startup")
 def _startup():
     config.ensure_dirs()
@@ -205,13 +188,11 @@ def _startup():
             translate_full.sweep_configs(os.path.join(PAPERS_DIR, pid, ".pages"))
     except OSError:
         pass
-    translate_full.sweep_page_dirs(PAPERS_DIR)   # 回收没人回来认领的页级中间产物（留给重跑复用的那批）
+    translate_full.sweep_page_dirs(PAPERS_DIR)
     _clear_zombie_jobs()
     _backfill_pdf_hashes()
 
     def _warm_engine():
-        # 后台预热 pdf2zh 探测（--version 要 3 秒）：用户打开设置时状态已经在手，
-        # 不用看着"未安装"闪两秒才变"可用"
         time.sleep(3)
         try:
             exe = translate_full.engine_path((config.load()["pdf2zh"].get("path") or "").strip())
@@ -219,7 +200,6 @@ def _startup():
         except Exception:
             pass
     threading.Thread(target=_warm_engine, daemon=True).start()
-
 
 def _sweep_orphan_papers():
     """清掉 papers/ 里没有论文指向的文件夹。
@@ -242,7 +222,6 @@ def _sweep_orphan_papers():
     if n:
         _applog(f"启动清理：删掉 {n} 个没有论文指向的文件夹")
 
-
 def _clear_zombie_jobs():
     """把"上一次进程留下的在跑状态"清掉。
 
@@ -253,14 +232,13 @@ def _clear_zombie_jobs():
     刚启动的进程里不可能有任务在跑，所以这些状态全是僵尸，一律归零（回到"还没做过"，
     按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
     """
-    _adopt_orphan_translation()          # 先认领：上一次进程退出时 pdf2zh 可能已经把译完写好了
-    _sweep_orphan_papers()               # 再把没人认领的产物清掉
+    _adopt_orphan_translation()
+    _sweep_orphan_papers()
     for col in ("analysis_status", "marginalia_status", "translate_status"):
         n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col} IN ('running','queued')")[0][0]
         if n:
             db.q(f"UPDATE papers SET {col}='none' WHERE {col} IN ('running','queued')", commit=True)
             _applog(f"启动清理：{n} 篇的 {col} 卡在 running/queued，已归零")
-
 
 def _adopt_orphan_translation():
     """收留"孤儿译文"。
@@ -271,8 +249,6 @@ def _adopt_orphan_translation():
     在就直接认领成 done。只认「看起来完整」的文件（有 %%EOF 收尾），
     免得把写到一半就被杀掉的那份当成成品。
     """
-    # 用 get_paper 逐篇取（list_papers 的列里**故意没有** path/dual_path——
-    # 那份列表是要发给浏览器的，不该把用户的本地路径捎出去）
     for row in db.list_papers():
         p = db.get_paper(row["id"]) or {}
         if p.get("translate_status") == "done" and (p.get("mono_path") or p.get("dual_path")):
@@ -283,7 +259,6 @@ def _adopt_orphan_translation():
         db.update_paper(p["id"], dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
                         translate_status="done", translate_error="")
         _applog(f"认领上次没结算的译文：{p['id']} → {os.path.basename(got.get('mono') or got.get('dual'))}")
-
 
 # ---------------- 设置 ----------------
 
@@ -297,7 +272,6 @@ def get_settings():
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
             "ui_lang": cfg.get("ui_lang", "zh"),
             "data_dir": appinfo.data_dir()}
-
 
 @app.put("/api/settings")
 def put_settings(body: dict):
@@ -320,21 +294,14 @@ def put_settings(body: dict):
             cfg["update"]["feed_url"] = u["feed_url"].strip()
         if "auto_check" in u:
             cfg["update"]["auto_check"] = bool(u["auto_check"])
-    # 填了 key 就自动退出演示模式，但**只在用户真的提交了 provider 时才动**：局部保存
-    # （如「立即检查更新」只发 {update:{...}}）不能顺手关掉它——用户没碰过模型设置，却会
-    # 突然开始真调模型（可能立刻 401/欠费），而弹窗里那个勾还打着。
     was_demo = _demo_mode(cfg)
     if cfg["provider"]["api_key"] and "mock" not in body and "provider" in body:
         cfg["mock"] = False
     config.save(cfg)
     if was_demo != _demo_mode(cfg):
-        # 演示↔真实 切换了：把上一模式留下的模型产物清掉。
-        # 不清的话，演示模式点过一次的引用卡/一眼卡会一直顶着"已缓存"显示假数据
-        # （J. Demo Chem. 那种），换了真 key 也不会自己变。
         n = db.clear_ai_results()
         _applog(f"模型模式切换（演示→{'演示' if _demo_mode(cfg) else '真实'}）：清了 {n} 篇的缓存产物")
     return get_settings()
-
 
 @app.get("/api/pdf2zh/engine")
 def pdf2zh_engine(path: str = ""):
@@ -350,12 +317,10 @@ def pdf2zh_engine(path: str = ""):
     ok, why = translate_full.engine_probe_cached(exe)
     return {"ok": ok, "path": exe, "why": why, "configured": bool(want)}
 
-
 @app.post("/api/data/pick")
 def data_pick():
     """弹原生目录选择框，返回选中的路径（取消返回空串）。"""
     return {"path": picker.pick_folder("选择数据目录")}
-
 
 @app.post("/api/data/location")
 def set_data_location(body: dict):
@@ -385,7 +350,6 @@ def set_data_location(body: dict):
     appinfo.write_pointer(target)
     return {"ok": True, "restart": True, "path": target}
 
-
 @app.post("/api/pdf2zh/install")
 def pdf2zh_install(body: dict = None):
     """一键把引擎装到用户机器上（从官方源下载，我们不再分发它——AGPL 见 engine_install）。
@@ -395,11 +359,9 @@ def pdf2zh_install(body: dict = None):
     url = str(((body or {}).get("url") or "")).strip()
     return engine_install.start(url)
 
-
 @app.get("/api/pdf2zh/install-status")
 def pdf2zh_install_status():
     return engine_install.status()
-
 
 @app.post("/api/pdf2zh/install-from-file")
 async def pdf2zh_install_from_file(file: UploadFile = File(...)):
@@ -421,11 +383,9 @@ async def pdf2zh_install_from_file(file: UploadFile = File(...)):
             f.write(chunk)
     return engine_install.start_from_zip(tmp)
 
-
 @app.post("/api/settings/test")
 def test_settings():
     return llm.test_connection()
-
 
 # ---------------- 版本与更新 ----------------
 
@@ -434,14 +394,12 @@ def version_info():
     return {"version": appinfo.version(), "packaged": update.is_packaged(),
             "data_dir": config.DATA_DIR, "quitting": _QUITTING["user"]}
 
-
 @app.get("/api/update/check")
 def update_check(force: bool = False):
     """查更新源。auto=0 时只读缓存不联网（打开软件时的那次安静探测走这条）。"""
     cfg = config.load().get("update", {})
     return update.check(cfg.get("feed_url", ""), force=force,
                         cache_hours=float(cfg.get("cache_hours") or 6))
-
 
 @app.post("/api/update/download")
 def update_download(body: dict):
@@ -451,11 +409,9 @@ def update_download(body: dict):
     update.start_download(url, (body.get("sha256") or "").lower(), int(body.get("size") or 0))
     return update.progress()
 
-
 @app.get("/api/update/progress")
 def update_progress():
     return update.progress()
-
 
 @app.post("/api/update/install")
 def update_install(body: dict):
@@ -465,12 +421,10 @@ def update_install(body: dict):
         raise HTTPException(400, "安装包不在或无法启动，重新下载一次")
     return {"ok": True}
 
-
 @app.post("/api/update/reveal")
 def update_reveal(body: dict):
     update.open_folder((body or {}).get("path") or update.progress().get("path") or "")
     return {"ok": True}
-
 
 def _my_port() -> int:
     """本进程到底在哪个端口上。桌面入口会按 8430→8431→8432 找第一个空闲的，
@@ -485,7 +439,6 @@ def _my_port() -> int:
         pass
     return 8430
 
-
 @app.post("/api/window")
 def open_native_window():
     """把界面开成一个没有浏览器边框的独立窗口（界面里点一下就多一个"应用窗口"）。
@@ -496,12 +449,7 @@ def open_native_window():
         raise HTTPException(503, "没找到可用的浏览器（Edge/Chrome），用当前这个窗口看就行")
     return {"ok": True, "how": how}
 
-
-# 用户主动退出（设置 → 退出 eggpaper）：置位后各页面在 3 秒轮询里看到 quitting
-# 就自己关窗（独立窗口是浏览器 --app 模式，window.close() 有效；普通标签页尽力），
-# 后端多等一拍轮询再退——不然后台一死，窗口只能靠用户手动一个一个关。
 _QUITTING = {"user": False}
-
 
 @app.post("/api/quit")
 def quit_app(body: dict = None):
@@ -516,11 +464,10 @@ def quit_app(body: dict = None):
         _QUITTING["user"] = True
     import threading as _th
     def bye():
-        time.sleep(3.2)      # ≥ 一整拍 3s 轮询：所有页面都来得及看到 quitting
+        time.sleep(3.2)
         os._exit(0)
     _th.Thread(target=bye, daemon=True).start()
     return {"ok": True}
-
 
 # ---------------- 论文 ----------------
 
@@ -528,12 +475,6 @@ def quit_app(body: dict = None):
 def papers():
     return db.list_papers()
 
-
-# 注意：这里**不要**加 @app.post("/api/papers")。这个函数是"把已经落在库里的 PDF 建进库"
-# 的内部步骤，上传路由（下面那个 async def upload）与"双击打开"都要调它。
-# 它头上曾经挂着一个装饰器，而 FastAPI 按注册顺序匹配——于是 POST /api/papers 命中的是它，
-# 要求 pid/filename/path 三个查询参数，**浏览器拖入/点击导入永远 422**（双击打开那条路不经过
-# 这个路由，所以一直正常，问题就被掩盖了）。
 def _pdf_hash_file(path: str) -> str:
     """流式算一份 PDF 的 sha256（几百 MB 也就一两秒，内存只占一块 1MB 的缓冲）。"""
     import hashlib
@@ -546,11 +487,9 @@ def _pdf_hash_file(path: str) -> str:
     except OSError:
         return ""
 
-
 def _pdf_hash_bytes(raw: bytes) -> str:
     import hashlib
     return hashlib.sha256(raw).hexdigest()
-
 
 def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     """把已经落在 papers/<pid>/ 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
@@ -573,9 +512,8 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     if pdf_hash:
         db.update_paper(pid, pdf_hash=pdf_hash)
     db.replace_paragraphs(pid, paras)
-    _ensure_paper_type(pid)     # 导入时就判好类型：析读提示词、略读、③、谱系卡都吃这一位
+    _ensure_paper_type(pid)
     row = db.get_paper(pid)
-    # AI 主动：导入即排队后台通读，打开时简报已就绪（没有文字层的扫描件没得析读，直接标完成）
     db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
     if paras:
         _enqueue_analysis(pid, paras)
@@ -585,7 +523,6 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
             "n_captions": sum(1 for p in paras if p["caption"]),
             "no_text": not paras}
 
-
 @app.post("/api/papers")
 async def upload(file: UploadFile = File(...)):
     raw = await file.read()
@@ -594,11 +531,8 @@ async def upload(file: UploadFile = File(...)):
     if len(raw) < 256:
         raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
     name = (file.filename or "paper.pdf").split("/")[-1].split("\\")[-1]
-    # 内容指纹优先：改名重导的同一份文件也认得出（不占第二份库空间、不重跑析读）
     dup = db.find_duplicate(name, len(raw), _pdf_hash_bytes(raw))
     if dup:
-        # 同一份文件已经在库里：不建第二篇，直接把它交出去。
-        # 两条导入路径（双击打开 / 拖入点选）都要判重，否则同一篇会进库两遍。
         return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
                 "duplicate": True}
     pid = db.new_id()
@@ -606,10 +540,7 @@ async def upload(file: UploadFile = File(...)):
     path = os.path.join(paper_dir(pid), "paper.pdf")
     with open(path, "wb") as f:
         f.write(raw)
-    # 解析（抽标题/段落）是**同步阻塞**的活，几秒钟起步。直接在 async 路由里做会卡住整个
-    # 事件循环——界面那几条轮询全部停摆，用户看到的是"导入时界面死了"。丢进线程池。
     return await run_in_threadpool(_ingest, pid, name, path, _pdf_hash_bytes(raw))
-
 
 @app.post("/api/papers/import-path")
 def import_path(body: dict):
@@ -625,9 +556,9 @@ def import_path(body: dict):
         raise HTTPException(400, "eggpaper 只认 PDF")
     name, size = os.path.basename(src), os.path.getsize(src)
     pdf_hash = _pdf_hash_file(src)
-    dup = db.find_duplicate(name, size, pdf_hash)          # 判重口径与上传那条路共用一份
+    dup = db.find_duplicate(name, size, pdf_hash)
     if dup:
-        _pending_open["pid"] = dup               # 已经在库里：让界面切过去就行
+        _pending_open["pid"] = dup
         return {"paper": db.get_paper(dup), "duplicate": True}
     pid = db.new_id()
     os.makedirs(paper_dir(pid), exist_ok=True)
@@ -640,10 +571,7 @@ def import_path(body: dict):
     _pending_open["pid"] = pid
     return out
 
-
-# 界面每 3 秒轮询一次：拿到"要打开哪一篇"就切过去（双击 PDF 时应用已经开着的情况）
 _pending_open = {"pid": None}
-
 
 @app.get("/api/open-request")
 def open_request():
@@ -651,16 +579,13 @@ def open_request():
     _pending_open["pid"] = None
     return {"pid": pid, "quitting": _QUITTING["user"]}
 
-
 def _paper_or_404(pid: str) -> dict:
     p = db.get_paper(pid)
     if not p:
         raise HTTPException(404, "论文不存在")
     return p
 
-
 NO_TEXT = "这份 PDF 没有可提取的文字层（多半是扫描件），析读和提问都无从下手；原文照样能读，图表也能框选问 AI"
-
 
 def _require_paras(pid: str) -> None:
     """扫描件没有文字层：让它过一个"请求模型、等半天、返回胡话"的流程是最坏的选择，
@@ -668,14 +593,12 @@ def _require_paras(pid: str) -> None:
     if not db.get_paragraphs(pid):
         raise HTTPException(400, NO_TEXT)
 
-
 @app.get("/api/papers/{pid}")
 def get_paper(pid: str):
     p = _paper_or_404(pid)
     paras = db.get_paragraphs(pid)
     p["n_paragraphs"] = len(paras)
     return p
-
 
 def _detect_paper_type(title: str, paras: list) -> str:
     """研究型（research）/ 综述型（review），启发式，一次模型调用都不花。
@@ -690,7 +613,6 @@ def _detect_paper_type(title: str, paras: list) -> str:
     lead_hit = bool(re.search(r"in (this|the) (review|survey)|we (review|survey)|本(文|篇)综述|这篇综述", lead, re.I))
     return "review" if (title_hit or lead_hit) else "research"
 
-
 def _ensure_paper_type(pid: str) -> str:
     """论文的类型字段，没有就现判一次（旧论文升级上来也走得到）。"""
     p = db.get_paper(pid) or {}
@@ -703,7 +625,6 @@ def _ensure_paper_type(pid: str) -> str:
         _applog(f"{pid}: 判定为综述，③/谱系卡/略读按综述策略走")
     return t
 
-
 @app.post("/api/papers/{pid}/touch")
 def touch_paper(pid: str):
     """记一笔"最近读过"，文库按最近阅读排序时用；论文日历按天再记一笔。"""
@@ -711,7 +632,6 @@ def touch_paper(pid: str):
     db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
     db.log_read(pid, time.strftime("%Y-%m-%d"))
     return {"ok": True}
-
 
 @app.get("/api/calendar")
 def calendar_view(month: str = ""):
@@ -746,7 +666,6 @@ def calendar_view(month: str = ""):
         days[day] = entry
     return {"month": month, "days": days}
 
-
 def _rm(path: str):
     if path and os.path.exists(path):
         try:
@@ -754,31 +673,23 @@ def _rm(path: str):
         except OSError:
             pass
 
-
 @app.delete("/api/papers/{pid}")
 def delete_paper(pid: str):
     p = _paper_or_404(pid)
-    db.purge_paper(pid)          # 段落/骨架/眉批/问答会话/分类归属，一张表都不留
-    # 文件也要走干净：这篇论文的全部数据就在它自己的文件夹里（paper.pdf + 译文 +
-    # 页级中间产物）。先掐掉还在跑的整本翻译：pdf2zh 是独立进程，不掐的话它会把
-    # mono.pdf 写回来——用户以为"删掉 = 痕迹全消失"，盘上却留着一份孤立的译文。
+    db.purge_paper(pid)
     if translate_full.cancel(pid):
         _applog(f"删论文 {pid}：同时终止了还在跑的整本翻译")
     shutil.rmtree(paper_dir(pid), ignore_errors=True)
-    _rm(p["path"])               # 库记录指向库外旧位置的兜底（正常都已在 papers/ 里）
+    _rm(p["path"])
     _rm(p["dual_path"]); _rm(p.get("mono_path"))
     return {"ok": True}
 
-
-# 派生译文/双语文件的互斥锁：首开双语的两个并发请求只该派生一次（写同一文件会写花）
 _variant_locks: dict = {}
 _variant_guard = threading.Lock()
-
 
 def _variant_lock(key: str) -> threading.Lock:
     with _variant_guard:
         return _variant_locks.setdefault(key, threading.Lock())
-
 
 @app.get("/api/papers/{pid}/pdf")
 def paper_pdf(pid: str, variant: str = "original"):
@@ -787,7 +698,6 @@ def paper_pdf(pid: str, variant: str = "original"):
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
             return FileResponse(dual, media_type="application/pdf")
-        # 省盘策略：盘上只落译文版，双语版（它的两倍大）**首次点开时**由 原文+译文 派生并缓存
         mono = p.get("mono_path") or os.path.join(paper_dir(pid), "mono.pdf")
         src = p.get("path") or ""
         if (mono and os.path.exists(mono) and src and os.path.exists(src)):
@@ -802,7 +712,6 @@ def paper_pdf(pid: str, variant: str = "original"):
         mono = p.get("mono_path") or ""
         if mono and os.path.exists(mono):
             return FileResponse(mono, media_type="application/pdf")
-        # 旧版存量只有双语版：抽偶数页合成译文版，补上之后与新品同构
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
             with _variant_lock(pid + ":mono"):
@@ -813,20 +722,13 @@ def paper_pdf(pid: str, variant: str = "original"):
             return FileResponse(mono, media_type="application/pdf")
         raise HTTPException(404, "译文版尚未生成")
     if not os.path.exists(p["path"]):
-        # 用户在资源管理器里挪走/删掉库里的 PDF 了。必须自己判：交给 FileResponse 会抛
-        # RuntimeError("File at path ... does not exist") → 500 + 一句英文黑话。
         raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。"
                                  "把它拖回来重新导入一次即可，批注不会丢。")
     return FileResponse(p["path"], media_type="application/pdf")
 
-
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
-    # 旧库的段落只有段落框、没有行级坐标，页边引文就只能整段涂。惰性补一次，但**先核对**：
-    # 新解析的结果必须与库里那批段落逐段一致才敢整表替换——批注/主张锚点/略读都按 para_idx
-    # 指位置，分组一变就会整体错位，而且是静默的。核对不过就这次不补（页边退回段落框），
-    # 至少不动用户已有的东西。
     if db.paragraphs_need_lines(pid):
         p = db.get_paper(pid)
         path = p.get("path") or os.path.join(paper_dir(pid), "paper.pdf")
@@ -841,7 +743,6 @@ def paragraphs(pid: str):
             print(f"[eggpaper] 行级坐标补解析失败 {pid}: {e}")
     return db.get_paragraphs(pid)
 
-
 # ---------------- 骨架分析 ----------------
 
 def _run_analysis(pid: str, paras: list):
@@ -849,47 +750,30 @@ def _run_analysis(pid: str, paras: list):
     try:
         title = db.get_paper(pid)["title"]
         use = [p for p in paras if not p.get("in_refs")]
-        kind = _ensure_paper_type(pid)      # 旧论文升级上来没判过类型，这里兜底补一次
+        kind = _ensure_paper_type(pid)
         demo = _demo_mode()
-        # 术语表跟骨架**互不依赖**，却曾排在骨架后面串行——骨架跑多久，术语就白等多久
-        # （术语是 48k 字进、8k token 出的一次大调用）。先把它发出去，与骨架同时跑。
-        # 传的是**全部**段落而不是 use：里面的"正文里有没有这个词"要跟界面上的
-        # 判据同源（界面拿的就是全篇），否则会出现界面画"—"、库里其实有。
         ex = ThreadPoolExecutor(max_workers=5)
         tfut = ex.submit(_demo_terms if demo else llm.extract_terms, title, paras)
         if demo:
             data = llm.mock_analyze(paras)
         else:
             data = llm.analyze_skeleton(title, use, kind=kind)
-        # 参考文献段强制 boilerplate
         for p in paras:
             if p["in_refs"]:
                 data["roles"][str(p["idx"])] = "boilerplate"
                 data["purposes"][str(p["idx"])] = "参考文献"
         db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
                                               for k, v in data["roles"].items()})
-        # 主张换了一批，所有"由主张派生的东西"就都是旧结论了：五问②④⑤、一眼卡、
-        # 推荐问题、导师三问、方法卡。只清其中一半是最难看的——一眼卡说 A，骨架里
-        # 已经没有 A 了，或者三问还在问一个被删掉的主张。宁再生一次。
         db.answers_clear(pid)
         db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
                         abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
-        # 五问剩下的三条在**首次析读时一次备齐**：读者点开"动机 / 还能做什么 / 换个学科"
-        # 的时候不该再等一次模型调用，界面上也就不需要那个「获取」按钮了。
-        # 三条互不依赖 → 并行跑；单条失败只记一行日志，绝不让整次析读陪葬
-        # （那一问留空，重新析读会再来一次）。旧口径的①②两问（problem/why）已合成
-        # motive，不再依赖骨架顺手写的 problem 字段——它由模型对着缺口段现场生成。
         p2 = db.get_paper(pid)
         todo = ["motive", "next", "lens"]
         futs = {ex.submit(_mock_six, k) if demo else ex.submit(_gen_six, p2, k): k
                 for k in todo}
         if not demo:
-            # 一眼卡也在这里顺手写掉：原来它由前端在析读完成的下一拍再要一次，
-            # 用户得对着"正在写一眼卡…"多等一次调用的工夫。现在析读完即就绪。
             futs[ex.submit(llm.summarize, p2["title"], paras)] = "summary"
-            # 推荐问题同理：它吃骨架的主张，原来要等用户第一次进"提问"页才现场生成
-            # （4~10 秒的干等，空态里只有四个通用问题）。这里一并写掉。
             _, claims2, annos2 = db.get_analysis(pid)
             futs[ex.submit(llm.suggest_questions, p2["title"], claims2, annos2)] = "suggest"
         futs[tfut] = "terms"
@@ -915,18 +799,15 @@ def _run_analysis(pid: str, paras: list):
                 else:
                     _applog(f"析读 {pid}: 五问·{k} 这次是空的")
             except Exception as e:
-                # 单条失败只记日志：限流/格式错不该让整次析读陪葬，那一问留空待补
                 _applog(f"析读 {pid}: {k} 没生成（{_human_msg(e)}）")
     except Exception as e:
-        # 人话 + **不清空**已有结果：一次限流不该让上次读出来的骨架陪葬
         hint = _human_msg(e)
         _applog(f"析读失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
         db.fail_analysis(pid, hint)
     finally:
         if ex:
-            ex.shutdown(wait=False, cancel_futures=True)   # 失败路径上没跑完的（术语）就别等了
+            ex.shutdown(wait=False, cancel_futures=True)
         _job_done("analysis", pid)
-
 
 @app.post("/api/papers/{pid}/analyze")
 def analyze(pid: str):
@@ -936,21 +817,18 @@ def analyze(pid: str):
         return {"status": p["analysis_status"]}
     if p["analysis_status"] in ("running", "queued"):
         _applog(f"析读 {pid}: 数据库里是 {p['analysis_status']} 但本进程没有这个任务（上次被中断），重来")
-    # 也排队：手动重读一篇时，后台可能正在读别的几篇，一起冲上去只会互相抢限流
     _enqueue_analysis(pid, db.get_paragraphs(pid))
     return {"status": "queued"}
-
 
 @app.get("/api/papers/{pid}/analysis")
 def analysis(pid: str):
     p = _paper_or_404(pid)
     status, claims, annos = db.get_analysis(pid)
     if status in ("running", "queued") and not _analysis_inflight(pid):
-        db.update_paper(pid, analysis_status="none")        # 僵尸状态：归零
+        db.update_paper(pid, analysis_status="none")
         status = "none"
     eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
     return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos, "evidence_qs": eqs}
-
 
 @app.post("/api/papers/{pid}/override-role")
 def override_role(pid: str, body: dict):
@@ -961,7 +839,6 @@ def override_role(pid: str, body: dict):
     """
     _paper_or_404(pid)
     role = body.get("role") or ""
-    # 空串 = 回到推断（卡片上的「回到推断」），别当成非法角色拒掉
     if role and role not in llm.ROLES:
         raise HTTPException(400, "角色不合法")
     try:
@@ -970,7 +847,6 @@ def override_role(pid: str, body: dict):
         raise HTTPException(400, "缺 para_idx（要改哪一段）")
     db.override_annotation(pid, ridx, role)
     return {"ok": True}
-
 
 # ---------------- 眉批（句级批注） ----------------
 
@@ -982,7 +858,6 @@ def _band(n: dict) -> str:
     「参考态不一」这种 warn 档的批注，只认 kind=='warning' 会把它们漏在外面。
     """
     return n.get("band") or llm.BAND_OF.get(n["kind"], "")
-
 
 def _resolve_rects(pid: str):
     """把 quote 定位成页面矩形。
@@ -1003,7 +878,7 @@ def _resolve_rects(pid: str):
     for n in db.get_marginalia(pid):
         if n["rect"] or n["kind"] == "region" or n["id"] in _rect_tried:
             continue
-        _rect_tried.add(n["id"])       # 成功失败都算试过，失败的不再重复开 PDF
+        _rect_tried.add(n["id"])
         if doc is None:
             doc = pymupdf.open(p["path"])
         rects = []
@@ -1011,9 +886,6 @@ def _resolve_rects(pid: str):
             probe = n["quote"] if cut == 0 else n["quote"][:cut].strip()
             if len(probe) < 8:
                 continue
-            # 不用 quads=True：它返回的是 Quad（四个角点），没有 x0/y0/x1/y1。
-            # 之前这里拿 Quad 当 Rect 取属性，只要页边出现一条**没有矩形**的钉子
-            # （比如自己写的那条批注），GET /marginalia 就整个 500——整页眉批打不开。
             rects = doc[n["page"]].search_for(probe)
             if rects:
                 break
@@ -1023,52 +895,33 @@ def _resolve_rects(pid: str):
     if doc:
         doc.close()
 
+_rect_tried = set()
 
-_rect_tried = set()      # 试过定位的钉子 id（失败的不再重复开 PDF）
-
-# 本进程**真正在跑**的长任务：{("marginalia", pid), ("analysis", pid), ...}
-# 数据库里的 running 只是"上一次置的标记"，进程重启后它说明不了任何事；判断"是不是真的在跑"
-# 只看这个集合。路由里登记、线程的 finally 里注销——所以"status=running 但不在集合里"
-# 就是僵尸状态，可以放心重来（见 _clear_zombie_jobs 的注释）。
 _live_jobs = set()
-_live_lock = threading.Lock()      # "检查是否在跑 + 占位"要原子（见 marginalia_start）
+_live_lock = threading.Lock()
 
-# 眉批生成的实时进度：pid -> {"done": 已完成块数, "total": 总块数, "t0": 起始时刻}
-# 只活在内存里——它是"这一次运行"的状态，进程重启后没有意义（也没必要进数据库）。
 _margin_progress = {}
-
 
 def _job_live(kind: str, pid: str) -> bool:
     return (kind, pid) in _live_jobs
 
-
 def _job_done(kind: str, pid: str):
     _live_jobs.discard((kind, pid))
 
-
 # ---------------- 析读队列：一次导入多篇时，一篇一篇地读 ----------------
-# 为什么要排队而不是每篇开一条线程：析读是一次**整篇通读**（几十次调用），
-# 五篇一起冲上去只会互相抢限流、每篇都变慢，而且用户根本不在等它们。
-# 串行之后"最前面的那篇最快好"，界面上也就能说清谁在跑、谁在排队。
 _q_lock = threading.Lock()
 _analysis_q = queue.Queue()
-_analysis_worker = [None]        # 装线程；列表是为了在闭包里能改
-# 队列里**等着**的那些 pid。必须单独记一份：`_live_jobs` 是"正在跑"的登记，
-# 而排队的论文要等出队那一刻才登记——于是"排队中"曾经既不算在跑、也不在队列里可查，
-# 造成两个真 bug：① GET /analysis 把自己的排队当僵尸归零，界面从"排队通读中"退回
-# "还没析读"；② 这时再点一次「析读」会**第二次入队**，同一篇被完整通读两遍（双倍 token）。
+_analysis_worker = [None]
 _analysis_pending = set()
-
 
 def _analysis_inflight(pid: str) -> bool:
     """这篇是不是"在跑或排队中"（两个真相源合起来看，别再漏一个）。"""
     return _job_live("analysis", pid) or pid in _analysis_pending
 
-
 def _enqueue_analysis(pid: str, paras: list):
     with _q_lock:
         if pid in _analysis_pending:
-            return                      # 已经排着了：再点一次不排队，也不重复烧钱
+            return
         _analysis_pending.add(pid)
         db.update_paper(pid, analysis_status="queued", analysis_error=None)
         _analysis_q.put((pid, paras))
@@ -1077,7 +930,6 @@ def _enqueue_analysis(pid: str, paras: list):
             w = threading.Thread(target=_analysis_loop, daemon=True)
             _analysis_worker[0] = w
             w.start()
-
 
 def _analysis_loop():
     """队列空了就自己退出（下次导入再起一条）。空判断与入队在同一把锁里，不会漏活。"""
@@ -1096,7 +948,6 @@ def _analysis_loop():
         finally:
             _job_done("analysis", pid)
 
-
 def _applog(msg: str):
     """往 app.log 写一行。打包版（console=False）没有 stdout，print 出去的东西一个字都留不下——
     而"这次到底花了多久、卡在哪一段"恰恰是用户最常问的。和 window.py 写的是同一份日志。
@@ -1110,7 +961,7 @@ def _applog(msg: str):
             if os.path.getsize(path) > 1_000_000:
                 with open(path, encoding="utf-8", errors="replace") as f:
                     f.seek(-250_000, 2)
-                    f.readline()                    # 扔掉截断的半行
+                    f.readline()
                     tail = f.read()
                 with open(path, "w", encoding="utf-8") as f:
                     f.write("[eggpaper] （日志超 1MB，只保留最近一段）\n" + tail)
@@ -1120,7 +971,6 @@ def _applog(msg: str):
             f.write("[%s] %s\n" % (_t.strftime("%Y-%m-%d %H:%M:%S"), msg))
     except OSError:
         pass
-
 
 def _run_marginalia(pid: str):
     import time as _t
@@ -1142,21 +992,17 @@ def _run_marginalia(pid: str):
         else:
             notes, misses = llm.analyze_marginalia(title, use, on_chunk=on_chunk)
         t_llm = _t.time() - t0
-        # 有块没成要说出来：状态仍是 done（有效的批注都写进去了），但把缺口写成一条提示
         db.set_marginalia(pid, notes)
         if misses:
             db.update_paper(pid, marginalia_error=(
                 f"{misses} 段块没能生成批注（模型限流或超时，已重试过一遍）。"
                 f"这些段落现在是空的——想补齐可以再点一次「重新生成」。"))
             _applog(f"眉批 {pid}: {misses} 块重试后仍失败")
-        # "还能做什么"吃眉批里的"有坑"，导师三问的输入也是这批 warning——重写眉批要一起作废
         db.answers_clear(pid)
         db.update_paper(pid, advisor=None)
         _resolve_rects(pid)
         t_all = _t.time() - t0
         n = _margin_progress.get(pid, {}).get("total") or 0
-        # 一行说清"慢在哪儿"：块数 × 单块时间 = 模型，剩下的是定位与写库。
-        # 顺带记下**这一次用的是哪个端点/模型**——"改了设置到底生效没有"看这一行就够。
         cfg = config.load()["provider"]
         _applog(f"眉批完成 {pid}: {len(notes)} 条 / {n} 块 · 模型 {t_llm:.1f}s · "
                 f"定位+入库 {t_all - t_llm:.1f}s · 总 {t_all:.1f}s"
@@ -1170,13 +1016,9 @@ def _run_marginalia(pid: str):
         _margin_progress.pop(pid, None)
         _job_done("marginalia", pid)
 
-
 @app.post("/api/papers/{pid}/marginalia")
 def marginalia_start(pid: str):
     p = _paper_or_404(pid)
-    # 检查与占位必须在**同一把锁**里：路由跑在线程池里是真并发，连点两下（或双击）时
-    # 两条请求会都读到"没在跑"，然后各自起一条线程——整篇眉批的模型调用花两遍，
-    # 而且先结束的那条会把还在跑的那条的进度抹掉（进度条中途消失）。
     with _live_lock:
         if _job_live("marginalia", pid):
             return {"status": "running"}
@@ -1186,19 +1028,17 @@ def marginalia_start(pid: str):
     threading.Thread(target=_run_marginalia, args=(pid,), daemon=True).start()
     return {"status": "running"}
 
-
 @app.get("/api/papers/{pid}/marginalia")
 def marginalia_get(pid: str):
     p = _paper_or_404(pid)
     if p["marginalia_status"] == "running" and not _job_live("marginalia", pid):
-        db.update_paper(pid, marginalia_status="none")     # 僵尸状态：归零，让按钮回来
+        db.update_paper(pid, marginalia_status="none")
         p = _paper_or_404(pid)
     if p["marginalia_status"] == "done" and any(not n["rect"] for n in db.get_marginalia(pid)):
         _resolve_rects(pid)
     return {"status": p["marginalia_status"], "error": p.get("marginalia_error"),
             "progress": _margin_progress.get(pid),
             "notes": [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None) for n in db.get_marginalia(pid)]}
-
 
 @app.post("/api/papers/{pid}/pin")
 def pin_lookup(pid: str, body: dict):
@@ -1213,14 +1053,9 @@ def pin_lookup(pid: str, body: dict):
     except (TypeError, ValueError):
         raise HTTPException(400, "para_idx 得是整数")
     page = int(body.get("page") or 0)
-    # 自己写的批注：锚点还是选中的那句话，内容是用户的原话。
-    # 不比"同段重钉"——同一段里想写两条就写两条，页边是读者的本子，不是去重器。
     if (body.get("kind") or "").strip() == "note":
         return {"id": db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
                                         kind="note", band="mine")}
-    # 框选答疑自带区域矩形：锚点就是那块区域，也不和别的钉子挤同一段。
-    # 用 kind=region 单独标记：前端据此知道"这个矩形就是唯一真相"，
-    # 而不是像引文钉子那样要回原文重新把引文对回字符。
     rect = body.get("rect") or None
     if rect:
         try:
@@ -1230,7 +1065,6 @@ def pin_lookup(pid: str, body: dict):
     if rect:
         return {"id": db.marginalia_add(pid, para_idx, page, quote[:200],
                                         note[:600], kind="region", rect=rect, band="mine")}
-    # 同段重钉 = 更新而非新增
     dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
                (pid, para_idx))
     if dup:
@@ -1240,13 +1074,11 @@ def pin_lookup(pid: str, body: dict):
                             kind="lookup", band="mine")
     return {"id": mid}
 
-
 @app.delete("/api/papers/{pid}/marginalia/{mid}")
 def marginalia_remove(pid: str, mid: int):
     _paper_or_404(pid)
     db.marginalia_delete(mid)
     return {"ok": True}
-
 
 # ---------------- 一眼卡 ----------------
 
@@ -1266,7 +1098,6 @@ def summary(pid: str):
     db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
     return data
 
-
 @app.get("/api/papers/{pid}/suggest")
 def suggest(pid: str):
     p = _paper_or_404(pid)
@@ -1284,7 +1115,6 @@ def suggest(pid: str):
     db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
     return data
 
-
 def _require_shape(data, keys: tuple, what: str):
     """模型返回的形状不对/是空的，就别把它当成功缓存下来。
 
@@ -1296,11 +1126,9 @@ def _require_shape(data, keys: tuple, what: str):
     if not isinstance(data, dict) or not any(data.get(k) for k in keys):
         raise HTTPException(503, f"{what}没生成出来（模型这次返回的是空的），过一会儿再点一次")
 
-
 KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别扭", "redundant": "多余重复",
            "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑",
            "conflict": "前后打架", "lookup": "查译", "region": "选区问答", "note": "批注"}
-
 
 @app.get("/api/papers/{pid}/advisor")
 def advisor(pid: str, cached: bool = False):
@@ -1308,7 +1136,7 @@ def advisor(pid: str, cached: bool = False):
     _require_paras(pid)
     if p["advisor"]:
         return JSONResponse(json.loads(p["advisor"]))
-    if cached:                       # 同 method-card：进速览页只读缓存，不顺手生成
+    if cached:
         return {"questions": []}
     if p["analysis_status"] != "done":
         return {"questions": []}
@@ -1316,14 +1144,11 @@ def advisor(pid: str, cached: bool = False):
         data = {"questions": [{"q": "〔演示〕证据够硬吗？", "outline": ["演示要点"]}]}
     else:
         _, claims, annos = db.get_analysis(pid)
-        # 眉批已标的"有坑"当作**作者/读者已经认了的**薄弱点喂进去——三问的任务是
-        # 在它们之上再狠一层，而不是把同一批话说第二遍（「问题」页④已经说过一遍了）
         warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
         data = llm.advisor_questions(p["title"], claims, warns)
         _require_shape(data, ("questions",), "导师三问")
     db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
     return data
-
 
 @app.post("/api/ask-visual")
 def ask_visual(body: dict):
@@ -1338,14 +1163,9 @@ def ask_visual(body: dict):
         raise HTTPException(503, "模型这次没返回内容，请重试")
     return {"answer": ans}
 
-
 # ---------------- 五问里需要现场生成的那几问 ----------------
-# 免费的两问（要解决什么 / 怎么解决的 / 还没解决什么）直接用骨架数据，不花 token；
-# 这三问按需生成、按篇缓存，和「获取」同一个纪律。语料只喂相关的几类段落。
 
-# problem 也走这条：析读时会顺带产出（骨架提示词的 problem 字段），没有缓存时现生成
 SIX_KEYS = ("motive", "how", "next", "lens")
-
 
 def _paras_of_role(pid: str, roles: set, cap: int = 8):
     _, _, annos = db.get_analysis(pid)
@@ -1353,19 +1173,14 @@ def _paras_of_role(pid: str, roles: set, cap: int = 8):
     out = [paras[int(k)] for k, v in annos.items() if v["role"] in roles and int(k) in paras]
     return sorted(out, key=lambda p: p["idx"])[:cap]
 
-
 def _gen_six(p: dict, key: str):
     pid = p["id"]
     _, claims, annos = db.get_analysis(pid)
     if key == "how":
-        # ③「怎么解决的」研究型由前端拿主张-证据链直接拼（不生成）；综述没有实验证据层，
-        # 那条路是空壳——由模型直接说清"它把文献怎么组织的"
         if p.get("paper_type") == "review":
             return llm.answer_how_review(p["title"], claims, db.get_paragraphs(pid))
         raise HTTPException(400, "研究型论文的这一问由骨架的主张-证据链直接拼出，无需生成")
     if key == "motive":
-        # ①「要解决什么、为什么」：原来的①②两问产出高度重合（都吃缺口段+背景段+主张），
-        # 读者也分不清该点哪个——合成一问，两三句话说清"解决什么 + 为什么非解决不可"
         return llm.answer_motive(p["title"],
                                  _paras_of_role(pid, {"gap"}),
                                  _paras_of_role(pid, {"background"}, 6),
@@ -1379,10 +1194,8 @@ def _gen_six(p: dict, key: str):
     s = json.loads(p["summary"]) if p.get("summary") else {}
     return llm.answer_lens(p["title"], s.get("one_line", ""), claims, db.get_paragraphs(pid))
 
-
 def _demo_terms(title, paras) -> dict:
     return {"terms": [{"en": "demo term", "zh": "演示术语", "kind": "method"}], "abbrs": {}}
-
 
 def _save_terms(pid: str, got) -> int:
     """术语与缩写一次落库——它们是同一次调用的产物，分两处写迟早会只写一半。"""
@@ -1394,7 +1207,6 @@ def _save_terms(pid: str, got) -> int:
     if added:
         print(f"[eggpaper] 本篇缩写补了 {added} 条")
     return len(terms)
-
 
 def _mock_six(key: str) -> dict:
     if key == "how":
@@ -1420,13 +1232,11 @@ def _mock_six(key: str) -> dict:
          "体系换了、结论还没人验证过 [¶18]。", "ask": "换到另一族氧化物要先验证什么？", "cites": [18]},
     ]}
 
-
 @app.get("/api/papers/{pid}/six-answers")
 def six_answers(pid: str):
     """只读缓存：打开一篇论文时问一次，没生成过的题返回 null。"""
     _paper_or_404(pid)
     return db.answers_all(pid)
-
 
 @app.get("/api/papers/{pid}/six-answers/{key}")
 def six_answer(pid: str, key: str):
@@ -1434,8 +1244,6 @@ def six_answer(pid: str, key: str):
     if key not in SIX_KEYS:
         raise HTTPException(404, "没有这个问题")
     cached = db.answer_get(pid, key)
-    # ⑤⑥换过口径：lens 从"几条视角"→"一段话"→又回到"条目式"（v=2），next 换成
-    # "两条腿"（v=2）。旧口径留着只会照旧显示，当它不存在，走下面的重新生成覆盖掉。
     if cached and key in ("lens", "next") and not cached.get("v"):
         cached = None
     if cached:
@@ -1447,22 +1255,18 @@ def six_answer(pid: str, key: str):
     db.answer_put(pid, key, data)
     return data
 
-
 @app.get("/api/papers/{pid}/method-card")
 def method_card(pid: str, cached: bool = False):
     p = _paper_or_404(pid)
     _require_paras(pid)
     if p["method_card"]:
         return JSONResponse(json.loads(p["method_card"]))
-    # cached=1：只读缓存，没有就明说"没有"。进速览页要先把算过的东西显示出来，
-    # 但"读缓存"和"花一次模型调用"是两件事，不能让前者偷偷变成后者。
     if cached:
         return {}
     if _demo_mode():
         data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
                 "steps": ["步骤一", "步骤二"], "notes": ""}
     elif p.get("paper_type") == "review":
-        # 综述没有"可复现的方法"，同一张卡换谱系口径：分类/脉络/各线关系（普适，不预设数据集）
         data = llm.survey_card(p["title"], db.get_paragraphs(pid))
         _require_shape(data, ("goal", "steps"), "谱系卡")
     else:
@@ -1470,7 +1274,6 @@ def method_card(pid: str, cached: bool = False):
         _require_shape(data, ("goal", "steps"), "方法卡")
     db.update_paper(pid, method_card=json.dumps(data, ensure_ascii=False))
     return data
-
 
 @app.get("/api/papers/{pid}/citation")
 def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
@@ -1494,13 +1297,11 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
     else:
         src = pdfparse.citation_source(p["path"])
         raw = llm.extract_citation(p["title"], src)
-        # 抄完先过一遍筛：源文里没出现过的字段一律清空（防的是"看起来很合理的假卷号"）
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
     if not (meta.get("title") or meta.get("authors")):
         raise HTTPException(503, "首页没认出文献信息，这份 PDF 可能没印刊头刊脚，只能手工补了")
     db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
     return {"meta": meta, "groups": citation.groups(meta)}
-
 
 @app.get("/api/papers/{pid}/export.md")
 def export_md(pid: str):
@@ -1539,13 +1340,10 @@ def export_md(pid: str):
     if notes:
         lines += [f"## {L('notes')}", ""]
         for n in notes:
-            # 类型名与界面口径一致：自造款用模型给的短标签，自己钉的三种算"你 ·"，
-            # 其余查同一张表——导出里写的是"前后打架 / 你 · 选区问答"，不是 [conflict]。
             zh = (n.get("label") or "").strip() or KIND_ZH.get(n["kind"], n["kind"])
             who = ("你 · " if en else "你 · ") + zh if n["kind"] in ("lookup", "region", "note") else zh
             lines.append(f"- **[{who}] {n['note']}** — “{n['quote'][:48]}”")
         lines.append("")
-    # 问答：按会话分组导出——当初问了什么、得到了什么，是笔记里最值钱的部分之一
     convs = db.conv_list(pid)
     for c in convs:
         msgs = db.qa_history(pid, c["id"])
@@ -1563,14 +1361,13 @@ def export_md(pid: str):
     return Response(content=md, media_type="text/markdown; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename=eggpaper-{pid}.md"})
 
-
 @app.get("/api/papers/{pid}/glossary/export.csv")
 def glossary_export(pid: str):
     _paper_or_404(pid)
     import csv
     import io
     buf = io.StringIO()
-    buf.write("﻿")     # BOM：中文 Windows 上 Excel/WPS 按 ANSI 解 UTF-8 CSV，不加就是乱码
+    buf.write("﻿")
     w = csv.writer(buf)
     w.writerow(["term_en", "term_zh", "domain", "note", "source"])
     for r in db.glossary_list(pid):
@@ -1578,34 +1375,18 @@ def glossary_export(pid: str):
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
 
-
 # ---------------- 图表速览 ----------------
-#
-# 方法（题注锚定 + 双向带状填充）：
-#   论文里的图/表几乎必带题注，题注自己就交代了内容贴在哪边——图题通常在下，
-#   表题通常在上（也有在下，Mistral 这篇就是）。所以不再全页聚类（旧版会把页眉
-#   横线、隔壁栏的正文粘进来，裁出一堆四不像），改为以题注为锚：
-#   ① 认题注：正则 + 分隔符校验，"Figure 3 shows…" 这种正文里顺嘴引用过不了关；
-#   ② 从题注向上/向下各做一次带状填充，把紧邻的图元（位图/矢量/横线/图内短文字）
-#      吸进来；正文段落块和别的题注是屏障，撞上即停——这是"精确贴边"的来源；
-#   ③ 两侧比较吸到的图形质量（表格看横线框、图看图元面积），择大者；难分伯仲时
-#      按题注种类猜方向（图题→内容在上，表题→内容在下）；
-#   ④ 长横线是表格的边框：吸到长横线之后，文字要贴到 8pt 内才继续吸收——
-#      表格底线下方的正文小标题不会再被吞进来。
-#   没题注的一律从严（logo、作者照片、整页扫描件都不该算图表）：首页大图不要、
-#   覆盖率过半的整页位图不要；其余的中等位图才收进来兜底。
 
-FIG_GFX_GAP = 18.0      # 图元/位图/横线离区域多近算"贴着"
-FIG_TXT_GAP = 16.0      # 图内短文字（轴标签、图例、子图题）
-FIG_WIDE_GAP = 9.0      # 宽文字行（表格行、图内段落）要贴得更近
-FIG_RULE_TXT_GAP = 8.0  # 表格吸到长横线后，文字的继续门槛（底线终止器）
-FIG_HDR_FOOT = 46.0     # 页眉页脚带：里面的东西既不当内容也不当屏障
+FIG_GFX_GAP = 18.0
+FIG_TXT_GAP = 16.0
+FIG_WIDE_GAP = 9.0
+FIG_RULE_TXT_GAP = 8.0
+FIG_HDR_FOOT = 46.0
 FIG_MIN_W, FIG_MIN_H = 60.0, 40.0
 
 CAPTION_RE = re.compile(
     r"^\s*(Fig(?:ure)?s?\.?|Table|Tab\.?|Scheme|Algorithm|Chart|Plate|图|表|算法|附图|附表)"
     r"\s*\.?\s*(\d+)\s*([a-z])?\s*[:.．|—–－—:，,]?\s*", re.I)
-
 
 def _caption_of(first_text):
     """块首行像不像题注。返回 (kind, label)；不是题注返回 None。
@@ -1616,12 +1397,11 @@ def _caption_of(first_text):
         return None
     rest = first_text[m.end():]
     if rest and not (rest[0].isupper() or ord(rest[0]) > 0x2e7f):
-        return None          # "Figure 3 shows"：数字后直接跟小写动词，是正文
+        return None
     prefix = m.group(1).lower()
     kind = "table" if prefix.startswith(("tab", "表", "附表", "算法")) else "figure"
     label = m.group(0).strip().rstrip(":.．|—–－—:，, ").strip()
     return kind, label
-
 
 def _two_columns(page, lines):
     """正文长行的分布像不像双栏。跨栏长行（通栏图表、页眉）占太多则是单栏。"""
@@ -1631,7 +1411,6 @@ def _two_columns(page, lines):
     left = sum(1 for r in longs if r.x1 <= pw * 0.53)
     right = sum(1 for r in longs if r.x0 >= pw * 0.47)
     return left >= 8 and right >= 8 and cross < 0.3 * (left + right)
-
 
 def _wide_flags(rects, colw_of, lm, rm):
     """逐行判"宽行"：超过栏宽七成；或者 140pt 以上、顶到页边还和邻行同宽同头
@@ -1650,7 +1429,6 @@ def _wide_flags(rects, colw_of, lm, rm):
                     break
         flags.append(f)
     return flags
-
 
 def _band_fill(up, cap_rect, cands, blockers, y_clip, table_kind):
     """从题注往一个方向吸收紧邻的图元。cands: [(rect, 是图元, 是宽文字行)]；
@@ -1678,21 +1456,17 @@ def _band_fill(up, cap_rect, cands, blockers, y_clip, table_kind):
                 continue
             lim = FIG_GFX_GAP if gfx else (FIG_WIDE_GAP if wide else FIG_TXT_GAP)
             if rule_hit and not gfx:
-                lim = min(lim, FIG_RULE_TXT_GAP)   # 吸过表格边框后，文字要贴得更近
+                lim = min(lim, FIG_RULE_TXT_GAP)
             if gap > lim:
                 continue
             inside = rect.x0 >= R.x0 - 2 and rect.x1 <= R.x1 + 2
             if not inside:
                 xov = min(R.x1, rect.x1) - max(R.x0, rect.x0)
                 if xov < (0.15 if gfx else 0.25) * rect.width:
-                    # 图元的例外：整幅图的外框线（虚线框、图框）会横向罩住整个
-                    # 区域，重叠比例天然很小——横向罩满又贴到 8pt 内的照收。
                     spans = (gfx and gap <= 8 and rect.x0 <= R.x0 + 4
                              and rect.x1 >= R.x1 - 4)
                     if not spans:
-                        continue   # 和区域横向不挨着的是别家的东西。
-                                   # 图元 0.15：翻译版题注窄，长横线、图标链
-                                   # 与题注重叠的比例本来就小，0.2 会卡掉
+                        continue
             blocked = False
             for b in blockers:
                 if min(R.x1, b.x1) - max(R.x0, b.x0) <= 0.3 * b.width:
@@ -1713,20 +1487,16 @@ def _band_fill(up, cap_rect, cands, blockers, y_clip, table_kind):
         rect, gfx, wide = cands[ci]
         R |= rect
         if gfx:
-            # 横线是零高度矩形，面积恒为 0——按"宽 × 名义粗细"计质量，
-            # 否则纯线条图表（表格框、坐标系）会在内容校验那关被当成空地丢掉
             graphic += max(rect.get_area(), rect.width * 1.5 if rect.height <= 2.5 else 0.0)
             if rect.height <= 2.5 and rect.width >= 0.55 * max(R.width, 200):
-                rule_hit = True                    # 长横线：表格的边框线
+                rule_hit = True
         else:
             txt_h += rect.height
     return R, graphic, txt_h
 
-
 def _iou(a, b):
     inter = (a & b).get_area()
     return inter / max(a.get_area() + b.get_area() - inter, 1e-6)
-
 
 def _figure_regions(path):
     """一份 PDF 里的全部图表区域。图的位置是**这份 PDF 的纯函数**，
@@ -1767,22 +1537,22 @@ def _figure_regions(path):
                     continue
                 brect = pymupdf.Rect(blk["bbox"])
                 if brect.y1 < ytop or brect.y0 > ybot:
-                    continue                        # 页眉页脚与图表无关
+                    continue
                 rects = [pymupdf.Rect(ln["bbox"]) for ln in blines]
                 texts = ["".join(sp["text"] for sp in ln["spans"]) for ln in blines]
                 cap = _caption_of(texts[0].strip())
                 if cap:
                     caps.append({"rect": brect, "kind": cap[0], "label": cap[1],
                                  "caption": re.sub(r"\s+", " ", " ".join(t.strip() for t in texts))[:260]})
-                    continue                        # 题注是锚点，自己不进候选
+                    continue
                 if sum(_wide_flags(rects, colw_of, lm, rm)) * 2 >= len(rects):
-                    blockers.append(brect)          # 正文段落：屏障，行也不许冒充图内文字
+                    blockers.append(brect)
                 else:
                     cands.extend((r, False, w) for r, w in zip(rects, _wide_flags(rects, colw_of, lm, rm)))
             for info in page.get_image_info():
                 r = pymupdf.Rect(info["bbox"])
                 if r.width < 12 or r.height < 8 or r.get_area() > 0.85 * pw * ph:
-                    continue                        # 小图标和整页背景层都不是图表内容
+                    continue
                 if r.y1 < ytop or r.y0 > ybot:
                     continue
                 cands.append((r, True, False))
@@ -1793,13 +1563,8 @@ def _figure_regions(path):
                 if r.y1 < ytop or r.y0 > ybot:
                     continue
                 if r.height < 1:
-                    # 横线是零高度矩形，pymupdf 的并集会把"空矩形"直接吞掉——
-                    # 垫一层名义厚度，表格边框线才撑得动区域
                     r = pymupdf.Rect(r.x0, r.y0 - 0.75, r.x1, r.y1 + 0.75)
                 cands.append((r, True, False))
-            # 正文引用框（两根同宽长横线、中间夹着一段正文，论文里常用来放
-            # 完整 prompt）是排版装饰，不是图表内容——从候选里拿掉，
-            # 省得它把紧邻图表的区域一下撑到整页宽
             long_rules = [(i, r) for i, (r, g, w) in enumerate(cands)
                           if g and r.height <= 4.5 and r.width >= 0.5 * (rm - lm)]
             drop = set()
@@ -1822,29 +1587,27 @@ def _figure_regions(path):
                 if up_g or dn_g:
                     pick_up = (c["kind"] == "figure") if up_g == dn_g else up_g > dn_g
                 elif up_t != dn_t:
-                    pick_up = up_t > dn_t          # 两侧都没图形：内容多的一侧是表格/图
+                    pick_up = up_t > dn_t
                 else:
-                    pick_up = (c["kind"] == "figure")  # 真空：按图题在上/表题在下的常理猜
+                    pick_up = (c["kind"] == "figure")
                 R, g, t = (up_R, up_g, up_t) if pick_up else (dn_R, dn_g, dn_t)
                 if g < 250 and t < 18:
-                    continue                        # 附近根本没有像图表的内容：是正文里的引用
+                    continue
                 R = (pymupdf.Rect(R.x0 - 3, R.y0 - 3, R.x1 + 3, R.y1 + 3)
                      & pymupdf.Rect(3, 3, pw - 3, ph - 3))
                 if R.width < FIG_MIN_W or R.height < FIG_MIN_H:
                     continue
                 c["region"] = R
                 entries.append(c)
-            # 两张题注抢到同一块内容：留先到的（页面顺序靠上的），重复的丢掉
             entries.sort(key=lambda x: x["rect"].y0)
             keep = []
             for e in entries:
                 if any(_iou(e["region"], k["region"]) > 0.45 for k in keep):
                     continue
                 keep.append(e)
-            # 没题注的大位图兜底：logo/作者照片/整页扫描件都够不上这个门槛
             for info in page.get_image_info():
                 if pno == 0:
-                    break                           # 首页大图几乎都是 logo/封面
+                    break
                 r = pymupdf.Rect(info["bbox"])
                 if r.width < 180 or r.height < 110 or r.get_area() > 0.55 * pw * ph:
                     continue
@@ -1865,10 +1628,8 @@ def _figure_regions(path):
         doc.close()
     return out
 
-
 _fig_cache = {}
 _fig_inflight = {}
-
 
 @app.get("/api/papers/{pid}/figures")
 def figures(pid: str):
@@ -1879,8 +1640,6 @@ def figures(pid: str):
         key = (p["path"], 0)
     if key in _fig_cache:
         return {"figures": _fig_cache[key]}
-    # 首算要扫全页矢量，大论文要几秒；速览页和阅读器会先后各拉一次——
-    # 并发去重：后来者等先来者算完直接读缓存，不重复扫
     ev = _fig_inflight.get(key)
     if ev:
         ev.wait(120)
@@ -1915,7 +1674,6 @@ def paper_toc(pid: str):
         doc.close()
     return {"toc": toc}
 
-
 @app.get("/api/papers/{pid}/figure.png")
 def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, dpi: int = 130):
     import pymupdf
@@ -1924,8 +1682,6 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
         raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
     doc = pymupdf.open(p["path"])
     try:
-        # 手工/陈旧请求可能给出越界页码、负矩形、离谱 dpi（dpi=100000 能撑爆内存）：
-        # 一律 400/404 并说清哪儿不对，别让它变成 500
         if page < 0 or page >= len(doc):
             raise HTTPException(404, f"页码越界：这篇只有 {len(doc)} 页")
         if not (36 <= dpi <= 400):
@@ -1937,12 +1693,10 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
     finally:
         doc.close()
 
-
 # ---------------- 问答（流式 + 多会话） ----------------
 
 def _sse(obj: dict) -> str:
     return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
-
 
 def _mock_stream(question: str):
     """演示模式也走流式：同一条前端代码路径，接上真 key 不用改任何东西。"""
@@ -1959,7 +1713,6 @@ def _mock_stream(question: str):
         yield text[i:i + 3]
         time.sleep(0.02)
 
-
 def _autotitle(pid: str, conv_id: int, question: str, is_first: bool):
     """第一个问题就是这摊对话的标题——和豆包/DeepSeek 一样，省得用户自己起名。"""
     if not is_first:
@@ -1969,12 +1722,7 @@ def _autotitle(pid: str, conv_id: int, question: str, is_first: bool):
         t = question.strip().replace("\n", " ")[:18]
         db.conv_rename(conv_id, t + ("…" if len(question.strip()) > 18 else ""))
 
-
-# 上下文预算：最近几轮原样带，更早的折进摘要。
-# 保留 8 条（4 轮）原文——足够接住"你刚才说的那个""再详细点"这类指代；
-# 折到 12 条 / 6000 字以上才动手，别每问一句都去调一次压缩。
 KEEP_MSGS, FOLD_AT, FOLD_CHARS = 8, 12, 6000
-
 
 def _context(pid: str, conv_id: int, history: list):
     """返回 (摘要, 原样带上的历史)。超预算就把较早的几条压成摘要存回会话。
@@ -1985,7 +1733,6 @@ def _context(pid: str, conv_id: int, history: list):
     """
     c = db.conv_get(conv_id) or {}
     upto = c.get("summary_upto") or 0
-    # tail = 还没被折进摘要的那些（删过的消息这里自然就没有了）
     tail = [m for m in history if (m.get("id") or 0) > upto]
     chars = sum(len(m.get("content") or "") for m in tail)
     if len(tail) <= FOLD_AT and chars <= FOLD_CHARS:
@@ -2000,15 +1747,12 @@ def _context(pid: str, conv_id: int, history: list):
     if new_sum:
         db.conv_set_summary(conv_id, new_sum, head[-1].get("id") or 0)
         return new_sum, rest
-    # 摘要没成：截短了带上，别丢
     short = [dict(m, content=(m.get("content") or "")[:240] + "…") for m in head[-40:]]
     return prev, short + rest
-
 
 RECON_SYSTEM = """你在为一次跨论文的提问挑选相关文献。给你一份编号清单（标题、有没有析读摘要）。
 从中挑出与问题最相关的 2~4 篇。只输出一个 JSON 数组（元素是编号整数），不要输出任何别的文字；
 一篇都不相关就输出 []。"""
-
 
 def _paper_by_title(title: str):
     """按标题找论文（大小写不敏感）。全等优先；其次唯一包含；都不中返回 None。
@@ -2024,7 +1768,6 @@ def _paper_by_title(title: str):
                 if t in (r["title"] or "").strip().lower()
                 or (r["title"] or "").strip().lower() in t]
     return contains[0]["id"] if contains else None
-
 
 def _recon_pick(question: str, papers: list):
     """范围是全库/分类时的第一拍"侦察"：只喂标题清单（几十篇也才几千字），
@@ -2059,7 +1802,6 @@ def _recon_pick(question: str, papers: list):
     except Exception:
         return [p["id"] for p in papers[:3]]
 
-
 def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
 
@@ -2068,7 +1810,7 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     """
     pid = p["id"]
     uid = db.qa_add(pid, "user", question, conv_id=conv_id)
-    hist = db.qa_history(pid, conv_id)[:-1]      # 不含刚写进去的这条；删过的消息这里自然就没有了
+    hist = db.qa_history(pid, conv_id)[:-1]
     buf = []
     try:
         if _demo_mode():
@@ -2077,8 +1819,6 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             summary, ctx = _context(pid, conv_id, hist)
             pids = [pid] + [x for x in (ref_pids or []) if x != pid]
             hits = db.glossary_hits_all(pids, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
-            # 渐进式披露：先在勾选范围里挑最相关的几篇（超过 3 篇才需要侦察一次），
-            # 再把这几篇的全文装进上下文——摘要只是挑篇的依据，不是回答的依据。
             others = []
             cand = [x for x in (ref_pids or []) if x != pid]
             if len(cand) > 3:
@@ -2106,13 +1846,11 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
                         llm.cites_of(ans), conv_id=conv_id)
         yield _sse({"type": "error", "message": hint, "user_id": uid, "assistant_id": aid})
 
-
 @app.get("/api/library/overview")
 def library_overview():
     """跨文献引用选择器的数据源：全部论文 + 分类映射。
     一次请求带全（库是本地的，几百篇也只是几十 KB），前端按分类分组勾选。"""
     return {"papers": db.list_papers(), "colls": db.collections_list(), "map": db.collection_map()}
-
 
 @app.post("/api/papers/{pid}/ask")
 def ask(pid: str, body: dict):
@@ -2120,7 +1858,7 @@ def ask(pid: str, body: dict):
     question = (body.get("question") or "").strip()
     if not question:
         raise HTTPException(400, "问题不能为空")
-    _require_paras(pid)          # 没有原文就没有"只依据原文"这回事，它不该去答
+    _require_paras(pid)
     conv_id = body.get("conv_id")
     if conv_id:
         c = db.conv_get(int(conv_id))
@@ -2129,18 +1867,14 @@ def ask(pid: str, body: dict):
         conv_id = int(conv_id)
     else:
         conv_id = db.conv_list(pid)[0]["id"]
-    # 跨文献引用：refs 是《标题》列表（输入框里用 / 勾选的），scope="library" 表示
-    # 「全库·自动挑相关」。解析失败就当没引——提问永远能发出去，引用只是增强。
     ref_pids = []
     for t in (body.get("refs") or []):
         pid2 = _paper_by_title(t)
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
-    # 校验都过了再开流：一旦开始 SSE，HTTP 头已经发出去，改不成 4xx 了
     return StreamingResponse(_stream_answer(p, conv_id, question, ref_pids), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                                       "Connection": "keep-alive"})
-
 
 @app.get("/api/papers/{pid}/conversations")
 def conversations(pid: str):
@@ -2152,14 +1886,12 @@ def conversation_new(pid: str, body: dict = None):
     _paper_or_404(pid)
     return {"id": db.conv_create(pid, (body or {}).get("title") or "新对话")}
 
-
 @app.patch("/api/conversations/{cid}")
 def conversation_patch(cid: int, body: dict):
     if not db.conv_get(cid):
         raise HTTPException(404, "会话不存在")
     db.conv_rename(cid, (body.get("title") or "新对话").strip() or "新对话")
     return {"ok": True}
-
 
 @app.delete("/api/conversations/{cid}")
 def conversation_delete(cid: int):
@@ -2168,14 +1900,12 @@ def conversation_delete(cid: int):
     db.conv_delete(cid)
     return {"ok": True}
 
-
 @app.get("/api/papers/{pid}/qa-history")
 def qa_history(pid: str, conv_id: int = None):
     _paper_or_404(pid)
     if conv_id is None:
         return {"messages": db.qa_history(pid), "conv_id": None}
     return {"messages": db.qa_history(pid, conv_id), "conv_id": conv_id}
-
 
 @app.post("/api/papers/{pid}/qa-save")
 def qa_save(pid: str, body: dict):
@@ -2190,7 +1920,6 @@ def qa_save(pid: str, body: dict):
     return {"ok": True, "citations": llm.cites_of(content),
             "assistant_id": aid, "user_id": db.qa_last_user_id(pid, conv_id) if conv_id else None}
 
-
 @app.post("/api/papers/{pid}/regenerate")
 def qa_regenerate(pid: str, body: dict):
     """重新生成：把这一问一答都撤掉，返回原问题，由前端重新发问。"""
@@ -2203,12 +1932,10 @@ def qa_regenerate(pid: str, body: dict):
         raise HTTPException(400, "没有可重新生成的问题")
     return {"question": q}
 
-
 @app.delete("/api/conversations/{cid}/messages/{mid}")
 def qa_delete_one(cid: int, mid: int):
     db.qa_delete(mid)
     return {"ok": True}
-
 
 @app.delete("/api/papers/{pid}/qa-history")
 def qa_clear(pid: str):
@@ -2216,13 +1943,11 @@ def qa_clear(pid: str):
     db.qa_clear(pid)
     return {"ok": True}
 
-
 # ---------------- 文库分类 ----------------
 
 @app.get("/api/collections")
 def collections():
     return {"collections": db.collections_list(), "map": db.collection_map()}
-
 
 @app.post("/api/collections")
 def collection_new(body: dict):
@@ -2230,7 +1955,6 @@ def collection_new(body: dict):
     if not name:
         raise HTTPException(400, "分类要有名字")
     return {"id": db.collection_add(name)}
-
 
 @app.patch("/api/collections/{cid}")
 def collection_patch(cid: int, body: dict):
@@ -2240,12 +1964,10 @@ def collection_patch(cid: int, body: dict):
     db.collection_rename(cid, name)
     return {"ok": True}
 
-
 @app.delete("/api/collections/{cid}")
 def collection_delete(cid: int):
     db.collection_delete(cid)
     return {"ok": True}
-
 
 @app.put("/api/papers/{pid}/collections")
 def paper_collections_set(pid: str, body: dict):
@@ -2256,7 +1978,6 @@ def paper_collections_set(pid: str, body: dict):
     db.set_paper_collections(pid, ids)
     return {"ok": True, "ids": ids}
 
-
 # ---------------- 翻译 ----------------
 
 def _mock_translate(text: str):
@@ -2265,7 +1986,6 @@ def _mock_translate(text: str):
     for i in range(0, len(t), 3):
         yield t[i:i + 3]
         time.sleep(0.02)
-
 
 def _translate_sse(pid: str, text: str, context: str, hits: list):
     """流式翻译。事件：delta（增量）/ done（术语命中）/ error（人话）。
@@ -2288,7 +2008,6 @@ def _translate_sse(pid: str, text: str, context: str, hits: list):
     except Exception as e:
         yield _sse({"type": "error", "message": _human_msg(e)})
 
-
 @app.post("/api/papers/{pid}/translate-selection")
 def translate_selection(pid: str, body: dict):
     _paper_or_404(pid)
@@ -2300,7 +2019,6 @@ def translate_selection(pid: str, body: dict):
     return StreamingResponse(_translate_sse(pid, text, context, hits), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-
 @app.post("/api/papers/{pid}/translate-para")
 def translate_para(pid: str, body: dict):
     p = _paper_or_404(pid)
@@ -2311,13 +2029,12 @@ def translate_para(pid: str, body: dict):
         raise HTTPException(400, "缺 idx（要译哪一段）")
     if idx not in paras:
         raise HTTPException(404, "段落不存在")
-    _require_paras(pid)          # 扫描件没有段落可译，直说
+    _require_paras(pid)
     para = paras[idx]
     hits = db.glossary_hit(pid, para["text"])
     ctx = paras.get(idx - 1, {}).get("text", "")
     return StreamingResponse(_translate_sse(pid, para["text"], ctx, hits), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
 
 def _pdf2zh_env(service: str, cfg: dict):
     """整本翻译要的 key 从哪来：**用用户在「设置」里已经填的那一套**，不让他填第二遍。
@@ -2347,18 +2064,12 @@ def _pdf2zh_env(service: str, cfg: dict):
         return envs, "api.deepseek.com"
     return {}, ""
 
-
 @app.post("/api/papers/{pid}/translate-full")
 def translate_full_start(pid: str, force: bool = False):
     p = _paper_or_404(pid)
     cfg = config.load()
     svc = (cfg["pdf2zh"].get("service") or "bing").strip()
     envs, host = _pdf2zh_env(svc, cfg)
-    # 先探一下这个服务连不连得通。连不通的后果不是"慢"而是**永远不动**
-    # （pdf2zh 会在每个请求上重试，CPU 0、界面停在「翻译中」），所以宁可在门口拦住。
-    # 盘上已经有成品就先认领：pdf2zh 是独立进程，eggpaper 退出后它可能才写完——那次
-    # 启动扫描已经过去了，状态被清成 none，用户再点一次会**重译一遍并覆盖**刚做好的文件。
-    # force=1（界面上的「重新整本翻译」）跳过认领：译文打不开就得重译，认领旧文件没意义。
     if not force:
         got = translate_full.adopt_existing(paper_dir(pid))
         if got:
@@ -2370,8 +2081,6 @@ def translate_full_start(pid: str, force: bool = False):
     if used is None:
         raise HTTPException(400, note)
     engine = (cfg["pdf2zh"].get("path") or "").strip()
-    # 引擎自检放在**点按钮这一拍**：后台线程里失败的话，用户要等一轮页级流水线跑完
-    # 才看到错误（还可能被误报成网络问题）。这里当场说清楚，代价是一次 --version。
     exe = translate_full.engine_path(engine)
     ok, why = translate_full.engine_probe_cached(exe)
     if not ok:
@@ -2382,26 +2091,20 @@ def translate_full_start(pid: str, force: bool = False):
     db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 
-
 @app.get("/api/papers/{pid}/translate-status")
 def translate_full_status(pid: str):
     p = _paper_or_404(pid)
     j = translate_full.job(pid)
     if j["status"] == "done":
-        # 盘上只落译文版（省盘），dual 在这里是空串——别拿它去清掉旧版留下的双语文件：
-        # 只有 mono 变了才落库；mono 没动就不写，dual_path 保持原样（派生缓存继续有效）
         if (j["mono"] or "") != (p["mono_path"] or ""):
             old_dual = p.get("dual_path") or ""
             db.update_paper(pid, mono_path=j["mono"] or "", dual_path="",
                             translate_status="done", translate_error="")
-            # 重译过的论文，上一版的双语文件就是**旧译文**：不删的话「双语」按 dual_path
-            # 还在盘上会直接端出来，用户看着旧译文以为重译没生效。删掉让首开按新 mono 重派生。
             if old_dual:
                 _rm(old_dual)
     elif j["status"] == "error" and p["translate_status"] != "error":
         db.update_paper(pid, translate_status="error", translate_error=j["error"])
     return j
-
 
 # ---------------- 术语表 ----------------
 
@@ -2409,7 +2112,6 @@ def translate_full_status(pid: str):
 def glossary_list(pid: str):
     _paper_or_404(pid)
     return db.glossary_list(pid)
-
 
 @app.post("/api/papers/{pid}/glossary")
 def glossary_add(pid: str, body: dict):
@@ -2422,16 +2124,12 @@ def glossary_add(pid: str, body: dict):
                           body.get("source", "manual"))
     return {"id": gid}
 
-
-# 一篇术语的生成互斥锁：同一篇被点两次（比如飞速切页签、或两个窗口）只该花一次 token。
 _terms_locks: dict = {}
 _terms_guard = threading.Lock()
-
 
 def _terms_lock(pid: str) -> threading.Lock:
     with _terms_guard:
         return _terms_locks.setdefault(pid, threading.Lock())
-
 
 @app.post("/api/papers/{pid}/glossary/generate")
 def glossary_generate(pid: str):
@@ -2444,7 +2142,7 @@ def glossary_generate(pid: str):
     _paper_or_404(pid)
     with _terms_lock(pid):
         rows = db.glossary_list(pid)
-        if rows:                       # 并发下第二个请求在这里等到结果，直接拿走
+        if rows:
             return {"items": rows, "generated": False, "abbrs": _abbrs_of(pid)}
         _require_paras(pid)
         p = db.get_paper(pid)
@@ -2452,9 +2150,7 @@ def glossary_generate(pid: str):
             p["title"], db.get_paragraphs(pid))
         if not _save_terms(pid, got):
             raise HTTPException(503, "模型这次没给出术语，过一会儿再试一次")
-        # abbrs 一并回：缩写表和术语表是同一批的产物，界面不用为此再取一次论文
         return {"items": db.glossary_list(pid), "generated": True, "abbrs": _abbrs_of(pid)}
-
 
 def _abbrs_of(pid: str) -> dict:
     row = db.get_paper(pid)
@@ -2464,12 +2160,10 @@ def _abbrs_of(pid: str) -> dict:
     except Exception:
         return {}
 
-
 @app.delete("/api/glossary/{gid}")
 def glossary_delete(gid: int):
     db.glossary_delete(gid)
     return {"ok": True}
-
 
 # ---------------- 前端静态托管（构建后） ----------------
 
@@ -2480,14 +2174,10 @@ def guide_page():
                         media_type="text/html; charset=utf-8",
                         headers={"Cache-Control": "no-cache, must-revalidate"})
 
-
 DIST = appinfo.dist_dir()
 if os.path.isdir(DIST):
     from fastapi.staticfiles import StaticFiles
 
-    # index.html 不能缓存：它里面写着这次构建的 chunk 文件名，缓存住旧的就会去要
-    # 已经不存在的 chunk（新装的 _internal 里旧 chunk 已被清掉）。chunk 自己带
-    # 内容 hash，可以放心长缓存——**只有这个壳必须每次问服务器**。
     @app.get("/", include_in_schema=False)
     @app.get("/index.html", include_in_schema=False)
     def _index():
@@ -2497,11 +2187,9 @@ if os.path.isdir(DIST):
 
     app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
 
-
 @app.on_event("startup")
 def _mark_ready():
     READY.set()
-
 
 def serve(port: int = 8430, log_level: str = "info"):
     """起服务。
@@ -2516,7 +2204,6 @@ def serve(port: int = 8430, log_level: str = "info"):
         uvicorn.run(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     else:
         uvicorn.run(app, host="127.0.0.1", port=port, log_level=log_level)
-
 
 if __name__ == "__main__":
     import argparse

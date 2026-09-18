@@ -32,25 +32,22 @@ import sys
 import threading
 import time
 
-JOBS = {}      # paper_id -> {status, error, dual, mono, service, note, pages, started}
-_RUNNING = {}  # paper_id -> Popen：删论文时要能把它掐掉（见 cancel）
-_PROBE = {}    # host -> (ok, why, at)  连通性预检的短期缓存
+JOBS = {}
+_RUNNING = {}
+_PROBE = {}
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _PROG = re.compile(r"(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
-# "key 错了"这一类：pdf2zh 只会逐段刷日志、不会自己停，所以这里主动认
 AUTH_FAILS = ("authentication fails", "invalid api key", "incorrect api key",
               "401 - ", "unauthorized", "invalid_api_key")
 
-PROBE_TIMEOUT = 2.5      # 预检单次连接的上限：够连通的早连通了，不通的也别让用户等
-PROBE_TTL = 600          # 一次预检结果管 10 分钟，别每次点按钮都白等 2.5 秒
+PROBE_TIMEOUT = 2.5
+PROBE_TTL = 600
 
-# 各服务要先能连上的主机。故意不写全：拿不准的（自建端点、本地模型、需要另配的
-# 云服务）留空 = 不预检——宁可让它自己去失败，也别在这里误报"不通"挡住一条能走的路。
 SERVICE_HOST = {
     "google": "translate.google.com",
     "bing": "www.bing.com",
     "deepl": "api-free.deepl.com",
-    "openai": "api.openai.com",              # 有 provider.base_url 时以它为准
+    "openai": "api.openai.com",
     "deepseek": "api.deepseek.com",
     "zhipu": "open.bigmodel.cn",
     "silicon": "api.siliconflow.cn",
@@ -60,16 +57,14 @@ SERVICE_HOST = {
     "groq": "api.groq.com",
     "tencent": "tmt.tencentcloudapi.com",
 }
-# 配的服务不通时挨个试：免费、不需要 key、国内基本能连
 AUTO_FALLBACK = ("bing",)
-
 
 # ---------------- 连通性预检 ----------------
 
 def probe(host: str, port: int = 443, timeout: float = PROBE_TIMEOUT, ttl: float = PROBE_TTL):
     """能不能连上 host:port。返回 (是否通, 不通时的一句人话)。结果缓存 ttl 秒。"""
     if not host:
-        return True, ""                      # 不知道连哪儿就别拦
+        return True, ""
     hit = _PROBE.get(host)
     now = time.time()
     if hit and now - hit[2] < ttl:
@@ -84,7 +79,6 @@ def probe(host: str, port: int = 443, timeout: float = PROBE_TIMEOUT, ttl: float
         why = f"{host} 连不上（{type(e).__name__}）"
     _PROBE[host] = (ok, why, now)
     return ok, why
-
 
 def choose_service(service: str, host: str = ""):
     """定下这次真正用哪个服务。返回 (服务名或 None, 给用户的一句话)。
@@ -102,7 +96,6 @@ def choose_service(service: str, host: str = ""):
         return alt, f"{service} 在你的网络下不通（{why}），已自动改用 {alt}"
     return None, (f"{why}。「设置 → 整本翻译服务」换一个能用的（国内推荐 bing），"
                   f"或者先连上外网再试。")
-
 
 # ---------------- 引擎：在哪、能不能跑 ----------------
 
@@ -127,8 +120,6 @@ def engine_path(explicit: str = "") -> str:
         cand.append(w)
     here = os.path.dirname(os.path.abspath(sys.executable))
     cand.append(os.path.join(here, "pdf2zh.exe"))
-    # 我们的"引擎舱"：一键下载装的、或用户自己解压进来的官方 zip（解出来是带版本号
-    # 子目录，所以递归找），都在 {数据目录}/engines/ 下——那目录升级、卸载都不动
     try:
         import engine_install
         got = engine_install.find_installed()
@@ -148,7 +139,6 @@ def engine_path(explicit: str = "") -> str:
         if p and os.path.exists(p):
             return p
     return ""
-
 
 def engine_probe(path: str) -> tuple:
     """跑一次 `pdf2zh --version`，确认它**真的能跑**。返回 (可用, 说明)。
@@ -178,9 +168,7 @@ def engine_probe(path: str) -> tuple:
     tail = out.splitlines()[-1].strip()[:160] if out else ""
     return False, tail or f"退出码 {r.returncode}"
 
-
-_ENGINE = {}     # path -> {"mtime": float, "ok": bool, "why": str, "at": float}
-
+_ENGINE = {}
 
 def engine_probe_cached(path: str, ttl: float = 900) -> tuple:
     """engine_probe 的缓存版。`--version` 实测要 3 秒（pdf2zh 得 import 整套依赖），
@@ -199,7 +187,6 @@ def engine_probe_cached(path: str, ttl: float = 900) -> tuple:
     _ENGINE[path] = {"mtime": mt, "ok": ok, "why": why, "at": time.time()}
     return ok, why
 
-
 # ---------------- 起进程 ----------------
 
 def _cmd(pdf_path, out_dir, service, extra, cfg_path="", engine: str = ""):
@@ -207,12 +194,8 @@ def _cmd(pdf_path, out_dir, service, extra, cfg_path="", engine: str = ""):
     if exe:
         base = [exe]
     elif getattr(sys, "frozen", False):
-        # 打包版没带 pdf2zh（AGPL 引擎另装）：这里直接抛 FileNotFoundError。
-        # **调用方必须先做 engine_probe 自检**，把"引擎没找到/跑不起来"在人话里说清；
-        # 让这个异常冒泡到页级流水线的兜底 except，用户拿到的是
-        # "所有页面都没译成（bing 连不上或被限流）"——把他往网络问题上引（踩过）。
         raise FileNotFoundError("pdf2zh")
-    else:                                    # 兜底：模块方式（新版 pdf2zh-next 支持）
+    else:
         base = [sys.executable, "-m", "pdf2zh"]
     cmd = base + [pdf_path, "-o", out_dir, "--service", service]
     if cfg_path:
@@ -220,7 +203,6 @@ def _cmd(pdf_path, out_dir, service, extra, cfg_path="", engine: str = ""):
     if extra:
         cmd += shlex.split(extra)
     return cmd
-
 
 def _no_window():
     """(creationflags, startupinfo)：让子进程**不要**开出控制台窗口。
@@ -232,12 +214,10 @@ def _no_window():
         return 0, None
     si = subprocess.STARTUPINFO()
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 0                       # SW_HIDE
-    return 0x08000000, si                    # CREATE_NO_WINDOW
-
+    si.wShowWindow = 0
+    return 0x08000000, si
 
 PDF2ZH_CONFIG = os.path.join(os.path.expanduser("~"), ".config", "PDFMathTranslate", "config.json")
-
 
 def pinned_config(out_dir: str, pid: str, overlay: dict = None) -> str:
     """把 pdf2zh 的配置"钉"在一份临时副本上，返回路径（拿不到就返回空 = 不传）。
@@ -271,7 +251,6 @@ def pinned_config(out_dir: str, pid: str, overlay: dict = None) -> str:
     except Exception:
         return ""
 
-
 def sweep_configs(out_dir: str, keep: str = "", older_than: float = 6 * 3600):
     """清掉陈旧的 --config 副本（里面有 key，别让它躺着）。
 
@@ -295,7 +274,6 @@ def sweep_configs(out_dir: str, keep: str = "", older_than: float = 6 * 3600):
     except OSError:
         pass
 
-
 def cancel(pid: str):
     """删论文时用：把还在跑的 pdf2zh 掐掉。
 
@@ -303,7 +281,7 @@ def cancel(pid: str):
     已删掉的论文文件夹里写回 mono.pdf，用户以为删干净了、盘上却留下孤立的译文文件。
     """
     j = job(pid)
-    j["_abort"] = True                      # 页级流水线：让 worker 别再起下一页
+    j["_abort"] = True
     procs = _RUNNING.get(pid) or []
     for proc in procs:
         try:
@@ -311,7 +289,6 @@ def cancel(pid: str):
         except Exception:
             pass
     return bool(procs)
-
 
 def adopt_existing(out_dir: str):
     """盘上已经有"看起来完整"的成品就认领，返回 {"dual","mono"}（缺的一方是空串）或 None。
@@ -329,48 +306,28 @@ def adopt_existing(out_dir: str):
         return None
     return {"dual": dual if dual_ok else "", "mono": mono if mono_ok else ""}
 
-
 def job(pid: str) -> dict:
     return JOBS.setdefault(pid, {"status": "none", "error": "", "dual": "", "mono": "",
                                  "service": "", "note": "", "pages": [0, 0], "started": 0.0})
 
-
-
 # ---------------- 整本翻译：按页流水线 ----------------
-# 为什么不再"一个 pdf2zh 进程译整本"：实测它对单段翻译失败是**无限重试**
-#（tenacity 默认没有上限），一页挂住全本挂住——8 页的论文停在 4/8 十几分钟不动
-#（用户报的"卡在中间"），重试整本也没用：还是那个段落、还是挂。
-# 改成按页起进程：
-#   · 进度 = 已完成的页数，粒度天然精确，不会再"卡在中间不知道怎么回事"；
-#   · 单页有超时，坏页最多拖几分钟就放弃，**绝不让一页拖死整本**；
-#   · 失败的页回退用原文（双语里这一页是两页原文），成品永远完整、页码永不错位；
-#   · 页 worker 并行（免费服务 3 页、LLM 服务 2 页），墙钟时间比串行短；
-#   · pdf2zh 自带译文缓存，重试的那页也快；
-#   · 没跑完就中断时，译成的页留在 .pages/ 里，重跑直接复用（48h 没人回收）。
 
-PAGE_WORKERS_FREE = 3    # bing/google 这类免费服务没有严格限流：三页并行使墙钟短三分之一
-PAGE_WORKERS_LLM = 2     # LLM 翻译一段一次调用，开大了只会更快撞限流（429 → 页失败回退原文）
-PAGE_TIMEOUT = 150       # 单页上限 2.5 分钟：正常一页几秒到几十秒；坏页早放弃早回退
-PAGE_TRIES = 2           # 每页试两次（第二次走 pdf2zh 的译文缓存，通常很快）
+PAGE_WORKERS_FREE = 3
+PAGE_WORKERS_LLM = 2
+PAGE_TIMEOUT = 150
+PAGE_TRIES = 2
 
-# LLM 翻译是一段一次模型调用：一页几十段、再撞上限流重试，两分半真的不够——
-# 超时杀掉重试再杀掉，用户看到的就是"进度爬几页退一页、永远到不了头"（实测 bing 6 分钟
-# 译完的论文，openai 会跑十几分钟）。这些服务给双倍时间，换"每一页都译成"。
 LLM_SERVICES = {"openai", "deepseek", "zhipu", "silicon", "modelscope",
                 "gemini", "grok", "groq"}
-
 
 def _page_workers(service: str) -> int:
     return PAGE_WORKERS_LLM if service in LLM_SERVICES else PAGE_WORKERS_FREE
 
-
 def _page_timeout(service: str) -> float:
     return PAGE_TIMEOUT * 2 if service in LLM_SERVICES else PAGE_TIMEOUT
 
-
 def _page_dir(out_dir: str, pno: int, t: int) -> str:
     return os.path.join(out_dir, ".pages", f"p{pno}-{t}")
-
 
 def _page_done(pdir: str, stem: str):
     """这一页的目录里有没有一份完整的译文版产物（%%EOF 收尾）。
@@ -378,7 +335,6 @@ def _page_done(pdir: str, stem: str):
     有 → 返回 {"mono": 路径}；没有 → None。重跑时靠它跳过已译好的页。"""
     mono = os.path.join(pdir, stem + "-mono.pdf")
     return {"mono": mono} if _pdf_complete(mono) else None
-
 
 def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
     """双语版 = 原文奇页 + 译文偶页交错。盘上只留译文版（省盘：双语是它的两倍大），
@@ -400,7 +356,6 @@ def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
         src.close(); mono.close(); dual.close()
     return dual_path
 
-
 def derive_mono(dual_path: str, mono_path: str) -> str:
     """旧版存量只有双语版时，抽偶数页（0 基 2i+1）合成译文版。"""
     import pymupdf
@@ -413,7 +368,6 @@ def derive_mono(dual_path: str, mono_path: str) -> str:
     finally:
         dual.close(); mono.close()
     return mono_path
-
 
 def sweep_page_dirs(papers_root: str, max_age: float = 48 * 3600):
     """回收陈旧的 .pages/ 页级目录（页级产物各自内嵌整本字体，一份好几 MB）。
@@ -434,7 +388,6 @@ def sweep_page_dirs(papers_root: str, max_age: float = 48 * 3600):
         except OSError:
             pass
 
-
 def _sweep_key_copies(page_root: str, pid: str):
     """页级目录里的 pdf2zh 配置副本带着 key：留着复用是**为了省时间**，不是为了存 key。
     目录留下之前把副本扫掉（正文产物不需要它们）。"""
@@ -445,7 +398,6 @@ def _sweep_key_copies(page_root: str, pid: str):
                     os.remove(os.path.join(dirpath, fn))
                 except OSError:
                     pass
-
 
 def _page_env(envs: dict) -> dict:
     """pdf2zh 子进程的环境。HOME/USERPROFILE 指到 eggpaper 数据目录下的 home/：
@@ -462,7 +414,6 @@ def _page_env(envs: dict) -> dict:
     except Exception:
         pass
     return env
-
 
 def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
               envs: dict, cfg: str, proc_reg: list, auth_out: list, engine: str = "") -> tuple:
@@ -495,7 +446,7 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
         for raw in proc.stdout:
             line = _ANSI.sub("", raw).strip()
             if not line or chr(13) in line or _PROG.search(line):
-                continue                          # 进度行不进 tail（太吵）
+                continue
             low = line.lower()
             if any(k in low for k in AUTH_FAILS):
                 auth_out.append(f"{service} 服务的 key 不对（pdf2zh 报鉴权失败）：{line[-160:]}")
@@ -511,11 +462,7 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
         return None, list(tail)
     stem = os.path.splitext(os.path.basename(pdf_path))[0]
     mono = os.path.join(out_dir, stem + "-mono.pdf")
-    # 半截文件不算数：进程被超时杀掉时 pdf2zh 可能刚写了个开头——
-    # 认了它，组装时 pymupdf 才炸（整本报错）；按"%%EOF 收尾"判完整，坏页老老实实回退
     if _pdf_complete(mono):
-        # 页级产物是"整本只译一页"，双语那份是纯开销（成品双语由 原文+译文 派生）——用完即删，
-        # 一个页目录少占一大半
         try:
             os.remove(os.path.join(out_dir, stem + "-dual.pdf"))
         except OSError:
@@ -524,7 +471,6 @@ def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
     if not any("单页超时" in t for t in tail):
         tail.append(f"单页失败（退出码 {proc.poll()}）")
     return None, list(tail)
-
 
 def _pdf_complete(path: str) -> bool:
     """文件存在且以 %%EOF 收尾（写到一半被杀的文件没有这个）。"""
@@ -537,7 +483,6 @@ def _pdf_complete(path: str) -> bool:
     except OSError:
         return False
 
-
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "") -> dict:
     """按页流水线翻译整本：进度=完成页数，坏页回退原文，一页卡不住整本。"""
@@ -547,17 +492,13 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
 
     def run():
         _say = say = log or (lambda _m: None)
-        j.pop("_abort", None)     # 上次取消留下的标志必须清掉，否则这一次一页都起不来
+        j.pop("_abort", None)
         j.update(status="running", error="", dual="", mono="", service=service,
                  note=note, pages=[0, 0], started=time.time())
         page_root = os.path.join(out_dir, ".pages")
         cfg_copy = ""
-        procs = []                           # 在跑的页进程，cancel() 按这个掐
-        results = {}                         # pno(0 基) -> {"dual","mono"}：先装复用的，再装新译的
-        # **先自检引擎，再谈翻译**。引擎不行的话每一页都会失败，最后报出来的却是
-        # "所有页面都没译成（bing 连不上或被限流）"——把用户支去换服务、查网络，
-        # 而真正的原因跟网络毫无关系（踩过：别的电脑上整本翻译"一直报错、换 openai
-        # 也不行"，就是 pdf2zh 没装好）。宁可在门口说清楚。
+        procs = []
+        results = {}
         exe = engine_path(engine)
         ok, why = engine_probe_cached(exe)
         if not ok:
@@ -569,8 +510,6 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         try:
             import pymupdf
             os.makedirs(out_dir, exist_ok=True)
-            # 源文件没变 → 上次没跑完就中断的成功页**直接复用**（重跑不再从零来一遍）；
-            # 变了（重新导入/替换）→ 全部作废重来。标记文件就是这次校验的凭据。
             try:
                 sig = json.dumps({"m": int(os.path.getmtime(pdf_path)),
                                   "s": os.path.getsize(pdf_path)})
@@ -593,7 +532,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             with pymupdf.open(pdf_path) as doc:
                 n = len(doc)
             stem = os.path.splitext(os.path.basename(pdf_path))[0]
-            for pno in range(n):                     # 找回上次留下的成功页
+            for pno in range(n):
                 for t in range(PAGE_TRIES):
                     got = _page_done(_page_dir(out_dir, pno, t), stem)
                     if got:
@@ -602,14 +541,13 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             if results:
                 _say(f"整本翻译 {pid}: 复用上次已译好的 {len(results)}/{n} 页，只译剩下的")
             if envs:
-                cfg_copy = pinned_config(page_root, pid)   # 拦住 key 被写进 pdf2zh 的配置
+                cfg_copy = pinned_config(page_root, pid)
             j["pages"] = [len(results), n]
             _RUNNING[pid] = procs
             lock = threading.Lock()
-            auth_error = []                  # 鉴权失败：整本必败，立刻停下
+            auth_error = []
 
             def worker(pno: int):
-                # 单页的一切失败只影响这一页（回退原文），绝不允许拖死整本
                 try:
                     _worker(pno)
                 except Exception as e:
@@ -656,7 +594,6 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 return
 
             # ---- 组装：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文
-            #      派生，见 derive_dual）。失败页译文=原文页，派生时天然得到两页原文 ----
             mono_path = os.path.join(out_dir, "mono.pdf")
             failed = []
             src = pymupdf.open(pdf_path)
@@ -672,7 +609,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                                 mono.insert_pdf(m, from_page=at, to_page=at)
                             ok = True
                         except Exception:
-                            pass     # 产物坏掉（半截文件等）：跟没译成一样，回退原文
+                            pass
                     if not ok:
                         failed.append(pno + 1)
                         mono.insert_pdf(src, from_page=pno, to_page=pno)
@@ -682,10 +619,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                                    "换一个翻译服务（设置 → 整本翻译）再试。")
                     say(f"整本翻译失败 {pid}：全部页面失败")
                     return
-                # garbage=4：页级产物各自内嵌了整本的字体资源，不回收的话成品虚胖一倍多
                 mono.save(mono_path, garbage=4, deflate=True)
-                # 旧的双语版是按**上一轮**译文派生的，留着会跟新译文错位——删掉，
-                # 首开「双语」时按新译文重派（dual 是派生缓存，不是独立成品）
                 try:
                     os.remove(os.path.join(out_dir, "dual.pdf"))
                 except OSError:
@@ -704,12 +638,10 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             say(f"整本翻译失败 {pid}：{type(e).__name__}: {str(e)[-300]}")
         finally:
             _RUNNING.pop(pid, None)
-            # 成功 → 页级产物已组装进成品，整目录回收；失败/取消 → 译成的页留给下次
-            # 重跑复用（48 小时没人回来，启动清扫收走）。一页都没成的没有可复用的东西。
             if j["status"] == "done" or not results:
                 shutil.rmtree(page_root, ignore_errors=True)
             else:
-                _sweep_key_copies(page_root, pid)   # 目录留下，key 副本不留
+                _sweep_key_copies(page_root, pid)
             for proc in procs:
                 try:
                     proc.kill()

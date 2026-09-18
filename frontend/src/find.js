@@ -1,21 +1,3 @@
-/* 把一段引文对回纸上的具体位置。
- *
- * 为什么不用段落框：段落的 bbox 是整段的（含没被引用的字），拿它画高亮会糊一大片。
- * 模型抄回来的引文是**句子**，所以要把这句话对回字符，再取字符的矩形——
- * 划了几行、每行划多长，才跟原文一致。
- *
- * 归一化是必须的：PDF 的行尾常断在连字符上（"pro-" / "jector"），正文里又常有
- * 换行空格和标点差异。所以匹配前两边都只留字母/数字/汉字并小写，
- * 连字符、空格、标点一律丢掉——"pro-jector" 和 "projector" 自然就同形了。
- *
- * 两条路各司其职：
- *   lineSpanOf() —— 用后端给的行级坐标，不需要 DOM，算得出来就能用来定位（页边排序、
- *                   跳转目标）。给的是"覆盖第几行到第几行"和首行 y。
- *   findQuoteRects() —— 用已渲染的 textLayer 建 Range，range.getClientRects()
- *                   一次拿到逐行的精确矩形（该多长就多长），用来画线。
- *   sentenceAround() —— 引文只是半句时，用段落原文补成整句（见下面那一段注释）。
- */
-
 const KEEP = /[0-9a-z\u4e00-\u9fff]/
 
 /* PDF 里的连字（ligature）是**一个**字符：ﬁ U+FB01、ﬂ U+FB02 这些。
@@ -78,8 +60,6 @@ function indexOf(root) {
   while ((node = walker.nextNode())) {
     const t = node.nodeValue || ''
     for (let i = 0; i < t.length; i++) {
-      // 连字必须先折开，跟 normText 一个口径：pdf.js 的文本层里 "scientiﬁc" 是一个字符，
-      // 不折的话它在索引里被整个丢掉，查 scientific / efficiency / flow 一律查不到
       const lig = LIG[t[i].toLowerCase()]
       if (lig) {
         for (const ch of lig) { idx.norm += ch; idx.map.push(node, i) }
@@ -217,7 +197,6 @@ export function sentenceAround(text, quote) {
   if (last < text.length) spans.push(text.slice(last))   // 段末那句可能没有句号收尾
   for (const s of spans) {
     const n = normText(s)
-    // 逐字命中最好；模型抄错一两个字时，用"对上的部分占八成"这种宽容口径也认
     if (n && (n.indexOf(q) >= 0 || matchLen(n, quote) >= q.length * 0.8)) {
       const t = s.trim()
       return t.length <= 400 ? t : ''       // 整句过长（罕见）就算了，别划掉半页

@@ -68,7 +68,6 @@ CREATE TABLE IF NOT EXISTS reading_log(
 );
 """
 
-
 def _get() -> sqlite3.Connection:
     global _conn
     if _conn is None:
@@ -78,7 +77,6 @@ def _get() -> sqlite3.Connection:
         _migrate(_conn)
         _conn.commit()
     return _conn
-
 
 def _migrate(c: sqlite3.Connection):
     """惰性迁移：旧库补列。"""
@@ -92,33 +90,26 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE papers ADD COLUMN abbrs TEXT",
         "ALTER TABLE papers ADD COLUMN evidence_qs TEXT",
         "ALTER TABLE papers ADD COLUMN advisor TEXT",
-        "ALTER TABLE paragraphs ADD COLUMN lines TEXT",   # 行级坐标：页边引文要按行画
-        "ALTER TABLE qa_messages ADD COLUMN conv_id INTEGER",   # 旧问答没有会话，迁移到默认会话
-        "ALTER TABLE papers ADD COLUMN last_read_at TEXT",      # 上次读到什么时候（文库排序用）
-        "ALTER TABLE papers ADD COLUMN authors TEXT",           # 第一作者（文库列表上就显示这一条）
-        "ALTER TABLE conversations ADD COLUMN summary TEXT",    # 较早对话压缩成的摘要（不丢关键信息）
-        "ALTER TABLE conversations ADD COLUMN summary_upto INTEGER DEFAULT 0",  # 摘要已折到哪一条
-        "ALTER TABLE papers ADD COLUMN citation TEXT",          # 引用信息：首页抄下来的作者/刊名/卷期页/DOI
-        # 眉批类型从"九选一"放开成开放词表：label 是自造的短标签，band 决定它的笔触档位
+        "ALTER TABLE paragraphs ADD COLUMN lines TEXT",
+        "ALTER TABLE qa_messages ADD COLUMN conv_id INTEGER",
+        "ALTER TABLE papers ADD COLUMN last_read_at TEXT",
+        "ALTER TABLE papers ADD COLUMN authors TEXT",
+        "ALTER TABLE conversations ADD COLUMN summary TEXT",
+        "ALTER TABLE conversations ADD COLUMN summary_upto INTEGER DEFAULT 0",
+        "ALTER TABLE papers ADD COLUMN citation TEXT",
         "ALTER TABLE marginalia ADD COLUMN label TEXT",
         "ALTER TABLE marginalia ADD COLUMN band TEXT",
-        # 文献类型：research / review（导入时启发式判定；综述走另一套五问②、谱系卡与略读护栏）
         "ALTER TABLE papers ADD COLUMN paper_type TEXT DEFAULT ''",
-        # 内容指纹（sha256）：改了名的同一份文件不再占第二份库空间，批注/译文全复用已有那篇
         "ALTER TABLE papers ADD COLUMN pdf_hash TEXT DEFAULT ''",
     ):
         try:
             c.execute(stmt)
         except sqlite3.OperationalError:
             pass
-    # 删掉早期版本的"种子术语库"：那批行的 paper_id 是空的，属于全库共用词表。
-    # 现在的口径是**一篇文献一份**（用户明说不要种子库）。留着既显示不出来，
-    # 又会让"这篇有几条术语"的统计全错。每次启动都跑一遍，删的是本就不该存在的东西。
     try:
         c.execute("DELETE FROM glossary WHERE paper_id IS NULL OR paper_id=''")
     except sqlite3.OperationalError:
         pass
-
 
 def q(sql: str, params=(), commit: bool = False):
     with _lock:
@@ -128,10 +119,8 @@ def q(sql: str, params=(), commit: bool = False):
             _get().commit()
         return rows
 
-
 def new_id() -> str:
     return uuid.uuid4().hex[:10]
-
 
 # ---------- papers ----------
 
@@ -140,22 +129,18 @@ def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int, a
       (pid, filename, title, path, n_pages, authors, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
     return pid
 
-
 def list_papers():
     return [dict(r) for r in q(
         "SELECT id, filename, title, authors, n_pages, created_at, last_read_at, analysis_status, "
         "marginalia_status, translate_status FROM papers ORDER BY created_at DESC")]
 
-
 def get_paper(pid: str):
     rows = q("SELECT * FROM papers WHERE id=?", (pid,))
     return dict(rows[0]) if rows else None
 
-
 def update_paper(pid: str, **fields):
     keys = ",".join(f"{k}=?" for k in fields)
     q(f"UPDATE papers SET {keys} WHERE id=?", (*fields.values(), pid), commit=True)
-
 
 def find_duplicate(filename: str, size: int, pdf_hash: str = ""):
     """找同一份 PDF 的已有论文，返回它的 id（没有则 None）。
@@ -178,12 +163,10 @@ def find_duplicate(filename: str, size: int, pdf_hash: str = ""):
             continue
     return None
 
-
 def papers_missing_hash():
     """还没算过内容指纹的论文（启动后的回填线程按这份清单慢慢补）。"""
     return [(r["id"], r["path"]) for r in
             q("SELECT id, path FROM papers WHERE pdf_hash IS NULL OR pdf_hash=''")]
-
 
 def purge_paper(pid: str):
     """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
@@ -192,7 +175,6 @@ def purge_paper(pid: str):
               "qa_messages", "conversations", "paper_collections", "answers"):
         q(f"DELETE FROM {t} WHERE paper_id=?", (pid,), commit=True)
     q("DELETE FROM papers WHERE id=?", (pid,), commit=True)
-
 
 # ---------- 现场生成问题的答案缓存 ----------
 
@@ -205,7 +187,6 @@ def answers_all(pid: str) -> dict:
             pass
     return out
 
-
 def answer_get(pid: str, key: str):
     rows = q("SELECT json FROM answers WHERE paper_id=? AND key=?", (pid, key))
     if not rows:
@@ -215,17 +196,12 @@ def answer_get(pid: str, key: str):
     except ValueError:
         return None
 
-
 def answers_clear(pid: str):
-    # 骨架/眉批重算过之后，这些生成答案的缓存就是旧结论了——必须作废，
-    # 否则「还能做什么」会一直引用已经不存在的主张与局限。
     q("DELETE FROM answers WHERE paper_id=?", (pid,), commit=True)
-
 
 def answer_put(pid: str, key: str, data):
     q("INSERT OR REPLACE INTO answers(paper_id, key, json) VALUES(?,?,?)",
       (pid, key, json.dumps(data, ensure_ascii=False)), commit=True)
-
 
 # ---------- 文库分类（Zotero 的 collection 语义：一篇可属于多类） ----------
 
@@ -234,21 +210,17 @@ def collections_list():
         "SELECT c.id, c.name, (SELECT COUNT(*) FROM paper_collections p WHERE p.coll_id=c.id) AS n "
         "FROM collections c ORDER BY c.name COLLATE NOCASE")]
 
-
 def collection_add(name: str) -> int:
     q("INSERT INTO collections(name, created_at) VALUES(?,?)",
       (name[:60], time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
 
-
 def collection_rename(cid: int, name: str):
     q("UPDATE collections SET name=? WHERE id=?", (name[:60], cid), commit=True)
-
 
 def collection_delete(cid: int):
     q("DELETE FROM paper_collections WHERE coll_id=?", (cid,), commit=True)
     q("DELETE FROM collections WHERE id=?", (cid,), commit=True)
-
 
 def collection_map():
     """paper_id -> [coll_id]：一次查完，左栏不用每篇再问一次。"""
@@ -257,7 +229,6 @@ def collection_map():
         m.setdefault(r["paper_id"], []).append(r["coll_id"])
     return m
 
-
 def set_paper_collections(pid: str, cids: list):
     with _lock:
         c = _get()
@@ -265,7 +236,6 @@ def set_paper_collections(pid: str, cids: list):
         c.executemany("INSERT OR IGNORE INTO paper_collections(paper_id, coll_id) VALUES(?,?)",
                       [(pid, int(x)) for x in cids])
         c.commit()
-
 
 # ---------- paragraphs ----------
 
@@ -290,18 +260,15 @@ def replace_paragraphs(pid: str, paras: list):
             c.rollback()
             raise
 
-
 def get_paragraphs(pid: str):
     rows = q("SELECT idx, page, bbox, text, in_refs, lines FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,))
     return [dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
                  lines=json.loads(r["lines"]) if r["lines"] else []) for r in rows]
 
-
 def paragraphs_need_lines(pid: str) -> bool:
     """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。"""
     rows = q("SELECT lines FROM paragraphs WHERE paper_id=?", (pid,))
     return bool(rows) and all(not r["lines"] for r in rows)
-
 
 def paragraphs_match(pid: str, paras: list) -> bool:
     """新解析出来的段落和库里存的**是不是同一批**（段数一样、每段的正文也一样）。
@@ -321,12 +288,11 @@ def paragraphs_match(pid: str, paras: list) -> bool:
             return False
     return True
 
-
 # ---------- skeleton ----------
 
 def set_analysis(pid: str, claims: list, annos: list, status: str = "done", error: str = None):
     if not get_paper(pid):
-        return          # 后台析读跑完时这篇可能已被删除：别往空论文上灌数据
+        return
     with _lock:
         c = _get()
         c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
@@ -337,7 +303,6 @@ def set_analysis(pid: str, claims: list, annos: list, status: str = "done", erro
                       [(pid, int(k), v["role"], v["role"], v.get("purpose", "")) for k, v in annos.items()])
         c.execute("UPDATE papers SET analysis_status=?, analysis_error=? WHERE id=?", (status, error, pid))
         c.commit()
-
 
 def clear_ai_results() -> int:
     """清掉"模型生成的、按篇缓存的"那些产物（换演示/真实模式时用）。
@@ -354,7 +319,6 @@ def clear_ai_results() -> int:
         c.commit()
     return n
 
-
 def fail_analysis(pid: str, error: str):
     """析读失败：**只记状态与原因，不动已经存在的 claims/annotations**。
 
@@ -365,12 +329,10 @@ def fail_analysis(pid: str, error: str):
     q("UPDATE papers SET analysis_status='error', analysis_error=? WHERE id=?",
       (error, pid), commit=True)
 
-
 def fail_marginalia(pid: str, error: str):
     """眉批失败：同理，AI 写的那批**留着**，只把状态与原因写下来（用户自己钉的本来就留着）。"""
     q("UPDATE papers SET marginalia_status='error', marginalia_error=? WHERE id=?",
       (error, pid), commit=True)
-
 
 def get_analysis(pid: str):
     paper = get_paper(pid)
@@ -381,22 +343,16 @@ def get_analysis(pid: str):
              for r in q("SELECT * FROM annotations WHERE paper_id=?", (pid,))}
     return paper["analysis_status"], claims, annos
 
-
 def override_annotation(pid: str, para_idx: int, role: str):
     if role:
         q("UPDATE annotations SET role=?, user_override=1 WHERE paper_id=? AND para_idx=?", (role, pid, para_idx), commit=True)
-    else:   # 回到推断
+    else:
         q("UPDATE annotations SET role=inferred_role, user_override=0 WHERE paper_id=? AND para_idx=?", (pid, para_idx), commit=True)
 
-
 # ---------- 术语：**按篇**，不设全库共用的词表 ----------
-# 理由（用户定的口径）：术语是"这篇文献自己的说法"，跨篇共用只会让列表里全是别的论文的词
-# （实测：全库 44 条里只有 3 条属于当前这篇，点"跳去原文"必然查不到）。
-# 一篇文献一份词表，由析读时的模型从正文里发掘 + 读者自己补；导出也是按篇导。
 
 def glossary_list(pid: str):
     return [dict(r) for r in q("SELECT * FROM glossary WHERE paper_id=? ORDER BY term_en", (pid,))]
-
 
 def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: str = "",
                  source: str = "manual") -> int:
@@ -405,10 +361,8 @@ def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: s
       (pid, term_en, term_zh, domain, note, source, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
 
-
 def glossary_delete(gid: int):
     q("DELETE FROM glossary WHERE id=?", (gid,), commit=True)
-
 
 def glossary_put_ai(pid: str, terms: list):
     """把模型发掘出来的术语整批写进这一篇（替换上一批 AI 词，读者的手写词不动）。"""
@@ -420,7 +374,6 @@ def glossary_put_ai(pid: str, terms: list):
             [(pid, t["en"], t["zh"], t.get("kind", ""), "", "ai",
               time.strftime("%Y-%m-%d %H:%M:%S")) for t in terms])
         _get().commit()
-
 
 def merge_abbrs(pid: str, abbrs: dict) -> int:
     """把新发掘到的缩写并进这一篇的缩写表，返回补进去几条。
@@ -448,7 +401,6 @@ def merge_abbrs(pid: str, abbrs: dict) -> int:
         update_paper(pid, abbrs=json.dumps(cur, ensure_ascii=False))
     return added
 
-
 def glossary_hit(pid: str, text: str):
     """这一篇的词里，有哪些出现在给定文本里（大小写不敏感的子串匹配）。"""
     hits = []
@@ -457,7 +409,6 @@ def glossary_hit(pid: str, text: str):
         if r["term_en"].lower() in low:
             hits.append({"en": r["term_en"], "zh": r["term_zh"]})
     return hits
-
 
 def glossary_hits_all(pids: list, text: str):
     """跨篇版 glossary_hit：几篇的词一起查，命中时带上所属篇 id——
@@ -474,19 +425,16 @@ def glossary_hits_all(pids: list, text: str):
             hits.append({"paper_id": r["paper_id"], "en": r["term_en"], "zh": r["term_zh"]})
     return hits
 
-
 # ---------- QA ----------
 
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
-
 
 def conv_create(pid: str, title: str = "新对话") -> int:
     now = _now()
     q("INSERT INTO conversations(paper_id, title, created_at, updated_at) VALUES(?,?,?,?)",
       (pid, title[:60], now, now), commit=True)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
-
 
 def conv_list(pid: str):
     """一篇论文的会话列表。第一次问之前也会有一个默认会话，免得"没有会话"成为
@@ -504,7 +452,6 @@ def conv_list(pid: str):
         "  (SELECT COUNT(*) FROM qa_messages m WHERE m.conv_id=c.id) AS n "
         "FROM conversations c WHERE c.paper_id=? ORDER BY c.updated_at DESC, c.id DESC", (pid,))]
 
-
 def _adopt_orphan_qa(pid: str):
     """旧库的问答没有会话号：给它们单开一摊"此前的提问"，别让历史粘在新对话里。"""
     if not q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id IS NULL", (pid,)):
@@ -512,19 +459,15 @@ def _adopt_orphan_qa(pid: str):
     cid = conv_create(pid, "此前的提问")
     q("UPDATE qa_messages SET conv_id=? WHERE paper_id=? AND conv_id IS NULL", (cid, pid), commit=True)
 
-
 def conv_rename(cid: int, title: str):
     q("UPDATE conversations SET title=? WHERE id=?", (title[:60], cid), commit=True)
-
 
 def conv_delete(cid: int):
     q("DELETE FROM qa_messages WHERE conv_id=?", (cid,), commit=True)
     q("DELETE FROM conversations WHERE id=?", (cid,), commit=True)
 
-
 def conv_set_summary(cid: int, summary: str, upto: int):
     q("UPDATE conversations SET summary=?, summary_upto=? WHERE id=?", (summary, int(upto), cid), commit=True)
-
 
 def conv_touch_summary(cid: int):
     """删过一条已经被折进摘要的消息：摘要就不算数了，清掉让它按剩下的原文重建。
@@ -533,18 +476,15 @@ def conv_touch_summary(cid: int):
     if c and c.get("summary"):
         q("UPDATE conversations SET summary='', summary_upto=0 WHERE id=?", (cid,), commit=True)
 
-
 def conv_get(cid: int):
     rows = q("SELECT * FROM conversations WHERE id=?", (cid,))
     return dict(rows[0]) if rows else None
-
 
 def conv_touch(cid: int, title: str = None):
     if title:
         q("UPDATE conversations SET updated_at=?, title=? WHERE id=?", (_now(), title[:60], cid), commit=True)
     else:
         q("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), cid), commit=True)
-
 
 def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: int = None) -> int:
     """写一条问答。会话已经被删掉时**不写**（返回 0）——否则会留下一条谁也看不到的孤儿，
@@ -557,12 +497,10 @@ def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: i
         conv_touch(conv_id)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
 
-
 def qa_last_user_id(pid: str, conv_id: int):
     rows = q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id=? AND role='user' ORDER BY id DESC LIMIT 1",
              (pid, conv_id))
     return rows[0]["id"] if rows else None
-
 
 def qa_history(pid: str, conv_id: int = None, limit: int = 200):
     if conv_id:
@@ -572,7 +510,6 @@ def qa_history(pid: str, conv_id: int = None, limit: int = 200):
         rows = q("SELECT role, content, citations, id, conv_id FROM (SELECT * FROM qa_messages "
                  "WHERE paper_id=? ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (pid, limit))
     return [dict(r, citations=json.loads(r["citations"])) for r in rows]
-
 
 def qa_drop_last_assistant(pid: str, conv_id: int):
     """重新生成 = 把最后一条回答删掉，连同它的用户问题一起交回前端重问。
@@ -585,12 +522,10 @@ def qa_drop_last_assistant(pid: str, conv_id: int):
     prev = next((r for r in rows if r["role"] == "user" and (not last or r["id"] < last["id"])), None)
     if prev:
         q("DELETE FROM qa_messages WHERE id=?", (prev["id"],), commit=True)
-    # 撤掉的两条如果已经折进摘要，摘要同样要作废（否则撤掉的内容还在上下文里）
     c = conv_get(conv_id)
     if c and (c.get("summary_upto") or 0) >= (last["id"] if last else 0):
         conv_touch_summary(conv_id)
     return prev["content"] if prev else None
-
 
 def qa_delete(mid: int):
     rows = q("SELECT conv_id FROM qa_messages WHERE id=?", (mid,))
@@ -600,11 +535,9 @@ def qa_delete(mid: int):
         if c and (c.get("summary_upto") or 0) >= mid:
             conv_touch_summary(c["id"])
 
-
 def qa_clear(pid: str):
     q("DELETE FROM qa_messages WHERE paper_id=?", (pid,), commit=True)
     q("DELETE FROM conversations WHERE paper_id=?", (pid,), commit=True)
-
 
 # ---------- 眉批（句级人性化批注） ----------
 
@@ -629,16 +562,13 @@ def set_marginalia(pid: str, notes: list, status: str = "done", error: str = Non
     if error:
         q("UPDATE papers SET marginalia_error=? WHERE id=?", (error, pid), commit=True)
 
-
 def get_marginalia(pid: str):
     return [dict(r) for r in q(
         "SELECT id, para_idx, page, quote, kind, note, label, band, rect FROM marginalia "
         "WHERE paper_id=? ORDER BY page, para_idx", (pid,))]
 
-
 def marginalia_set_rect(mid: int, rect: dict):
     q("UPDATE marginalia SET rect=? WHERE id=?", (json.dumps(rect), mid), commit=True)
-
 
 def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, kind: str = "lookup",
                    rect: dict = None, label: str = "", band: str = "") -> int:
@@ -648,17 +578,14 @@ def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, ki
       commit=True)
     return q("SELECT last_insert_rowid() AS i")[0]["i"]
 
-
 def marginalia_delete(mid: int):
     q("DELETE FROM marginalia WHERE id=?", (mid,), commit=True)
-
 
 # ---------- 论文日历 ----------
 
 def log_read(pid: str, day: str):
     """打开论文时记一笔当天阅读。INSERT OR IGNORE：一天一篇只有一行。"""
     q("INSERT OR IGNORE INTO reading_log(day, paper_id) VALUES(?,?)", (day, pid), commit=True)
-
 
 def reading_days(month: str):
     """某个月（'YYYY-MM' 前缀）的全部阅读日志。"""

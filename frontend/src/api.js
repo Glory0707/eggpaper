@@ -9,7 +9,6 @@ async function req(method, url, body) {
   }
   const r = await fetch(url, opt)
   if (!r.ok) {
-    // 后端会把失败翻译成人话放进 detail；拿不到（比如请求根本没到服务）才退回状态码 + 短语
     let msg = `${r.status} ${r.statusText || ''}`.trim()
     try { msg = (await r.json()).detail || msg } catch { /* 不是 JSON，就用上面的兜底 */ }
     throw new Error(t(msg))
@@ -19,13 +18,11 @@ async function req(method, url, body) {
 
 export const api = {
   papers: () => req('GET', '/api/papers'),
-  // 跨文献引用选择器的数据：全部论文（标题/类型/是否已析读）+ 分类映射
   libOverview: () => req('GET', '/api/library/overview'),
   upload: (file) => { const fd = new FormData(); fd.append('file', file); return req('POST', '/api/papers', fd) },
   paper: (pid) => req('GET', `/api/papers/${pid}`),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
   touchPaper: (pid) => req('POST', `/api/papers/${pid}/touch`),
-  // 双击 PDF 打开：后端把文件建进库，这里问"该切到哪一篇"
   openRequest: () => req('GET', '/api/open-request'),
   paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
   analyze: (pid) => req('POST', `/api/papers/${pid}/analyze`),
@@ -36,9 +33,7 @@ export const api = {
   pin: (pid, body) => req('POST', `/api/papers/${pid}/pin`, body),
   unpin: (pid, mid) => req('DELETE', `/api/papers/${pid}/marginalia/${mid}`),
   summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
-  // cached=1：只读缓存，没有就返回空——进速览页要把算过的显示出来，但不该顺手花一次模型调用
   methodCard: (pid, cached = false) => req('GET', `/api/papers/${pid}/method-card${cached ? '?cached=1' : ''}`),
-  // 引用信息：cached 只读缓存（打开浮层不该顺手花一次模型调用），refresh 是「重新识别」
   citation: (pid, cached = false, refresh = false) =>
     req('GET', `/api/papers/${pid}/citation?${[cached && 'cached=1', refresh && 'refresh=1'].filter(Boolean).join('&')}`),
   suggest: (pid) => req('GET', `/api/papers/${pid}/suggest`),
@@ -46,9 +41,7 @@ export const api = {
   sixAnswer: (pid, key) => req('GET', `/api/papers/${pid}/six-answers/${key}`),
   advisor: (pid, cached = false) => req('GET', `/api/papers/${pid}/advisor${cached ? '?cached=1' : ''}`),
   figures: (pid) => req('GET', `/api/papers/${pid}/figures`),
-  // 论文日历：某个月哪天读了什么、哪天入了什么
   calendar: (month) => req('GET', `/api/calendar?month=${month}`),
-  // PDF 自带书签目录
   toc: (pid) => req('GET', `/api/papers/${pid}/toc`),
   askVisual: (body) => req('POST', '/api/ask-visual', body),
   figureUrl: (pid, f, dpi = 130) =>
@@ -56,7 +49,6 @@ export const api = {
   exportMdUrl: (pid) => `/api/papers/${pid}/export.md`,
   glossaryCsvUrl: (pid) => `/api/papers/${pid}/glossary/export.csv`,
 
-  // 提问：会话 + 流式回答
   askUrl: (pid) => `/api/papers/${pid}/ask`,
   conversations: (pid) => req('GET', `/api/papers/${pid}/conversations`),
   convNew: (pid, title) => req('POST', `/api/papers/${pid}/conversations`, { title }),
@@ -67,26 +59,20 @@ export const api = {
   qaRegenerate: (pid, convId) => req('POST', `/api/papers/${pid}/regenerate`, { conv_id: convId }),
   qaDeleteOne: (cid, mid) => req('DELETE', `/api/conversations/${cid}/messages/${mid}`),
 
-  // 文库分类
   collections: () => req('GET', '/api/collections'),
   collAdd: (name) => req('POST', '/api/collections', { name }),
   collRename: (cid, name) => req('PATCH', `/api/collections/${cid}`, { name }),
   collDelete: (cid) => req('DELETE', `/api/collections/${cid}`),
   paperColls: (pid, ids) => req('PUT', `/api/papers/${pid}/collections`, { ids }),
 
-  // 划词/段译只有流式一条路（translateStream）：这两个非流式包装没人用，而且后端
-  // 那两个接口返回的是 SSE，真被调也会炸——删掉，别再钓着一个错的东西
-  // force=1：盘上已有成品也重译一遍（译文打不开时的"重新整本翻译"）
   translateFull: (pid, force) => req('POST', `/api/papers/${pid}/translate-full${force ? '?force=1' : ''}`),
   translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
   glossary: (pid) => req('GET', `/api/papers/${pid}/glossary`),
-  // 按篇发掘术语（+这篇自己的缩写）：只在词表为空时调一次，生成过就是纯读库
   glossaryGen: (pid) => req('POST', `/api/papers/${pid}/glossary/generate`),
   glossaryAdd: (pid, item) => req('POST', `/api/papers/${pid}/glossary`, item),
   glossaryDelete: (id) => req('DELETE', `/api/glossary/${id}`),
   settings: () => req('GET', '/api/settings'),
   version: () => req('GET', '/api/version'),
-  // 更新：查源 / 下载（进度另轮询）/ 交给安装器 / 退出程序
   updateCheck: (force = false) => req('GET', `/api/update/check${force ? '?force=1' : ''}`),
   updateDownload: (body) => req('POST', '/api/update/download', body),
   updateProgress: () => req('GET', '/api/update/progress'),
@@ -96,12 +82,10 @@ export const api = {
   nativeWindow: () => req('POST', '/api/window'),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
-  // 整本翻译引擎（pdf2zh）在哪、能不能跑：设置里显示状态用
   pdf2zhEngine: (path = '') =>
     req('GET', '/api/pdf2zh/engine' + (path ? `?path=${encodeURIComponent(path)}` : '')),
   pdf2zhInstall: (url = '') => req('POST', '/api/pdf2zh/install', { url }),
   pdf2zhInstallStatus: () => req('GET', '/api/pdf2zh/install-status'),
-  // 从本地 zip 装引擎：multipart 上传（走 127.0.0.1，300MB 十几秒）
   setDataLocation: (path) => req('POST', '/api/data/location', { path }),
   dataPick: () => req('POST', '/api/data/pick', {}),
   pdf2zhInstallFromFile: (file) => {
@@ -144,8 +128,6 @@ function sseStream(url, body, onEvent) {
         if (!line) continue
         let ev
         try { ev = JSON.parse(line) } catch { continue }   // 半帧/心跳：解不出来就跳过
-        // onEvent 必须在 try **外面**调：翻译那条路靠收到 error 事件时 throw 来让 done 拒绝，
-        // 被空 catch 吞掉就会"半截译文当成成品钉在页边，一句错都没报"。
         onEvent(ev)
       }
     }
@@ -157,7 +139,6 @@ export function askStream(pid, body, onEvent) {
   return sseStream(api.askUrl(pid), body, onEvent)
 }
 
-// 翻译也走流式：划词等一秒就该见到字，等 10 秒才砸出整段没人受得了
 export function translateStream(pid, kind, body, onEvent) {
   return sseStream(`/api/papers/${pid}/translate-${kind}`, body, onEvent)
 }
@@ -171,24 +152,18 @@ const KIND_ZH = {
   hype: '吹嘘过头', ai: 'AI 痕迹', insight: '点睛之笔', warning: '有坑',
   conflict: '前后打架', lookup: '查译', region: '选区问答', note: '批注',
 }
-// 色标只表达一件事：读的时候该给多少注意力。
-// 八个色相谁也记不住（人能一眼解码的上限是 3–4 个），所以颜色不该再区分
-// "对照参比 vs 优化拓展"这种细类——读的时候本来也分不出来。
-// 一个暖色 = 全文的芯；三级墨由深到浅 = 论证主干 → 让步 → 铺垫与流程。
 export const ROLE_COLOR = {
   claim: '#1d4e5f',                                                    // 唯一彩色：核心主张
   evidence: '#57534a', gap: '#57534a',                                 // 深灰：论证主干
   control: '#8e8a80', extension: '#8e8a80', limitation: '#8e8a80',      // 中灰：外围与让步
   background: '#c9c4ba', boilerplate: '#c9c4ba',                       // 浅灰：铺垫与标准流程
 }
-// 用作文字色时不能用浅灰（白底上看不见），另给一档正文可读的阶梯
 export const ROLE_TEXT_COLOR = {
   claim: '#123a47', evidence: '#1d1b17', gap: '#1d1b17',
   control: '#55524a', extension: '#55524a', limitation: '#55524a',
   background: '#6f6b62', boilerplate: '#6f6b62',
 }
 
-// 眉批用同一套逻辑：值得读 / 要当心 / 是噪音 / 你自己写的
 const KIND_COLOR = {
   insight: '#1d4e5f',                                                          // 值得读
   warning: '#b8462e', hype: '#b8462e', ai: '#b8462e', conflict: '#b8462e',       // 要当心
@@ -196,7 +171,6 @@ const KIND_COLOR = {
   lookup: '#57534a', region: '#57534a',                    // 你自己钉的
   note: '#57534a',                                        // 你自己写的批注
 }
-// 眉批标签的文字色（浅灰在白卡上看不清，另给可读的一档）
 const KIND_TEXT_COLOR = {
   insight: '#123a47', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25', conflict: '#9d3a25',
   padding: '#6f6b62', redundant: '#6f6b62', stiff: '#6f6b62', hedge: '#6f6b62',

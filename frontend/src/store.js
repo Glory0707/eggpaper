@@ -25,21 +25,15 @@ export const store = reactive({
   summary: null,
   summaryErr: '',
   settings: null,
-  // 文库：分类 + 搜索 + 排序。map 是 paper_id → [分类 id]，一次拉全，列表里不用逐篇问
   lib: { colls: [], map: {}, coll: 'all', q: '', sort: lsGet('libSort', 'added') },
   viewer: {
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
-    // 图层默认：AI 眉批开、略读关（用户定的）。localStorage 里存过就以用户的为准——
-    // 包括略读：这一局关了就是想关，下次打开不再自作主张蒙上。
-    // mine 是"我的钉卡"（查译/框选答疑/自己写的批注）：默认显示，设置里可收起
     layers: { marginalia: true, skim: false, mine: true, ...lsGet('layers', {}) },
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
     railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
-    // 页边批注按档位过滤：一档一个开关。论文读久了页边会有三四十条，
-    // 想只看"要当心"的时候得有个开关——四档就是纸上四种笔触，不多不少。
     noteBands: lsGet('noteBands', { good: true, warn: true, noise: true, mine: true }),
     frame: false,
     libOpen: false,
@@ -48,7 +42,6 @@ export const store = reactive({
   },
   jump: null,            // {page, y0, y1, at}
   cite: { open: false }, // 「引用」浮层：开在顶栏标题旁，内容由 CiteCard 自己拉
-  // 更新：打开软件时后台静默查一次，有新版才把 show 打开（UpdateCard 读这一份）
   update: {
     show: false, current: '', latest: '', notes: '', url: '', size: 0, sha256: '',
     pub_date: '', required: false, packaged: false, installing: false,
@@ -66,7 +59,6 @@ export const store = reactive({
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
 
-  // 窄窗（半屏、竖屏、小笔记本）：右栏不再占版面，改成浮在书桌上的抽屉
   get narrow() { return this.vw < 1180 },
   get railRight() {
     if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
@@ -179,22 +171,15 @@ export function goHome() {
 export async function openPaper(pid) {
   lsSet('lastPaper', pid)
   store.currentId = pid
-  // "现在看的是哪一篇"的版本号：每换一篇 +1。按篇发的请求回来时对不上就丢掉——
-  // 一眼卡/析读/眉批/五问这些请求是**秒级**的，用户"打开 A 看一眼就点 B"时，
-  // A 的结果会落在 B 身上（B 的速览页显示 A 的发现、A 的角色套到 B 的段落上）。
   store.epoch++
   const pos = lsGet(`pos:${pid}`, {})
   if (pos.variant) store.viewer.variant = pos.variant
   if (pos.spread) store.viewer.spread = pos.spread
   if (ui.lang === 'en') store.viewer.variant = 'original'   // 英文模式没有译文/双语
   store.paper = await api.paper(pid)
-  // 译文/双语是**按篇**的资源，而 variant 是全局偏好（记在 localStorage 里）。
-  // 打开一篇没有译文的论文时，上次留在"双语"上会让纸面整块空白（/pdf?variant=dual 404），
-  // 而用户只能自己猜到要回去点「原文」。所以按这一篇的实际状态校正一次。
   if (store.viewer.variant !== 'original' && store.paper.translate_status !== 'done') {
     store.viewer.variant = 'original'
   }
-  // 换篇先清干净再装新的，否则新论文上会闪一下上一篇的划线和批注卡
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
   store.marginalia = { status: 'none', notes: [], progress: null }
@@ -205,8 +190,6 @@ export async function openPaper(pid) {
   store.viewer.restorePos = pos.scroll || 0
   refreshAnalysis()
   refreshMarginalia()
-  // 一眼卡是后台压的：压不出来（比如扫描件）要说出来，别让"正在写一眼卡…"一直转。
-  // 这里的 `mine` 就是"发请求时看的是哪一篇"——回来时对不上说明用户已经换了篇，丢掉。
   const mine = store.epoch
   api.summary(pid).then(s => { if (store.epoch === mine) store.summary = s })
     .catch(e => { if (store.epoch === mine) store.summaryErr = e.message })

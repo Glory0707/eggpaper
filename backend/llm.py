@@ -19,18 +19,6 @@ ROLE_ZH = {
     "limitation": "让步局限",
 }
 
-# 提示词纪律（写提示词之前先看一眼，2026-09-12 定的）
-#   ① 写目的和角色，不写禁令。"不要复述某某"这类句子会把能力一起关掉——模型判断某句
-#      需要展开讲，就该让它讲。要防重复，就把旧结论当**已知前提**交代给它，由它决定推多远。
-#   ② 长度用"尽量 / 一两句"，不用"≤N 字"去砍。界面上的篇幅问题（一行塞多少）交给前端
-#      排版解决，不靠提示词里截肢。
-#   ③ 结构性要求（JSON 形状、依据段号 [¶n]）照旧写死——那不是限制能力，是让前端能渲染。
-#   ④ 只在真需要的地方划边界：素材同源的两栏（④ 与导师三问）用**视角**区分，
-#      不用"你不许说什么"区分。
-#   ⑤ 每条提示词改完，拿这篇论文的真数据跑一次看输出——不跑就不知道是变松了还是变垮了。
-#      验证"某函数不会调用模型"这类行为用哨兵桩，不要拿真实数据当靶子。
-
-
 # ---------------- 基础调用 ----------------
 
 def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
@@ -54,7 +42,6 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
                 json=body,
                 timeout=600,
             )
-            # 5xx 是服务端抖动，重试一次常就好了；4xx（key/额度/模型名）重试也没用
             if r.status_code >= 500:
                 last_err = RuntimeError(f"模型服务开小差了（{r.status_code}），已自动重试过一次")
                 continue
@@ -65,13 +52,12 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
         out = (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
         if out.strip():
             return out
-        budget = int(budget * 1.6)          # 推理模型可能耗尽 token 空想，空结果加倍重试
+        budget = int(budget * 1.6)
     if out.strip():
         return out
     if last_err is not None:
         raise last_err
     return out
-
 
 def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3,
                 no_think: bool = False):
@@ -112,7 +98,6 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
             if piece:
                 yield piece
 
-
 def parse_json(text: str) -> dict:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     i, j = text.find("{"), text.rfind("}")
@@ -122,10 +107,8 @@ def parse_json(text: str) -> dict:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # 模型最常见的两种小毛病先就地修：尾逗号、中文引号——别一巴掌推给用户
         fixed = re.sub(r",\s*([}\]])", r"\1", raw).replace("“", '"').replace("”", '"')
         return json.loads(fixed)
-
 
 def _lang_tail() -> str:
     """界面语言是英文时，要求所有面向用户的产出都用英文写。
@@ -137,7 +120,6 @@ def _lang_tail() -> str:
     except Exception:
         pass
     return ""
-
 
 TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者读这篇时会卡住、需要中英对照的那些说法。
 
@@ -163,7 +145,6 @@ kind 用三个短词之一：method（方法/框架）、material（材料/结�
 terms 给 15~40 条，宁多勿少但必须真的属于这篇；en 要能在正文里原样找到，别改写、别翻译。
 """
 
-
 def extract_terms(title: str, paras: list) -> dict:
     """从正文里发掘**这篇论文自己的**术语与缩写（按篇建表用）。
 
@@ -179,7 +160,7 @@ def extract_terms(title: str, paras: list) -> dict:
     ]
     out = ""
     data = None
-    for _ in range(3):                 # 空结果、或回了坏 JSON，都再试一次；别把解析器异常推给用户
+    for _ in range(3):
         out = chat(msgs, max_tokens=8000, temperature=0.2)
         if not out.strip():
             continue
@@ -193,11 +174,8 @@ def extract_terms(title: str, paras: list) -> dict:
     clean = _clean_terms(data.get("terms"))
     kept = _only_in_text(clean, paras)
     if len(kept) < len(clean):
-        # 看得见：模型给的词里有几条正文里没有（多半是把一句话里不连续的成分拼成了一个词），
-        # 静悄悄丢掉的话，"这次怎么少了几条"就永远查不出来
         print("[eggpaper] 术语过滤：正文里找不到的 %d 条已丢" % (len(clean) - len(kept)))
     return {"terms": kept, "abbrs": _clean_abbrs(data.get("abbrs"))}
-
 
 def norm_text(s: str) -> str:
     """和前端 find.js / RightRail 的 fold() **逐字对齐**的归一化：
@@ -215,11 +193,9 @@ def norm_text(s: str) -> str:
             out.append(ch)
     return "".join(out)
 
-
 _LIG = {"\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi",
-        "\ufb04": "ffl", "\ufb05": "ft", "\ufb06": "st"}   # 与 find.js 的 LIG 逐项一致
+        "\ufb04": "ffl", "\ufb05": "ft", "\ufb06": "st"}
 _KEEP = set("0123456789abcdefghijklmnopqrstuvwxyz")
-
 
 def _only_in_text(terms: list, paras: list) -> list:
     """只留**真在这篇正文里**的词（用户口径：术语必须确实是本文的）。
@@ -228,10 +204,9 @@ def _only_in_text(terms: list, paras: list) -> list:
     对不上的词会出现一个点不动的"—"，而"术语表里一半的词查不到原文"正是之前的老毛病。
     """
     corpus = norm_text(" ".join(p.get("text") or "" for p in paras))
-    if not corpus:                     # 没有正文可比（没解析/扫描件）就不过滤
+    if not corpus:
         return terms
     return [t for t in terms if len(norm_text(t["en"])) >= 3 and norm_text(t["en"]) in corpus]
-
 
 def _clean_terms(terms) -> list:
     if not isinstance(terms, list):
@@ -250,7 +225,6 @@ def _clean_terms(terms) -> list:
                       "kind": kind if kind in ("method", "material", "metric") else ""})
     return clean[:48]
 
-
 def _clean_abbrs(abbrs) -> dict:
     """缩写表：键必须真的像个缩写（短、没有空格），值是有内容的展开。"""
     if not isinstance(abbrs, dict):
@@ -266,8 +240,6 @@ def _clean_abbrs(abbrs) -> dict:
         out[k] = v
     return out
 
-
-
 def test_connection() -> dict:
     try:
         out = chat([{"role": "user", "content": "只回复两个字：可用"}], max_tokens=2048)
@@ -276,7 +248,6 @@ def test_connection() -> dict:
         return {"ok": False, "reply": "演示模式（未配置 API key）"}
     except Exception as e:
         return {"ok": False, "reply": f"{type(e).__name__}: {str(e)[:150]}"}
-
 
 # ---------------- 骨架分析 ----------------
 
@@ -317,7 +288,6 @@ PURPOSE_FALLBACK = {
     "extension": "锦上添花的拓展", "limitation": "作者主动承认的弱点", "boilerplate_refs": "参考文献",
 }
 
-
 ROLE_ALIAS = {
     "background": "background", "gap": "gap", "claim": "claim", "evidence": "evidence",
     "control": "control", "boilerplate": "boilerplate", "extension": "extension", "limitation": "limitation",
@@ -328,13 +298,11 @@ ROLE_ALIAS = {
     "拓展": "extension", "优化拓展": "extension", "局限": "limitation", "让步": "limitation", "让步局限": "limitation",
 }
 
-
 def _key_num(k):
     if isinstance(k, int):
         return k
     m = re.search(r"\d+", str(k))
     return int(m.group()) if m else None
-
 
 REVIEW_SKELETON_APPENDIX = """
 
@@ -347,7 +315,6 @@ REVIEW_SKELETON_APPENDIX = """
   anchors 填真实支撑该组织主张的段落；它给出的对比表格、数据汇总、典型案例算 evidence；
 - purposes 用读者视角："给出方法族的分类地图""对比三条技术路线的优劣""点出开放问题"。"""
 
-
 def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。"""
@@ -358,9 +325,6 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    # 长论文（百来段）的骨架输出是一大坨 JSON，模型偶尔会在尾巴上拖一句解释或截断——
-    # 这是唯一"一炮定生死"的大调用（术语有 3 轮、眉批有补跑），这里同样兜一次重试，
-    # 别让一次格式失手就把整次析读打成"失败，可重试"。
     data = None
     for attempt in range(2):
         out = chat(msgs, max_tokens=16000, temperature=0.2)
@@ -381,7 +345,6 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
         raise last
     valid = {p["idx"] for p in paras}
 
-    # claims：兼容 id/cid、anchors 可能是字符串
     claims_raw = data.get("claims") or []
     if isinstance(claims_raw, dict):
         claims_raw = [{"id": k, **v} for k, v in claims_raw.items()]
@@ -401,7 +364,6 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
                        "text": str(c["text"])[:60],
                        "anchors": clean})
 
-    # roles：键提取数字；值兼容英文大小写与中文别名
     roles_raw = data.get("roles") or {}
     if isinstance(roles_raw, list):
         roles_raw = {it.get("para") or it.get("idx"): it.get("role") for it in roles_raw if isinstance(it, dict)}
@@ -434,7 +396,6 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
         raise ValueError(f"骨架解析失败（roles 为空），原始输出: {out[:160]}")
     return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs, "evidence_qs": eqs}
 
-
 # ---------------- 论文专属推荐问题 ----------------
 
 def suggest_questions(title: str, claims: list, annos: dict) -> dict:
@@ -461,7 +422,6 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
     qs = [_clip_q(str(q)) for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
     return {"questions": qs[:4]}
 
-
 def _clip_q(q: str) -> str:
     """问题的长度上限只做兜底，且断在标点处。
 
@@ -475,14 +435,12 @@ def _clip_q(q: str) -> str:
     stop = max(cut.rfind("？"), cut.rfind("。"), cut.rfind("；"), cut.rfind("? "))
     return cut[:stop + 1] if stop > 18 else cut + "…"
 
-
 # ---------------- 一眼卡 ----------------
 
 def _gloss_block(hits) -> str:
     if not hits:
         return ""
     return "术语表（以下术语必须使用锁定译法）：\n" + "\n".join(f"- {h['en']} → {h['zh']}" for h in hits) + "\n\n"
-
 
 def summarize(title: str, paras: list, hits=None) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:800]}" for p in paras if not p.get("in_refs"))[:60000]
@@ -499,7 +457,6 @@ def summarize(title: str, paras: list, hits=None) -> dict:
     ], max_tokens=4000, temperature=0.3)
     return parse_json(out)
 
-
 # ---------------- 问答 ----------------
 
 QA_SYSTEM = """你是论文精读助手，陪研究者读这篇论文，也顺手帮处理其他问题。
@@ -511,7 +468,6 @@ QA_SYSTEM = """你是论文精读助手，陪研究者读这篇论文，也顺�
 4. 回答用中文，术语首次出现给出英文
 5. 上下文里可能有多篇论文：每篇前有标记行——【当前论文】是用户正在读的这篇，其余以《标题》标记。
    ¶ 编号属于它上方最近的标记篇；提到其他论文先写《标题》再写 ¶（如《某论文》¶3）。与问题无关的论文不要硬扯"""
-
 
 def ask_messages(title: str, paras: list, history: list, question: str, hits=None, summary: str = "", others: list = None) -> list:
     """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。"""
@@ -539,16 +495,11 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
     msgs.append({"role": "user", "content": question})
     return msgs
 
-
 def cites_of(text: str) -> list:
     """从回答里抓 [¶5] 这类依据段号——引用角标可点击跳原文，靠的就是它。"""
     return sorted({int(n) for n in re.findall(r"¶\s*(\d+)", text or "")})
 
-
 # ---------- 长对话的上下文压缩 ----------
-# 一轮轮聊下去，上下文迟早会顶到上限。直接截断最早的那几轮是最坏的做法：用户
-# 在前面确认过的结论、术语译法、关注点会凭空消失，模型就开始自相矛盾。所以
-# "老的那几轮"要先压成摘要，和被删掉的消息一样——不在窗口里，但仍可追溯。
 DIALOG_SUMMARY_SYSTEM = """你在为一次论文研读对话做上下文压缩。把给出的较早对话压成一份摘要，只输出摘要正文。
 
 必须保留（这些丢了后面就全错）：
@@ -557,7 +508,6 @@ DIALOG_SUMMARY_SYSTEM = """你在为一次论文研读对话做上下文压缩�
 3. 用户反复关心的点、明确的要求与否定的方向
 4. 还没有解决的问题
 可以丢：寒暄、重复表述、模型的推理过程、已经被推翻的中间结论。用中文，条目式，≤400 字。"""
-
 
 def summarize_dialog(prev: str, messages: list) -> str:
     """把"已有摘要 + 这批较早的消息"压成新摘要。失败时退回原摘要（宁可留着旧的）。"""
@@ -576,11 +526,9 @@ def summarize_dialog(prev: str, messages: list) -> str:
     except Exception:
         return prev
 
-
 def ask(title: str, paras: list, history: list, question: str, hits=None, summary: str = "") -> dict:
     out = chat(ask_messages(title, paras, history, question, hits, summary), max_tokens=6000, temperature=0.3)
     return {"answer": out, "citations": cites_of(out)}
-
 
 # ---------------- 划词/段落翻译 ----------------
 
@@ -599,18 +547,15 @@ def translate_messages(text: str, context: str = "", hits: list = None) -> list:
         {"role": "user", "content": user},
     ]
 
-
 def translate(text: str, context: str = "", hits: list = None) -> str:
     out = chat(translate_messages(text, context, hits), max_tokens=4000, temperature=0.1)
     return out.strip()
-
 
 def translate_stream(text: str, context: str = "", hits: list = None):
     """逐字翻译。划词等场景等不了 10 秒的整段——首字 1 秒内就该出现。
     翻译不需要模型先思考：关掉能把首字从 ~8s 压到 ~1.5s。"""
     return chat_stream(translate_messages(text, context, hits),
                        max_tokens=4000, temperature=0.1, no_think=True)
-
 
 # ---------------- 眉批（句级人性化批注） ----------------
 
@@ -668,26 +613,17 @@ band 只有一个作用——决定它在纸上怎么被划、页边是什么颜
 
 """
 
-
-# 九种常用款 + 它们的档位。档位只有三档：值得读 / 要当心 / 可跳过——
-# 页边颜色、纸上笔触都按它来。自造类型也必须落进这三档，否则页面上没有它的位置。
 KINDS = ("hedge", "padding", "stiff", "redundant", "hype", "ai", "insight", "warning", "conflict")
 BANDS = ("good", "warn", "noise")
 BAND_OF = {"insight": "good",
            "warning": "warn", "hype": "warn", "ai": "warn", "conflict": "warn",
            "padding": "noise", "redundant": "noise", "stiff": "noise", "hedge": "noise"}
 
-# 语言/文风类的 kind + 整篇硬上限。
-# 为什么要有这道闸：改提示词之前，这篇 48 段的论文出过 48 条，其中 15 条是这一类
-# （单复数、翻译腔、AI 腔、套话）——页边看着全是挑字眼的，而读者要的是"这篇哪里站不住"。
-# 提示词里已经请模型少写，这里再上一道代码闸：模型偶尔忘了也兜得住。
 PROSE_KINDS = ("stiff", "ai", "redundant", "padding")
 PROSE_MAX = 4
 
-
-CHUNK_PARAS = 12          # 一块多少段
-CHUNK_WORKERS = 6         # 同时几块在跑
-
+CHUNK_PARAS = 12
+CHUNK_WORKERS = 6
 
 def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
     """分块细读，返回 `(notes, failed_blocks)`：notes 是
@@ -718,7 +654,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
             {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
         ]
         out = ""
-        for attempt in range(2):   # 推理模型可能把 token 花在思考上，空结果重试一次
+        for attempt in range(2):
             out = chat(msgs, max_tokens=16000, temperature=0.3)
             if out.strip():
                 break
@@ -728,19 +664,17 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
     total = len(chunks)
     if on_chunk:
         try:
-            on_chunk(0, total)     # 先报总量：界面从第一秒就能说"共 N 块"，而不是干等
+            on_chunk(0, total)
         except Exception:
             pass
     batches = [None] * total
-    state = {}                 # 块号 -> 成功；进度按"真的拿到结果的块"算，不虚报
+    state = {}
     failed = []
 
     def wave(idx_list):
         """跑一批块（第一遍全部；第二遍只补失败的）。返回没成的块号。"""
         bad = []
         with ThreadPoolExecutor(max_workers=min(CHUNK_WORKERS, max(1, len(idx_list)))) as ex:
-            # 用 as_completed 而不是 map：map 只在"轮到它"时才把结果交出来，第 1 块慢的时候
-            # 后面早写完的块也报不出来——进度会假滞后。顺序仍按块号回填，最终批注次序不变。
             futs = {ex.submit(run, chunks[i]): i for i in idx_list}
             for fut in as_completed(futs):
                 i = futs[fut]
@@ -759,8 +693,6 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
 
     failed = wave(list(range(total)))
     if failed and len(failed) < total:
-        # 补一次失败的块。为什么要补：一次 429/超时只挂一块，用户拿到的就是"这篇有一段
-        # 没有批注"，而他从界面上看不出来，只会以为那段没问题。代价只有失败块那么多。
         failed = wave(failed)
     if total and len(failed) == total:
         raise RuntimeError(f"{total} 块全部失败（模型或网络问题）")
@@ -770,7 +702,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
     for batch in batches:
         for n in batch:
             if not isinstance(n, dict):
-                continue           # 模型偶尔把元素写成字符串/数字：跳过它，别让整篇崩在这儿
+                continue
             try:
                 para_idx, quote = int(n.get("para")), str(n.get("quote", "")).strip()
                 note = str(n.get("note", "")).strip()[:80]
@@ -781,15 +713,13 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
             if kind in KINDS:
                 band, label = BAND_OF[kind], ""
             elif label and band in BANDS:
-                kind = "custom"          # 自造款：标签 + 档位齐了才收，否则页面不知道把它画成什么
+                kind = "custom"
             else:
                 continue
-            # 语言/文风类整篇只留 PROSE_MAX 条（模型自己排的顺序就是它认为的轻重）
             if kind in PROSE_KINDS:
                 if prose_kept >= PROSE_MAX:
                     continue
                 prose_kept += 1
-            # 一段最多三条：模型偶尔会对着同一句反复批，截胡在入口比让页边堆满好
             if not quote or quote[:40] in seen or per_para.get(para_idx, 0) >= 3:
                 continue
             if para_idx not in page_of:
@@ -800,15 +730,11 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
                           "kind": kind, "label": label, "band": band, "note": note})
     return notes[:48], len(failed)
 
-
-
-
 _MOCK_PURPOSE = {
     "gap": "作者真正的出发点（演示）", "claim": "论文要证明的核心（演示）", "evidence": "核心数据段（演示）",
     "control": "仅为严谨的对照（演示）", "boilerplate": "样板段，可跳过（演示）", "limitation": "作者心虚处（演示）",
     "extension": "锦上添花（演示）", "background": "领域铺垫（演示）",
 }
-
 
 def mock_marginalia(paras: list) -> list:
     kinds = ["insight", "padding", "hedge", "ai", "warning", "redundant"]
@@ -818,7 +744,6 @@ def mock_marginalia(paras: list) -> list:
         notes.append({"para_idx": p["idx"], "page": p["page"], "quote": p["text"][:60], "kind": k,
                       "label": "", "band": BAND_OF[k], "note": "〔演示〕" + _MOCK_PURPOSE.get(k, "演示批注")})
     return notes
-
 
 def mock_analyze(paras: list) -> dict:
     roles, purposes = {}, {}
@@ -853,7 +778,6 @@ def mock_analyze(paras: list) -> dict:
     return {"claims": claims, "roles": roles, "purposes": purposes,
             "problem": "（演示模式）这篇论文要解决的问题是：演示用的占位陈述 [¶2]。"}
 
-
 # ---------------- 方法卡（可复现 protocol）/ 谱系卡（综述导览） ----------------
 
 def method_card(title: str, paras: list) -> dict:
@@ -872,7 +796,6 @@ def method_card(title: str, paras: list) -> dict:
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
     return parse_json(out)
-
 
 def survey_card(title: str, paras: list) -> dict:
     """谱系卡：综述版的方法卡。字段与 method_card 同一套 key（前端同一块渲染），
@@ -896,7 +819,6 @@ def survey_card(title: str, paras: list) -> dict:
     ], max_tokens=6000, temperature=0.3)
     return parse_json(out)
 
-
 # ---------------- 引用信息 ----------------
 
 CITATION_SYSTEM = """研究者要引用这篇论文，请你从首页上把"怎么引用它"那几个字段抄下来。他会把首页原始行（含刊头、页脚、DOI 行）和 PDF 自带元数据交给你。
@@ -919,7 +841,6 @@ CITATION_SYSTEM = """研究者要引用这篇论文，请你从首页上把"怎�
 "year":"","volume":"","issue":"","pages":"","doi":"","preprint":""}
 不要 markdown 代码块，不要解释。"""
 
-
 def extract_citation(title: str, src: str) -> dict:
     """从首页原文里抄出参考文献字段。排版不归它管（见 citation.py）。"""
     out = chat([
@@ -928,7 +849,6 @@ def extract_citation(title: str, src: str) -> dict:
     ], max_tokens=2000, temperature=0, no_think=True)
     return parse_json(out)
 
-
 # ---------------- 导师三问 ----------------
 
 def advisor_questions(title: str, claims: list, warnings: list) -> dict:
@@ -936,10 +856,6 @@ def advisor_questions(title: str, claims: list, warnings: list) -> dict:
     warn_txt = "\n".join(f"- {w}" for w in warnings) or "（无）"
     out = chat([
         {"role": "system", "content":
-            # 与「问题④」共用同一批素材（主张 + 眉批有坑），差别在**视角**而不是禁令：
-            # ④ 是"作者自己承认了什么"，这里是"拿到答辩桌上会被怎么问"。
-            # 这里写过"不要再问这些"——那是拿能力换整洁：模型若判断某条薄弱点需要展开讲，
-            # 就该让它讲。所以改成把旧结论当**已知前提**交给它，由它自己决定往前推到哪。
             "你是苛刻但建设性的导师。学生要拿这篇论文去组会汇报/答辩。"
             "下面这些『作者已承认的薄弱点』当作已知前提——它们本身不必再复述一遍，"
             "你要问的是更往里的问题：承认了还不够在哪里？缺的是哪一步证据？"
@@ -955,7 +871,6 @@ def advisor_questions(title: str, claims: list, warnings: list) -> dict:
         if isinstance(q, dict) and q.get("q"):
             qs.append({"q": str(q["q"])[:80], "outline": [str(o)[:44] for o in (q.get("outline") or [])[:3]]})
     return {"questions": qs[:3]}
-
 
 # ---------------- 视觉问答（框选/图表） ----------------
 
@@ -981,15 +896,10 @@ def vision_ask(image_dataurl: str, question: str) -> str:
     r.raise_for_status()
     return (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
 
-
 # ---------------- 五问里需要现场生成的那几问 ----------------
-# 语料只喂"回答这个问题用得上的那几类段落"，别把全文塞进去——
-# 喂全了模型就会把别的问题的答案也一起倒出来，正好是我们要避免的。
-
 
 def _paras_block(items: list, cap: int = 600) -> str:
     return "\n".join(f"¶{p['idx']} {(p.get('text') or '')[:cap]}" for p in items)
-
 
 def _items(raw) -> dict:
     """三个生成题共用的清洗：lead/text/ask 三个字段，没有 text 的一条不留。"""
@@ -1005,7 +915,6 @@ def _items(raw) -> dict:
                       "ask": str(it.get("ask") or "").strip()[:80],
                       "cites": cites_of(text)})
     return {"items": items[:3]}
-
 
 def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
     """①「要解决什么、为什么」：原来的①②两问（要解决什么 / 为什么要解决）各吃一遍
@@ -1028,7 +937,6 @@ def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> di
     text = str(parse_json(out).get("text") or "").strip()[:500]
     return {"text": text, "cites": cites_of(text)}
 
-
 def answer_how_review(title: str, claims: list, paras: list) -> dict:
     """综述版③「它把文献怎么组织的？」：研究型的③靠主张-证据链拼，综述没有实验证据层，
     那条路是空壳。这里由模型直接说清它的组织方式——按什么分类、沿什么脉络、各条线的关系。"""
@@ -1046,7 +954,6 @@ def answer_how_review(title: str, claims: list, paras: list) -> dict:
     ], max_tokens=3000, temperature=0.3, no_think=True)
     text = str(parse_json(out).get("text") or "").strip()[:500]
     return {"text": text, "cites": cites_of(text)}
-
 
 def answer_next(title: str, limits: list, exts: list, claims: list, warns: list) -> dict:
     """还能做什么：两条腿都要有——论文自己承认的局限/延伸里长出来的方向，以及你顺着这篇
@@ -1077,7 +984,6 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
     out = _items(parse_json(out).get("items"))
     out["v"] = 2
     return out
-
 
 def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
     """换个学科怎么看：**条目式**——一条一个学科，lead 是学科名、text 是那个人读到这篇

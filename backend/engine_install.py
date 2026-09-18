@@ -22,18 +22,14 @@ import httpx
 
 import appinfo
 
-# 官方发布页（GitHub Releases）。国内直连常常慢或不通——所以界面允许改下载地址，
-# 也允许"你自己下好 zip 丢进 engines/ 目录"（find_installed 是递归找的）。
 DEFAULT_URL = ("https://github.com/Byaidu/PDFMathTranslate/releases/download/"
                "v1.9.11/pdf2zh-v1.9.11-win64.zip")
 
 _lock = threading.Lock()
 _prog = {"state": "idle", "pct": 0, "got": 0, "total": 0, "error": "", "url": "", "path": ""}
 
-
 def install_dir() -> str:
     return os.path.join(os.path.dirname(appinfo.data_dir()), "engines", "pdf2zh")
-
 
 def status() -> dict:
     with _lock:
@@ -44,11 +40,9 @@ def status() -> dict:
             out.update(state="done", path=got)
     return out
 
-
 def _set(**kw):
     with _lock:
         _prog.update(kw)
-
 
 def find_installed() -> str:
     """在 engines/ 里找 pdf2zh.exe（递归：官方 zip 解压出来是带版本号的子目录）。
@@ -64,7 +58,6 @@ def find_installed() -> str:
             return p
     return ""
 
-
 def _safe_extract_all(zf: zipfile.ZipFile, dest: str):
     """解压，但**拒绝越界路径**（zip-slip）。带 ../ 的条目能把文件写到目标目录外，
     这个 zip 是从网上下的（还可能来自用户自填的镜像地址），必须挡住。"""
@@ -74,7 +67,6 @@ def _safe_extract_all(zf: zipfile.ZipFile, dest: str):
         if not (target == dest_abs or target.startswith(dest_abs + os.sep)):
             raise ValueError(f"压缩包里有越界路径：{m.filename[:80]}")
     zf.extractall(dest)
-
 
 def _unpack(zpath: str):
     """把引擎 zip 解开、换到正式目录。下载装和本地文件装走的是同一段。"""
@@ -87,7 +79,6 @@ def _unpack(zpath: str):
         os.makedirs(ex_dir, exist_ok=True)
         with zipfile.ZipFile(zpath) as zf:
             _safe_extract_all(zf, ex_dir)
-        # 换目录：先把旧的挪开再换，中途失败不留半个引擎目录
         final = install_dir()
         old = final + ".old"
         shutil.rmtree(old, ignore_errors=True)
@@ -104,7 +95,6 @@ def _unpack(zpath: str):
     except Exception as e:
         shutil.rmtree(tmp_root, ignore_errors=True)
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
-
 
 def _install(url: str):
     _set(state="downloading", pct=0, got=0, total=0, error="", url=url, path="")
@@ -133,7 +123,6 @@ def _install(url: str):
         shutil.rmtree(tmp_root, ignore_errors=True)
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
 
-
 def start(url: str = "") -> dict:
     with _lock:
         if _prog["state"] in ("downloading", "unpacking"):
@@ -141,7 +130,6 @@ def start(url: str = "") -> dict:
     _set(state="downloading", pct=0, got=0, total=0, error="", url=url or DEFAULT_URL, path="")
     threading.Thread(target=_install, args=((url or DEFAULT_URL).strip(),), daemon=True).start()
     return status()
-
 
 def start_from_zip(zip_path: str) -> dict:
     """从**本地已有的 zip** 装引擎。
@@ -156,7 +144,6 @@ def start_from_zip(zip_path: str) -> dict:
     _set(state="unpacking", pct=100, got=0, total=0, error="", url="(本地文件)", path="")
     threading.Thread(target=_from_zip, args=(zip_path,), daemon=True).start()
     return status()
-
 
 def _from_zip(zip_path: str):
     try:

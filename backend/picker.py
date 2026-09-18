@@ -7,10 +7,9 @@
 import ctypes
 from ctypes import wintypes
 
-BIF_RETURNONLYFSDIRS = 0x00000001     # 只允许选目录
-BIF_EDITBOX = 0x00000010              # 带路径输入框（可直接粘贴）
-BIF_NEWDIALOGSTYLE = 0x00000040       # 新样式（可缩放、有新建目录按钮）
-
+BIF_RETURNONLYFSDIRS = 0x00000001
+BIF_EDITBOX = 0x00000010
+BIF_NEWDIALOGSTYLE = 0x00000040
 
 class BROWINFOW(ctypes.Structure):
     _fields_ = [("hwndOwner", wintypes.HWND),
@@ -22,7 +21,6 @@ class BROWINFOW(ctypes.Structure):
                 ("lParam", wintypes.LPARAM),
                 ("iImage", ctypes.c_int)]
 
-
 def pick_folder(title: str = "选择数据目录") -> str:
     """弹出原生目录选择框。确定返回完整路径，取消返回空串。
 
@@ -33,7 +31,7 @@ def pick_folder(title: str = "选择数据目录") -> str:
         return ""
     ole32 = ctypes.oledll.ole32
     shell32 = ctypes.windll.shell32
-    ole32.CoInitializeEx(None, 2)                     # COINIT_APARTMENTTHREADED
+    ole32.CoInitializeEx(None, 2)
     try:
         display = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
         bi = BROWINFOW()

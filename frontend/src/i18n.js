@@ -21,7 +21,6 @@ export const ui = reactive({
 /* 词典：键是界面上的中文原文（含后端会冒到界面上的静态消息）。
  * {n} 之类的槽位由 t() 的第二个参数填。 */
 const EN = {
-  // ---- 顶栏 / 全局 ----
   '回书桌': 'Back to desk',
   '引用': 'Cite',
   '原文': 'Original',
@@ -50,7 +49,6 @@ const EN = {
   '正在译{svc} · 已用 {t}': 'Translating{svc} · {t} elapsed',
   '译出第二份 PDF，供「译文 / 双语」': 'Builds the second PDF behind “Translated / Dual”',
   '刚刚': 'just now',
-  // ---- 键盘卡 ----
   '键盘': 'Keyboard',
   '略读开 / 关': 'Skim on / off',
   '下一段 / 上一段（略读时仅核心段）': 'Next / previous paragraph (core only while skimming)',
@@ -63,7 +61,6 @@ const EN = {
   '文库 / 回书桌': 'Library / desk',
   '返回原位': 'Jump back',
   '收起所有浮层 / 退出框选': 'Dismiss pop-ups / exit framing',
-  // ---- toasts（App） ----
   '出错了：{m}': 'Something went wrong: {m}',
   '未知错误': 'unknown error',
   '初始化失败：{m}': 'Startup failed: {m} (the backend may still be waking up)',
@@ -86,7 +83,6 @@ const EN = {
   '蛋都睡了，你还在读。': 'The egg is asleep. You are still reading.',
   '{m} 分 {s} 秒': '{m}m {s}s',
   '{s} 秒': '{s}s',
-  // ---- PdfViewer ----
   '正在破壳': 'Hatching',
   '这段也要读': 'I want to read this too',
   '取消保留': 'Undo keep',
@@ -152,7 +148,6 @@ const EN = {
   '文档加载失败：{m}': 'Failed to load the document: {m}',
   '这份文档渲染失败了：{m}': 'This document failed to render: {m}',
   '你 · ': 'You · ',
-  // ---- RightRail ----
   '问题': 'Questions',
   '速览': 'Overview',
   '术语': 'Glossary',
@@ -211,12 +206,10 @@ const EN = {
   '这篇论文的正文里没有这个词': 'This term does not appear in the paper',
   '收进术语表': 'Save to glossary',
   '添加': 'Add',
-  // 五问页里的其他零碎
   '依据': 'Evidence',
   '眉批里的可疑之处': 'Flagged in margin notes',
   '局限段落': 'Limitation paragraphs',
   '通读失败': 'Reading failed',
-  // ---- AskPanel ----
   '基于这篇论文提问…': 'Ask about this paper…',
   '新对话': 'New chat',
   '重命名会话': 'Rename chat',
@@ -240,7 +233,6 @@ const EN = {
   '勾选要一起看的论文': 'Pick papers to include',
   '搜索论文…': 'Search papers…',
   '重发': 'Resend',
-  // ---- LeftRail（文库） ----
   '文库': 'Library',
   '收起文库': 'Hide library',
   '搜标题 / 文件名…': 'Search title / filename…',
@@ -273,7 +265,6 @@ const EN = {
   '拖动改宽度 · 双击复位 · ←→': 'Drag to resize · double-click to reset · ←→',
   '收起右栏（x）': 'Collapse sidebar (x)',
   '重命名': 'Rename',
-  // ---- CiteCard ----
   '作者': 'Authors',
   '期刊': 'Journal',
   '年份': 'Year',
@@ -286,7 +277,6 @@ const EN = {
   '复制没成功，选中文字手动复制一下': 'Copy failed — select the text and copy manually',
   '重新识别': 'Re-recognize',
   '复制': 'Copy',
-  // ---- UpdateCard ----
   '稍后': 'Later',
   '立即重启并安装': 'Restart & install now',
   '打开文件夹': 'Open folder',
@@ -294,7 +284,6 @@ const EN = {
   '下载中 {p}%': 'Downloading {p}%',
   '新版本 {v}': 'New version {v}',
   '必升版本：协议有变，旧界面连不上新后端。': 'Required update: the protocol changed and the old UI cannot talk to the new backend.',
-  // ---- SettingsModal ----
   '使用指南': 'User guide',
   '模型': 'Model',
   '视觉': 'Vision',
@@ -354,7 +343,6 @@ const EN = {
   '退出 eggpaper': 'Quit eggpaper',
   '保存': 'Save',
   '翻译引擎装好了': 'Translation engine installed',
-  // ---- api.js 后端静态消息（会冒到 toast / 弹层上的） ----
   '论文不存在': 'Paper not found',
   'eggpaper 只认 PDF': 'eggpaper only accepts PDFs',
   '不是 PDF 文件': 'Not a PDF file',
@@ -394,11 +382,9 @@ const EN = {
   '路径为空': 'Path is empty',
   '要选 .zip 文件': 'Pick a .zip file',
   '没找到可用的浏览器（Edge/Chrome），用当前这个窗口看就行': 'No usable browser (Edge/Chrome) found — just keep using this window',
-  // ---- llm / translate 的演示与提示 ----
   '〔演示模式〕这是模拟回答，用来跑通界面。': '[Demo mode] This is a canned answer for trying the UI.',
   '配置好 API key 后这里会是真答案。': 'With an API key configured, real answers appear here.',
   '你问的是：': 'You asked: ',
-  // ---- 第二批补齐（组件扫尾时冒出来的） ----
   'AI 眉批三档都收起（你自己钉的还在）：纸面上没有批注 ·': 'All three AI layers are hidden (your own pins stay): no marks on the paper · ',
   '上一张（←）': 'Previous (←)',
   '下一张（→）': 'Next (→)',
@@ -447,19 +433,16 @@ const EN = {
   '重新下载': 'Retry download',
   '重新生成': 'Regenerate',
   '重认中…': 'Re-recognizing…',
-  // ---- 批注类型与段落角色（api.js 的 KIND_ZH / ROLE_ZH 值） ----
   '妥协让步': 'Hedging', '凑字数': 'Padding', '生硬别扭': 'Awkward phrasing', '多余重复': 'Redundant',
   '吹嘘过头': 'Overhyped', 'AI 痕迹': 'AI artifact', '点睛之笔': 'Key insight', '有坑': 'Pitfall',
   '前后打架': 'Contradiction', '查译': 'Lookup', '选区问答': 'Region Q&A',
   '背景铺垫': 'Background', '缺口转折': 'Gap', '核心主张': 'Core claim', '关键证据': 'Evidence',
   '对照参比': 'Control', '标准流程': 'Boilerplate', '优化拓展': 'Extension', '让步局限': 'Limitation',
   '人': 'authors',
-  // ---- 推荐问题（提问面板空态） ----
   '这篇论文解决什么问题？': 'What problem does this paper solve?',
   '核心结论和最硬的证据是什么？': 'What are the core conclusions, and how strong is the evidence?',
   '方法上有什么可挑剔的地方？': 'What are the methodological weaknesses?',
   '作者承认了哪些局限？': 'Which limitations do the authors admit?',
-  // ---- 论文日历 ----
   '论文日历': 'Calendar',
   '论文日历 · g c': 'Calendar · g c',
   '收起日历': 'Hide calendar',

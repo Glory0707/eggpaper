@@ -1,13 +1,4 @@
 <script setup>
-/* 提问面板：按 DeepSeek / 豆包网页版的对话来做的。
- *
- * 那几个产品的共同点（也是它们好用的全部原因）：
- *   ① 回答逐字吐出来，中途能停——等 20 秒才砸一大段是没人愿意用的；
- *   ② 一摊对话一个上下文，"新对话"是一等公民，不是"清空历史"；
- *   ③ 每条回答底下有一排动作：复制、重新生成、删除；
- *   ④ 输入框能长高，Enter 发送、Shift+Enter 换行（中文输入法按 Enter 选字不能误发）。
- * 这些都不加文案、不加颜色，符合本子自己的调子。
- */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, askStream, store, toast, jumpTo, paraByIdx } from '../store'
 import { confirmBox, inputBox } from '../dialog'
@@ -42,7 +33,6 @@ const curConv = computed(() => convs.value.find(c => c.id === convId.value) || n
 const shownConvs = computed(() => convs.value.filter(c => c.id === convId.value || c.n > 0))
 const empty = computed(() => !msgs.value.length && !loading.value)
 
-// ---------- 载入 ----------
 async function loadConvs(keep = false) {
   if (!pid.value) return
   try {
@@ -52,8 +42,6 @@ async function loadConvs(keep = false) {
 }
 async function loadMsgs() {
   if (!pid.value || !convId.value) { msgs.value = []; return }
-  // 屏幕上的 msgs 只能有一个作者：要么流式在写，要么历史在写。生成中载入历史会把刚推
-  // 上去的那问一答换掉，而回答还在往一个不在列表里的对象里吐（症状：发了没反应）。
   if (busy.value) return
   loading.value = true
   try {
@@ -64,13 +52,11 @@ async function loadMsgs() {
   await nextTick()
   scrollBottom(false)
 }
-// 换会话 = 放弃这一摊正在跑的回答：先停下来（半截由 send 的尾巴落库），再读新历史
 async function reload() { stop(true); await loadConvs(); await loadMsgs() }
 
 watch(() => store.currentId, async () => { convId.value = null; await reload() })
 watch(convId, (n, o) => { if (n !== o) { stop(true); loadMsgs() } })
 
-// ---------- 滚动 ----------
 function onScroll() {
   const el = scrollEl.value
   if (!el) return
@@ -82,15 +68,11 @@ function scrollBottom(smooth = true) {
   el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
   atBottom.value = true
 }
-// 流式输出时只在用户本来就在底部时跟着走；用户翻上去看别处，就别抢他的滚动条
 function follow() { if (atBottom.value) { const el = scrollEl.value; if (el) el.scrollTop = el.scrollHeight } }
 
-// ---------- 发送 / 停止 ----------
 async function send(q) {
   q = (q ?? text.value).trim()
   if (!q || busy.value || !pid.value) return
-  // 会话还没载入完就问（预填抢跑）：先把会话取回来，别让服务端替我们猜是哪一摊。
-  // 猜错的后果是问题落进另一摊对话，而这个面板显示的又不是那一摊。
   if (!convId.value) await loadConvs()
   text.value = ''
   await nextTick(); autoGrow(); inputEl.value?.focus()
@@ -102,8 +84,6 @@ async function send(q) {
   gotDone = false
   await nextTick(); scrollBottom(false)
   const id = convId.value
-  // 服务端把落库的 id 顺着流送回来，挂到本地这两条上——
-  // 不然"删除这条"只能删掉屏幕上的，刷新一下它又回来了
   const applyIds = ev => {
     if (ev.user_id) um.id = ev.user_id
     if (ev.assistant_id) m.id = ev.assistant_id
@@ -130,7 +110,6 @@ async function send(q) {
     if (ev.type === 'delta') queue(ev.text)
     else if (ev.type === 'done') { flush(); gotDone = true; m.citations = ev.citations || []; applyIds(ev) }
     else if (ev.type === 'error') {
-      // 出错也把已经吐出来的留着，末尾接一行提示——和服务端存下来的内容保持一致
       flush()
       applyIds(ev)
       m.content = (m.content.trim() ? m.content + '\n\n' : '') + '⚠ ' + ev.message
@@ -150,7 +129,6 @@ async function send(q) {
   ctl = null
   m.streaming = false
   busy.value = false
-  // 中途停下的那半截由前端存：服务端在客户端断开时不保证还能把生成器走完
   if (!gotDone && m.content.trim() && !m.error) {
     api.qaSave(pid.value, { conv_id: id, content: m.content })
        .then(r => { if (r?.assistant_id) applyIds({ user_id: r.user_id, assistant_id: r.assistant_id }) })
@@ -170,7 +148,6 @@ async function regen(i) {
   if (busy.value) return
   try {
     const r = await api.qaRegenerate(pid.value, convId.value)
-    // 服务端撤掉了这一问一答，本地同步弹出，再重问一遍
     while (msgs.value.length && msgs.value[msgs.value.length - 1].role !== 'user') msgs.value.pop()
     msgs.value.pop()
     await nextTick()
@@ -190,7 +167,6 @@ async function copy(m) {
   } catch { toast(t('复制失败，手动选吧')) }
 }
 
-// ---------- 会话 ----------
 async function newConv() {
   try {
     const r = await api.convNew(pid.value)
@@ -224,7 +200,6 @@ async function delConv() {
   } catch (e) { toast(e.message) }
 }
 
-// ---------- 跨文献引用：/ 拉起选择器，勾选的篇挂在输入框上 ----------
 /* 只带每篇的析读摘要（几百字），不搬全文——两篇全文就顶到上下文天花板了。
    范围两种：手选几篇；或「全库·自动挑相关」（后端先用标题清单侦察出最相关的 2~4 篇）。 */
 const citeOpen = ref(false)
@@ -251,7 +226,6 @@ const filtered = computed(() => {
   return libPapers.value.filter(p => !q || (p.title || '').toLowerCase().includes(q) || (p.filename || '').toLowerCase().includes(q))
 })
 const groups = computed(() => {
-  // 「全部」打头，其余按分类；未分类的归进「未分类」
   const used = new Set()
   const gs = []
   for (const c of libColls.value) {
@@ -299,7 +273,6 @@ function openCite() {
 }
 function closeCite() { citeOpen.value = false; nextTick(() => inputEl.value?.focus()) }
 
-// ---------- 输入框 ----------
 function autoGrow() {
   const t = inputEl.value
   if (!t) return
@@ -307,14 +280,12 @@ function autoGrow() {
   t.style.height = Math.min(168, Math.max(30, t.scrollHeight)) + 'px'
 }
 function onKey(e) {
-  // isComposing：中文输入法按 Enter 是在选字，不能当发送
   if (e.isComposing || e.keyCode === 229) return
   if (citeOpen.value) {
     if (e.key === 'Escape') { e.preventDefault(); closeCite() }
     else if (e.key === 'Enter') { e.preventDefault(); pickFirst() }
     return
   }
-  // 输入框里按 / = 引用其他论文（和 Codex/ZCode 提 @ 一个肌肉记忆）
   if (e.key === '/') { e.preventDefault(); openCite(); return }
   if (e.key !== 'Enter') return
   if (e.shiftKey) return
@@ -323,9 +294,7 @@ function onKey(e) {
 }
 watch(text, () => nextTick(autoGrow))
 
-// ---------- 外部预填（划词提问 / ¶提问 / 快捷键 / 「问题」页签的「去问」） ----------
 function applyPrefill(pf) {
-  // 三种来源：给定问题原文（「问题」页签的"去问"）、给定段落号、给定一段原文
   text.value = pf.question
     || (pf.paraIdx ? t('¶{n} 这段在说什么？', { n: pf.paraIdx }) : t('这段在说什么：「{t}」？', { t: pf.text }))
   nextTick(() => { autoGrow(); inputEl.value?.focus() })
@@ -368,10 +337,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
 
 <template>
   <div class="ask-panel">
-    <!-- 会话栏：切换 / 新建 / 改名 / 删掉。文案只有动作，没有注解。
-         三个图标是同一套线条 SVG（一个细 ＋、一个实心 ✎、一个彩色 emoji 🗑 混在一起
-         看着像三个人画的），删除键悬停才转朱红 -->
-    <div class="cv-bar">
+        <div class="cv-bar">
       <select class="cv-pick" :value="convId ?? ''"
               @change="e => (convId = Number(e.target.value))">
         <option v-for="c in shownConvs" :key="c.id" :value="c.id">{{ c.title }}</option>
@@ -396,8 +362,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
     </div>
 
     <div class="qa-scroll" ref="scrollEl" @scroll.passive="onScroll">
-      <!-- 较早的对话被压成摘要后，说一句"它还在"，点开能看 -->
-      <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">{{ t('更早的对话已存为摘要') }}</div>
+            <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">{{ t('更早的对话已存为摘要') }}</div>
 
       <div v-if="empty" class="qa-empty">
         <div class="qa-quick">
@@ -408,16 +373,12 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
       <div v-for="(m, i) in msgs" :key="m.id || 'm' + i" class="qa-msg" :class="m.role">
         <div class="q-role">{{ m.role === 'user' ? t('你') : 'EGGPAPER' }}</div>
         <template v-if="m.role === 'assistant'">
-          <!-- 思考型模型要先想 30~60 秒才吐第一个字。这段空等不写出来的话，
-               "正在想"和"发了没反应"在屏幕上长得一模一样。 -->
-          <div v-if="m.streaming && !m.content" class="q-body md qa-wait">{{ t('正在想…') }}</div>
+                    <div v-if="m.streaming && !m.content" class="q-body md qa-wait">{{ t('正在想…') }}</div>
           <MdLite v-else class="q-body md" :text="m.content || ' '" @cite="jumpPara" />
         </template>
         <div class="q-body" v-else>{{ m.content }}</div>
         <span v-if="m.streaming" class="qa-caret"></span>
-        <!-- 这里原来还有一行「依据 ¶1 ¶5 ¶6…」。删了：它列的就是正文里那些已经可点的 ¶，
-             一字不差地再说一遍（后端 cites_of 就是从答案正文里正则抓的）。 -->
-        <div class="qa-acts" v-if="!m.streaming">
+                <div class="qa-acts" v-if="!m.streaming">
           <button @click="copy(m)">{{ t('复制') }}</button>
           <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen(i)"
                   :disabled="busy">{{ t('重新生成') }}</button>
@@ -430,8 +391,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
       </Transition>
     </div>
 
-    <!-- 输入区：能长高，Enter 发送 / Shift+Enter 换行；/ 拉起跨文献引用 -->
-    <div class="qa-input">
+        <div class="qa-input">
       <Transition name="fade">
         <div v-if="citeOpen" class="cite-pop">
           <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" :placeholder="t('筛选标题…（Esc 关闭，Enter 选第一个）')" @keydown.esc.stop="closeCite">

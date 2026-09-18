@@ -14,7 +14,6 @@ import { t, isEn } from '../i18n'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
-
 const GUTTER_FULL = 184   // 页边批注带（184 宽 + 12 的左边距）
 const LS_POS = 'eggpaper:pos:'
 
@@ -22,7 +21,6 @@ const deskEl = ref(null)
 const ready = ref(false)
 const loadPct = ref(0)         // 破壳进度：喂给入场那条细线
 let creep = 0                   // 缓慢逼近的底速（本地 PDF 的下载是瞬时的，
-                                // pdf.js 的进度回调基本不触发——只靠它，线会一直停在 0%）
 const zoom = ref(1)              // 在"适宽/适页"之上的微调倍率
 const fit = ref('width')         // width 适宽 / page 适页 / none 固定百分比
 const fitScale = ref(1)          // 适宽比例：容器宽 ÷ 纸宽
@@ -87,7 +85,6 @@ const gutterW = computed(() => (notesShown.value.length ? GUTTER_FULL : 0))
 const gutterPad = computed(() => (gutterW.value ? 12 : 0))
 const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 
-// 角色（8 类）现在只服务于一件事：略读时该把哪几段蒙掉。界面上不再有它的位置
 function roleOf(p) {
   return store.analysis.annotations[String(p.idx)]?.role || null
 }
@@ -135,8 +132,6 @@ function onVeilClick(e, idx) {
    把整段蒙掉等于把读者自己的锚点一起藏起来。略读该略的是没有信息量的铺垫。 */
 const protectedIdx = computed(() => {
   const s = new Set()
-  // 用**全部**批注而不是过滤后的那一份：这条规则说的是"那段有东西要看"，
-  // 跟用户此刻收起了哪一档（纯粹是显示偏好）无关
   for (const n of store.marginalia.notes) {
     const b = bandOf(n)
     if (b === 'good' || b === 'warn' || b === 'mine') s.add(n.para_idx)
@@ -160,8 +155,6 @@ function onFigure(pno, b) {
       一段中间突然留一句不灰反而迷乱）。 */
 const skimSkip = computed(() => {
   if (!store.viewer.layers.skim) return new Set()
-  // 综述的正文就是"梳理文献"本身——把 background/boilerplate 灰掉等于把血肉蒙掉
-  // （实测一篇 GNN 综述 82% 正文会被判成背景）。综述只灰参考文献区，正文一律保留。
   const review = store.paper?.paper_type === 'review'
   return new Set(store.paras.filter(p => {
     if (p.page <= 0 || p.caption) return false
@@ -233,13 +226,15 @@ function computeVeils() {
   const out = {}
   const outPage = {}
   const s = scale.value
+  if (!store.viewer.layers.skim) {
+    veilRects.value = out
+    veilPageRects.value = outPage
+    return
+  }
   for (const it of flatItems.value) {
     if (it.origPage < 0) continue
     const el = pageEls.value[it.gi]
     if (!el) continue
-    // 段落流之后的页（参考文献/附录）：整页灰。
-    // 双重门：略读开着 + 段落流**已经加载**（刚打开论文时 store.paras 还是空的，
-    // lastParaPage 是 -1，不加门会把每一页都当成"段落流之后的页"整页灰掉）。
     if (store.viewer.layers.skim && lastParaPage.value >= 0 &&
         it.origPage > lastParaPage.value && it.origPage > 0) {
       const boxes = pageRows(el, s)
@@ -278,7 +273,6 @@ function marksShownOnPage(pno) {
 async function getDoc(kind) {
   if (!docs[kind]) {
     const task = pdfjsLib.getDocument(`/api/papers/${store.currentId}/pdf?variant=${kind}`)
-    // 首次打开才报进度：换姿势是本地重排，不需要（也不会有）下载进度
     if (!sheets.value.length) {
       task.onProgress = ({ loaded, total }) => {
         if (total) loadPct.value = Math.max(loadPct.value, Math.min(0.94, loaded / total))
@@ -306,8 +300,6 @@ async function buildSheets() {
       push([{ key: `o${i}`, doc: 'orig', page: i, origPage: i, w: m.w, h: m.h, margin: true, text: true }])
   } else if (v === 'mono') {
     const d = await getDoc('mono'), m = await meta(d)
-    // 译文页也有文字层：选中/复制译文是高频动作（origPage 仍为 -1——蒙纱、
-    // 页边批注、框选都只认原文页，这个标记不改）
     for (let i = 0; i < m.count; i++)
       push([{ key: `m${i}`, doc: 'mono', page: i, origPage: -1, w: m.w, h: m.h, margin: false, text: true }])
   } else if (v === 'dual') {
@@ -322,9 +314,6 @@ async function buildSheets() {
     } else {
       for (let j = 0; j < tm.count; j++) {
         const isOrig = j % 2 === 0
-        // 交替模式下双语文档的第 j 页：偶数页是**原文第 j/2 页**（不是第 j 页）。
-        // 写成 j 的话所有按"原文页号"索引的东西都会错一倍——段落蒙纱、批注卡、
-        // 页码读数、查找命中、跳转全落错页（0 基 2i 当成了 i）。
         push([{ key: `di${j}`, doc: 'dual', page: j, origPage: isOrig ? j / 2 : -1, w: tm.w, h: tm.h, margin: isOrig, text: true }])
       }
     }
@@ -332,8 +321,6 @@ async function buildSheets() {
   sheets.value = rows
 }
 
-// 破壳那条线：真进度有就用真的，没有也让它一直往前挪一点（上限 90%），
-// 免得"在等"和"卡死了"长得一样。到 1 由 ready 那一拍负责。
 function startCreep() {
   stopCreep()
   creep = setInterval(() => {
@@ -347,15 +334,12 @@ async function load({ keepPlace = false } = {}) {
   loading = true
   const veryFirst = !sheets.value.length
   if (veryFirst) { ready.value = false; loadPct.value = 0.08; startCreep() }
-  // 换姿势（原文/译文/双语/对开）前先记住读到哪里，换完再落回同一页同一高度
   const anchor = keepPlace || !veryFirst ? currentAnchor() : null
   sheets.value = []
   doneKeys.clear()
   try {
     await buildSheets()
   } catch (e) {
-    // 译文/双语取不到（还没译、译文文件被删、翻译中途失败）：**退回原文**并说人话——
-    // 停在空白纸面上时，用户只能自己猜到要回去点「原文」。
     if (store.viewer.variant !== 'original') {
       const was = store.viewer.variant
       store.viewer.variant = 'original'      // 赋值会触发 watch → 重新 load
@@ -372,7 +356,6 @@ async function load({ keepPlace = false } = {}) {
     await measure()
     await renderAll()
   } catch (e) {
-    // 渲染中途炸了（某页画不出来等）：别让进度条永远爬、也别白屏不解释
     console.error('[eggpaper] 渲染失败：', e)
     toast(t('这份文档渲染失败了：{m}', { m: String(e.message || e).slice(0, 120) }), 6000)
     stopCreep()
@@ -389,7 +372,6 @@ async function load({ keepPlace = false } = {}) {
   if (anchor) applyAnchor(anchor)
   else if (store.viewer.restorePos) { scroller().scrollTop = store.viewer.restorePos; store.viewer.restorePos = 0 }
   updateProg()
-  // 让 scroll-spy 先跑一拍：不进滚动也要把页码、"读至 ¶n"、进度线初始化好
   if (veryFirst) setTimeout(onScroll, 800)
   if (pendingFind) {                      // 「文中」等在切回原文之后的那一次搜索
     const q = pendingFind
@@ -512,10 +494,7 @@ function measure() {
   if (!sc || !first) return
   const perRow = sheets.value[0].items.length
   const gutter = gutterW.value + gutterPad.value
-  // 量的是滚动容器（书桌）的宽度，不是 .desk-inner——后者是 max-content，
-  // 会随排版自己长大，拿它算"适宽"就成了正反馈：纸越大 → 容器越宽 → 纸更大。
   fitScale.value = (sc.clientWidth - 60 - gutter - (perRow === 2 ? 20 : 0)) / (first.w * perRow)
-  // 适页：把一整页塞进书桌高度（留出上下内边距）
   pageFitScale.value = (sc.clientHeight - 56) / first.h
 }
 
@@ -527,9 +506,6 @@ function updateMid() {
   deskRightX.value = Math.round(r.right - 3)
 }
 
-// 容器宽度变了要重新定标：缩完要落回同一处，别让读者的视线跳走。
-// 注意锚点只在一次连发里记第一拍——右栏折叠是 320ms 的动画，中途每帧都重记的话
-// 记到的是"新宽度 + 旧页高"的错位坐标，落位就会偏。
 let reflowT = null, reflowAnchor = null, loading = false
 function reflow() {
   if (loading) return                       // 换模式那次由 load() 负责落位，别抢
@@ -555,18 +531,11 @@ async function renderAll() {
   }
   if (seq === passToken) {
     rendering.value = false
-    // 谁触发的那次渲染（缩放/换姿势/换篇）最后都要**重新量一遍标注**：渲染中途跑过的
-    // measureNotes（比如 fit 一变引发的两条 renderAll 竞赛）是对着半套文字层量的，
-    // 蒙纱和引文划线会缺块——以渲染收尾后的这一次为准。
     await measureNotes()
-    // 搜索只扫已渲染的文本层：大 PDF 刚打开就搜，后半本的页还没渲染出来，
-    // 会误报"没找到"。渲染齐了把活动查询再跑一遍，结果自己收敛。
     if (searchOpen.value && searchQ.value.trim().length >= 2) runSearch()
   }
 }
 
-// 同一画布的渲染任务串成一条链，后来者排队；轮到执行时重新对齐当前
-// scale / 当前 DOM——排队期间换过页或换过模式的活动直接作废。
 function doRenderItem(it) {
   const key = it.key + ':' + scale.value.toFixed(3)
   if (doneKeys.has(key)) return
@@ -593,9 +562,6 @@ function doRenderItem(it) {
         clearTextIndex(tlEl)          // 节点全换了，旧的引文索引作废
         const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
         await tl.render()
-        // 渲染是**流式**的：期间进来的查询（页边引文、略读蒙纱）会拿当时那半套文字层
-        // 建索引并缓存——缓存键是这个元素，渲染完了元素没换，半套索引就一直被复用。
-        // 这里再清一次：之后来的查询都会对着完整的文字层重建。
         clearTextIndex(tlEl)
       }
       doneKeys.add(key)
@@ -625,8 +591,6 @@ function rectStyle(p) {
            width: (b.x1 - b.x0) * scale.value + 'px', height: (b.y1 - b.y0) * scale.value + 'px' }
 }
 
-// 旁批高度靠实测：先按估算摆一遍，渲染后量真实高度再摆第二遍。
-// 这样长批注展开后只会把下面的推开，不会压在别人身上。
 function noteHeight(n) {
   const noteLines = Math.max(1, Math.ceil((n.note || '').length / 11))
   return 34 + Math.min(noteLines, 3) * 19 + 20
@@ -647,9 +611,6 @@ async function measureNotes() {
   if (changed) noteHeights.value = next
 }
 
-// 旁批是「钉在纸边的」，不是「长在纸里的」：一条展开变长了，整条页边就往下让，
-// 让出来的高度只影响这一行的排布，绝不压到下一页身上。
-// 高度靠实测收敛：先按估算摆一遍 → 渲染后量真实高度 → 再摆一遍。
 const pageLayouts = computed(() => {
   const out = {}
   for (const it of flatItems.value) {
@@ -681,8 +642,6 @@ function notesOnPage(pno) { return pageLayouts.value[pno]?.notes || [] }
 
 /* ---------------- 引文落位：划线精确到行 ---------------- */
 
-// 一条引文落到哪几行——用段落自带的行级坐标算，不依赖渲染，页边排序和跳转都用它
-// （缓存放组件里，不往 store 的批注对象上挂字段：那是数据，别被排布逻辑污染）
 const spanCache = new Map()
 /* 卡片上显示的、纸上划的，必须是**同一句话**：模型引的半句先用段落原文补成整句
    （sentenceAround），补不出来才退回原引文。 */
@@ -706,15 +665,12 @@ function quoteSpan(n) {
   }
   return spanCache.get(k)
 }
-// 框选钉子和引文钉子是两回事：前者锚在用户圈的那块矩形上（rect 就是唯一真相），
-// 后者要在原文里重新找引文。旧数据只有靠 quote 的前缀分辨，新数据看 kind。
 function isRegion(n) { return n.kind === 'region' || (n.quote || '').startsWith('[选区]') }
 function regionBox(n) {
   const s = scale.value
   return n.rect ? [{ x: n.rect.x0 * s, y: n.rect.y0 * s, w: (n.rect.x1 - n.rect.x0) * s, h: (n.rect.y1 - n.rect.y0) * s }] : []
 }
 
-// 纸面上那段引文的精确矩形（逐行，DOM 量出来的），只给当前已渲染的页算
 const quoteMarks = ref({})          // noteId -> [{x,y,w,h}]
 const quoteCov = ref({})            // noteId -> 0~1：引文有多少能对回原文
 function computeQuoteMarks() {
@@ -724,7 +680,6 @@ function computeQuoteMarks() {
     const it = pageItem(n.page)
     const el = it && pageEls.value[it.gi]
     if (!el) continue
-    // 把这一段在纸上的纵向范围也交给它：同一句话在页面上出现两次时，挑落在这一段里的那次
     const p = paraByIdx.value[n.para_idx]
     const box = p ? { y0: p.bbox.y0 * scale.value, y1: p.bbox.y1 * scale.value } : null
     const r = findQuoteRects(el, anchorText(n), box)
@@ -733,13 +688,11 @@ function computeQuoteMarks() {
   quoteMarks.value = out
   quoteCov.value = cov
 }
-// 引文对不上原文（模型改写、PDF 断词、跨栏）：划线只盖对得上的那截，卡片上要说一句
 function quoteLoose(n) {
   const c = quoteCov.value[n.id]
   return c != null && c < 0.75
 }
 
-// 卡片和纸上那条线是一条命：鼠标停在卡片上，对应的划线跟着亮起来
 const hotNote = ref(null)
 function hoverNote(id) { hotNote.value = id }
 
@@ -755,8 +708,6 @@ function kindLabel(n) {
    不硬切：切口带省略号，而且有明确的展开出口——页边只有 154px 宽，
    一条 200 字的引文全铺出来会把整页的批注挤下去。 */
 const openQuote = ref(null)
-// 摊开全句：卡片会变高，必须**跟着重新排版**（页边按"上一条下沿 + 8px"往下摆，
-// 不重量一次，下面的卡不会让位、展开的引文会被盖住）。量两次：DOM 更新后 + 折行落定后。
 function toggleQuote(n) {
   openQuote.value = openQuote.value === n.id ? null : n.id
   measureNotes()
@@ -766,7 +717,6 @@ function quoteShown(n) {
   const q = anchorText(n)
   return openQuote.value === n.id || q.length <= 44 ? q : q.slice(0, 44) + '…'
 }
-// 没有 DOM 时的退路：按行级坐标画整行框（行数准，行内不裁）
 function spanBoxes(n) {
   const span = quoteSpan(n)
   if (!span) return null
@@ -779,7 +729,6 @@ function markBoxes(n) {
   if (isRegion(n)) return regionBox(n)
   return quoteMarks.value[n.id] || spanBoxes(n) || []
 }
-// 引文的第一个字在纸上的 y（用来排序/跳转），拿不到就退回段落首行
 function quoteY(n) {
   if (isRegion(n)) return (n.rect?.y0 || 0) * scale.value
   const m = quoteMarks.value[n.id]
@@ -791,9 +740,6 @@ function quoteY(n) {
 const currentHit = computed(() => searchHits.value[searchAt.value] || null)
 function searchHitsOnPage(pno) { return searchHits.value.filter(h => h.page === pno) }
 
-// 阅读进度：一根贴书桌右缘的细线，读到哪长到哪。
-// 用 ref 在 onScroll 里更新，不用 computed——computed 的依赖里没有"滚动位置"，
-// 它只会在别的东西变化时重算，等于永远停在 0%。
 const progPct = ref(0)
 function updateProg() {
   const sc = scroller()
@@ -811,7 +757,6 @@ function toggleNote(n) {
 async function translateParaAndPin(idx) {
   if (pendingPara.value != null) return
   pendingPara.value = idx
-  // 流式攒出来的译文；流结束后一次性钉到页边（页边卡不逐字跳，钉的是成品）
   let zh = ''
   try {
     await translateStream(store.currentId, 'para', { idx }, ev => {
@@ -841,10 +786,6 @@ function onMouseUp(e) {
   const r = range.getBoundingClientRect()
   const pageEl = node.closest('.page')
   const it = flatItems.value.find(x => pageEls.value[x.gi] === pageEl)
-  // 定位不到段落时不能默认成 ¶0：那会把笔记钉到第一页的页边去。
-  // 用选中文字所在页兜底，para_idx 记 -1（不参与同段重钉去重）。
-  // 译文/双语页的 origPage 是 -1：页号回退到它对应的原文页（mono 1:1、dual 奇偶折半），
-  // 否则钉卡会带着 page=-1 落库，永远翻不到。
   let context = '', paraIdx = -1, page = it ? (it.origPage >= 0 ? it.origPage : origPageOf(it)) : 0
   if (it && it.origPage >= 0) {
     const localY = r.top - pageEl.getBoundingClientRect().top
@@ -896,7 +837,6 @@ function focusNote(n) {
     el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
 }
-// 就这条批注追问模型：把批注与它引的原话一起交过去（从页边卡直接问，不必绕去右栏）
 function askNote(n) {
   const kind = kindZH(n) || t('批注')
   store.viewer.railUser = true
@@ -938,7 +878,6 @@ async function pinSel() {
   toast(t('已钉在页边'))
 }
 
-// 译文的出口多一个：框选提问/钉页边之外，最常见的动作其实是"把这段译文贴到别处去"
 async function copySel() {
   try {
     await navigator.clipboard.writeText(sel.zh || '')
@@ -964,7 +903,6 @@ const mineEl = ref(null)
 function openMine() {
   mine.open = true
   mine.text = ''
-  // 划完词接着就能写：不聚焦的话，用户得先在气泡里点一下输入框才打得出字
   nextTick(() => mineEl.value?.focus({ preventScroll: true }))
 }
 async function saveMine() {
@@ -992,15 +930,12 @@ async function unpin(mid) {
 
 function setFit(m) { fit.value = m; zoom.value = 1; saveLater() }
 function stepZoom(d) {
-  // 在"适宽/适页"之上微调；已经是固定比例就在当前比例上乘
   const next = scale.value * (d > 0 ? 1.15 : 1 / 1.15)
   fit.value = 'none'
   zoom.value = Math.min(3, Math.max(0.2, next))
   saveLater()
 }
 function commitPage() {
-  // 页码框里手滑打进非数字（"abc"、清成了空格）：Number() 会得到 NaN，
-  // 直接放行会把框填成 "NaN"。不合法就退回当前页。
   const n = Number(pageIn.value)
   if (Number.isFinite(n) && n >= 1) gotoPage(n)
   else pageIn.value = String(pageNum.value)
@@ -1013,7 +948,6 @@ function gotoPage(p) {
   if (!el) return
   backStack.push(scroller().scrollTop)
   scrollToY(el.offsetTop - 8, true)
-  // 跳页就是换语境：划词气泡、框选问答别再钉在原地挡新一页的视线
   if (sel.visible) closeSel()
   if (vis.visible) closeVis()
   pageNum.value = pno
@@ -1023,8 +957,6 @@ function gotoPage(p) {
 }
 function stepPage(d) { gotoPage(pageNum.value + d) }
 
-// 近处滑过去、远处直接切：跨好几页的"平滑"滚动要滚一两秒，翻页就成了等动画。
-// 翻页/跳页一律即时；同页内的微调（查找命中）才滑。
 function scrollToY(y, instant = false) {
   const sc = scroller()
   if (!sc) return
@@ -1032,21 +964,16 @@ function scrollToY(y, instant = false) {
   sc.scrollTo({ top: y, behavior: instant || far ? 'auto' : 'smooth' })
 }
 
-// 文档内搜索：在已渲染的文本层里找，命中位置用和引文划线同一套办法量，
-// 所以跳过去落在哪、亮多长，都跟原文对得上。
 async function runSearch() {
   const q = searchQ.value.trim()
   if (q.length < 2) { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; return }
   searchBusy.value = true
-  // 上一轮的"当前命中"：同一查询的重跑（缩放/换姿势后的渲染收尾）不该把用户
-  // 从第 17 条拽回第 1 条，重跑完要落回原来那条。换了查询自然照旧从头来。
   const prev = lastSearchQ === q && searchAt.value >= 0 ? searchHits.value[searchAt.value] : null
   const hits = []
   for (const it of flatItems.value) {
     if (it.origPage < 0) continue
     const el = pageEls.value[it.gi]
     if (!el?.querySelector('.textLayer')) continue
-    // k = 测量时的缩放：重渲染期间框按比例实时换算（见 hitK），不等收尾重跑
     for (const h of findAllRects(el, q)) hits.push({ ...h, page: it.origPage, gi: it.gi, k: scale.value })
   }
   hits.sort((a, b) => (a.page - b.page) || (a.y - b.y))
@@ -1067,8 +994,6 @@ async function runSearch() {
   searchAt.value = at
   searchBusy.value = false
   if (hits.length) gotoHit(at)
-  // 没找到不弹 toast：输入是防抖逐字触发的，中间态（"自组"→"自组装"）会弹假警报；
-  // 结果条本身的「无结果」就是答案
 }
 let lastSearchQ = ''
 function gotoHit(i) {
@@ -1079,10 +1004,8 @@ function gotoHit(i) {
   const it = pageItem(h.page)
   const el = it && pageEls.value[it.gi]
   if (!el) return
-  // 查找命中一律即时落位：平滑滚动在长距离上要滚一两秒，而且落位不准就没法核对了
   scrollToY(el.offsetTop + h.rects[0].y * hitK(h) - scroller().clientHeight * 0.3, true)
 }
-// 命中的高亮：给当前搜到的那条一个更大的底
 function searchStep(d) { if (searchHits.value.length) gotoHit(searchAt.value + d) }
 function closeSearch() { searchOpen.value = false; searchQ.value = ''; searchHits.value = []; searchAt.value = -1; lastSearchQ = '' }
 /* 命中框的实时比例：框是按测量那一刻的缩放（h.k）量的，页面现在活在 scale 档。
@@ -1110,13 +1033,11 @@ async function applyJump() {
   const it = pageItem(j.page)
   const el = it && pageEls.value[it.gi]
   if (!el) return
-  // 落点就是引文首行：跳过去的第一眼应该正好看见被引用的那句话
   scrollToY(el.offsetTop + j.y0 * scale.value - scroller().clientHeight * 0.28)
   flash.value = null
   if (j.rects?.length) {
     flash.value = { gi: it.gi, boxes: j.rects }
   } else {
-    // 只给了 y：标出所在的那一段（用行级坐标兜底，别整段乱涂的时候多）
     for (const p of parasByPage.value[j.page] || []) {
       const y0 = (p.lines?.[0]?.bbox.y0 ?? p.bbox.y0) * scale.value
       const y1 = (p.lines?.[p.lines.length - 1]?.bbox.y1 ?? p.bbox.y1) * scale.value
@@ -1186,8 +1107,6 @@ function openSearch() { searchOpen.value = true }
 let pendingFind = null       // 等这一轮渲染完再搜（换模式要重新出图、建文字层）
 function findInPaper(q) {
   if (!q) return
-  // 查找只在原文的文字层里找，而译文页与框选模式下**没有** .textLayer：
-  // 直接搜必然"没找到"，用户会以为这个词不在这篇里
   if (store.viewer.variant !== 'original') {
     store.viewer.variant = 'original'
     toast(t('已切回原文再找'))
@@ -1244,20 +1163,13 @@ function savePos() {
     spread: store.viewer.spread, zoom: zoom.value, fit: fit.value,
   }))
 }
-// 换了姿势也要记住：不能只在滚动时才存
 function saveLater() { clearTimeout(saveT); saveT = setTimeout(savePos, 250) }
 
 onMounted(async () => {
-  // 打开一篇已经有眉批的论文：让划线和批注卡自己"画"进来一次，像有人刚在纸上划过。
-  // （新生成的眉批走 store.marginalia.notes 的 watch，这里是"早就存在"的那种。）
   if (store.marginalia.notes.length) {
     freshNotes.value = true
     setTimeout(() => (freshNotes.value = false), 1800)
   }
-  // 缩放/适页要在 load() **之前**定下来：load() 里会用 restorePos 写 scrollTop，
-  // 而那个位置是按**当时那套缩放**算出来的像素。先加载再改适页，页高整个变了——存下来的
-  // 位置就落到别处（用适页读过时缩放常常只有适宽的一半，跳到文末都算常事），而且
-  // watch(scale) 会在 250ms 后把这个错位置写回 localStorage，正确位置就此丢掉。
   try {
     const saved = JSON.parse(localStorage.getItem(LS_POS + store.currentId) || '{}')
     if (saved.fit) fit.value = saved.fit
@@ -1295,7 +1207,6 @@ onBeforeUnmount(() => {
   docs = { orig: null, dual: null, mono: null }
 })
 
-// ---------- 框选视觉问答 ----------
 const frameRect = ref(null)
 
 function cropItem(it, r) {
@@ -1313,8 +1224,6 @@ const vis = reactive({ visible: false, x: 0, y: 0, img: '', question: '', answer
 
 function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
-  // 译文/双语页（origPage = -1）上不许框选：那里没有原文段落，页边也摆不出对应的卡片，
-  // 钉下去的结果是"AI 的回答存了但永远看不到"，还会顺手覆盖 ¶0 上已有的那条。
   if (it.origPage < 0) { toast(t('译文页不能框选，切回「原文」再圈')); return }
   e.preventDefault()
   const el = pageEls.value[it.gi]
@@ -1335,7 +1244,6 @@ function startFrameDrag(e, it) {
     const x1 = Math.max(rr.x0, rr.x1), y1 = Math.max(rr.y0, rr.y1)
     if (x1 - x0 < 24 || y1 - y0 < 24) return
     const img = cropItem(it, { x0, y0, x1, y1 })
-    // 记住这是哪一页、哪一段，钉页边时才落得准
     const s = scale.value
     let paraIdx = 0
     for (const p of parasByPage.value[it.origPage] || []) {
@@ -1349,8 +1257,6 @@ function startFrameDrag(e, it) {
   }
   frameRect.value = { x0: p0.x, y0: p0.y, x1: p0.x, y1: p0.y }
   document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
-  // 拖到窗口外松手时 document 收不到 mouseup：监听器会一直留着，之后鼠标一动纸上就冒
-  // 幽灵框（下一次框选的结果还可能是上一次的）。失焦也当成"松手了"。
   window.addEventListener('blur', stop)
 }
 
@@ -1406,9 +1312,6 @@ function onDocDown(e) {
   const t = e.target
   if (!t?.closest) return
   if (vis.visible && !t.closest('.vis-pop')) closeVis()
-  // 划词气泡：点它以外任何地方都收（包括纸面本身）。
-  // 原来把 .textLayer 排除在外，本意是"别把正在划的词弄丢"，结果是在纸上点哪儿都不关，
-  // 只能去够那个小叉。其实点下去会清掉选区、mouseup 又会按新选区重开气泡，不会丢东西。
   if (sel.visible && !t.closest('.sel-pop')) closeSel()
 }
 watch(() => store.escTick, () => {
@@ -1416,8 +1319,6 @@ watch(() => store.escTick, () => {
   if (vis.visible) closeVis()
   if (searchOpen.value) closeSearch()
 })
-// 聚焦要用 preventScroll：查找框挂在书桌内容的末尾，浏览器为了"把焦点滚进视野"
-// 会把整个书桌滚到底，把刚跳好的命中位置冲掉。
 watch(searchOpen, v => { if (v) nextTick(() => searchInputEl.value?.focus({ preventScroll: true })) })
 let searchT = null
 watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 320) })
@@ -1427,12 +1328,8 @@ watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: tru
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
 watch(() => store.paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
-// 图层开关（眉批/略读）会改页边宽度和标注的密度，换完要重新定标落回原处
 watch(() => store.viewer.layers, () => reflow(), { deep: true })
-// 右栏/文库拖宽结束时不需要 ResizeObserver 的延迟：直接重排一次
 watch(() => store.reflowTick, () => reflow())
-// 档位筛选会改"页边要不要留"（四档全关 = 整条页边消失），而页宽是按这个定标的：
-// 不重排的话论文不会变宽，只是整块往右挪，白白空掉两百像素
 watch(() => store.viewer.noteBands, () => reflow(), { deep: true })
 watch(() => store.marginalia.notes, (n, o) => {
   spanCache.clear()
@@ -1463,24 +1360,19 @@ watch(() => store.marginalia.notes, (n, o) => {
 
             <canvas :ref="el => (canvases[it.gi] = el)"></canvas>
             <div class="care-wash" v-if="store.viewer.care !== 'off'"></div>
-            <!-- 文字层**不随框选卸载**（只关掉它的鼠标/可见性）：v-if 一摘一挂，
-                 新元素是空的，而 doneKeys 还记着"这一档渲染过了"→ 再也不会重画，
-                 退掉框选之后划词、查找、引文划线全哑（元素在、里面一个字都没有）。 -->
-            <div class="textLayer" v-if="it.text" :class="{ 'tl-off': store.viewer.frame }"
+                        <div class="textLayer" v-if="it.text" :class="{ 'tl-off': store.viewer.frame }"
                  :ref="el => (textLayers[it.gi] = el)"></div>
             <div v-if="frameRect && frameRect.gi === it.gi" class="frame-rect"
                  :style="{ left: Math.min(frameRect.x0, frameRect.x1) + 'px', top: Math.min(frameRect.y0, frameRect.y1) + 'px',
                            width: Math.abs(frameRect.x1 - frameRect.x0) + 'px', height: Math.abs(frameRect.y1 - frameRect.y0) + 'px' }"></div>
 
             <div class="para-zone">
-              <!-- 参考文献区/附录（段落流之后的页）整页灰：不拦鼠标，字可以照常选中 -->
-              <div v-for="(vb, vi) in pageVeils(it.origPage)" :key="'pv' + vi"
+                            <div v-for="(vb, vi) in pageVeils(it.origPage)" :key="'pv' + vi"
                    class="para-fade veil page-veil"
                    :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
                              animationDelay: Math.min(400, vi * 8) + 'ms' }"></div>
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
-                <!-- 灰掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
-                <template v-if="veiled(p, it.origPage)">
+                                <template v-if="veiled(p, it.origPage)">
                   <div v-for="(vb, vi) in veilBoxes(p, it.origPage)" :key="'v' + vi"
                        class="para-fade veil" :title="vi ? '' : t('这段也要读')"
                        :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
@@ -1488,9 +1380,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                        @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
                        @click="onVeilClick($event, p.idx)"></div>
                 </template>
-                <!-- 留下来的段落只在页边留一道芯线（不写字）。手选过的段落，这条芯线
-                     就是撤销出口：纸上没有别的可点的地方了。 -->
-                <div v-else-if="store.viewer.layers.skim && it.origPage > 0 && (isCore(p) || kept(p.idx))"
+                                <div v-else-if="store.viewer.layers.skim && it.origPage > 0 && (isCore(p) || kept(p.idx))"
                      class="para-core-bar" :class="{ undo: kept(p.idx) }"
                      :title="kept(p.idx) ? t('取消保留') : ''"
                      :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"
@@ -1498,8 +1388,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
               </template>
 
-              <!-- 跳转/查找命中：精确到字符的矩形，落在哪就亮在哪 -->
-              <div v-for="(b, bi) in flash?.gi === it.gi ? flash.boxes || [] : []" :key="'fb' + bi"
+                            <div v-for="(b, bi) in flash?.gi === it.gi ? flash.boxes || [] : []" :key="'fb' + bi"
                    class="para-fade hot boxed" :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
               <template v-for="(h, hi) in searchHitsOnPage(it.origPage)" :key="'s' + hi">
                 <div v-for="(b, bi) in h.rects" :key="bi" class="find-hit" :class="{ cur: h === currentHit }"
@@ -1507,10 +1396,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                                width: b.w * hitK(h) + 'px', height: b.h * hitK(h) + 'px' }"></div>
               </template>
 
-              <!-- 眉批引文：按句子落行，划了几行就是几个块；框选钉子按区域画。
-                   笔法分三档（见 styles.css）：值得读是马克笔、要当心是波浪线、可跳过只有一条点线。
-                   块本身不吃鼠标事件——它盖在正文上，吃了就没法选字了。 -->
-              <template v-for="{ n } in marksShownOnPage(it.origPage)" :key="'n' + n.id">
+                            <template v-for="{ n } in marksShownOnPage(it.origPage)" :key="'n' + n.id">
                 <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark" :data-nid="n.id"
                      :class="['b-' + bandOf(n), { draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }]"
                      :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
@@ -1518,8 +1404,7 @@ watch(() => store.marginalia.notes, (n, o) => {
             </div>
           </div>
 
-          <!-- 页边批注带：宽度跟着"有没有东西要放"走 -->
-          <div class="gutter" v-if="it.margin && gutterW > 0"
+                    <div class="gutter" v-if="it.margin && gutterW > 0"
                :style="{ height: (pageLayouts[it.origPage]?.height || it.h * scale) + 'px',
                          width: gutterW + 'px', marginLeft: gutterPad + 'px' }">
             <div v-for="{ n, top, pending } in notesOnPage(it.origPage)" :key="'mg' + n.id"
@@ -1538,21 +1423,17 @@ watch(() => store.marginalia.notes, (n, o) => {
                   {{ pending ? t('翻译中') : kindLabel(n) }}
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? t('收起') : t('展开') }}</span>
-                <!-- 就地追问：读到这条批注时人的第一反应是"凭什么"，
-                     追问要在这儿，而不是跳到右栏问题页去凑一句话 -->
-                <button v-if="!pending" class="mg-ask" @click.stop="askNote(n)">{{ t('问 ↗') }}</button>
+                                <button v-if="!pending" class="mg-ask" @click.stop="askNote(n)">{{ t('问 ↗') }}</button>
                 <button v-if="!pending" class="mg-del" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ prettyChem(n.note) }}</div>
-              <!-- 引文：默认看开头，点「全句」摊开；引文本身点了是跳回纸上那句 -->
-              <div class="mg-quote-row">
+                            <div class="mg-quote-row">
                 <span class="mg-quote" :class="{ all: openQuote === n.id }"
                       :title="t('跳到纸上这句：{q}', { q: anchorText(n) })" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
                 <button v-if="anchorText(n).length > 44" class="mg-qall" @click.stop="toggleQuote(n)">
                   {{ openQuote === n.id ? t('收起') : t('全句') }}
                 </button>
-                <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->
-                <span v-if="quoteLoose(n)" class="mg-loose" :title="t('引文与原文略有出入')">≈</span>
+                                <span v-if="quoteLoose(n)" class="mg-loose" :title="t('引文与原文略有出入')">≈</span>
               </div>
             </div>
           </div>
@@ -1561,15 +1442,11 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
     </Transition>
 
-    <!-- 出图进度：一条不挡路的细线，比"遮住论文的加载器"诚实 -->
-    <div class="stage-line" v-if="ready && rendering"><i /></div>
+        <div class="stage-line" v-if="ready && rendering"><i /></div>
 
-    <!-- 阅读进度：贴书桌右缘的一根细线，读到哪长到哪 -->
-    <div class="read-prog" v-if="ready" :style="{ left: deskRightX + 'px' }"><i :style="{ height: progPct * 100 + '%' }" /></div>
+        <div class="read-prog" v-if="ready" :style="{ left: deskRightX + 'px' }"><i :style="{ height: progPct * 100 + '%' }" /></div>
 
-
-    <!-- 阅读器控件：翻页 / 缩放 / 查找。整条可拖走，别压在论文中间 -->
-    <Transition name="fade">
+        <Transition name="fade">
     <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px' }"
          v-drag="{ key: 'zoombar' }" data-drag>
       <button :title="t('上一页（PageUp）')" @click="stepPage(-1)">‹</button>
@@ -1590,8 +1467,7 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
     </Transition>
 
-    <!-- 文档内查找：结果条数与位置都来自真实字符矩形 -->
-    <Transition name="pop">
+        <Transition name="pop">
     <div v-if="ready && searchOpen" class="desk-float find-bar" :style="{ left: midX + 'px' }"
          v-drag="{ key: 'findbar' }" data-drag>
       <input ref="searchInputEl" v-model="searchQ" class="fb-input" :placeholder="t('在论文里找…')"
@@ -1605,15 +1481,13 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
     </Transition>
 
-    <!-- 框选中：常驻退出口。顶栏那颗「框选」此刻正亮着，这里不必再把同一个词说一遍 -->
-    <Transition name="pop">
+        <Transition name="pop">
     <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
       <button @click="store.viewer.frame = false">{{ t('退出框选') }}</button>
     </div>
     </Transition>
 
-    <!-- 划词气泡 -->
-    <Transition name="pop">
+        <Transition name="pop">
     <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }"
          v-drag="{ key: 'selpop' }" data-drag @mouseup.stop>
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
@@ -1625,8 +1499,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div class="sp-hits" v-if="sel.hits.length">
         <span class="chip" v-for="h in sel.hits" :key="h.en">📌 {{ h.en }} → {{ h.zh }}</span>
       </div>
-      <!-- 自己写一条：页边也是你的本子，不只是 AI 说话的地方 -->
-      <div class="sp-mine" v-if="mine.open">
+            <div class="sp-mine" v-if="mine.open">
         <textarea ref="mineEl" v-model="mine.text" rows="3" :placeholder="t('就这句写点什么…（Ctrl+Enter 保存）')"
                   @mouseup.stop @keydown.enter.ctrl="saveMine"></textarea>
       </div>
@@ -1653,9 +1526,7 @@ watch(() => store.marginalia.notes, (n, o) => {
     </div>
     </Transition>
 
-    <!-- 返回原位 -->
-    <!-- 框选视觉问答 -->
-    <Transition name="pop">
+            <Transition name="pop">
     <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }"
          v-drag="{ key: 'vispop' }" data-drag @mouseup.stop>
       <div class="vp-head">
@@ -1666,17 +1537,14 @@ watch(() => store.marginalia.notes, (n, o) => {
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" :placeholder="t('问这个选区…')" />
       <div class="sp-actions">
-        <!-- 只把提示词放进输入框，不发：用户多半要改两句再问（Enter 发送） -->
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图：画了什么、支持什么结论'))">{{ t('分析此图') }}</button>
+                <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图：画了什么、支持什么结论'))">{{ t('分析此图') }}</button>
         <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式：每一步的含义和推导逻辑'))">{{ t('分析公式') }}</button>
         <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表：趋势、异常和可疑之处'))">{{ t('分析表格') }}</button>
       </div>
       <div v-if="vis.busy" class="vp-state">{{ t('正在看图') }}</div>
       <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>
       <MdLite v-if="vis.answer" class="vp-answer" :text="vis.answer" />
-      <!-- 关掉的出口只有右上角那个 ×（和 Esc）：左下角再挂一个"关闭"是重复，
-           底部只留真正要做的动作 -->
-      <div class="sp-actions" v-if="vis.answer">
+            <div class="sp-actions" v-if="vis.answer">
         <button class="primary" style="padding:4px 10px" @click="pinVisual">{{ t('钉在页边') }}</button>
       </div>
     </div>

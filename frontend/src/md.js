@@ -1,8 +1,3 @@
-/* 极简 markdown：标题 / 加粗 / 无序列表 / 行内代码 / ¶n 引用 / 表格。
- *
- * 只解析模型真会吐的那几种。不做通用解析器——通用解析器会顺手把嵌套引用、
- * HTML 透传都带进来，在这类"读一句算一句"的面板里全是风险和噪音。
- */
 import { prettyChem } from './chem'
 
 const CITE = /¶\s*\d+/
@@ -13,8 +8,6 @@ export function mdSegs(text) {
   const out = []
   const lines = String(text || '').split('\n')
   for (let i = 0; i < lines.length; i++) {
-    // 表格块：本行是行、下一行是 --- 分隔行，才当表格吃；中间任何一行不像行就断块。
-    // 解析不出来的行一律按普通文本走——宁可显示竖线也不吞内容。
     if (isRow(lines[i]) && i + 1 < lines.length && isSep(lines[i + 1])) {
       const block = tableBlock(lines, i)
       out.push(block.seg)
@@ -35,7 +28,6 @@ function lineSeg(raw, out) {
   if (hm) { head = hm[1].length; t = hm[2] }
   if (/^\s*[-*]\s+/.test(t)) { bullet = true; t = t.replace(/^\s*[-*]\s+/, '') }
   const runs = runsOf(t)
-  // 连续空行只留一个段距，别把面板撑出大片空白（null = 这行不产生内容）
   if (!runs.length && out.length && out[out.length - 1].blank) return null
   return { head, bullet, runs, blank: !runs.length }
 }

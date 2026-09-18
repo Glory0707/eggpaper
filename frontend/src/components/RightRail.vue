@@ -37,8 +37,6 @@ watch(() => store.marginalia.status, (s) => {
 onUnmounted(() => { if (marginTimer) clearInterval(marginTimer) })
 const marginElapsed = computed(() => marginSecs.value)
 
-
-// 摘一段原文：断在句末更体面，断不了就按字数切
 function excerpt(text, cap = 132) {
   const t = String(text || '').replace(/\s+/g, ' ').trim()
   if (t.length <= cap) return t
@@ -51,8 +49,6 @@ function jumpPara(idx) {
   const p = paraByIdx.value[idx]
   if (p) jumpTo(p.page, p.bbox.y0, p.bbox.y1)
 }
-// 眉批跳转：跳到这条批注引用的那句话，而不是它所在段的开头。
-// 和纸面用同一句话（sentenceAround 补成整句），否则"跳到那句"会跳到半句上
 function jumpNote(n) {
   const p = paraByIdx.value[n.para_idx]
   const span = p ? lineSpanOf(p, sentenceAround(p.text, n.quote) || n.quote) : null
@@ -97,15 +93,11 @@ async function loadSix() {
   try {
     const r = await api.sixAnswers(store.currentId)
     if (!samePaper(mine)) return        // 回来时已经换篇：这是上一篇的答案
-    // 旧口径的缓存不认：problem/why 已并入 motive（服务端不再认这两个 key），
-    // lens/next 换过口径（服务端按 v 判定、会重新生成）。删掉让它们走下面的静默补跑。
     delete r.problem; delete r.why
     if (r.lens && !r.lens.v) delete r.lens
     if (r.next && !r.next.v) delete r.next
     Object.assign(six, r)
   } catch { /* 没缓存很正常 */ }
-  // 还缺的那几问自己补上：新的析读会一次写全，但**早先析读过的论文**（生成逻辑上线之前）
-  // 或者当时没写成的那一问，这里静默重取一次——界面上不再有「获取」按钮
   const wanted = ['motive', 'next', 'lens'].concat(isReview.value ? ['how'] : [])
   for (const k of wanted) {
     if (six[k] || sixBusy[k]) continue
@@ -116,7 +108,6 @@ async function loadSix() {
       .finally(() => { sixBusy[k] = false })
   }
 }
-// 「方法卡」是"怎么解决的"那条的加深版：点一下跳到速览页并顺手取回（没取过才取）
 function openMethod() {
   tab.value = 'eye'
   if (!methodCard.value) genMethodCard()
@@ -132,7 +123,6 @@ function gotoSix(k) {
     if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
   })
 }
-// 就一条批注追问：把批注和它引的原话一起交给模型，问题才问得准
 function askNote(n) {
   const kind = kindZH(n) || t('批注')
   store.askPrefill = {
@@ -142,7 +132,6 @@ function askNote(n) {
   }
 }
 
-// 「去问」：把这一条顺着问下去（带进提问面板并直接发出去）
 function askIt(q) {
   if (!q) return
   store.askPrefill = { question: q, send: true }
@@ -185,9 +174,6 @@ function anchorsOf(claim) {
     .filter(x => x.anno)
 }
 
-// ---------- 提问 ----------
-// 问答本身在 AskPanel 里（会话、流式、停止、复制、重新生成）；这里只负责
-// "该问什么"——论文专属的推荐问题，空态里给出来，省得对着空框发呆。
 const GENERIC = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？', '作者承认了哪些局限？']
 const suggest = ref([])
 async function loadSuggest() {
@@ -199,16 +185,10 @@ async function loadSuggest() {
 }
 const quickList = computed(() => (suggest.value.length ? suggest.value : GENERIC))
 
-// 划词/¶ 提问：切到提问页，剩下的交给 AskPanel（它读 store.askPrefill）
 watch(() => store.askPrefill, pf => { if (pf) tab.value = 'ask' })
 watch(() => store.askFocusTick, () => { tab.value = 'ask' })
-// 提问面板现在常驻（切页签不打断生成），所以"进页面就有光标"要自己补一下
 watch(tab, t => { if (t === 'ask') store.askFocusTick++ })
 
-// ---------- 术语 ----------
-// 术语是**按篇**的（一篇文献一份词表，不设全库共用）。旧论文的按篇词表是空的——
-// 它们是"词表还全库共用"那会儿析读的，而"为了看术语把整篇重新析读一遍"代价太大，
-// 所以这里补一次懒生成：进术语页发现是空的、且这篇已经析读过，就让它发掘一次。
 const terms = ref([])
 const termFilter = ref('')
 const termForm = ref({ term_en: '', term_zh: '' })
@@ -270,8 +250,6 @@ watch(tab, t => {
   if (t === 'ask') loadSuggest()
   if (t === 'eye') { loadFigures(); loadCachedBlocks() }
 })
-// 重算析读 / 重写眉批后，服务端作废了由主张派生的缓存，前端那份也得跟着丢，否则
-// 一眼卡、方法卡还是旧的，三问还在问一句已经删掉的"有坑"。
 watch(() => store.analysis.status, s => {
   if (s !== 'done') return
   methodCard.value = null; advisor.value = []; suggest.value = []
@@ -279,8 +257,6 @@ watch(() => store.analysis.status, s => {
   termsTried.value = ''              // 重算析读 = 词表也重发了一批，允许再补一次空白
   loadTerms()
   loadSix()          // 服务端重算析读时把五问的答案一并清了（answers_clear），
-                     // 前端留着旧的就会显示上一个世代的内容，而"已有答案"又把
-                     // 「获取 / 补全」按钮全藏起来 —— 只能换篇才能再取一次
 })
 watch(() => store.marginalia.status, s => {
   if (s !== 'done') return
@@ -325,7 +301,6 @@ onUnmounted(() => {
   endRailResize()
 })
 
-// ---------- 方法卡 / 谱系卡（综述）/ 缩写 / mini-map ----------
 const isReview = computed(() => store.paper?.paper_type === 'review')
 const methodCard = ref(null)
 const mcBusy = ref(false)
@@ -344,8 +319,6 @@ async function genMethodCard() {
     methodCard.value = r
   } catch (e) { toast(t('生成失败：{m}', { m: e.message })) } finally { mcBusy.value = false }
 }
-// 本文缩写：**只列还没收进术语表的**。收进去之后它就出现在下面那张表里了，
-// 同一对 en→zh 在同一屏里出现两次没有意义（反馈由 toast 负责）。
 const abbrList = computed(() => {
   try {
     const abbrs = JSON.parse(store.paper?.abbrs || '{}')
@@ -364,10 +337,6 @@ function eqq(idx) {
   return m[String(idx)] || ''
 }
 
-// ---------- 导师三问 ----------
-// 不主动预生成：这是要花 token 的一次调用，没点"获取"就不该发生。
-// 但**读缓存**是免费的——进速览页时静默读一次，算过的东西就直接显示出来，
-// 不然每次换篇都要重点「获取」，点了才知道"其实早算过了"。
 const advisor = ref([])
 const advBusy = ref(false)
 async function loadAdvisor() {
@@ -398,10 +367,8 @@ async function loadCachedBlocks() {
   }
 }
 
-// ---------- 图表速览 ----------
 const figures = ref([])
 const figuresLoading = ref(false)
-// 灯箱用序号而不是对象：这样能左右翻图，像看图片一样一张张过
 const figIdx = ref(-1)
 const lightbox = computed(() => (figIdx.value >= 0 ? figures.value[figIdx.value] || null : null))
 function figStep(d) {
@@ -481,7 +448,6 @@ const termsFiltered = computed(() => {
   list = list.filter(t => t.term_en.toLowerCase().includes(f) || t.term_zh.includes(f))
   return list
 })
-// 「文中」：术语表 → 原文。预填这个英文词，跳到第一条命中。
 function findTerm(en) {
   if (!en) return
   store.viewerApi?.findInPaper(en)
@@ -503,8 +469,7 @@ watch(() => store.currentId, () => {
 
 <template>
   <aside class="rail-right">
-    <!-- 分栏拖手：贴在右栏左缘，往左拖变宽 -->
-    <div class="rail-grip" :class="{ on: railDragging }" role="separator" aria-orientation="vertical"
+        <div class="rail-grip" :class="{ on: railDragging }" role="separator" aria-orientation="vertical"
          tabindex="0" :title="t('拖动改宽度 · 双击复位 · ←→')"
          @mousedown="startRailResize" @dblclick="store.viewer.railW = RAIL_DEF; store.reflowTick++"
          @keydown.left.prevent="nudgeRail(28)" @keydown.right.prevent="nudgeRail(-28)"></div>
@@ -516,12 +481,9 @@ watch(() => store.currentId, () => {
       <button class="rt-collapse" :title="t('收起右栏（x）')" @click="store.viewer.railUser = false">»</button>
     </div>
     <div class="rbody" ref="rbodyEl" :class="{ flush: tab === 'ask' }">
-      <!-- 页签切换：三个静态页共用一层过渡（出去快、进来稍慢），换页时内容是"落定"而不是"啪一下换掉"。
-           提问页不在这层里——它必须常驻（切走不能掐断正在生成的回答），单独用下面那个 v-show 层。 -->
-      <Transition name="rt" mode="out-in">
+            <Transition name="rt" mode="out-in">
       <div class="rt-pane" v-if="tab !== 'ask'" :key="tab">
-      <!-- ============ 问题 ============ -->
-      <template v-if="tab === 'skeleton'">
+            <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
           <div class="r-line">{{ t('正在通读…') }}</div>
           <div class="r-bar"><i /></div>
@@ -530,8 +492,7 @@ watch(() => store.currentId, () => {
           <div style="font-size:var(--fs-sm);color:var(--vermilion);line-height:1.6">{{ store.analysis.error }}</div>
           <button style="margin-top:10px" @click="emit('analyze')">{{ t('重试') }}</button>
         </div>
-        <!-- 没析读时只陈述状态：顶栏那颗「析读」就在上面，同一屏里放第二个同名按钮是重复 -->
-        <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
+                <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
             {{ store.paras.length ? t('还没析读：析读后才有这五个答案。') : t('扫描件：能读、能框选问 AI，五问答不了。') }}
           </div>
@@ -542,8 +503,7 @@ watch(() => store.currentId, () => {
         </template>
 
         <template v-else>
-          <!-- 五个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
-          <div class="six-head">
+                    <div class="six-head">
             <span v-if="store.readingPara" class="mono-num">{{ t('读至 ¶{n} / {m}', { n: store.readingPara, m: store.paras.length }) }}</span>
           </div>
 
@@ -554,21 +514,15 @@ watch(() => store.currentId, () => {
               <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
             </button>
 
-            <!-- 展开是"长出来"的，不是"跳出来"的：0fr→1fr 的 grid 过渡才真的在动高度 -->
-            <div class="six-fold" :class="{ open: openSix[s.k] }">
+                        <div class="six-fold" :class="{ open: openSix[s.k] }">
              <div class="six-fold-in">
             <div class="six-a">
-              <!-- ① 要解决什么、为什么：**直接说出来**。原文里没有哪一句现成写着"我们要解决什么"，
-                   那是要从引言里综合出来的——所以这一问的答案是模型的几句话，段落只作为依据
-                   标在句尾（原文在纸上，点 ¶ 就到，不必在这里再抄一遍）。 -->
-              <template v-if="s.k === 'q1'">
+                            <template v-if="s.k === 'q1'">
                 <MdLite v-if="six.motive?.text" class="six-txt" :text="six.motive.text" @cite="jumpPara" />
                 <div v-else class="six-note">{{ sixBusy.motive ? '…' : t('未生成') }}</div>
               </template>
 
-              <!-- ② 研究型：主张 → 证据链；综述：由模型说清"它把文献怎么组织的"
-                   （综述没有实验证据层，主张-证据链在那儿是空壳，见后端 answer_how_review） -->
-              <template v-else-if="s.k === 'q2' && isReview">
+                            <template v-else-if="s.k === 'q2' && isReview">
                 <MdLite v-if="six.how?.text" class="six-txt" :text="six.how.text" @cite="jumpPara" />
                 <div v-else class="six-note">{{ sixBusy.how ? '…' : t('未生成') }}</div>
                 <div class="six-foot">
@@ -597,8 +551,7 @@ watch(() => store.currentId, () => {
                 </div>
               </template>
 
-              <!-- ③ 还有什么没解决：局限段 + 眉批里标"有坑"的句子 -->
-              <template v-else-if="s.k === 'q3'">
+                            <template v-else-if="s.k === 'q3'">
                 <div v-for="p in limitParas" :key="p.idx" class="gap-node">
                   <div class="gap-row" @click="jumpPara(p.idx)">
                     <span class="g-tag">¶{{ p.idx }}</span>
@@ -619,9 +572,7 @@ watch(() => store.currentId, () => {
                 </div>
               </template>
 
-              <!-- ④ 还能做什么：几条方向（论文自己承认的 + AI 自己想的新研究），
-                   每条都能顺下去问 -->
-              <template v-else-if="s.k === 'q4'">
+                            <template v-else-if="s.k === 'q4'">
                 <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
                   <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
@@ -630,9 +581,7 @@ watch(() => store.currentId, () => {
                 <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
               </template>
 
-              <!-- ⑤ 换个学科怎么看：一条一个学科（含没沾边但有关联的），每条说那个人
-                   读到这篇的想法/意见，并配一句他会问的 -->
-              <template v-else-if="s.k === 'q5'">
+                            <template v-else-if="s.k === 'q5'">
                 <div class="six-item" v-for="(it, i) in (six.lens?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
                   <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
@@ -645,10 +594,7 @@ watch(() => store.currentId, () => {
             </div>
           </section>
 
-          <!-- 眉批的家在纸面页边：这里只给"它们在哪儿"、生成入口，和**按档位筛**的开关。
-               状态是 error 时结果**还在**（失败不抹旧结果），所以这里说的是"这次的没成"，
-               不是"眉批没了"——别让用户以为页边那些批注也作废了。 -->
-          <div class="blk">
+                    <div class="blk">
             <div class="blk-head">
               <span class="mono-label">{{ t('眉批') }}<span v-if="mnotes.length"> · {{ mnotes.length }}</span></span>
               <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')"
@@ -657,9 +603,7 @@ watch(() => store.currentId, () => {
               </button>
               <span v-else class="blk-busy">{{ t('写批注中') }}<span class="r-dots">…</span></span>
             </div>
-            <!-- 生成中的真实进度：服务端按"读完几块"回报（12 段一块），不是装饰动画。
-                 首次生成要通读全文，长论文十几块，这条线就是"还要等多久"的答案。 -->
-            <div class="blk-prog" v-if="store.marginalia.status === 'running'">
+                        <div class="blk-prog" v-if="store.marginalia.status === 'running'">
               <div class="r-bar">
                 <i :class="{ det: marginPct !== null }" :style="marginPct !== null ? { width: marginPct + '%' } : null" />
               </div>
@@ -669,9 +613,7 @@ watch(() => store.currentId, () => {
                 <span class="blk-elapsed">{{ marginElapsed }}s</span>
               </div>
             </div>
-            <!-- 页边按档位筛：四档就是纸上四种笔触。三四十条批注的时候，
-                 "只看要当心"是读者的第一个念头；关掉的档位在纸上和页边同时消失。 -->
-            <div class="band-bar" v-if="mnotes.length">
+                        <div class="band-bar" v-if="mnotes.length">
               <button v-for="b in BANDS" :key="b.k" class="band-chip" :class="{ off: !bandOn(b.k) }"
                       @click="toggleBand(b.k)">
                 <i class="bdot" :style="{ background: b.color }"></i>{{ t(b.zh) }}<span class="n">{{ bandCount[b.k] }}</span>
@@ -684,16 +626,12 @@ watch(() => store.currentId, () => {
             <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
               {{ store.marginalia.error }}
             </p>
-            <!-- 完成了但有块没生成：页边少了一段，得说出来，否则用户以为那段没问题 -->
-            <p class="blk-warn" v-else-if="store.marginalia.error">{{ store.marginalia.error }}</p>
+                        <p class="blk-warn" v-else-if="store.marginalia.error">{{ store.marginalia.error }}</p>
           </div>
         </template>
       </template>
 
-      <!-- ============ 速览 ============ -->
-      <!-- 这一页只干三件事：三十秒定位（一眼卡）、能不能复现（方法卡）、组会会被问什么（导师三问）。
-           「为什么重要」归问题页②，「依据在哪」归③，「作者承认了什么」归④——这里只留指针，不搬内容。 -->
-      <template v-if="tab === 'eye'">
+                  <template v-if="tab === 'eye'">
         <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}</div>
         <div v-else-if="!store.summary" class="reading">
           <div class="r-line">{{ t('正在写一眼卡…') }}</div>
@@ -708,10 +646,7 @@ watch(() => store.currentId, () => {
           <div class="ce-kw"><span class="chip" v-for="k in store.summary.keywords" :key="k">{{ k }}</span></div>
         </div>
 
-        <!-- 图表：紧跟着一眼卡。读完结论就想看图，这是读论文的自然顺序。
-             表格裁剪和图形裁剪长得很像（都是纸上的一块），角标把话说死；
-             底下跟论文原生题注（Figure 3…），两行截断，悬停看全文。 -->
-        <div class="blk" v-if="figures.length || figuresLoading">
+                <div class="blk" v-if="figures.length || figuresLoading">
           <div class="blk-head">
             <span class="mono-label" v-if="figures.length">{{ t('图表速览 · {n}', { n: figures.length }) }}</span>
             <span class="blk-busy" v-else>{{ t('正在找图表…') }}</span>
@@ -726,9 +661,7 @@ watch(() => store.currentId, () => {
           </div>
         </div>
 
-        <!-- 方法卡（研究型：可复现 protocol）/ 谱系卡（综述：把领域名梳理成什么样子）。
-             同一张卡、同一套字段，按文献类型换口径——综述没有"可复现步骤"，硬套只会编。 -->
-        <div class="blk">
+                <div class="blk">
           <div class="blk-head">
             <span class="mono-label">{{ t(isReview ? '谱系卡' : '方法卡') }}</span>
             <button v-if="!methodCard?.goal && !mcBusy" class="blk-get" @click="genMethodCard">{{ t('获取') }}</button>
@@ -752,8 +685,7 @@ watch(() => store.currentId, () => {
           </div>
         </div>
 
-        <!-- 导师三问：只问作者没承认的那一层。作者认了的、眉批标了的，在问题页④ -->
-        <div class="blk">
+                <div class="blk">
           <div class="blk-head">
             <span class="mono-label">{{ t('导师三问') }}</span>
             <button v-if="!advisor.length && !advBusy && store.analysis.status === 'done'" class="blk-get"
@@ -768,16 +700,13 @@ watch(() => store.currentId, () => {
           </div>
         </div>
 
-        <!-- 导出 -->
-        <div class="blk" style="display:flex;gap:8px">
+                <div class="blk" style="display:flex;gap:8px">
           <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>{{ t('导出笔记 .md') }}</a>
         </div>
       </template>
 
-      <!-- ============ 提问 ============ -->
-      <template v-if="tab === 'terms'">
-        <!-- 本文用到的缩写：论文自带的，一键收进术语表 -->
-        <div style="margin-bottom:14px" v-if="abbrList.length">
+            <template v-if="tab === 'terms'">
+                <div style="margin-bottom:14px" v-if="abbrList.length">
           <div class="mono-label" style="margin-bottom:6px">{{ t('本文缩写 · {n}', { n: abbrList.length }) }}</div>
           <div class="abbr-list">
             <div class="term-row" v-for="a in abbrList" :key="a.en">
@@ -802,8 +731,7 @@ watch(() => store.currentId, () => {
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
-          <!-- 只有本文出现过的词才有这个箭头：别的论文的术语点进去必然查不到 -->
-          <button v-if="inPaper(t)" class="t-go" :title="t('在论文中查找该词')"
+                    <button v-if="inPaper(t)" class="t-go" :title="t('在论文中查找该词')"
                   @click="findTerm(t.term_en)">↗</button>
           <span v-else class="t-no" :title="t('这篇论文的正文里没有这个词')">—</span>
           <button class="t-del" @click="delTerm(t.id)" :title="t('删除')">×</button>
@@ -812,24 +740,19 @@ watch(() => store.currentId, () => {
       </div>
       </Transition>
 
-      <!-- ============ 提问 ============ -->
-      <!-- 常驻不卸载：切走时 unmount 会 abort 这条流，服务端因此不写回答行
-           （库里只剩问题、没有回答）。改成显示/隐藏，在 rbody 上盖一层。 -->
-      <div class="ask-layer" v-show="tab === 'ask'">
+                  <div class="ask-layer" v-show="tab === 'ask'">
         <AskPanel :quick="quickList" />
       </div>
     </div>
 
-    <!-- 图表灯箱：像看图片一样左右翻 -->
-    <Transition name="fade">
+        <Transition name="fade">
     <div class="lightbox" v-if="lightbox" @click="figIdx = -1">
       <div class="lb-stage" @click.stop>
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('上一张（←）')" @click="figStep(-1)">‹</button>
         <img :src="api.figureUrl(store.currentId, lightbox, 200)" />
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('下一张（→）')" @click="figStep(1)">›</button>
       </div>
-      <!-- 论文原生题注放最显眼的一行：这张图是什么，论文自己说过 -->
-      <div class="lb-cap" v-if="lightbox.caption" @click.stop>{{ lightbox.caption }}</div>
+            <div class="lb-cap" v-if="lightbox.caption" @click.stop>{{ lightbox.caption }}</div>
       <div class="lb-actions" @click.stop>
         <span class="mono-label">{{ t(lightbox.kind === 'table' ? '表' : '图') }} · {{ figIdx + 1 }} / {{ figures.length }} · {{ t('第 {p} 页', { p: lightbox.page + 1 }) }}</span>
         <button @click="figJump(lightbox)">{{ t('在原文查看') }}</button>
