@@ -297,6 +297,14 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   0%, 100% { transform: rotate(90deg); }
   50% { transform: rotate(98deg); }
 }
+/* 睡着被戳：在躺姿上抖一下——不会醒（定义在 sleep 之后，盖过它） */
+.wordmark .egg.sleep-poke { animation: eggSleepPoke .55s var(--ease-spring); }
+@keyframes eggSleepPoke {
+  0%, 100% { transform: rotate(90deg); }
+  30% { transform: rotate(100deg) scale(1.05, 0.95); }
+  55% { transform: rotate(84deg); }
+  78% { transform: rotate(94deg); }
+}
 /* 咽饭：纸片进口的那拍鼓一下（一次三篇起是「撑到」——鼓两下、晃到失衡） */
 .wordmark .egg.gulp { animation: eggGulp .8s var(--ease-spring); transform-origin: 50% 88%; }
 @keyframes eggGulp {

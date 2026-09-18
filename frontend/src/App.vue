@@ -38,15 +38,27 @@ function wobbleOnce(ms = 450) {
   wobbleOnce._t = setTimeout(() => (wobbling.value = false), ms)
 }
 const surprise = ref('')        // '' | 'sneeze' | 'stumble'
+const sleepPoke = ref(false)    // 睡着被戳：躺姿上抖一下
 function surpriseOnce(kind) {
   surprise.value = ''
   requestAnimationFrame(() => { surprise.value = kind })
   clearTimeout(surpriseOnce._t)
   surpriseOnce._t = setTimeout(() => (surprise.value = ''), kind === 'sneeze' ? 650 : 1000)
 }
+function sleepPokeOnce() {
+  sleepPoke.value = false
+  requestAnimationFrame(() => { sleepPoke.value = true })
+  clearTimeout(sleepPokeOnce._t)
+  sleepPokeOnce._t = setTimeout(() => (sleepPoke.value = false), 650)
+}
 let pokes = 0
 let pokeReset = 0
+/* 蛋的状态优先级（由 styles.css 的定义顺序决定谁盖谁）：
+   hungry < busy(含字条流过) < doze < wobble < 喷嚏/趔趄 < sleep < gulp/stuff < roll < cheer；
+   sleep-poke 专盖 sleep；spin 是行内 transform，只在没有任何动画类时可见。
+   JS 侧守卫：睡着不庆祝/不打盹/不馋/不搓/被戳只抖不醒；干活时不搓；搓着时不接戳。 */
 function pokeEgg() {
+  if (spinning.value) return          // 搓着的时候不接戳：一只手只做一件事
   pokes++
   clearTimeout(pokeReset)
   if (pokes >= 3) {
@@ -55,6 +67,8 @@ function pokeEgg() {
     return
   }
   pokeReset = setTimeout(() => (pokes = 0), 3000)
+  // 睡着被戳：在躺姿上抖一下——不会醒，也不算进三连戳
+  if (sleepEgg.value) { sleepPokeOnce(); return }
   if (Math.random() < 1 / 24) {
     surpriseOnce(Math.random() < 0.5 ? 'sneeze' : 'stumble')
     return
@@ -101,6 +115,8 @@ const spinFree = ref(false)     // 停手回正的这一段才挂弹性过渡
 let spinTimer = 0
 function onEggWheel(e) {
   if (e.ctrlKey) return         // Ctrl+滚轮是页面缩放，不抢浏览器的
+  // 睡着/干活/馋着/咽食时搓不动：别跟这些动画抢 transform
+  if (sleepEgg.value || eggBusy.value || hungry.value || gulping.value) return
   e.preventDefault()
   spinFree.value = false
   spinning.value = true
@@ -575,7 +591,7 @@ function onKey(e) {
         <span class="egg-wrap" ref="eggEl" @click.stop="pokeEgg" @wheel="onEggWheel"
               @dragenter="eggDragEnter" @dragover="eggDragOver" @dragleave="eggDragLeave" @drop="onEggDrop">
           <EggMark class="egg"
-            :class="[{ hungry }, { roll }, { wobble: wobbling }, surprise, { sleep: sleepEgg }, { busy: eggBusy }, gulping, { cheer: eggCheer }, { doze: dozing }, { spun: spinning }, { free: spinFree }]"
+            :class="[{ hungry }, { roll }, { wobble: wobbling }, surprise, { sleep: sleepEgg }, { 'sleep-poke': sleepPoke }, { busy: eggBusy }, gulping, { cheer: eggCheer }, { doze: dozing }, { spun: spinning }, { free: spinFree }]"
             :style="spinning ? { transform: `rotate(${spinDeg}deg) scale(${spinFree ? 1 : 0.94})` } : null" />
           <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
         </span>
