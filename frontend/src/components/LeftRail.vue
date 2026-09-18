@@ -8,6 +8,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper } from '../store'
 import { confirmBox } from '../dialog'
+import { t } from '../i18n'
 
 const emit = defineEmits(['import', 'close'])
 const fileInput = ref(null)
@@ -93,8 +94,8 @@ async function doRename(c) {
 }
 async function delColl(c) {
   const yes = await confirmBox({
-    title: '删除分类', ok: '删除', danger: true,
-    body: `「${c.name}」里的文献不会被删，只是不再归在这一类。`,
+    title: t('删除分类'), ok: t('删除'), danger: true,
+    body: t('「{name}」里的文献不会被删，只是不再归在这一类。', { name: c.name }),
   })
   if (!yes) return
   try {
@@ -115,7 +116,7 @@ async function toggleIn(pid, cid) {
   try {
     await api.paperColls(pid, next)
     await refreshCollections()
-    if (c) toast(on ? `已移出「${c.name}」` : `已归入「${c.name}」`)
+    if (c) toast(on ? t('已移出「{name}」', { name: c.name }) : t('已归入「{name}」', { name: c.name }))
     // 归类完成就该收口：不然"从未分类勾一笔 → 切到那个分类"，弹窗还挂在那篇上
     menuFor.value = null
   } catch (e) { toast(e.message) }
@@ -131,7 +132,7 @@ async function dropOn(cid) {
   try {
     await api.paperColls(pid, [...cur, cid])
     await refreshCollections()
-    if (c) toast(`已归入「${c.name}」`)
+    if (c) toast(t('已归入「{name}」', { name: c.name }))
   } catch (e) { toast(e.message) }
   menuFor.value = null
 }
@@ -148,13 +149,13 @@ function onDrop(e) {
 }
 async function del(pid, name) {
   const yes = await confirmBox({
-    title: '删除文献', ok: '删除', danger: true,
-    body: `《${name.slice(0, 40)}》以及它的批注、析读、问答会一起从本机删掉。`,
+    title: t('删除文献'), ok: t('删除'), danger: true,
+    body: t('《{name}》以及它的批注、析读、问答会一起从本机删掉。', { name: name.slice(0, 40) }),
   })
   if (!yes) return
   try {
     await api.deletePaper(pid)
-  } catch (e) { toast('删除失败：' + e.message); return }
+  } catch (e) { toast(t('删除失败：{m}', { m: e.message })); return }
   localStorage.removeItem('eggpaper:pos:' + pid)     // 阅读位置也别留在浏览器里
   if (store.currentId === pid) {
     store.currentId = null
@@ -172,31 +173,31 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 
 <template>
   <div class="lib-panel" :style="{ '--lib-w': libW + 'px' }" @keydown.esc="emit('close')">
-    <div class="rail-grip lib-grip" title="拖动改宽度 · 双击复位"
+    <div class="rail-grip lib-grip" :title="t('拖动改宽度 · 双击复位')"
          @mousedown="startResize" @dblclick="libW = LIB_DEF"></div>
 
     <div class="rail-head">
       <!-- 篇数在这块里已经说过了（左条的角标 + 下面「全部 N」），标题不再重复第三个 -->
-      <span class="mono-label">文库</span>
-      <button class="ghost head-x" title="收起文库" @click="emit('close')">‹</button>
+      <span class="mono-label">{{ t('文库') }}</span>
+      <button class="ghost head-x" :title="t('收起文库')" @click="emit('close')">‹</button>
     </div>
 
     <div class="lib-tools">
-      <input type="text" v-model="q" placeholder="搜标题 / 文件名…" class="lib-search" />
+      <input type="text" v-model="q" :placeholder="t('搜标题 / 文件名…')" class="lib-search" />
       <select v-model="sort" class="lib-sort">
-        <option value="added">最近导入</option>
-        <option value="read">最近阅读</option>
-        <option value="title">标题</option>
+        <option value="added">{{ t('最近导入') }}</option>
+        <option value="read">{{ t('最近阅读') }}</option>
+        <option value="title">{{ t('标题') }}</option>
       </select>
     </div>
 
     <!-- 分类：一条"全部"、一条"未分类"，然后是用户建的 -->
     <div class="coll-list">
       <div class="coll-row" :class="{ on: SEL === 'all' }" @click="pickColl('all')">
-        <span class="c-name">全部</span><b>{{ store.papers.length }}</b>
+        <span class="c-name">{{ t('全部') }}</span><b>{{ store.papers.length }}</b>
       </div>
       <div class="coll-row" :class="{ on: SEL === 'none' }" @click="pickColl('none')">
-        <span class="c-name">未分类</span><b>{{ nUnfiled }}</b>
+        <span class="c-name">{{ t('未分类') }}</span><b>{{ nUnfiled }}</b>
       </div>
       <div v-for="c in colls" :key="c.id" class="coll-row" :class="{ on: SEL === c.id }"
            @click="pickColl(c.id)" @dragover.prevent @drop.prevent="dropOn(c.id)"
@@ -206,53 +207,53 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
                @keydown.enter="doRename(c)" @keydown.esc="editId = null" @blur="doRename(c)" />
         <span v-else class="c-name" :title="c.name">{{ c.name }}</span>
         <b>{{ c.n }}</b>
-        <button class="c-x" title="删除分类" @click.stop="delColl(c)">×</button>
+        <button class="c-x" :title="t('删除分类')" @click.stop="delColl(c)">×</button>
       </div>
       <div v-if="adding" class="coll-row">
-        <input class="coll-edit" v-model="newName" placeholder="分类名" autofocus
+        <input class="coll-edit" v-model="newName" :placeholder="t('分类名')" autofocus
                @keydown.enter="createColl" @keydown.esc="adding = false; newName = ''" @blur="createColl" />
       </div>
-      <button v-else class="coll-add" @click="adding = true">＋ 新建分类</button>
+      <button v-else class="coll-add" @click="adding = true">＋ {{ t('新建分类') }}</button>
     </div>
 
     <div class="paper-list">
       <div v-for="p in shown" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId }"
            draggable="true" @dragstart="dragPid = p.id" @dragend="dragPid = null" @click="touch(p)">
-        <button class="p-del" title="删除" @click.stop="del(p.id, p.title || p.filename)">×</button>
-        <button class="p-tag" title="归入分类"
+        <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
+        <button class="p-tag" :title="t('归入分类')"
                 @click.stop="menuFor = menuFor === p.id ? null : p.id">＋</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
         <div class="p-author" v-if="p.authors">{{ p.authors }}</div>
         <!-- 后台在忙什么，列表里得看得见——一次导入多篇时，"还剩哪几篇没读完"只能靠这一行 -->
-        <div class="p-state" v-if="p.analysis_status === 'queued'">排队通读中…</div>
-        <div class="p-state busy" v-else-if="p.analysis_status === 'running'">正在通读…</div>
-        <div class="p-state" v-else-if="p.analysis_status === 'error'">通读失败，可重试</div>
+        <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
+        <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
+        <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败，可重试') }}</div>
 
         <!-- 归入分类：勾选即存，不用"确定" -->
         <div class="coll-menu" v-if="menuFor === p.id" @click.stop>
-          <div class="cm-head">归入分类</div>
+          <div class="cm-head">{{ t('归入分类') }}</div>
           <label v-for="c in colls" :key="c.id" class="cm-row">
             <input type="checkbox" :checked="collOf(p.id).includes(c.id)" @change="toggleIn(p.id, c.id)" />
             <span>{{ c.name }}</span>
           </label>
-          <div v-if="!colls.length" class="cm-empty">还没有分类，先在上面新建一个</div>
-          <button class="cm-done" @click="menuFor = null">完成</button>
+          <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
+          <button class="cm-done" @click="menuFor = null">{{ t('完成') }}</button>
         </div>
       </div>
       <div v-if="!shown.length" class="p-empty">
-        <template v-if="!store.papers.length">文库是空的。拖一份 PDF 进来就开始。</template>
-        <template v-else-if="q.trim()">没有匹配「{{ q.trim() }}」的文献。</template>
+        <template v-if="!store.papers.length">{{ t('文库是空的。拖一份 PDF 进来就开始。') }}</template>
+        <template v-else-if="q.trim()">{{ t('没有匹配「{q}」的文献。', { q: q.trim() }) }}</template>
         <template v-else-if="typeof SEL === 'number'">
-          还没有文献。到「全部」点条目旁 ＋ 归入，或直接拖进来。
+          {{ t('还没有文献。到「全部」点条目旁 ＋ 归入，或直接拖进来。') }}
         </template>
-        <template v-else-if="SEL === 'none'">每一篇都归类了。</template>
-        <template v-else>没有符合条件的文献。</template>
+        <template v-else-if="SEL === 'none'">{{ t('每一篇都归类了。') }}</template>
+        <template v-else>{{ t('没有符合条件的文献。') }}</template>
       </div>
     </div>
 
     <div class="drop-hint" :class="{ over }" @click="fileInput.click()"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
-      拖入 PDF 或点击导入
+      {{ t('拖入 PDF 或点击导入') }}
     </div>
     <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFile" />
   </div>

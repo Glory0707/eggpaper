@@ -11,16 +11,17 @@
  * Esc 与点遮罩 = 取消，Enter = 确定。danger 时确定键用朱红。
  */
 import { reactive } from 'vue'
+import { t } from './i18n'
 
 export const dlg = reactive({
-  open: false, kind: 'confirm', title: '', body: '', ok: '确定', cancel: '取消',
+  open: false, kind: 'confirm', title: '', body: '', ok: '', cancel: '',
   value: '', placeholder: '', danger: false, _done: null,
 })
 
 function open(opts) {
   return new Promise(resolve => {
     Object.assign(dlg, {
-      open: true, kind: 'confirm', body: '', ok: '确定', cancel: '取消',
+      open: true, kind: 'confirm', body: '', ok: t('确定'), cancel: t('取消'),
       value: '', placeholder: '', danger: false, ...opts, _done: resolve,
     })
   })

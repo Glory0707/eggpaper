@@ -3,6 +3,7 @@
    全局只挂一个（App.vue 末尾），调用方 await confirmBox / inputBox 就行。 */
 import { nextTick, ref, watch } from 'vue'
 import { dlg, dlgOk, dlgCancel } from '../dialog'
+import { t } from '../i18n'
 import { store } from '../store'
 import { vDrag } from '../drag'
 
@@ -25,7 +26,7 @@ watch(() => dlg.open, v => {
       <div class="modal dialog" v-drag>
         <div class="modal-head" data-drag>
           <h3>{{ dlg.title }}</h3>
-          <button class="modal-x" title="关闭（Esc）" @click="dlgCancel">×</button>
+          <button class="modal-x" :title="t('关闭（Esc）')" @click="dlgCancel">×</button>
         </div>
         <div class="dlg-body" v-if="dlg.body">{{ dlg.body }}</div>
         <input v-if="dlg.kind === 'input'" ref="inputEl" class="dlg-input" v-model="dlg.value"

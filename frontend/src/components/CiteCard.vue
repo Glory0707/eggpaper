@@ -11,6 +11,7 @@
 import { computed, ref, watch } from 'vue'
 import { api, store, toast } from '../store'
 import { copyText } from '../clip'
+import { t } from '../i18n'
 
 const data = ref(null)      // {meta, groups}
 const busy = ref(false)
@@ -18,7 +19,7 @@ const err = ref('')
 
 const FIELDS = [
   ['authors', '作者', m => ((m.authors || []).map(a => a.family).filter(Boolean).join('、') ||
-                            (m.authors || []).length + ' 人')],
+                            (m.authors || []).length + ' ' + t('人'))],
   ['journal', '期刊', m => m.journal || m.journal_abbr],
   ['year', '年份', m => m.year],
   ['volume', '卷', m => m.volume],
@@ -61,13 +62,13 @@ async function recognize() {
   err.value = ''
   try {
     data.value = await api.citation(store.currentId, false, true)
-    toast('文献信息认好了')
+    toast(t('文献信息认好了'))
   } catch (e) { err.value = e.message } finally { busy.value = false }
 }
 
 async function copy(row) {
   const ok = await copyText(row.text)
-  toast(ok ? `已复制 · ${row.label}` : '复制没成功，选中文字手动复制一下')
+  toast(ok ? t('已复制 · {label}', { label: row.label }) : t('复制没成功，选中文字手动复制一下'))
 }
 </script>
 
@@ -76,18 +77,18 @@ async function copy(row) {
     <div class="modal-mask" v-if="store.cite.open && store.paper" @click.self="store.cite.open = false">
       <div class="modal cite">
         <div class="modal-head">
-          <h3>引用这篇</h3>
-          <button class="modal-x" title="关闭（Esc）" @click="store.cite.open = false">×</button>
+          <h3>{{ t('引用这篇') }}</h3>
+          <button class="modal-x" :title="t('关闭（Esc）')" @click="store.cite.open = false">×</button>
         </div>
 
         <div class="cite-note" v-if="err">{{ err }}</div>
 
         <!-- 还没认过：把花不花这次调用交给用户决定（一次模型调用 = 一次授权） -->
         <div class="cite-empty" v-if="!meta && !err">
-          <div v-if="busy">正在认首页<span class="r-dots">…</span></div>
+          <div v-if="busy">{{ t('正在认首页…') }}</div>
           <template v-else>
             <div style="margin-top:2px">
-              <button class="primary" @click="recognize">识别文献信息</button>
+              <button class="primary" @click="recognize">{{ t('识别文献信息') }}</button>
             </div>
           </template>
         </div>
@@ -95,7 +96,7 @@ async function copy(row) {
         <template v-if="meta">
           <div class="cite-fields">
             <span class="cf" v-for="f in fields" :key="f.k" :class="{ miss: !f.v }">
-              {{ f.zh }} <b>{{ f.v || '—' }}</b>
+              {{ t(f.zh) }} <b>{{ f.v || '—' }}</b>
             </span>
           </div>
 
@@ -104,14 +105,14 @@ async function copy(row) {
             <button class="cite-row" v-for="r in g.rows" :key="r.k" @click="copy(r)">
               <span class="cr-k">{{ r.label }}<i>{{ r.hint }}</i></span>
               <span class="cr-v">{{ r.text }}</span>
-              <span class="cr-cp">复制</span>
+              <span class="cr-cp">{{ t('复制') }}</span>
             </button>
           </div>
 
           <div class="cite-foot">
-            <a v-if="link" :href="link" target="_blank" rel="noreferrer">去核对 ↗</a>
+            <a v-if="link" :href="link" target="_blank" rel="noreferrer">{{ t('去核对 ↗') }}</a>
             <button class="ghost" :disabled="busy" @click="recognize">
-              {{ busy ? '重认中…' : '重新识别' }}
+              {{ busy ? t('重认中…') : t('重新识别') }}
             </button>
           </div>
         </template>

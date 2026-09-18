@@ -295,6 +295,7 @@ def get_settings():
                          "vision_model": p.get("vision_model", ""),
                          "has_key": bool(p["api_key"]), "key_masked": (p["api_key"][:6] + "…") if p["api_key"] else ""},
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
+            "ui_lang": cfg.get("ui_lang", "zh"),
             "data_dir": appinfo.data_dir()}
 
 
@@ -309,6 +310,8 @@ def put_settings(body: dict):
             cfg["provider"]["api_key"] = body["provider"]["api_key"].strip()
     if "mock" in body:
         cfg["mock"] = bool(body["mock"])
+    if body.get("ui_lang") in ("zh", "en"):
+        cfg["ui_lang"] = body["ui_lang"]
     if "pdf2zh" in body:
         cfg["pdf2zh"].update(body["pdf2zh"])
     if "update" in body:
@@ -1851,9 +1854,15 @@ def _sse(obj: dict) -> str:
 
 def _mock_stream(question: str):
     """演示模式也走流式：同一条前端代码路径，接上真 key 不用改任何东西。"""
-    text = ("〔演示模式〕这是模拟回答，用来跑通界面。[¶1] 配好 API key 后这里会是真答案。\n\n"
-            "· 你问的是：" + question[:60] + "\n"
-            "· 回答会逐字出现，可以中途停下；停下时已经吐出来的部分会留着。")
+    if (config.load().get("ui_lang") or "zh") == "en":
+        text = ("[Demo mode] This is a canned answer for trying the UI. [para 1] With an API key "
+                "configured, real answers appear here.\n\n"
+                "· You asked: " + question[:60] + "\n"
+                "· Answers stream in token by token; you can stop midway and keep what arrived.")
+    else:
+        text = ("〔演示模式〕这是模拟回答，用来跑通界面。[¶1] 配好 API key 后这里会是真答案。\n\n"
+                "· 你问的是：" + question[:60] + "\n"
+                "· 回答会逐字出现，可以中途停下；停下时已经吐出来的部分会留着。")
     for i in range(0, len(text), 3):
         yield text[i:i + 3]
         time.sleep(0.02)

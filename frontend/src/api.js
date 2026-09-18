@@ -1,3 +1,5 @@
+import { t } from './i18n'
+
 async function req(method, url, body) {
   const opt = { method, headers: {} }
   if (body instanceof FormData) opt.body = body
@@ -10,7 +12,7 @@ async function req(method, url, body) {
     // 后端会把失败翻译成人话放进 detail；拿不到（比如请求根本没到服务）才退回状态码 + 短语
     let msg = `${r.status} ${r.statusText || ''}`.trim()
     try { msg = (await r.json()).detail || msg } catch { /* 不是 JSON，就用上面的兜底 */ }
-    throw new Error(msg)
+    throw new Error(t(msg))
   }
   return r.json()
 }
@@ -103,7 +105,7 @@ export const api = {
     fd.append('file', file)
     return fetch('/api/pdf2zh/install-from-file', { method: 'POST', body: fd })
       .then(async r => {
-        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`)
+        if (!r.ok) throw new Error(t((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`))
         return r.json()
       })
   },
@@ -122,7 +124,7 @@ function sseStream(url, body, onEvent) {
     if (!r.ok || !r.body) {
       let msg = `${r.status} ${r.statusText || ''}`.trim()
       try { msg = (await r.json()).detail || msg } catch { /* 非 JSON 就用状态码 */ }
-      throw new Error(msg)
+      throw new Error(t(msg))
     }
     const reader = r.body.getReader()
     const dec = new TextDecoder()
@@ -229,9 +231,9 @@ export function kindText(n) {
   return BAND_TEXT[typeof n === 'string' ? 'noise' : bandOf(n)] || BAND_TEXT.noise
 }
 export function kindZH(n) {
-  if (typeof n === 'string') return KIND_ZH[n] || ''
+  if (typeof n === 'string') return t(KIND_ZH[n] || '')
   if (!n) return ''
   if (n.kind === 'custom') return n.label || '新批注'   // 模型自造的：用它自己起的那个短标签
-  return KIND_ZH[n.kind] || ''
+  return t(KIND_ZH[n.kind] || '')
 }
 export const CORE_ROLES = ['gap', 'claim', 'evidence', 'limitation']

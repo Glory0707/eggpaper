@@ -4,6 +4,7 @@ import { api, store, toast, jumpTo, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_CO
          paperEpoch, samePaper } from '../store'
 import { lineSpanOf, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
+import { t, isEn } from '../i18n'
 import AskPanel from './AskPanel.vue'
 import MdLite from './MdLite.vue'
 
@@ -72,7 +73,7 @@ const SIX = [
   { k: 'q3', n: 3, q: '还有什么没解决？' },
   { k: 'q4', n: 4, q: '还能做什么？', gen: 'next' },
   { k: 'q5', n: 5, q: '换个学科怎么看？', gen: 'lens' },
-]
+]  // 问题文案在渲染处过 t()
 const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false })
 function toggleSix(k) { openSix[k] = !openSix[k] }
 
@@ -133,10 +134,10 @@ function gotoSix(k) {
 }
 // 就一条批注追问：把批注和它引的原话一起交给模型，问题才问得准
 function askNote(n) {
-  const kind = kindZH(n) || '批注'
+  const kind = kindZH(n) || t('批注')
   store.askPrefill = {
-    question: `眉批标了「${kind}」：「${n.note}」——引文是“${(n.quote || '').slice(0, 60)}”。`
-      + `这条判断站得住吗？依据在哪几段？[¶${n.para_idx}]`,
+    question: t('眉批标了「{kind}」：「{note}」——引文是“{quote}”。这条判断站得住吗？依据在哪几段？[¶{n}]',
+                { kind, note: n.note, quote: (n.quote || '').slice(0, 60), n: n.para_idx }),
     send: true,
   }
 }
@@ -235,7 +236,7 @@ async function maybeGenTerms(mine = paperEpoch()) {
     terms.value = r.items || []
     if (r.abbrs) store.paper.abbrs = JSON.stringify(r.abbrs)   // 缩写是同一批的产物
   } catch (e) {
-    if (samePaper(mine)) toast('术语没生成：' + e.message)
+    if (samePaper(mine)) toast(t('术语没生成：{m}', { m: e.message }))
   } finally { termsBusy.value = false }
 }
 async function addTerm() {
@@ -341,7 +342,7 @@ async function genMethodCard() {
     const r = await api.methodCard(store.currentId)
     if (!samePaper(mine)) return
     methodCard.value = r
-  } catch (e) { toast('生成失败：' + e.message) } finally { mcBusy.value = false }
+  } catch (e) { toast(t('生成失败：{m}', { m: e.message })) } finally { mcBusy.value = false }
 }
 // 本文缩写：**只列还没收进术语表的**。收进去之后它就出现在下面那张表里了，
 // 同一对 en→zh 在同一屏里出现两次没有意义（反馈由 toast 负责）。
@@ -377,7 +378,7 @@ async function loadAdvisor() {
     const r = await api.advisor(store.currentId)
     if (!samePaper(mine)) return
     advisor.value = r.questions || []
-  } catch (e) { toast('生成失败：' + e.message) } finally { advBusy.value = false }
+  } catch (e) { toast(t('生成失败：{m}', { m: e.message })) } finally { advBusy.value = false }
 }
 async function loadCachedBlocks() {
   if (!store.currentId) return
@@ -427,10 +428,10 @@ async function askFigure(f) {
     figIdx.value = -1
     const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
     store.visPrefill = {
-      img, question: '讲解这张图：画了什么、支持论文的哪个结论、有什么可疑之处。',
+      img, question: t('讲解这张图：画了什么、支持论文的哪个结论、有什么可疑之处。'),
       page: f.page, paraIdx: para?.idx ?? 0, rect: { x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y1 },
     }
-  } catch (e) { toast('取图失败：' + e.message) }
+  } catch (e) { toast(t('取图失败：{m}', { m: e.message })) }
 }
 function figJump(f) {
   jumpTo(f.page, f.y0, f.y1)
@@ -485,15 +486,15 @@ watch(() => store.currentId, () => {
   <aside class="rail-right">
     <!-- 分栏拖手：贴在右栏左缘，往左拖变宽 -->
     <div class="rail-grip" :class="{ on: railDragging }" role="separator" aria-orientation="vertical"
-         tabindex="0" title="拖动改宽度 · 双击复位 · ←→"
+         tabindex="0" :title="t('拖动改宽度 · 双击复位 · ←→')"
          @mousedown="startRailResize" @dblclick="store.viewer.railW = RAIL_DEF; store.reflowTick++"
          @keydown.left.prevent="nudgeRail(28)" @keydown.right.prevent="nudgeRail(-28)"></div>
     <div class="rtabs">
-      <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">问题</button>
-      <button class="rt" :class="{ on: tab === 'eye' }" @click="tab = 'eye'">速览</button>
-      <button class="rt" :class="{ on: tab === 'ask' }" @click="tab = 'ask'">提问</button>
-      <button class="rt" :class="{ on: tab === 'terms' }" @click="tab = 'terms'">术语</button>
-      <button class="rt-collapse" title="收起右栏（x）" @click="store.viewer.railUser = false">»</button>
+      <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">{{ t('问题') }}</button>
+      <button class="rt" :class="{ on: tab === 'eye' }" @click="tab = 'eye'">{{ t('速览') }}</button>
+      <button class="rt" :class="{ on: tab === 'ask' }" @click="tab = 'ask'">{{ t('提问') }}</button>
+      <button v-if="!isEn()" class="rt" :class="{ on: tab === 'terms' }" @click="tab = 'terms'">{{ t('术语') }}</button>
+      <button class="rt-collapse" :title="t('收起右栏（x）')" @click="store.viewer.railUser = false">»</button>
     </div>
     <div class="rbody" ref="rbodyEl" :class="{ flush: tab === 'ask' }">
       <!-- 页签切换：三个静态页共用一层过渡（出去快、进来稍慢），换页时内容是"落定"而不是"啪一下换掉"。
@@ -503,33 +504,33 @@ watch(() => store.currentId, () => {
       <!-- ============ 问题 ============ -->
       <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
-          <div class="r-line">正在通读<span class="r-dots">…</span></div>
+          <div class="r-line">{{ t('正在通读…') }}</div>
           <div class="r-bar"><i /></div>
         </div>
         <div v-else-if="store.analysis.status === 'error'" style="padding:8px 2px">
           <div style="font-size:var(--fs-sm);color:var(--vermilion);line-height:1.6">{{ store.analysis.error }}</div>
-          <button style="margin-top:10px" @click="emit('analyze')">重试</button>
+          <button style="margin-top:10px" @click="emit('analyze')">{{ t('重试') }}</button>
         </div>
         <!-- 没析读时只陈述状态：顶栏那颗「析读」就在上面，同一屏里放第二个同名按钮是重复 -->
         <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? '还没析读：析读后才有这五个答案。' : '扫描件：能读、能框选问 AI，五问答不了。' }}
+            {{ store.paras.length ? t('还没析读：析读后才有这五个答案。') : t('扫描件：能读、能框选问 AI，五问答不了。') }}
           </div>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">扫描件：能读、能框选问 AI，五问答不了。<span v-if="figures.length"> 速览页有 {{ figures.length }} 张图表。</span></div>
+          <div class="r-note">{{ t('扫描件：能读、能框选问 AI，五问答不了。') }}<span v-if="figures.length">{{ t(' 速览页有 {n} 张图表。', { n: figures.length }) }}</span></div>
         </template>
 
         <template v-else>
           <!-- 五个问题：读一篇论文该带着的问题。问题免费、答案点开才看 -->
           <div class="six-head">
-            <span v-if="store.readingPara" class="mono-num">读至 ¶{{ store.readingPara }} / {{ store.paras.length }}</span>
+            <span v-if="store.readingPara" class="mono-num">{{ t('读至 ¶{n} / {m}', { n: store.readingPara, m: store.paras.length }) }}</span>
           </div>
 
           <section class="six" v-for="s in SIX" :key="s.k" :class="{ open: openSix[s.k] }">
             <button class="six-q" @click="toggleSix(s.k)">
-              <i :class="{ on: sixHas[s.k] }">{{ s.n }}</i><span class="qt">{{ s.k === 'q3' && isReview ? '它把文献怎么组织的？' : s.q }}</span>
+              <i :class="{ on: sixHas[s.k] }">{{ s.n }}</i><span class="qt">{{ t(s.k === 'q3' && isReview ? '它把文献怎么组织的？' : s.q) }}</span>
               <b v-if="s.k === 'q3' && !isReview && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
               <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
             </button>
@@ -543,16 +544,16 @@ watch(() => store.currentId, () => {
                    标在句尾（原文在纸上，点 ¶ 就到，不必在这里再抄一遍）。 -->
               <template v-if="s.k === 'q1'">
                 <MdLite v-if="six.motive?.text" class="six-txt" :text="six.motive.text" @cite="jumpPara" />
-                <div v-else class="six-note">{{ sixBusy.motive ? '…' : '未生成' }}</div>
+                <div v-else class="six-note">{{ sixBusy.motive ? '…' : t('未生成') }}</div>
               </template>
 
               <!-- ② 研究型：主张 → 证据链；综述：由模型说清"它把文献怎么组织的"
                    （综述没有实验证据层，主张-证据链在那儿是空壳，见后端 answer_how_review） -->
               <template v-else-if="s.k === 'q2' && isReview">
                 <MdLite v-if="six.how?.text" class="six-txt" :text="six.how.text" @cite="jumpPara" />
-                <div v-else class="six-note">{{ sixBusy.how ? '…' : '未生成' }}</div>
+                <div v-else class="six-note">{{ sixBusy.how ? '…' : t('未生成') }}</div>
                 <div class="six-foot">
-                  <button @click="openMethod">谱系卡 ↗</button>
+                  <button @click="openMethod">{{ t('谱系卡 ↗') }}</button>
                 </div>
               </template>
               <template v-else-if="s.k === 'q2'">
@@ -565,15 +566,15 @@ watch(() => store.currentId, () => {
                     <span class="e-dot">¶{{ a.idx }}</span>
                     <span class="e-bar" :style="{ background: ROLE_COLOR[a.anno.role] }"></span>
                     <span class="e-note">
-                      <span class="rg-kind" :style="{ color: ROLE_TEXT_COLOR[a.anno.role] }">{{ ROLE_ZH[a.anno.role] }}</span>
+                      <span class="rg-kind" :style="{ color: ROLE_TEXT_COLOR[a.anno.role] }">{{ t(ROLE_ZH[a.anno.role]) }}</span>
                       {{ a.anno.purpose }}
-                      <div class="ev-q" v-if="eqq(a.idx)">该实验回答：{{ eqq(a.idx) }}</div>
+                      <div class="ev-q" v-if="eqq(a.idx)">{{ t('该实验回答：') }}{{ eqq(a.idx) }}</div>
                     </span>
                   </div>
-                  <div v-if="!anchorsOf(c).length" class="six-note">未找到直接证据段</div>
+                  <div v-if="!anchorsOf(c).length" class="six-note">{{ t('未找到直接证据段') }}</div>
                 </div>
                 <div class="six-foot">
-                  <button @click="openMethod">方法卡 ↗</button>
+                  <button @click="openMethod">{{ t('方法卡 ↗') }}</button>
                 </div>
               </template>
 
@@ -591,11 +592,11 @@ watch(() => store.currentId, () => {
                   <span class="e-bar" :style="{ background: kindColor(n) }"></span>
                   <span class="e-note">
                     {{ prettyChem(n.note) }}
-                    <button class="ev-ask" @click.stop="askNote(n)">问 ↗</button>
+                    <button class="ev-ask" @click.stop="askNote(n)">{{ t('问 ↗') }}</button>
                   </span>
                 </div>
                 <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
-                  作者没明说局限，眉批也没标出可疑之处。
+                  {{ t('作者没明说局限，眉批也没标出可疑之处。') }}
                 </div>
               </template>
 
@@ -607,7 +608,7 @@ watch(() => store.currentId, () => {
                   <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
-                <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : '未生成' }}</div>
+                <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
               </template>
 
               <!-- ⑤ 换个学科怎么看：一条一个学科（含没沾边但有关联的），每条说那个人
@@ -618,7 +619,7 @@ watch(() => store.currentId, () => {
                   <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
-                <div v-if="!six.lens?.items?.length" class="six-note">{{ sixBusy.lens ? '…' : '未生成' }}</div>
+                <div v-if="!six.lens?.items?.length" class="six-note">{{ sixBusy.lens ? '…' : t('未生成') }}</div>
               </template>
             </div>
              </div>
@@ -630,12 +631,12 @@ watch(() => store.currentId, () => {
                不是"眉批没了"——别让用户以为页边那些批注也作废了。 -->
           <div class="blk">
             <div class="blk-head">
-              <span class="mono-label">眉批<span v-if="mnotes.length"> · {{ mnotes.length }}</span></span>
+              <span class="mono-label">{{ t('眉批') }}<span v-if="mnotes.length"> · {{ mnotes.length }}</span></span>
               <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')"
-                      :title="mnotes.length ? '替换现有眉批' : ''">
-                {{ mnotes.length ? '重写' : 'AI 眉批' }}
+                      :title="mnotes.length ? t('替换现有眉批') : ''">
+                {{ mnotes.length ? t('重写') : t('AI 眉批') }}
               </button>
-              <span v-else class="blk-busy">写批注中<span class="r-dots">…</span></span>
+              <span v-else class="blk-busy">{{ t('写批注中') }}<span class="r-dots">…</span></span>
             </div>
             <!-- 生成中的真实进度：服务端按"读完几块"回报（12 段一块），不是装饰动画。
                  首次生成要通读全文，长论文十几块，这条线就是"还要等多久"的答案。 -->
@@ -644,8 +645,8 @@ watch(() => store.currentId, () => {
                 <i :class="{ det: marginPct !== null }" :style="marginPct !== null ? { width: marginPct + '%' } : null" />
               </div>
               <div class="blk-prog-line">
-                <span v-if="store.marginalia.progress?.total">已读 {{ store.marginalia.progress.done }}/{{ store.marginalia.progress.total }} 块</span>
-                <span v-else>正在通读全文</span>
+                <span v-if="store.marginalia.progress?.total">{{ t('已读 {n}/{m} 块', { n: store.marginalia.progress.done, m: store.marginalia.progress.total }) }}</span>
+                <span v-else>{{ t('正在通读全文') }}</span>
                 <span class="blk-elapsed">{{ marginElapsed }}s</span>
               </div>
             </div>
@@ -654,12 +655,12 @@ watch(() => store.currentId, () => {
             <div class="band-bar" v-if="mnotes.length">
               <button v-for="b in BANDS" :key="b.k" class="band-chip" :class="{ off: !bandOn(b.k) }"
                       @click="toggleBand(b.k)">
-                <i class="bdot" :style="{ background: b.color }"></i>{{ b.zh }}<span class="n">{{ bandCount[b.k] }}</span>
+                <i class="bdot" :style="{ background: b.color }"></i>{{ t(b.zh) }}<span class="n">{{ bandCount[b.k] }}</span>
               </button>
             </div>
             <div class="band-alloff" v-if="mnotes.length && !bandAny">
-              AI 眉批三档都收起（你自己钉的还在）：纸面上没有批注 ·
-              <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true }">全开</button>
+              {{ t('AI 眉批三档都收起（你自己钉的还在）：纸面上没有批注 ·') }}
+              <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true }">{{ t('全开') }}</button>
             </div>
             <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
               {{ store.marginalia.error }}
@@ -676,13 +677,13 @@ watch(() => store.currentId, () => {
       <template v-if="tab === 'eye'">
         <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}</div>
         <div v-else-if="!store.summary" class="reading">
-          <div class="r-line">正在写一眼卡<span class="r-dots">…</span></div>
+          <div class="r-line">{{ t('正在写一眼卡…') }}</div>
           <div class="r-bar"><i /></div>
         </div>
         <div class="card-eye" v-else>
           <div class="ce-one">{{ prettyChem(store.summary.one_line) }}</div>
-          <div class="ce-row go" @click="gotoSix('q2')" title="去「问题」页第 2 问：主张与证据链">
-            <span class="ce-k">发现</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
+          <div class="ce-row go" @click="gotoSix('q2')" :title="t('去「问题」页第 2 问：主张与证据链')">
+            <span class="ce-k">{{ t('发现') }}</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>
           <div class="ce-kw"><span class="chip" v-for="k in store.summary.keywords" :key="k">{{ k }}</span></div>
@@ -692,10 +693,10 @@ watch(() => store.currentId, () => {
              表格裁剪和图形裁剪长得很像（都是纸上的一块），角标把话说死；
              底下跟论文原生题注（Figure 3…），两行截断，悬停看全文。 -->
         <div class="blk" v-if="figures.length">
-          <div class="blk-head"><span class="mono-label">图表速览 · {{ figures.length }}</span></div>
+          <div class="blk-head"><span class="mono-label">{{ t('图表速览 · {n}', { n: figures.length }) }}</span></div>
           <div class="fig-strip">
             <span v-for="(f, i) in figures" :key="i" class="fig-cell"
-                  :title="f.caption || `${f.kind === 'table' ? '表' : '图'} · 第 ${f.page + 1} 页`" @click="figIdx = i">
+                  :title="f.caption || `${t(f.kind === 'table' ? '表' : '图')} · ${t('第 {p} 页', { p: f.page + 1 })}`" @click="figIdx = i">
               <img class="fig-thumb" :src="api.figureUrl(store.currentId, f)" alt="" />
               <i class="fig-kind">{{ f.kind === 'table' ? '表' : '图' }}</i>
               <span class="fig-cap" v-if="f.caption">{{ f.caption }}</span>
@@ -707,24 +708,24 @@ watch(() => store.currentId, () => {
              同一张卡、同一套字段，按文献类型换口径——综述没有"可复现步骤"，硬套只会编。 -->
         <div class="blk">
           <div class="blk-head">
-            <span class="mono-label">{{ isReview ? '谱系卡' : '方法卡' }}</span>
-            <button v-if="!methodCard?.goal && !mcBusy" class="blk-get" @click="genMethodCard">获取</button>
-            <span v-else-if="mcBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
+            <span class="mono-label">{{ t(isReview ? '谱系卡' : '方法卡') }}</span>
+            <button v-if="!methodCard?.goal && !mcBusy" class="blk-get" @click="genMethodCard">{{ t('获取') }}</button>
+            <span v-else-if="mcBusy" class="blk-busy">{{ t('获取中…') }}</span>
           </div>
           <div class="card-eye" v-if="methodCard?.goal">
-            <div class="ce-row"><span class="ce-k">{{ isReview ? '定位' : '目标' }}</span><span class="ce-v">{{ prettyChem(methodCard.goal) }}</span></div>
-            <div class="ce-row"><span class="ce-k">{{ isReview ? '对象' : '体系' }}</span><span class="ce-v">{{ prettyChem(methodCard.system) }}</span></div>
-            <div class="ce-row"><span class="ce-k">{{ isReview ? '范围' : '条件' }}</span><span class="ce-v">{{ prettyChem(methodCard.conditions) }}</span></div>
-            <div class="ce-row"><span class="ce-k">{{ isReview ? '脉络' : '步骤' }}</span>
+            <div class="ce-row"><span class="ce-k">{{ t(isReview ? '定位' : '目标') }}</span><span class="ce-v">{{ prettyChem(methodCard.goal) }}</span></div>
+            <div class="ce-row"><span class="ce-k">{{ t(isReview ? '对象' : '体系') }}</span><span class="ce-v">{{ prettyChem(methodCard.system) }}</span></div>
+            <div class="ce-row"><span class="ce-k">{{ t(isReview ? '范围' : '条件') }}</span><span class="ce-v">{{ prettyChem(methodCard.conditions) }}</span></div>
+            <div class="ce-row"><span class="ce-k">{{ t(isReview ? '脉络' : '步骤') }}</span>
               <span class="ce-v">
                 <div class="mc-step" :class="{ unfold: mcMore && i >= MC_STEPS }"
                      :style="mcMore && i >= MC_STEPS ? { animationDelay: (i - MC_STEPS) * 45 + 'ms' } : null"
                      v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ prettyChem(s) }}</div>
               </span>
             </div>
-            <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">{{ isReview ? '入门' : '注意' }}</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
+            <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">{{ t(isReview ? '入门' : '注意') }}</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
             <button v-if="!mcMore && methodCard.steps.length > MC_STEPS" class="blk-more" @click="mcMore = true">
-              展开全部 {{ methodCard.steps.length }} {{ isReview ? '条' : '步' }}<span v-if="methodCard.notes"> · {{ isReview ? '入门' : '注意' }}</span>
+              {{ t('展开全部') }} {{ methodCard.steps.length }} {{ t(isReview ? '条' : '步') }}<span v-if="methodCard.notes"> · {{ t(isReview ? '入门' : '注意') }}</span>
             </button>
           </div>
         </div>
@@ -732,10 +733,10 @@ watch(() => store.currentId, () => {
         <!-- 导师三问：只问作者没承认的那一层。作者认了的、眉批标了的，在问题页④ -->
         <div class="blk">
           <div class="blk-head">
-            <span class="mono-label">导师三问</span>
+            <span class="mono-label">{{ t('导师三问') }}</span>
             <button v-if="!advisor.length && !advBusy && store.analysis.status === 'done'" class="blk-get"
-                    @click="loadAdvisor">获取</button>
-            <span v-else-if="advBusy" class="blk-busy">获取中<span class="r-dots">…</span></span>
+                    @click="loadAdvisor">{{ t('获取') }}</button>
+            <span v-else-if="advBusy" class="blk-busy">{{ t('获取中…') }}</span>
           </div>
           <div v-if="advisor.length">
             <div class="adv-item" v-for="(q, i) in advisor" :key="i">
@@ -747,7 +748,7 @@ watch(() => store.currentId, () => {
 
         <!-- 导出 -->
         <div class="blk" style="display:flex;gap:8px">
-          <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>导出笔记 .md</a>
+          <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>{{ t('导出笔记 .md') }}</a>
         </div>
       </template>
 
@@ -755,35 +756,35 @@ watch(() => store.currentId, () => {
       <template v-if="tab === 'terms'">
         <!-- 本文用到的缩写：论文自带的，一键收进术语表 -->
         <div style="margin-bottom:14px" v-if="abbrList.length">
-          <div class="mono-label" style="margin-bottom:6px">本文缩写 · {{ abbrList.length }}</div>
+          <div class="mono-label" style="margin-bottom:6px">{{ t('本文缩写 · {n}', { n: abbrList.length }) }}</div>
           <div class="abbr-list">
             <div class="term-row" v-for="a in abbrList" :key="a.en">
               <span class="t-en" :title="a.en">{{ a.en }}</span>
               <span class="t-arrow">→</span>
               <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
-              <button class="t-add" title="收进术语表"
+              <button class="t-add" :title="t('收进术语表')"
                       @click="saveAbbr(a)">＋</button>
             </div>
           </div>
         </div>
 
-        <div class="mono-label" style="margin-bottom:6px">术语表 · {{ termsBusy ? '发掘中…' : terms.length }}</div>
+        <div class="mono-label" style="margin-bottom:6px">{{ t('术语表') }} · {{ termsBusy ? t('发掘中…') : terms.length }}</div>
         <div class="term-form">
-          <input type="text" v-model="termForm.term_en" placeholder="英文" />
-          <input type="text" v-model="termForm.term_zh" placeholder="中文" />
-          <button title="添加" @click="addTerm">＋</button>
+          <input type="text" v-model="termForm.term_en" :placeholder="t('英文')" />
+          <input type="text" v-model="termForm.term_zh" :placeholder="t('中文')" />
+          <button :title="t('添加')" @click="addTerm">＋</button>
         </div>
-        <input type="text" v-model="termFilter" placeholder="筛选…" class="term-filter" />
-        <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>导出 CSV</a></div>
+        <input type="text" v-model="termFilter" :placeholder="t('筛选…')" class="term-filter" />
+        <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>{{ t('导出 CSV') }}</a></div>
         <div v-for="t in termsFiltered" :key="t.id" class="term-row">
           <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
           <span class="t-arrow">→</span>
           <span class="t-zh">{{ t.term_zh }}</span>
           <!-- 只有本文出现过的词才有这个箭头：别的论文的术语点进去必然查不到 -->
-          <button v-if="inPaper(t)" class="t-go" title="在论文中查找该词"
+          <button v-if="inPaper(t)" class="t-go" :title="t('在论文中查找该词')"
                   @click="findTerm(t.term_en)">↗</button>
-          <span v-else class="t-no" title="这篇论文的正文里没有这个词">—</span>
-          <button class="t-del" @click="delTerm(t.id)" title="删除">×</button>
+          <span v-else class="t-no" :title="t('这篇论文的正文里没有这个词')">—</span>
+          <button class="t-del" @click="delTerm(t.id)" :title="t('删除')">×</button>
         </div>
       </template>
       </div>
@@ -801,17 +802,17 @@ watch(() => store.currentId, () => {
     <Transition name="fade">
     <div class="lightbox" v-if="lightbox" @click="figIdx = -1">
       <div class="lb-stage" @click.stop>
-        <button class="lb-nav" :disabled="figures.length < 2" title="上一张（←）" @click="figStep(-1)">‹</button>
+        <button class="lb-nav" :disabled="figures.length < 2" :title="t('上一张（←）')" @click="figStep(-1)">‹</button>
         <img :src="api.figureUrl(store.currentId, lightbox, 200)" />
-        <button class="lb-nav" :disabled="figures.length < 2" title="下一张（→）" @click="figStep(1)">›</button>
+        <button class="lb-nav" :disabled="figures.length < 2" :title="t('下一张（→）')" @click="figStep(1)">›</button>
       </div>
       <!-- 论文原生题注放最显眼的一行：这张图是什么，论文自己说过 -->
       <div class="lb-cap" v-if="lightbox.caption" @click.stop>{{ lightbox.caption }}</div>
       <div class="lb-actions" @click.stop>
-        <span class="mono-label">{{ lightbox.kind === 'table' ? '表' : '图' }} · {{ figIdx + 1 }} / {{ figures.length }} · 第 {{ lightbox.page + 1 }} 页</span>
-        <button @click="figJump(lightbox)">在原文查看</button>
-        <button @click="askFigure(lightbox)">问这张{{ lightbox.kind === 'table' ? '表' : '图' }}</button>
-        <button @click="figIdx = -1">关闭</button>
+        <span class="mono-label">{{ t(lightbox.kind === 'table' ? '表' : '图') }} · {{ figIdx + 1 }} / {{ figures.length }} · {{ t('第 {p} 页', { p: lightbox.page + 1 }) }}</span>
+        <button @click="figJump(lightbox)">{{ t('在原文查看') }}</button>
+        <button @click="askFigure(lightbox)">{{ t(lightbox.kind === 'table' ? '问这张表' : '问这张图') }}</button>
+        <button @click="figIdx = -1">{{ t('关闭') }}</button>
       </div>
     </div>
     </Transition>

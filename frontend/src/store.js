@@ -1,5 +1,6 @@
 import { reactive, watch, computed } from 'vue'
 import { api } from './api'
+import { t, ui } from './i18n'
 
 /* 只转出组件真的会 import 的那些。颜色/标签的字典（KIND_*、BAND_*）不再对外——
    它们只该通过下面这三个解析口被读到，散出去就又会有人绕过口径直接取色。 */
@@ -74,10 +75,14 @@ export const store = reactive({
 window.addEventListener('resize', () => { store.vw = window.innerWidth })
 
 export function toast(msg, ms = 2600) {
-  store.toast = msg
+  store.toast = t(msg)
   clearTimeout(toast._t)
   toast._t = setTimeout(() => (store.toast = ''), ms)
 }
+
+/* 纯英文模式不带翻译模块：变体永远停在原文。存过的偏好不改（回中文还在），
+   只在"要往回读"的地方拦住它。 */
+watch(() => ui.lang, l => { if (l === 'en' && store.viewer.variant !== 'original') store.viewer.variant = 'original' })
 
 watch(() => store.viewer.variant, v => lsSet('variant', v))
 watch(() => store.viewer.spread, v => lsSet('spread', v))
@@ -117,7 +122,7 @@ export async function checkUpdate(force = false, silent = true) {
     if (r.has_update) store.update = { ...store.update, ...r, show: true }
     return r
   } catch (e) {
-    if (!silent) toast('检查更新失败：' + e.message)
+    if (!silent) toast(t('检查更新失败：{m}', { m: e.message }))
     return null
   }
 }
@@ -179,6 +184,7 @@ export async function openPaper(pid) {
   const pos = lsGet(`pos:${pid}`, {})
   if (pos.variant) store.viewer.variant = pos.variant
   if (pos.spread) store.viewer.spread = pos.spread
+  if (ui.lang === 'en') store.viewer.variant = 'original'   // 英文模式没有译文/双语
   store.paper = await api.paper(pid)
   // 译文/双语是**按篇**的资源，而 variant 是全局偏好（记在 localStorage 里）。
   // 打开一篇没有译文的论文时，上次留在"双语"上会让纸面整块空白（/pdf?variant=dual 404），

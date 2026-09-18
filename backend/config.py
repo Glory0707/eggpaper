@@ -18,6 +18,7 @@ DEFAULTS = {
         "model": "deepseek-chat",
         "vision_model": "",  # 视觉问答用的多模态模型，留空则该功能不可用
     },
+    "ui_lang": "zh",       # 界面语言（zh/en）。前端照它隐藏翻译模块；LLM 的产出语言跟着它走
     "mock": False,         # 演示模式：默认关（用户定的）。没填 key 时行为仍按演示走（见 main._demo_mode），
                            # 填了 key 自动真跑；勾上这一项才强制演示
     "pdf2zh": {

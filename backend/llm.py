@@ -127,6 +127,18 @@ def parse_json(text: str) -> dict:
         return json.loads(fixed)
 
 
+def _lang_tail() -> str:
+    """界面语言是英文时，要求所有面向用户的产出都用英文写。
+    只拼在 system 提示词尾部；论文原文的引用仍按原文（引文必须忠于纸面）。
+    翻译与引用抄写这两类提示词**不拼**：翻译就是要译，引用是照抄不译。"""
+    try:
+        if (config.load().get("ui_lang") or "zh") == "en":
+            return "\n\nWrite ALL user-visible text you produce in English. Keep quoted sentences from the paper in their original language."
+    except Exception:
+        pass
+    return ""
+
+
 TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者读这篇时会卡住、需要中英对照的那些说法。
 
 只收**这篇论文特有的**东西：
@@ -162,7 +174,7 @@ def extract_terms(title: str, paras: list) -> dict:
     parts = ["¶%s %s" % (p["idx"], p["text"][:600]) for p in paras if not p.get("in_refs")]
     body = "\n\n".join(parts)
     msgs = [
-        {"role": "system", "content": TERMS_SYSTEM},
+        {"role": "system", "content": TERMS_SYSTEM + _lang_tail()},
         {"role": "user", "content": "论文标题：" + (title or "") + "\n\n" + body[:48000]},
     ]
     out = ""
@@ -341,7 +353,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)
     user = f"论文标题：{title or '（未识别）'}\n\n{body}"
-    system = SKELETON_SYSTEM + (REVIEW_SKELETON_APPENDIX if kind == "review" else "")
+    system = SKELETON_SYSTEM + (REVIEW_SKELETON_APPENDIX if kind == "review" else "") + _lang_tail()
     msgs = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -442,7 +454,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
             "只要别停在'这篇讲了什么'这种翻开摘要就能回答的层面。"
             "每条是**一个**短问题：一句话、十五到二十五字问完，别加铺垫，也别一口气问两件事"
             "（面板里是竖排按钮，长句读着累）。"
-            "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。"},
+            "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
     ], max_tokens=4000, temperature=0.5)
     data = parse_json(out)
@@ -475,7 +487,7 @@ def _gloss_block(hits) -> str:
 def summarize(title: str, paras: list, hits=None) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:800]}" for p in paras if not p.get("in_refs"))[:60000]
     out = chat([
-        {"role": "system", "content": _gloss_block(hits) +
+        {"role": "system", "content": _lang_tail() + _gloss_block(hits) +
             "你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
             '{"one_line":"<一句话说清这篇论文做了什么、核心结果是什么，≤60字>",'
             '"contributions":"<贡献：解决了什么问题、为什么重要，≤80字>",'
@@ -516,7 +528,7 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
         if blocks:
             body += ("\n\n【用户同时引用的其他论文全文——每篇的 ¶ 编号是它自己的段落。"
                      "提到这些论文时先写《标题》再写 ¶ 编号（如《某论文》¶3）】\n" + "\n\n".join(blocks))
-    msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n【当前论文】{title or ''}\n\n{body}"}]
+    msgs = [{"role": "system", "content": _lang_tail() + QA_SYSTEM + _gloss_block(hits) + f"\n\n【当前论文】{title or ''}\n\n{body}"}]
     if summary:
         msgs.append({"role": "system", "content":
                      "以下是本次对话较早部分的摘要（其中的结论、术语译法、用户的关注点都继续有效，"
@@ -702,7 +714,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
     def run(chunk):
         body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in chunk)
         msgs = [
-            {"role": "system", "content": MARGINALIA_SYSTEM},
+            {"role": "system", "content": MARGINALIA_SYSTEM + _lang_tail()},
             {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
         ]
         out = ""
@@ -856,7 +868,7 @@ def method_card(title: str, paras: list) -> dict:
             '"notes":"<复现时要注意的坑，≤60字>"}'
             "步骤要具体可执行，保留关键数字。写法：化学式与上下标用 Unicode 字符"
             "（Sc₂O₃、10⁻⁷、Oₛ），不要 LaTeX、不要 $…$、不要用下划线代替下标。"
-            "不要 markdown 代码块，不要解释。"},
+            "不要 markdown 代码块，不要解释。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
     return parse_json(out)
@@ -879,7 +891,7 @@ def survey_card(title: str, paras: list) -> dict:
             "steps 就是这篇综述自己的分类/脉络（有几条写几条，3~8 条为宜），每条自成一格。"
             "**普适性**：领域不同载体不同——它用数据集/基准/材料体系/理论模型中的哪一种，就写哪一种；"
             "没提到的东西不要编。化学式与上下标用 Unicode 字符（Sc₂O₃、10⁻⁷），不要 LaTeX。"
-            "不要 markdown 代码块，不要解释。"},
+            "不要 markdown 代码块，不要解释。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
     return parse_json(out)
@@ -934,7 +946,7 @@ def advisor_questions(title: str, claims: list, warnings: list) -> dict:
             "结论到底能走到哪一步？换个做法会怎样？"
             "出 3 个最可能把学生问住的问题（证据强度、方法选择、结论推广性都是好切入口，"
             "你也可以从自己对这篇的判断出发），每个配一份过关要点提纲。"
-            '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。'},
+            '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n已承认的薄弱点（已知前提）：\n{warn_txt}"},
     ], max_tokens=6000, temperature=0.5)
     data = parse_json(out)
@@ -951,14 +963,16 @@ def vision_ask(image_dataurl: str, question: str) -> str:
     cfg = config.load()
     vm = cfg["provider"].get("vision_model", "").strip()
     if cfg["mock"]:
-        return "〔演示模式〕视觉问答需要配置视觉模型。"
+        return ("[Demo mode] Visual Q&A needs a vision model." if _lang_tail()
+                else "〔演示模式〕视觉问答需要配置视觉模型。")
     if not vm:
         raise RuntimeError("未配置视觉模型（设置 → 视觉模型）")
     r = httpx.post(
         f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
         headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
         json={"model": vm, "max_tokens": 6000, "temperature": 0.3,
-              "messages": [{"role": "user", "content": [
+              "messages": ([{"role": "system", "content": _lang_tail()}] if _lang_tail() else []) +
+              [{"role": "user", "content": [
                   {"type": "image_url", "image_url": {"url": image_dataurl}},
                   {"type": "text", "text": question},
               ]}]},
@@ -1004,7 +1018,7 @@ def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> di
             "因此这篇论文要回答什么）；为什么非解决不可（对领域意味着什么、为什么到现在还没解决"
             "或有争议）。要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；一共两三句；"
             "句尾用 [¶n] 标出你是从哪几段看出来的。"
-            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
+            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。' + _lang_tail()},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n\n"
             f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
@@ -1025,7 +1039,7 @@ def answer_how_review(title: str, claims: list, paras: list) -> dict:
             "用两三句话说清：它按什么线索/维度分类，分成哪几块，各块之间什么关系（并列/递进/交叉），"
             "最后落到哪些开放问题。要求：说它自己的组织方式，不要复述被综述的内容；"
             "能标依据的句子都标段号（如 [¶12]）。"
-            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。'},
+            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。' + _lang_tail()},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n\n"
             "[它的组织主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文]\n{body}"},
@@ -1057,7 +1071,7 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
             "每条配一句能直接拿去问模型的追问；lead 里点明这条是「它承认的」还是「你的新方向」。"
             '只输出 JSON：{"items":[{"lead":"<方向名，≤10字，注明是它承认的还是你的新方向>",'
             '"text":"<做什么、为什么，句尾带依据段号 [¶n]，有依据就标>",'
-            '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。'},
+            '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content": payload},
     ], max_tokens=4000, temperature=0.45, no_think=True)
     out = _items(parse_json(out).get("items"))
@@ -1084,7 +1098,7 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
             "每条配一句他会问的问题。"
             '只输出 JSON：{"items":[{"lead":"<学科名，≤8字>",'
             '"text":"<他读到这篇的想法/意见，一两句，可标依据段号 [¶n]>",'
-            '"ask":"<他会提出的那个问题，≤40字>"}]}，不要代码块。'},
+            '"ask":"<他会提出的那个问题，≤40字>"}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
             "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) +

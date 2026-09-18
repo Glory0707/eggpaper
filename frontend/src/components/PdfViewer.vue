@@ -10,6 +10,7 @@ import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
 import EggMark from './EggMark.vue'
 import { vDrag } from '../drag'
+import { t, isEn } from '../i18n'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -358,11 +359,11 @@ async function load({ keepPlace = false } = {}) {
     if (store.viewer.variant !== 'original') {
       const was = store.viewer.variant
       store.viewer.variant = 'original'      // 赋值会触发 watch → 重新 load
-      toast((was === 'mono' ? '译文版' : '双语版') + '打不开，已切回原文；想再看可重新「整本翻译」', 5000)
+      toast(t((was === 'mono' ? '译文版' : '双语版') + '打不开，已切回原文；想再看可重新「整本翻译」'), 5000)
       loading = false
       return
     }
-    toast('文档加载失败：' + e.message)
+    toast(t('文档加载失败：{m}', { m: e.message }))
     ready.value = true
     loading = false
     return
@@ -373,7 +374,7 @@ async function load({ keepPlace = false } = {}) {
   } catch (e) {
     // 渲染中途炸了（某页画不出来等）：别让进度条永远爬、也别白屏不解释
     console.error('[eggpaper] 渲染失败：', e)
-    toast('这份文档渲染失败了：' + String(e.message || e).slice(0, 120), 6000)
+    toast(t('这份文档渲染失败了：{m}', { m: String(e.message || e).slice(0, 120) }), 6000)
     stopCreep()
     loadPct.value = 1
     ready.value = true
@@ -660,7 +661,7 @@ const pageLayouts = computed(() => {
     if (pendingPara.value != null) {
       const p = paraByIdx.value[pendingPara.value]
       if (p && p.page === it.origPage)
-        cands.push({ n: { id: 'pending', kind: 'lookup', page: it.origPage, quote: (p.text || '').slice(0, 60), note: '翻译中…' }, anchor: p.bbox.y0 * scale.value, pending: true })
+        cands.push({ n: { id: 'pending', kind: 'lookup', page: it.origPage, quote: (p.text || '').slice(0, 60), note: t('翻译中…') }, anchor: p.bbox.y0 * scale.value, pending: true })
     }
     cands.sort((a, b) => a.anchor - b.anchor)
     const notes = []
@@ -747,7 +748,7 @@ function hoverNote(id) { hotNote.value = id }
 const MINE = new Set(['lookup', 'region', 'note'])
 function kindLabel(n) {
   const zh = kindZH(n)
-  return MINE.has(n.kind) && zh ? '你 · ' + zh : zh
+  return MINE.has(n.kind) && zh ? t('你 · ') + zh : zh
 }
 
 /* 引文默认只看开头，想看全句点「全句」。
@@ -817,11 +818,11 @@ async function translateParaAndPin(idx) {
       if (ev.type === 'delta') zh += ev.text
       else if (ev.type === 'error') throw new Error(ev.message)
     }).done
-    if (!zh.trim()) { toast('模型没返回内容，再试一次'); return }
+    if (!zh.trim()) { toast(t('模型没返回内容，再试一次')); return }
     const p = paraByIdx.value[idx]
     await api.pin(store.currentId, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
     await refreshM()
-  } catch (e) { toast('翻译失败：' + e.message) }
+  } catch (e) { toast(t('翻译失败：{m}', { m: e.message })) }
   finally { pendingPara.value = null }
 }
 
@@ -897,11 +898,11 @@ function focusNote(n) {
 }
 // 就这条批注追问模型：把批注与它引的原话一起交过去（从页边卡直接问，不必绕去右栏）
 function askNote(n) {
-  const kind = kindZH(n) || '批注'
+  const kind = kindZH(n) || t('批注')
   store.viewer.railUser = true
   store.askPrefill = {
-    question: `眉批标了「${kind}」：「${n.note}」——引文是“${(n.quote || '').slice(0, 60)}”。`
-      + `这条判断站得住吗？依据在哪几段？[¶${n.para_idx}]`,
+    question: t('眉批标了「{kind}」：「{note}」——引文是“{quote}”。这条判断站得住吗？依据在哪几段？[¶{n}]',
+                { kind, note: n.note, quote: (n.quote || '').slice(0, 60), n: n.para_idx }),
     send: true,
   }
 }
@@ -934,20 +935,20 @@ async function pinSel() {
   await api.pin(store.currentId, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
   await refreshM()
   closeSel()
-  toast('已钉在页边')
+  toast(t('已钉在页边'))
 }
 
 // 译文的出口多一个：框选提问/钉页边之外，最常见的动作其实是"把这段译文贴到别处去"
 async function copySel() {
   try {
     await navigator.clipboard.writeText(sel.zh || '')
-    toast('译文已复制')
-  } catch { toast('复制失败，手动选吧') }
+    toast(t('译文已复制'))
+  } catch { toast(t('复制失败，手动选吧')) }
 }
 function sendToGlossary() {
   store.glossaryPrefill = { term_en: sel.text.slice(0, 80), term_zh: (sel.zh || '').replace('〔演示译文〕', '').slice(0, 24) }
   closeSel()
-  toast('已带到术语表，请确认中文译法')
+  toast(t('已带到术语表，请确认中文译法'))
   window.dispatchEvent(new CustomEvent('eggpaper:terms-prefill'))
 }
 
@@ -974,7 +975,7 @@ async function saveMine() {
   mine.open = false; mine.text = ''
   await refreshM()
   closeSel()
-  toast('已写在页边')
+  toast(t('已写在页边'))
 }
 
 async function refreshM() {
@@ -1093,7 +1094,7 @@ function hitK(h) { return scale.value / (h.k || scale.value) }
 function translateSelectionKey() {
   const s = window.getSelection()
   if (s && !s.isCollapsed && s.toString().trim()) onMouseUp({})
-  else toast('先划选一段原文')
+  else toast(t('先划选一段原文'))
 }
 
 /* ---------------- 跳转栈 / 键盘 API ---------------- */
@@ -1174,7 +1175,7 @@ function step(dir) {
 
 async function translateCurrent() {
   if (store.readingPara) await translateParaAndPin(store.readingPara)
-  else toast('先滚动到要译的段落')
+  else toast(t('先滚动到要译的段落'))
 }
 
 store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
@@ -1189,7 +1190,7 @@ function findInPaper(q) {
   // 直接搜必然"没找到"，用户会以为这个词不在这篇里
   if (store.viewer.variant !== 'original') {
     store.viewer.variant = 'original'
-    toast('已切回原文再找')
+    toast(t('已切回原文再找'))
     pendingFind = q          // 换模式要重新出图、重建文字层：等 load() 收尾再搜
     return
   }
@@ -1314,7 +1315,7 @@ function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
   // 译文/双语页（origPage = -1）上不许框选：那里没有原文段落，页边也摆不出对应的卡片，
   // 钉下去的结果是"AI 的回答存了但永远看不到"，还会顺手覆盖 ¶0 上已有的那条。
-  if (it.origPage < 0) { toast('译文页不能框选，切回「原文」再圈'); return }
+  if (it.origPage < 0) { toast(t('译文页不能框选，切回「原文」再圈')); return }
   e.preventDefault()
   const el = pageEls.value[it.gi]
   const base = el.getBoundingClientRect()
@@ -1342,7 +1343,7 @@ function startFrameDrag(e, it) {
     }
     Object.assign(vis, { visible: true, x: Math.min(window.innerWidth - 410, ev.clientX + 12),
                          y: Math.min(window.innerHeight - 340, Math.max(64, ev.clientY - 60)),
-                         img, question: '解释选区里的内容。', answer: '', busy: false, err: '',
+                         img, question: t('解释选区里的内容。'), answer: '', busy: false, err: '',
                          page: it.origPage, paraIdx,
                          rect: it.origPage >= 0 ? { x0: x0 / s, y0: y0 / s, x1: x1 / s, y1: y1 / s } : null })
   }
@@ -1388,13 +1389,13 @@ async function pinVisual() {
   })
   await refreshM()
   closeVis()
-  toast('已钉在页边')
+  toast(t('已钉在页边'))
 }
 
 watch(() => store.visPrefill, pf => {
   if (!pf) return
   Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(midX.value || window.innerWidth / 2) - 190), y: 90,
-                       img: pf.img, question: pf.question || '讲解这张图。', answer: '', busy: false, err: '',
+                       img: pf.img, question: pf.question || t('讲解这张图。'), answer: '', busy: false, err: '',
                        page: pf.page ?? 0, paraIdx: pf.paraIdx ?? 0, rect: pf.rect ?? null })
   store.visPrefill = null
   askVisual()
@@ -1449,7 +1450,7 @@ watch(() => store.marginalia.notes, (n, o) => {
     <div class="hatch" v-if="!ready">
       <EggMark class="hatch-mark" />
       <div class="hatch-line"><i :style="{ width: Math.round(loadPct * 100) + '%' }" /></div>
-      <div class="hatch-word">正在破壳</div>
+      <div class="hatch-word">{{ t('正在破壳') }}</div>
     </div>
 
     <div v-else class="sheet-stage">
@@ -1481,7 +1482,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                 <!-- 灰掉的段落：悬停掀开看一眼（CSS），点一下=「这段我也要读」 -->
                 <template v-if="veiled(p, it.origPage)">
                   <div v-for="(vb, vi) in veilBoxes(p, it.origPage)" :key="'v' + vi"
-                       class="para-fade veil" :title="vi ? '' : '这段也要读'"
+                       class="para-fade veil" :title="vi ? '' : t('这段也要读')"
                        :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
                                  animationDelay: Math.min(400, pi * 12 + vi * 8) + 'ms' }"
                        @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
@@ -1491,7 +1492,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                      就是撤销出口：纸上没有别的可点的地方了。 -->
                 <div v-else-if="store.viewer.layers.skim && it.origPage > 0 && (isCore(p) || kept(p.idx))"
                      class="para-core-bar" :class="{ undo: kept(p.idx) }"
-                     :title="kept(p.idx) ? '取消保留' : ''"
+                     :title="kept(p.idx) ? t('取消保留') : ''"
                      :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"
                      @click.stop="kept(p.idx) && toggleKeep(p.idx)"></div>
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
@@ -1534,24 +1535,24 @@ watch(() => store.marginalia.notes, (n, o) => {
               <div class="mg-head">
                 <span class="mg-dot" :style="{ background: kindColor(n) }"></span>
                 <span class="mg-kind" :style="{ color: kindText(n) }">
-                  {{ pending ? '翻译中' : kindLabel(n) }}
+                  {{ pending ? t('翻译中') : kindLabel(n) }}
                 </span>
-                <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? '收起' : '展开' }}</span>
+                <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? t('收起') : t('展开') }}</span>
                 <!-- 就地追问：读到这条批注时人的第一反应是"凭什么"，
                      追问要在这儿，而不是跳到右栏问题页去凑一句话 -->
-                <button v-if="!pending" class="mg-ask" @click.stop="askNote(n)">问 ↗</button>
+                <button v-if="!pending" class="mg-ask" @click.stop="askNote(n)">{{ t('问 ↗') }}</button>
                 <button v-if="!pending" class="mg-del" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ prettyChem(n.note) }}</div>
               <!-- 引文：默认看开头，点「全句」摊开；引文本身点了是跳回纸上那句 -->
               <div class="mg-quote-row">
                 <span class="mg-quote" :class="{ all: openQuote === n.id }"
-                      :title="'跳到纸上这句：' + anchorText(n)" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
+                      :title="t('跳到纸上这句：{q}', { q: anchorText(n) })" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
                 <button v-if="anchorText(n).length > 44" class="mg-qall" @click.stop="toggleQuote(n)">
-                  {{ openQuote === n.id ? '收起' : '全句' }}
+                  {{ openQuote === n.id ? t('收起') : t('全句') }}
                 </button>
                 <!-- 模型引文和原文对不齐时说实话：划线只盖对得上的部分 -->
-                <span v-if="quoteLoose(n)" class="mg-loose" title="引文与原文略有出入">≈</span>
+                <span v-if="quoteLoose(n)" class="mg-loose" :title="t('引文与原文略有出入')">≈</span>
               </div>
             </div>
           </div>
@@ -1571,21 +1572,21 @@ watch(() => store.marginalia.notes, (n, o) => {
     <Transition name="fade">
     <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px' }"
          v-drag="{ key: 'zoombar' }" data-drag>
-      <button title="上一页（PageUp）" @click="stepPage(-1)">‹</button>
+      <button :title="t('上一页（PageUp）')" @click="stepPage(-1)">‹</button>
       <span class="zb-page">
-        <input ref="pageInputEl" v-model="pageIn" class="zb-input" title="跳到第几页"
+        <input ref="pageInputEl" v-model="pageIn" class="zb-input" :title="t('跳到第几页')"
                @keydown.enter="commitPage(); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
         <em>/ {{ store.paper?.n_pages || 0 }}</em>
       </span>
-      <button title="下一页（PageDown）" @click="stepPage(1)">›</button>
+      <button :title="t('下一页（PageDown）')" @click="stepPage(1)">›</button>
       <span class="zb-sep"></span>
-      <button :class="{ on: fit === 'width' }" @click="setFit('width')">适宽</button>
-      <button :class="{ on: fit === 'page' }" @click="setFit('page')">适页</button>
-      <button class="zb-num" title="实际大小" @click="setFit('none')">{{ zoomPct }}%</button>
-      <button title="缩小" @click="stepZoom(-1)">－</button>
-      <button title="放大" @click="stepZoom(1)">＋</button>
+      <button :class="{ on: fit === 'width' }" @click="setFit('width')">{{ t('适宽') }}</button>
+      <button :class="{ on: fit === 'page' }" @click="setFit('page')">{{ t('适页') }}</button>
+      <button class="zb-num" :title="t('实际大小')" @click="setFit('none')">{{ zoomPct }}%</button>
+      <button :title="t('缩小')" @click="stepZoom(-1)">－</button>
+      <button :title="t('放大')" @click="stepZoom(1)">＋</button>
       <span class="zb-sep"></span>
-      <button title="查找（Ctrl+F）" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">查找</button>
+      <button :title="t('查找（Ctrl+F）')" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">{{ t('查找') }}</button>
     </div>
     </Transition>
 
@@ -1593,21 +1594,21 @@ watch(() => store.marginalia.notes, (n, o) => {
     <Transition name="pop">
     <div v-if="ready && searchOpen" class="desk-float find-bar" :style="{ left: midX + 'px' }"
          v-drag="{ key: 'findbar' }" data-drag>
-      <input ref="searchInputEl" v-model="searchQ" class="fb-input" placeholder="在论文里找…"
+      <input ref="searchInputEl" v-model="searchQ" class="fb-input" :placeholder="t('在论文里找…')"
              @keydown.enter="searchStep(1)" @keydown.escape="closeSearch" />
       <span class="fb-count">
-        {{ searchHits.length ? (searchAt + 1) + ' / ' + searchHits.length : (searchBusy ? '…' : '无结果') }}
+        {{ searchHits.length ? (searchAt + 1) + ' / ' + searchHits.length : (searchBusy ? '…' : t('无结果')) }}
       </span>
-      <button :disabled="!searchHits.length" title="上一个（Enter）" @click="searchStep(-1)">‹</button>
-      <button :disabled="!searchHits.length" title="下一个（Enter）" @click="searchStep(1)">›</button>
-      <button class="ghost" title="关闭（Esc）" @click="closeSearch">×</button>
+      <button :disabled="!searchHits.length" :title="t('上一个（Enter）')" @click="searchStep(-1)">‹</button>
+      <button :disabled="!searchHits.length" :title="t('下一个（Enter）')" @click="searchStep(1)">›</button>
+      <button class="ghost" :title="t('关闭（Esc）')" @click="closeSearch">×</button>
     </div>
     </Transition>
 
     <!-- 框选中：常驻退出口。顶栏那颗「框选」此刻正亮着，这里不必再把同一个词说一遍 -->
     <Transition name="pop">
     <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
-      <button @click="store.viewer.frame = false">退出框选</button>
+      <button @click="store.viewer.frame = false">{{ t('退出框选') }}</button>
     </div>
     </Transition>
 
@@ -1616,9 +1617,9 @@ watch(() => store.marginalia.notes, (n, o) => {
     <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }"
          v-drag="{ key: 'selpop' }" data-drag @mouseup.stop>
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
-        已选 {{ sel.text.length }} 字符<span v-if="sel.paraIdx >= 0" class="mono-num"> · ¶{{ sel.paraIdx }}</span>
+        {{ t('已选 {n} 字符', { n: sel.text.length }) }}<span v-if="sel.paraIdx >= 0" class="mono-num"> · ¶{{ sel.paraIdx }}</span>
       </div>
-      <div v-if="sel.busy && !sel.zh" style="font-size:var(--fs-sm);color:var(--ink-3)">翻译中…</div>
+      <div v-if="sel.busy && !sel.zh" style="font-size:var(--fs-sm);color:var(--ink-3)">{{ t('翻译中…') }}</div>
       <div v-if="sel.err && !sel.zh" style="font-size:var(--fs-sm);color:var(--vermilion)">{{ sel.err }}</div>
       <div class="sp-zh" v-if="sel.zh">{{ sel.zh }}<span v-if="sel.busy" class="qa-caret"></span></div>
       <div class="sp-hits" v-if="sel.hits.length">
@@ -1626,7 +1627,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       </div>
       <!-- 自己写一条：页边也是你的本子，不只是 AI 说话的地方 -->
       <div class="sp-mine" v-if="mine.open">
-        <textarea ref="mineEl" v-model="mine.text" rows="3" placeholder="就这句写点什么…（Ctrl+Enter 保存）"
+        <textarea ref="mineEl" v-model="mine.text" rows="3" :placeholder="t('就这句写点什么…（Ctrl+Enter 保存）')"
                   @mouseup.stop @keydown.enter.ctrl="saveMine"></textarea>
       </div>
       <div class="sp-actions">
@@ -1635,15 +1636,17 @@ watch(() => store.marginalia.notes, (n, o) => {
           <button style="padding:4px 10px" @click="mine.open = false">取消</button>
         </template>
         <template v-else>
-          <button class="primary" style="padding:4px 10px" @click="doTranslateSel" :disabled="sel.busy">
-            {{ sel.busy ? '翻译中' : (sel.zh ? '重译' : '翻译') }}
-          </button>
-          <button v-if="sel.zh" style="padding:4px 10px"
-                  @click="copySel">复制译文</button>
-          <button style="padding:4px 10px" @click="pinSel">钉在页边</button>
-          <button style="padding:4px 10px" @click="openMine">写批注</button>
-          <button style="padding:4px 10px" @click="sendToGlossary">收进术语</button>
-          <button style="padding:4px 10px" @click="askAboutSel">提问</button>
+          <template v-if="!isEn()">
+            <button class="primary" style="padding:4px 10px" @click="doTranslateSel" :disabled="sel.busy">
+              {{ sel.busy ? t('翻译中') : (sel.zh ? t('重译') : t('翻译')) }}
+            </button>
+            <button v-if="sel.zh" style="padding:4px 10px"
+                    @click="copySel">{{ t('复制译文') }}</button>
+            <button style="padding:4px 10px" @click="pinSel">{{ t('钉在页边') }}</button>
+            <button style="padding:4px 10px" @click="sendToGlossary">{{ t('收进术语') }}</button>
+          </template>
+          <button style="padding:4px 10px" @click="openMine">{{ t('写批注') }}</button>
+          <button style="padding:4px 10px" @click="askAboutSel">{{ t('提问') }}</button>
           <button class="ghost" style="padding:4px 8px" @click="closeSel()">×</button>
         </template>
       </div>
@@ -1656,32 +1659,32 @@ watch(() => store.marginalia.notes, (n, o) => {
     <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }"
          v-drag="{ key: 'vispop' }" data-drag @mouseup.stop>
       <div class="vp-head">
-        <span class="mono-label">选区问 AI</span>
+        <span class="mono-label">{{ t('选区问 AI') }}</span>
         <button class="vp-x" title="关闭（Esc）" @click="closeVis">×</button>
       </div>
       <img class="vis-img" :src="vis.img" />
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
-             @keydown.enter="askVisual" placeholder="问这个选区…" />
+             @keydown.enter="askVisual" :placeholder="t('问这个选区…')" />
       <div class="sp-actions">
         <!-- 只把提示词放进输入框，不发：用户多半要改两句再问（Enter 发送） -->
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill('分析这张图：画了什么、支持什么结论')">分析此图</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill('分析这个公式：每一步的含义和推导逻辑')">分析公式</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill('分析这张表：趋势、异常和可疑之处')">分析表格</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图：画了什么、支持什么结论'))">{{ t('分析此图') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式：每一步的含义和推导逻辑'))">{{ t('分析公式') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表：趋势、异常和可疑之处'))">{{ t('分析表格') }}</button>
       </div>
-      <div v-if="vis.busy" class="vp-state">正在看图</div>
+      <div v-if="vis.busy" class="vp-state">{{ t('正在看图') }}</div>
       <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>
       <MdLite v-if="vis.answer" class="vp-answer" :text="vis.answer" />
       <!-- 关掉的出口只有右上角那个 ×（和 Esc）：左下角再挂一个"关闭"是重复，
            底部只留真正要做的动作 -->
       <div class="sp-actions" v-if="vis.answer">
-        <button class="primary" style="padding:4px 10px" @click="pinVisual">钉在页边</button>
+        <button class="primary" style="padding:4px 10px" @click="pinVisual">{{ t('钉在页边') }}</button>
       </div>
     </div>
     </Transition>
 
     <Transition name="pop">
       <button class="back-chip desk-float" v-if="backChip" :style="{ left: midX + 'px' }" @click="jumpBack">
-        返回原位 · Alt+←
+        {{ t('返回原位 · Alt+←') }}
       </button>
     </Transition>
   </div>

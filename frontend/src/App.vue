@@ -10,6 +10,7 @@ import CiteCard from './components/CiteCard.vue'
 import UpdateCard from './components/UpdateCard.vue'
 import { dlg, dlgCancel } from './dialog'
 import EggMark from './components/EggMark.vue'
+import { t, isEn, setLang } from './i18n'
 
 const showSettings = ref(false)
 const dragOver = ref(false)
@@ -210,12 +211,12 @@ onMounted(async () => {
   // 兜底的最后一道网：哪条链路漏了 catch，也别静默死掉——报给用户（限流：同一句
   // 30 秒内只报一次，轮询类的重复失败不刷屏）。拦过之后控制台里照样能看全栈。
   window.addEventListener('unhandledrejection', ev => {
-    const msg = String(ev.reason?.message || ev.reason || '未知错误')
+    const msg = String(ev.reason?.message || ev.reason || t('未知错误'))
     const now = Date.now()
     if (msg === _lastErrToast.msg && now - _lastErrToast.at < 30000) return
     _lastErrToast = { msg, at: now }
     console.error('[eggpaper] 未处理的失败：', ev.reason)
-    toast('出错了：' + msg.slice(0, 120), 5000)
+    toast(t('出错了：{m}', { m: msg.slice(0, 120) }), 5000)
   })
   pollTimer = setInterval(poll, 3000)
   sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后
@@ -228,6 +229,8 @@ onMounted(async () => {
   wakeEgg()                  // 先把打盹的表立起来
   try {
     store.settings = await api.settings()
+    // 界面语言以后端设置为准（它同时决定 LLM 的产出语言）；本地记录只是后端没回话时的兜底
+    if (store.settings?.ui_lang) setLang(store.settings.ui_lang)
     await refreshPapers()
     await refreshCollections()
     // 上次停在哪儿就回哪儿：记录的篇还在就开它，不在了（被删过）停在书桌，
@@ -236,7 +239,7 @@ onMounted(async () => {
     const last = store.papers.find(p => p.id === lastId)
     if (last) openPaper(last.id)
   } catch (e) {
-    toast('初始化失败：' + e.message + '（后台可能刚起来，稍后会自动恢复）', 6000)
+    toast(t('初始化失败：{m}', { m: e.message }), 6000)
   }
   // 更新：先问自己是哪个版本，再等 6 秒做一次安静探测。故意不抢首屏——
   // 用户先看到论文，更新提示随后自己浮出来；源里没东西就什么都不会发生。
@@ -288,7 +291,7 @@ async function poll() {
       const v = await api.version()
       if (v.version && v.version !== bootVersion) {
         verHintShown = true
-        toast(`eggpaper 已更新到 ${v.version}，正在刷新界面…`, 6000)
+        toast(t('eggpaper 已更新到 {v}，正在刷新界面…', { v: v.version }), 6000)
         setTimeout(() => window.location.reload(), 1200)
       }
     } catch { /* 下个 15 秒再问 */ }
@@ -340,7 +343,7 @@ function sleepGreet() {
     const today = new Date().toDateString()
     if (localStorage.getItem('egg:sleep-greet') !== today) {
       localStorage.setItem('egg:sleep-greet', today)
-      toast('蛋都睡了，你还在读。', 8000)
+      toast(t('蛋都睡了，你还在读。'), 8000)
     }
   } else if (sleepEgg.value) {
     sleepEgg.value = false
@@ -385,8 +388,8 @@ async function onOverride({ idx, role }) {
   try {
     await api.overrideRole(store.currentId, idx, role)
     await refreshAnalysis()
-    toast(role ? '已改判' : '已回到推断')
-  } catch (e) { toast('改判失败：' + e.message) }
+    toast(role ? t('已改判') : t('已回到推断'))
+  } catch (e) { toast(t('改判失败：{m}', { m: e.message })) }
 }
 
 async function doMarginalia() {
@@ -421,8 +424,8 @@ async function doTranslateFull() {
     await refreshPapers()
     // 服务被自动换掉（比如 google 在这台机器的网络下不通）要说出来——
     // 用户设的是 google、跑的是 bing，不吭声等于骗人
-    toast(r.note || (again ? '已开始重新整本翻译' : '整本翻译已开始'))
-  } catch (e) { toast('启动失败：' + e.message) }
+    toast(r.note || (again ? t('已开始重新整本翻译') : t('整本翻译已开始')))
+  } catch (e) { toast(t('启动失败：{m}', { m: e.message })) }
 }
 
 /* 整本翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
@@ -435,11 +438,11 @@ async function pollTranslate() {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
     cheerEgg()                            // 整本书翻完了：跳两下（析读完成才是滚一圈）
-    toast('整本翻译完成')   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
+    toast(t('整本翻译完成'))   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
   } else if (j.status === 'error') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()
-    toast('整本翻译失败：' + (j.error || '').slice(0, 100), 6000)
+    toast(t('整本翻译失败：{m}', { m: (j.error || '').slice(0, 100) }), 6000)
   }
 }
 
@@ -463,11 +466,12 @@ async function onImport(list) {
   const ok = []
   for (let i = 0; i < files.length; i++) {
     const f = files[i]
-    toast(many ? `正在导入 ${i + 1}/${files.length}：${f.name.slice(0, 24)}` : '已导入，正在后台通读…')
+    toast(many ? t('正在导入 {i}/{n}：{name}', { i: i + 1, n: files.length, name: f.name.slice(0, 24) })
+                    : t('已导入，正在后台通读…'))
     try {
       const r = await api.upload(f)
       ok.push(r)
-      if (r.duplicate) toast('库里已有这篇——直接打开原来那份')
+      if (r.duplicate) toast(t('库里已有这篇——直接打开原来那份'))
       // 正在看某个分类时导入的，就顺手归到那个分类里——Zotero 的"导入到分类"一个意思
       const c = store.lib.coll
       if (typeof c === 'number') {
@@ -479,17 +483,17 @@ async function onImport(list) {
       }
       await refreshPapers()
     } catch (e) {
-      toast(`《${f.name.slice(0, 20)}》导入失败：` + e.message)
+      toast(t('《{name}》导入失败：{m}', { name: f.name.slice(0, 20), m: e.message }))
     }
   }
   const first = ok[0]
   if (!first) return
   if (many && ok.length > 1) {
-    toast(`已导入 ${ok.length} 篇，其余在后台排队通读`)
+    toast(t('已导入 {n} 篇，其余在后台排队通读', { n: ok.length }))
   } else if (first.no_text) {
-    toast('扫描件：只能读，析读与眉批用不了')
+    toast(t('扫描件：只能读，析读与眉批用不了'))
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
-    toast('只认出 ' + first.n_paragraphs + ' 段，析读会比较粗')
+    toast(t('只认出 {n} 段，析读会比较粗', { n: first.n_paragraphs }))
   }
 }
 
@@ -518,20 +522,20 @@ const tranElapsed = computed(() => {
   tranTick.value
   if (!tranProg.value.started) return ''
   const t = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
-  return t >= 90 ? `${Math.floor(t / 60)} 分 ${t % 60} 秒` : `${t} 秒`
+  return t >= 90 ? t('{m} 分 {s} 秒', { m: Math.floor(t / 60), s: t % 60 }) : t('{s} 秒', { s: t })
 })
 const tranLabel = computed(() => {
-  if (tranSt.value === 'done') return '重新整本翻译'
-  if (tranSt.value !== 'running') return '整本翻译'
+  if (tranSt.value === 'done') return t('重新整本翻译')
+  if (tranSt.value !== 'running') return t('整本翻译')
   const n = tranProg.value.total ? ` ${tranProg.value.done}/${tranProg.value.total}` : '…'
-  return `翻译中${n}`
+  return t('翻译中') + n
 })
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
-    return `正在译${tranProg.value.svc ? '（' + tranProg.value.svc + '）' : ''}`
-         + ` · 已用 ${tranElapsed.value || '刚刚'}`
+    return t('正在译{svc} · 已用 {t}', { svc: tranProg.value.svc ? `（${tranProg.value.svc}）` : '',
+                                         t: tranElapsed.value || t('刚刚') })
   }
-  return '译出第二份 PDF，供「译文 / 双语」'
+  return t('译出第二份 PDF，供「译文 / 双语」')
 })
 
 /* ---------------- 键盘流 ---------------- */
@@ -564,6 +568,8 @@ function onKey(e) {
     return
   }
   if (!store.paper) return
+  // 英文模式不带翻译模块：译段（t）、划译（s）、译文（2）、双语（3）都不接
+  if (isEn() && ['t', 's', '2', '3'].includes(e.key)) return
   switch (e.key) {
     case 'j': e.preventDefault(); store.viewerApi?.step(1); break
     case 'k': e.preventDefault(); store.viewerApi?.step(-1); break
@@ -587,7 +593,7 @@ function onKey(e) {
 <template>
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
-      <div class="wordmark" title="回书桌" @click="goHome">
+      <div class="wordmark" :title="t('回书桌')" @click="goHome">
         <span class="egg-wrap" ref="eggEl" @click.stop="pokeEgg" @wheel="onEggWheel"
               @dragenter="eggDragEnter" @dragover="eggDragOver" @dragleave="eggDragLeave" @drop="onEggDrop">
           <EggMark class="egg"
@@ -602,49 +608,49 @@ function onKey(e) {
           <div class="t">{{ store.paper.title || store.paper.filename }}</div>
           <!-- 引用格式是这篇的身份信息，跟标题同一族数据 → 就挂在标题旁边。
                任何页签下都够得着，不占右栏那四栏的版面 -->
-          <button class="cite-btn" @click="store.cite.open = true">引用</button>
+          <button class="cite-btn" @click="store.cite.open = true">{{ t('引用') }}</button>
         </div>
       </div>
       <div class="actions" v-if="store.paper">
-        <div class="segmented" :style="{ '--n': 3, '--i': VARIANTS.indexOf(store.viewer.variant) }">
+        <div class="segmented" v-if="!isEn()" :style="{ '--n': 3, '--i': VARIANTS.indexOf(store.viewer.variant) }">
           <span class="seg-thumb" />
-          <button :class="{ on: store.viewer.variant === 'original' }" @click="store.viewer.variant = 'original'">原文</button>
-          <button :class="{ on: store.viewer.variant === 'mono' }" :disabled="tranSt !== 'done'" @click="store.viewer.variant = 'mono'">译文</button>
-          <button :class="{ on: store.viewer.variant === 'dual' }" :disabled="tranSt !== 'done'" @click="store.viewer.variant = 'dual'">双语</button>
+          <button :class="{ on: store.viewer.variant === 'original' }" @click="store.viewer.variant = 'original'">{{ t('原文') }}</button>
+          <button :class="{ on: store.viewer.variant === 'mono' }" :disabled="tranSt !== 'done'" @click="store.viewer.variant = 'mono'">{{ t('译文') }}</button>
+          <button :class="{ on: store.viewer.variant === 'dual' }" :disabled="tranSt !== 'done'" @click="store.viewer.variant = 'dual'">{{ t('双语') }}</button>
         </div>
         <Transition name="fade">
           <div class="segmented mini" v-if="store.viewer.variant === 'dual'"
                :style="{ '--n': 2, '--i': store.viewer.spread === 'spread' ? 0 : 1 }">
             <span class="seg-thumb" />
-            <button :class="{ on: store.viewer.spread === 'spread' }" @click="store.viewer.spread = 'spread'">对开</button>
-            <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">交替</button>
+            <button :class="{ on: store.viewer.spread === 'spread' }" @click="store.viewer.spread = 'spread'">{{ t('对开') }}</button>
+            <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">{{ t('交替') }}</button>
           </div>
         </Transition>
         <!-- 略读：只蒙不用细读的正文，图与图注永不蒙；悬停掀开，点一下=这段也要读 -->
         <button class="toggle" :class="{ on: store.viewer.layers.skim }"
-                title="略读（f）"
-                @click="store.viewer.layers.skim = !store.viewer.layers.skim">略读</button>
-        <button class="toggle" :class="{ on: store.viewer.frame }" title="框选问 AI（r）"
-                @click="store.viewer.frame = !store.viewer.frame">框选</button>
+                :title="t('略读（f）')"
+                @click="store.viewer.layers.skim = !store.viewer.layers.skim">{{ t('略读') }}</button>
+        <button class="toggle" :class="{ on: store.viewer.frame }" :title="t('框选问 AI（r）')"
+                @click="store.viewer.frame = !store.viewer.frame">{{ t('框选') }}</button>
         <!-- 整本翻译：把 PDF 整篇译成第二份文档（奇页原文偶页译文），译文/双语两个模式靠它。
              译完就没必要再露出来了——留一个永远点不动的按钮只会让人猜它还能干什么。 -->
         <!-- 整本翻译常驻：译过一次也要能再来（有的译文打不开，重译一遍就好）。
              译完后的按钮是「重新整本翻译」，点了会覆盖现有译文重译。 -->
-        <button @click="doTranslateFull" :disabled="tranSt === 'running'"
+        <button v-if="!isEn()" @click="doTranslateFull" :disabled="tranSt === 'running'"
                 :title="tranTip">
           {{ tranLabel }}
         </button>
         <button class="primary" @click="doAnalyze" :disabled="anaBusy">
-          {{ store.analysis.status === 'queued' ? '排队中…' : (store.analysis.status === 'running' ? '通读中…'
-             : (store.analysis.status === 'done' ? '重新析读' : '析读')) }}
+          {{ store.analysis.status === 'queued' ? t('排队中…') : (store.analysis.status === 'running' ? t('通读中…')
+             : (store.analysis.status === 'done' ? t('重新析读') : t('析读'))) }}
         </button>
       </div>
       <div class="actions">
-        <button class="ghost" @click="showSettings = true" title="设置">⚙</button>
+        <button class="ghost" @click="showSettings = true" :title="t('设置')">⚙</button>
       </div>
       <!-- 整本翻译的进度：一条发丝墨线压在工具栏下沿，译完/失败自己消失。
            它是唯一要跑分钟级的活（这篇 18 页实测 2 分钟），不给点动静用户只会以为卡了。 -->
-      <div class="tran-line" v-if="tranSt === 'running'">
+      <div class="tran-line" v-if="tranSt === 'running' && !isEn()">
         <i :class="{ det: tranPct > 0 }" :style="tranPct > 0 ? { width: tranPct + '%' } : null"></i>
       </div>
     </header>
@@ -652,7 +658,7 @@ function onKey(e) {
     <div class="main">
       <!-- 左：图标条 -->
       <div class="left-strip">
-        <button class="strip-btn" :class="{ on: store.viewer.libOpen }" title="文库 · g l"
+        <button class="strip-btn" :class="{ on: store.viewer.libOpen }" :title="t('文库 · g l')"
                 @click="store.viewer.libOpen = !store.viewer.libOpen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M4 4h6v16H4zM14 4h6v16h-6z" />
@@ -671,15 +677,15 @@ function onKey(e) {
         <div class="empty" v-if="!store.paper" role="button" tabindex="0"
              @click="pickFiles" @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">
           <EggMark class="egg-big" :class="{ hop: dragOver }" />
-          <div class="e-title">论文，启动！</div>
+          <div class="e-title">{{ t('论文，启动！') }}</div>
           <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
-          <div class="desk-hint">拖入PDF或点击任意位置选择文件</div>
+          <div class="desk-hint">{{ t('拖入PDF或点击任意位置选择文件') }}</div>
         </div>
         <PdfViewer v-else :key="store.currentId" @override="onOverride" />
       </main>
 
       <!-- 右栏折叠把手 -->
-      <button class="rail-tab" v-if="store.paper && !store.railRight" title="展开右栏 · x"
+      <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
               @click="store.viewer.railUser = true">◂</button>
       <!-- 没有论文就没有右栏：一个只有页签的空栏目会让人以为它坏了，
            而且里面的问答会对着一个不存在的 paper_id 发请求 -->
@@ -704,25 +710,25 @@ function onKey(e) {
     <CiteCard />
     <UpdateCard />
     <!-- 退出后的兜底：普通浏览器标签页浏览器不许脚本关，亮一层遮罩别让用户对死页面发愣 -->
-    <div class="quit-mask" v-if="quitMask">eggpaper 已退出，这个页面可以关掉了。</div>
+    <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，这个页面可以关掉了。') }}</div>
     <!-- 应用级文件选择：空态整屏可点、键盘也能用（多选：一次导入多篇） -->
     <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 
     <!-- 键盘卡 -->
     <Transition name="pop">
     <div class="keys-card" v-if="store.shortcutCard" @click="store.shortcutCard = false">
-      <div class="mono-label" style="margin-bottom:8px">键盘</div>
-      <div class="k-row"><span>略读开 / 关</span><kbd>f</kbd></div>
-      <div class="k-row"><span>下一段 / 上一段（略读时仅核心段）</span><kbd>j / k</kbd></div>
-      <div class="k-row"><span>译当前段并钉页边</span><kbd>t</kbd></div>
-      <div class="k-row"><span>翻译划选</span><kbd>s</kbd></div>
-      <div class="k-row"><span>框选问 AI（Esc 退出）</span><kbd>r</kbd></div>
-      <div class="k-row"><span>原文 / 译文 / 双语</span><kbd>1 / 2 / 3</kbd></div>
-      <div class="k-row"><span>聚焦提问</span><kbd>/</kbd></div>
-      <div class="k-row"><span>折叠右栏</span><kbd>x</kbd></div>
-      <div class="k-row"><span>文库 / 回书桌</span><kbd>g l / g h</kbd></div>
-      <div class="k-row"><span>返回原位</span><kbd>Alt + ←</kbd></div>
-      <div class="k-row"><span>收起所有浮层 / 退出框选</span><kbd>Esc</kbd></div>
+      <div class="mono-label" style="margin-bottom:8px">{{ t('键盘') }}</div>
+      <div class="k-row"><span>{{ t('略读开 / 关') }}</span><kbd>f</kbd></div>
+      <div class="k-row"><span>{{ t('下一段 / 上一段（略读时仅核心段）') }}</span><kbd>j / k</kbd></div>
+      <div class="k-row" v-if="!isEn()"><span>{{ t('译当前段并钉页边') }}</span><kbd>t</kbd></div>
+      <div class="k-row" v-if="!isEn()"><span>{{ t('翻译划选') }}</span><kbd>s</kbd></div>
+      <div class="k-row"><span>{{ t('框选问 AI（Esc 退出）') }}</span><kbd>r</kbd></div>
+      <div class="k-row" v-if="!isEn()"><span>{{ t('原文 / 译文 / 双语') }}</span><kbd>1 / 2 / 3</kbd></div>
+      <div class="k-row"><span>{{ t('聚焦提问') }}</span><kbd>/</kbd></div>
+      <div class="k-row"><span>{{ t('折叠右栏') }}</span><kbd>x</kbd></div>
+      <div class="k-row"><span>{{ t('文库 / 回书桌') }}</span><kbd>g l / g h</kbd></div>
+      <div class="k-row"><span>{{ t('返回原位') }}</span><kbd>Alt + ←</kbd></div>
+      <div class="k-row"><span>{{ t('收起所有浮层 / 退出框选') }}</span><kbd>Esc</kbd></div>
     </div>
     </Transition>
 
@@ -735,7 +741,7 @@ function onKey(e) {
     <Transition name="fade">
     <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(29,27,23,.22)">
       <div class="modal" style="text-align:center">
-        <div style="font-size:var(--fs-xl);font-weight:650">松手，放到书桌上</div>
+        <div style="font-size:var(--fs-xl);font-weight:650">{{ t('松手，放到书桌上') }}</div>
       </div>
     </div>
     </Transition>

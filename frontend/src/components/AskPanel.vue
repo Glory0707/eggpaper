@@ -11,6 +11,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, askStream, store, toast, jumpTo, paraByIdx } from '../store'
 import { confirmBox, inputBox } from '../dialog'
+import { t } from '../i18n'
 import MdLite from './MdLite.vue'
 
 const props = defineProps({ quick: { type: Array, default: () => [] } })
@@ -185,8 +186,8 @@ async function delMsg(i) {
 async function copy(m) {
   try {
     await navigator.clipboard.writeText(m.content || '')
-    toast('已复制')
-  } catch { toast('复制失败，手动选吧') }
+    toast(t('已复制'))
+  } catch { toast(t('复制失败，手动选吧')) }
 }
 
 // ---------- 会话 ----------
@@ -202,16 +203,16 @@ async function newConv() {
 async function renameConv() {
   const c = curConv.value
   if (!c) return
-  const t = await inputBox({ title: '重命名会话', value: c.title, placeholder: '会话名称', ok: '改名' })
-  if (t == null) return
-  try { await api.convRename(c.id, t.trim() || '新对话'); await loadConvs(true) } catch (e) { toast(e.message) }
+  const name = await inputBox({ title: t('重命名会话'), value: c.title, placeholder: t('会话名称'), ok: t('改名') })
+  if (name == null) return
+  try { await api.convRename(c.id, name.trim() || t('新对话')); await loadConvs(true) } catch (e) { toast(e.message) }
 }
 async function delConv() {
   const c = curConv.value
   if (!c) return
   const yes = await confirmBox({
-    title: '删除会话', danger: true, ok: '删除',
-    body: `「${c.title}」里的问答会一起删掉，论文与批注不受影响。`,
+    title: t('删除会话'), danger: true, ok: t('删除'),
+    body: t('「{t}」里的问答会一起删掉，论文与批注不受影响。', { t: c.title }),
   })
   if (!yes) return
   try {
@@ -260,7 +261,7 @@ const groups = computed(() => {
     gs.push({ name: c.name, items })
   }
   const rest = filtered.value.filter(p => !used.has(p.id))
-  if (rest.length) gs.push({ name: '未分类', items: rest })
+  if (rest.length) gs.push({ name: t('未分类'), items: rest })
   return gs
 })
 function isOn(t) { return picked.value.includes(t) }
@@ -285,7 +286,7 @@ function pickFirst() {
   if (first) toggleTitle(first.title || first.filename)
 }
 const citeCount = computed(() => picked.value.length)
-const citeTitle = computed(() => '已引用：' + (picked.value.slice(0, 5).join('、') + (picked.value.length > 5 ? '…' : '')))
+const citeTitle = computed(() => t('已引用：') + picked.value.slice(0, 5).join(', ') + (picked.value.length > 5 ? '…' : ''))
 function pickFromPop(p) {
   toggleTitle((p.title || p.filename || '').trim())
   nextTick(() => citeFilterEl.value?.focus())
@@ -326,7 +327,7 @@ watch(text, () => nextTick(autoGrow))
 function applyPrefill(pf) {
   // 三种来源：给定问题原文（「问题」页签的"去问"）、给定段落号、给定一段原文
   text.value = pf.question
-    || (pf.paraIdx ? `¶${pf.paraIdx} 这段在说什么？` : `这段在说什么：「${pf.text}」？`)
+    || (pf.paraIdx ? t('¶{n} 这段在说什么？', { n: pf.paraIdx }) : t('这段在说什么：「{t}」？', { t: pf.text }))
   nextTick(() => { autoGrow(); inputEl.value?.focus() })
   if (pf.send) nextTick(() => send())      // 「去问」= 直接问出去，别再让人按一次回车
 }
@@ -374,19 +375,19 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
       <select class="cv-pick" :value="convId ?? ''"
               @change="e => (convId = Number(e.target.value))">
         <option v-for="c in shownConvs" :key="c.id" :value="c.id">{{ c.title }}</option>
-        <option v-if="!shownConvs.length" :value="''">新对话</option>
+        <option v-if="!shownConvs.length" :value="''">{{ t('新对话') }}</option>
       </select>
-      <button class="cv-btn" title="新建会话" @click="newConv">
+      <button class="cv-btn" :title="t('新建会话')" @click="newConv">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13" /></svg>
       </button>
-      <button class="cv-btn" title="重命名" :disabled="!curConv" @click="renameConv">
+      <button class="cv-btn" :title="t('重命名')" :disabled="!curConv" @click="renameConv">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round">
           <path d="M16.5 3.5a2.6 2.6 0 013.7 3.7L8 19.4l-4.6 1.1L4.5 16z" />
         </svg>
       </button>
-      <button class="cv-btn danger" title="删除会话" :disabled="!curConv" @click="delConv">
+      <button class="cv-btn danger" :title="t('删除会话')" :disabled="!curConv" @click="delConv">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round">
           <path d="M3.5 6.5h17M9 6.5V4.2h6v2.3M6.2 6.5l.9 13.3h9.8l.9-13.3" />
@@ -396,20 +397,20 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
 
     <div class="qa-scroll" ref="scrollEl" @scroll.passive="onScroll">
       <!-- 较早的对话被压成摘要后，说一句"它还在"，点开能看 -->
-      <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">更早的对话已存为摘要</div>
+      <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">{{ t('更早的对话已存为摘要') }}</div>
 
       <div v-if="empty" class="qa-empty">
         <div class="qa-quick">
-          <button v-for="q in props.quick" :key="q" :title="q" @click="send(q)">{{ q }}</button>
+          <button v-for="q in props.quick" :key="q" :title="q" @click="send(q)">{{ t(q) }}</button>
         </div>
       </div>
 
       <div v-for="(m, i) in msgs" :key="m.id || 'm' + i" class="qa-msg" :class="m.role">
-        <div class="q-role">{{ m.role === 'user' ? '你' : 'EGGPAPER' }}</div>
+        <div class="q-role">{{ m.role === 'user' ? t('你') : 'EGGPAPER' }}</div>
         <template v-if="m.role === 'assistant'">
           <!-- 思考型模型要先想 30~60 秒才吐第一个字。这段空等不写出来的话，
                "正在想"和"发了没反应"在屏幕上长得一模一样。 -->
-          <div v-if="m.streaming && !m.content" class="q-body md qa-wait">正在想<span class="r-dots">…</span></div>
+          <div v-if="m.streaming && !m.content" class="q-body md qa-wait">{{ t('正在想…') }}</div>
           <MdLite v-else class="q-body md" :text="m.content || ' '" @cite="jumpPara" />
         </template>
         <div class="q-body" v-else>{{ m.content }}</div>
@@ -417,15 +418,15 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         <!-- 这里原来还有一行「依据 ¶1 ¶5 ¶6…」。删了：它列的就是正文里那些已经可点的 ¶，
              一字不差地再说一遍（后端 cites_of 就是从答案正文里正则抓的）。 -->
         <div class="qa-acts" v-if="!m.streaming">
-          <button @click="copy(m)">复制</button>
+          <button @click="copy(m)">{{ t('复制') }}</button>
           <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen(i)"
-                  :disabled="busy">重新生成</button>
-          <button @click="delMsg(i)">删除</button>
+                  :disabled="busy">{{ t('重新生成') }}</button>
+          <button @click="delMsg(i)">{{ t('删除') }}</button>
         </div>
       </div>
 
       <Transition name="fade">
-        <button class="qa-tobottom" v-if="!atBottom && msgs.length" @click="scrollBottom()">回到底部 ↓</button>
+        <button class="qa-tobottom" v-if="!atBottom && msgs.length" @click="scrollBottom()">{{ t('回到底部 ↓') }}</button>
       </Transition>
     </div>
 
@@ -433,14 +434,14 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
     <div class="qa-input">
       <Transition name="fade">
         <div v-if="citeOpen" class="cite-pop">
-          <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" placeholder="筛选标题…（Esc 关闭，Enter 选第一个）" @keydown.esc.stop="closeCite">
+          <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" :placeholder="t('筛选标题…（Esc 关闭，Enter 选第一个）')" @keydown.esc.stop="closeCite">
           <div class="cite-list" ref="citeListEl">
             <button class="cite-item lib" :class="{ on: libAll }" @click="toggleLibAll">
               <span class="box">
                 <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
                      stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
               </span>
-              <span class="t">整个文库</span>
+              <span class="t">{{ t('整个文库') }}</span>
             </button>
             <template v-for="g in groups" :key="g.name">
               <button class="cite-item ga" :class="{ on: groupAll(g) }" @click="toggleGroup(g)">
@@ -457,22 +458,22 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
                        stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
                 </span>
                 <span class="t">{{ p.title || p.filename }}</span>
-                <span class="tag" v-if="p.analysis_status === 'done'">已析读</span>
-                <span class="tag" v-else>未析读</span>
+                <span class="tag" v-if="p.analysis_status === 'done'">{{ t('已析读') }}</span>
+                <span class="tag" v-else>{{ t('未析读') }}</span>
               </button>
             </template>
-            <div v-if="!groups.length" class="cite-group">没有匹配的论文</div>
+            <div v-if="!groups.length" class="cite-group">{{ t('没有匹配的论文') }}</div>
           </div>
         </div>
       </Transition>
       <button v-if="citeCount" class="cite-inline" :title="citeTitle" @click="openCite">
-        引用 {{ citeCount }}
+        {{ t('引用 {n}', { n: citeCount }) }}
       </button>
       <textarea ref="inputEl" v-model="text" rows="1" class="qa-ta"
-                placeholder="基于这篇论文提问…（按 / 引用其他论文）"
+                :placeholder="t('基于这篇论文提问…（按 / 引用其他论文）')"
                 @keydown="onKey"></textarea>
-      <button v-if="busy" class="qa-send stop" @click="stop()" title="停止生成">■</button>
-      <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" title="发送（Enter）">↑</button>
+      <button v-if="busy" class="qa-send stop" @click="stop()" :title="t('停止生成')">■</button>
+      <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" :title="t('发送（Enter）')">↑</button>
     </div>
   </div>
 </template>

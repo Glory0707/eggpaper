@@ -33,6 +33,18 @@
   --accent-line: rgba(29, 78, 95, 0.34);
   --vermilion: #b8462e;
   --code-bg: rgba(29, 78, 95, 0.07);
+  /* 按钮底色与文本色分开：--accent 在暗色下要提亮才可读，而实底按钮需要
+     "深底白字"——那个深底任何主题下都是它（白字 9.1:1）。 */
+  --accent-btn: #1d4e5f;
+  /* 墨色 RGB 三元组：页面上大量"墨的浅洗"（悬停、滚动条、蒙版）按透明度调，
+     暗色下换一组亮墨，这一批洗色一起翻转。 */
+  --ink-rgb: 29, 27, 23;
+  --wash-rgb: 38, 32, 21;
+  --btn-hover: #f2efe8;
+  --btn-active: #e9e5dc;
+  --paper-hover: rgba(255, 253, 246, 0.8);
+  --ok: #2e7d43;
+  --vermilion-deep: #9d3a25;
 
   /* 角色色标：不是八个色相，是"该给多少注意力"的四个档 */
   /* 段落角色色：只剩「核心主张」和「缺口」两处在用（论证链的 ID、引言的标签）。
@@ -115,8 +127,8 @@ body {
 
 ::selection { background: var(--accent-soft); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: rgba(29, 27, 23, 0.16); border: 3px solid var(--paper); border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(29, 27, 23, 0.3); }
+::-webkit-scrollbar-thumb { background: rgba(var(--ink-rgb), 0.16); border: 3px solid var(--paper); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(var(--ink-rgb), 0.3); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -176,13 +188,13 @@ button {
   transition: background var(--t-fast) var(--ease-smooth), border-color var(--t-fast) var(--ease-smooth),
               color var(--t-fast) var(--ease-smooth);
 }
-button:hover { background: #f2efe8; border-color: rgba(29, 27, 23, 0.22); box-shadow: none; }
-button:active { background: #e9e5dc; border-color: rgba(29, 27, 23, 0.26); }
-button.primary { background: var(--accent); border-color: var(--accent-deep); color: #fff; font-weight: 600; }
+button:hover { background: var(--btn-hover); border-color: rgba(var(--ink-rgb), 0.22); box-shadow: none; }
+button:active { background: var(--btn-active); border-color: rgba(var(--ink-rgb), 0.26); }
+button.primary { background: var(--accent-btn); border-color: var(--accent-btn); color: #fff; font-weight: 600; }
 button.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
-button.primary:active { background: #c07d13; }
+button.primary:active { background: var(--accent-deep); }
 button.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
-button.ghost:hover { background: rgba(29, 27, 23, 0.06); border-color: transparent; }
+button.ghost:hover { background: rgba(var(--ink-rgb), 0.06); border-color: transparent; }
 button:disabled { opacity: 0.45; cursor: default; }
 
 input[type='text'], textarea, select {
@@ -391,7 +403,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .segmented .seg-thumb {
   position: absolute; top: 0; bottom: 0; left: 0; width: calc(100% / var(--n, 2));
-  background: var(--ink); border-radius: 3px; pointer-events: none;
+  background: var(--accent-btn); border-radius: 3px; pointer-events: none;
   transform: translateX(calc(var(--i, 0) * 100%));
   transition: transform var(--t-base) var(--ease-spring);
 }
@@ -400,7 +412,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   border: none; border-radius: 0; background: transparent;
   padding: 6px 12px; font-size: var(--fs-sm); color: var(--ink-2);
 }
-.segmented button.on { background: transparent; color: var(--card); }
+.segmented button.on { background: transparent; color: #fff; }
 .segmented button:hover { background: transparent; }
 .segmented.mini button { padding: 4px 10px; font-size: var(--fs-xs); }
 
@@ -431,18 +443,18 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   border: 1px solid transparent; background: transparent; border-radius: 4px;
   color: var(--ink-2);
 }
-.strip-btn:hover { background: rgba(29, 27, 23, 0.07); box-shadow: none; transform: none; }
+.strip-btn:hover { background: rgba(var(--ink-rgb), 0.07); box-shadow: none; transform: none; }
 .strip-btn.on { background: var(--card-2); border-color: var(--hairline); color: var(--ink); }
 .strip-btn svg { width: 17px; height: 17px; }
 .strip-btn .badge {
   position: absolute; top: -3px; right: -4px;
   font-family: var(--mono); font-size: var(--fs-xs);
-  background: var(--accent); color: #fff;
+  background: var(--accent-btn); color: #fff;
   border-radius: 6px; padding: 0.5px 4px; font-weight: 600;
 }
 .strip-sep { width: 18px; height: 1px; background: var(--hairline); margin: 2px 0; }
 
-.lib-mask { position: fixed; inset: 0; z-index: 240; background: rgba(38, 32, 21, 0.28); }
+.lib-mask { position: fixed; inset: 0; z-index: 240; background: rgba(var(--wash-rgb), 0.28); }
 .lib-panel {
   position: fixed; left: 0; top: 0; bottom: 0; z-index: 250;
   width: var(--lib-w, 300px);
@@ -462,7 +474,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   border: 1px solid transparent; margin-bottom: 2px;
   transition: background var(--t-fast) var(--ease-smooth);
 }
-.paper-item:hover { background: rgba(255, 253, 246, 0.8); }
+.paper-item:hover { background: var(--paper-hover); }
 .paper-item.on { background: var(--card-2); border-color: var(--hairline); }
 .paper-item .fn { font-size: var(--fs-sm); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .paper-item.on .fn { color: var(--ink); font-weight: 600; }
@@ -487,7 +499,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 
 .drop-hint {
   margin: 8px; padding: 14px 10px; text-align: center;
-  border: 1.5px dashed rgba(38, 32, 21, 0.28); border-radius: 4px;
+  border: 1.5px dashed rgba(var(--ink-rgb), 0.28); border-radius: 4px;
   color: var(--ink-3); font-size: var(--fs-sm); cursor: pointer;
   transition: border-color var(--t-fast), background var(--t-fast);
 }
@@ -710,7 +722,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .mg-note.expanded .mg-body { display: block; max-height: 240px; overflow-y: auto; }
 /* 卡里的滚动条要细，不然一条批注看着像个小窗口 */
 .mg-note .mg-body::-webkit-scrollbar { width: 6px; }
-.mg-note .mg-body::-webkit-scrollbar-thumb { border: none; border-radius: 3px; background: rgba(38, 32, 21, 0.22); }
+.mg-note .mg-body::-webkit-scrollbar-thumb { border: none; border-radius: 3px; background: rgba(var(--ink-rgb), 0.22); }
 .mg-note .mg-loose {
   float: right; font-size: var(--fs-xs); color: var(--ink-3);
   margin-left: 4px; cursor: help; line-height: 1;
@@ -729,7 +741,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   white-space: normal; overflow: visible; max-height: 108px; overflow-y: auto;
 }
 .mg-note .mg-quote.all::-webkit-scrollbar { width: 5px; }
-.mg-note .mg-quote.all::-webkit-scrollbar-thumb { border: none; border-radius: 3px; background: rgba(38, 32, 21, 0.22); }
+.mg-note .mg-quote.all::-webkit-scrollbar-thumb { border: none; border-radius: 3px; background: rgba(var(--ink-rgb), 0.22); }
 .mg-note .mg-qall {
   flex: 0 0 auto; border: none; background: none; padding: 0;
   font-size: var(--fs-xs); color: var(--ink-3); text-decoration: underline;
@@ -787,7 +799,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   background: transparent; border: none; border-radius: 0;
   border-bottom: 2px solid transparent;
 }
-.rtabs .rt:hover { transform: none; box-shadow: none; background: rgba(38, 32, 21, 0.04); }
+.rtabs .rt:hover { transform: none; box-shadow: none; background: rgba(var(--ink-rgb), 0.06); }
 .rtabs .rt.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .rbody { flex: 1; overflow-y: auto; padding: 14px 16px 30px; min-height: 0; position: relative; }
 /* 页签切换：出去快（90ms 淡出）、进来稍慢（170ms 落定）。合计 ~260ms，
@@ -800,7 +812,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 /* 「问题」页：缺口段与主张链的排版（页签叫「问题」，这里的类名还是旧名 gap-*） */
 .gap-node { margin-bottom: 10px; }
 .gap-row { display: flex; gap: 8px; align-items: baseline; cursor: pointer; padding: 3px 4px; border-radius: 3px; }
-.gap-row:hover { background: rgba(38, 32, 21, 0.05); }
+.gap-row:hover { background: rgba(var(--ink-rgb), 0.05); }
 .gap-row .g-tag { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; color: #fff; background: var(--r-gap); border-radius: 2px; padding: 2px 5px; flex-shrink: 0; }
 .gap-row .g-txt { font-family: var(--sans); font-weight: 500; font-size: var(--fs-read); line-height: 1.6; }
 /* 段下面的原文摘句：①④ 光有 22 字的目的看不出问题到底是什么，得让它自己说话 */
@@ -987,7 +999,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 /* ---------- 弹层 ---------- */
 .modal-mask {
   position: fixed; inset: 0; z-index: 500;
-  background: rgba(38, 32, 21, 0.42);
+  background: rgba(var(--wash-rgb), 0.42);
   display: flex; align-items: center; justify-content: center;
 }
 .modal {
@@ -1012,7 +1024,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .modal .viz-sub { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .modal .test-btn { padding: 3px 12px; font-size: var(--fs-sm); font-family: inherit; white-space: nowrap; }
-.modal .test-btn.ok, .modal .tmark.ok { color: #2e7d43; font-weight: 700; }
+.modal .test-btn.ok, .modal .tmark.ok { color: var(--ok); font-weight: 700; }
 .modal .test-btn.bad, .modal .tmark.bad { color: var(--vermilion); font-weight: 700; }
 .modal .quit-btn { margin-right: auto; padding: 2px 10px; font-size: var(--fs-sm); font-family: inherit; color: var(--vermilion); border-color: var(--hairline); }
 .modal .quit-btn:hover { border-color: var(--vermilion); }
@@ -1043,8 +1055,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal.dialog .dlg-body { font-size: var(--fs-md); line-height: 1.7; color: var(--ink-2); margin-bottom: 14px; }
 .modal.dialog .dlg-input { width: 100%; }
 .modal.dialog .f-actions { margin-top: 16px; }
-.modal .primary.danger { background: var(--vermilion); border-color: #9d3a25; }
-.modal .primary.danger:hover { background: #9d3a25; }
+.modal .primary.danger { background: var(--vermilion); border-color: var(--vermilion-deep); }
+.modal .primary.danger:hover { background: var(--vermilion-deep); }
 
 /* ---------- 引用这篇（.modal.cite） ----------
    一张卡片装九种格式，所以比设置宽：长条目要能整条换行读完，不截断。
@@ -1321,7 +1333,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   background: var(--card-2); border: none; border-radius: 14px;
   font-size: var(--fs-sm); padding: 3px 12px; color: var(--ink); font-weight: 600;
 }
-.frame-hint button:hover { transform: none; box-shadow: none; background: #fff; }
+.frame-hint button:hover { transform: none; box-shadow: none; background: var(--card-2); }
 
 .vis-pop .vp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
 .vis-pop .vp-x {
@@ -1732,3 +1744,48 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .cite-item.lib { border-bottom: 1px dashed var(--hairline); border-radius: 0; }
 .cite-item.lib .t { font-weight: 600; }
 .cite-chip.lib { color: var(--ink); }
+
+/* ---------- 暗色模式 ----------
+   开关在设置里（localStorage），落在 <html class="dark"> 上。
+   两件事：① 翻转设计令牌（暖黑底、亮墨、提亮的靛青文本色）；② PDF 纸面不跟主题——
+   纸永远是白的（.page / .fig-thumb / 灯箱里的图都是白底），黑纸既伤还原度也伤打印心智，
+   读者在暗色界面里读的依旧是一张白纸。护眼底纹是乘在纸面上的膜，纸不换它就不变，
+   两个开关互不干扰。 */
+html.dark {
+  --paper: #171512;        /* 桌面：暖黑，和纸的暖白同一个家族 */
+  --paper-deep: #121009;
+  --card: #1d1a15;         /* 顶栏、右栏 */
+  --card-2: #252119;       /* 浮层、内容卡 */
+  --veil: rgba(23, 21, 18, 0.88);
+  --ink: #e9e5da;          /* 亮墨三级，对比度同白底一样分四档 */
+  --ink-2: #b8b3a6;
+  --ink-3: #96917f;
+  --hairline: rgba(233, 229, 218, 0.17);
+  --hairline-soft: rgba(233, 229, 218, 0.09);
+
+  /* 靛青提亮成"深底上的墨水色"（文本/图标/边框可读），实底按钮走 --accent-btn 不变 */
+  --accent: #74b4c7;
+  --accent-deep: #9ad0e0;
+  --accent-soft: rgba(116, 180, 199, 0.16);
+  --accent-line: rgba(116, 180, 199, 0.4);
+  --vermilion: #d9765c;
+  --vermilion-deep: #e08a70;
+  --code-bg: rgba(255, 255, 255, 0.07);
+
+  --ink-rgb: 233, 229, 218;
+  --wash-rgb: 8, 6, 4;
+  --btn-hover: #2a251c;
+  --btn-active: #332d22;
+  --paper-hover: rgba(255, 255, 255, 0.055);
+  --ok: #7ccd96;
+
+  --shadow-pop: 0 2px 3px rgba(0, 0, 0, 0.45), 0 14px 36px -10px rgba(0, 0, 0, 0.62);
+  --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px -12px rgba(0, 0, 0, 0.58);
+}
+
+/* 纸面元素钉住白底：主题再黑，纸也是纸 */
+html.dark .page,
+html.dark .fig-thumb,
+html.dark .lightbox img,
+html.dark .vis-img,
+html.dark .sp-shot { background: #fff; }
