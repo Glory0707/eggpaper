@@ -232,6 +232,13 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .tran-line i.det { animation: none; }
 .wordmark { display: flex; align-items: center; gap: 9px; user-select: none; position: relative; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
+/* 有 PDF 悬在蛋头顶：等饭——放大一点、小幅急摆（顺带是「丢这里」的落点暗示）。
+   定义在最前：被点/晃/睡/干活时都盖过它 */
+.wordmark .egg.hungry { animation: eggHungry .46s ease-in-out infinite; transform-origin: 50% 88%; }
+@keyframes eggHungry {
+  0%, 100% { transform: scale(1.1) rotate(-4.5deg); }
+  50% { transform: scale(1.1) translateY(-2px) rotate(4.5deg); }
+}
 /* 整本翻译跑着时：蛋轻轻晃着埋头干活（±2.6°、慢周期，不抢注意力）。
    定义放在 wobble/sleep/roll 之前——戳它（wobble）、睡觉（sleep）、翻滚（roll）都要能盖过它 */
 .wordmark .egg.busy { animation: eggBusy 2.6s ease-in-out infinite; transform-origin: 50% 85%; }
@@ -239,6 +246,15 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   0%, 100% { transform: rotate(0); }
   25% { transform: rotate(-2.6deg); }
   75% { transform: rotate(2.6deg); }
+}
+/* 忙碌时字条流过：三条轮流浅一下再回来，像一行行读过去——「三条字条=蛋在读论文」
+   落到它干活的时刻。幅度只给到透明度，几何一笔不动；27px 小图上淡得像呼吸 */
+.wordmark .egg.busy .bar { animation: eggRead 2.4s linear infinite; }
+.wordmark .egg.busy .b1 { animation-delay: .8s; }
+.wordmark .egg.busy .b2 { animation-delay: 1.6s; }
+@keyframes eggRead {
+  0%, 30%, 100% { opacity: 1; }
+  12% { opacity: .4; }
 }
 /* 发呆打盹：歪着头小幅起伏（区别于深夜躺平的 sleep；没有 z——z 是深夜专属） */
 .wordmark .egg.doze { animation: eggDoze 4.2s var(--ease-smooth) infinite; transform-origin: 50% 85%; }
@@ -255,11 +271,68 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   55% { transform: rotate(8deg); }
   80% { transform: rotate(-4deg); }
 }
+/* 戳一戳的破绽（App 里 1/24 掷骰子）：打喷嚏——猛缩一下再弹回来；
+   打趔趄——朝一边栽过去、悬一拍、晃回来 */
+.wordmark .egg.sneeze { animation: eggSneeze .6s var(--ease-spring); transform-origin: 50% 88%; }
+@keyframes eggSneeze {
+  0% { transform: none; }
+  16% { transform: scale(.92, .74); }
+  38% { transform: scale(1.12, .95) rotate(5deg); }
+  62% { transform: scale(.95, 1.04) rotate(-3deg); }
+  100% { transform: none; }
+}
+.wordmark .egg.stumble { animation: eggStumble .95s var(--ease-smooth); transform-origin: 50% 92%; }
+@keyframes eggStumble {
+  0%, 100% { transform: rotate(0); }
+  26% { transform: rotate(-17deg); }
+  40% { transform: rotate(-15deg); }
+  68% { transform: rotate(7deg); }
+  84% { transform: rotate(-3deg); }
+}
 /* 深夜彩蛋：蛋躺下睡——只转方向，印章几何一个笔画都不动；呼吸=在躺姿上轻轻晃 */
 .wordmark .egg.sleep { animation: eggSleep 4.2s var(--ease-smooth) infinite; }
 @keyframes eggSleep {
   0%, 100% { transform: rotate(90deg); }
   50% { transform: rotate(98deg); }
+}
+/* 咽饭：纸片进口的那拍鼓一下（一次三篇起是「撑到」——鼓两下、晃到失衡） */
+.wordmark .egg.gulp { animation: eggGulp .8s var(--ease-spring); transform-origin: 50% 88%; }
+@keyframes eggGulp {
+  0% { transform: none; }
+  22% { transform: scale(1.28, .82); }
+  50% { transform: scale(.94, 1.08); }
+  100% { transform: none; }
+}
+.wordmark .egg.stuff { animation: eggStuff 1.3s var(--ease-spring); transform-origin: 50% 88%; }
+@keyframes eggStuff {
+  0%, 100% { transform: none; }
+  14% { transform: scale(1.38, .78); }
+  30% { transform: scale(1.05, 1.08); }
+  46% { transform: scale(1.32, .84); }
+  64% { transform: scale(.96, 1.05) rotate(-4deg); }
+  82% { transform: scale(1.06, .98) rotate(3deg); }
+}
+/* 滚轮搓蛋：搓着时绕底边支点跟手转（角度是 inline transform，App 里算），
+   停手那拍挂上弹性摆回正。没有 animation——不跟任何动作抢 transform */
+.wordmark .egg.spun { transform-origin: 50% 85%; }
+.wordmark .egg.spun.free { transition: transform .65s var(--ease-spring); }
+/* 飞进蛋里的纸片：一枚小页（两行发丝字），从松手处翻着跟头缩进去。
+   压在拖放浮层（500）之上、toast（600）之下 */
+.feed-ghost {
+  position: fixed; z-index: 550; width: 24px; height: 32px;
+  background: var(--card); border: 1px solid var(--hairline); border-radius: 2px;
+  box-shadow: 0 2px 8px rgba(29, 27, 23, 0.16);
+  pointer-events: none;
+  animation: feedFly .5s cubic-bezier(0.45, 0.05, 0.75, 0.5) forwards;
+}
+.feed-ghost::before, .feed-ghost::after {
+  content: ''; position: absolute; left: 4px; height: 2px; background: var(--hairline);
+}
+.feed-ghost::before { top: 8px; right: 5px; }
+.feed-ghost::after { top: 13px; right: 9px; }
+@keyframes feedFly {
+  from { transform: none; opacity: 1; }
+  to { transform: translate(var(--dx), var(--dy)) rotate(170deg) scale(0.1); opacity: 0; }
 }
 /* 两个 z 接续飘（第二个晚半拍、稍大、偏右上）——单个 z 看不出"睡着了" */
 .wordmark .egg-z {

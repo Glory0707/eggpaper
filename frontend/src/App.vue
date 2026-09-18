@@ -28,13 +28,22 @@ function rollOnce(ms = 700) {
   rollOnce._t = setTimeout(() => (roll.value = false), ms)
 }
 
-/* 戳一戳蛋：点一下晃一下；3 秒内戳满三下翻滚一圈。无声——戳了会动，仅此而已。 */
+/* 戳一戳蛋：点一下晃一下；3 秒内戳满三下翻滚一圈。无声——戳了会动，仅此而已。
+   活物有破绽：24 下里有 1 下不是常规晃动，是打喷嚏或打趔趄——不预告、不收集，
+   只能被撞见。 */
 const wobbling = ref(false)
 function wobbleOnce(ms = 450) {
   wobbling.value = false
   requestAnimationFrame(() => { wobbling.value = true })
   clearTimeout(wobbleOnce._t)
   wobbleOnce._t = setTimeout(() => (wobbling.value = false), ms)
+}
+const surprise = ref('')        // '' | 'sneeze' | 'stumble'
+function surpriseOnce(kind) {
+  surprise.value = ''
+  requestAnimationFrame(() => { surprise.value = kind })
+  clearTimeout(surpriseOnce._t)
+  surpriseOnce._t = setTimeout(() => (surprise.value = ''), kind === 'sneeze' ? 650 : 1000)
 }
 let pokes = 0
 let pokeReset = 0
@@ -46,8 +55,12 @@ function pokeEgg() {
     rollOnce()
     return
   }
-  wobbleOnce()
   pokeReset = setTimeout(() => (pokes = 0), 3000)
+  if (Math.random() < 1 / 24) {
+    surpriseOnce(Math.random() < 0.5 ? 'sneeze' : 'stumble')
+    return
+  }
+  wobbleOnce()
 }
 
 /* 干活与庆祝：整本翻译跑着的时候，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）。
@@ -81,6 +94,76 @@ function wakeEgg() {
   }
 }
 
+/* 滚轮搓蛋：光标压在蛋上滚滚轮，它跟着转；停手一拍后带着弹性自己摆回正。
+   转角始终折进 ±180°——回正永远走最近的那半圈，不会解开一麻花再回来。 */
+const spinDeg = ref(0)
+const spinning = ref(false)     // 正被搓着：transform-origin 才落到支点上
+const spinFree = ref(false)     // 停手回正的这一段才挂弹性过渡
+let spinTimer = 0
+function onEggWheel(e) {
+  if (e.ctrlKey) return         // Ctrl+滚轮是页面缩放，不抢浏览器的
+  e.preventDefault()
+  spinFree.value = false
+  spinning.value = true
+  spinDeg.value = ((spinDeg.value + e.deltaY * 0.18 + 180) % 360 + 360) % 360 - 180
+  clearTimeout(spinTimer)
+  spinTimer = setTimeout(() => {
+    spinFree.value = true
+    spinDeg.value = 0
+    setTimeout(() => { spinning.value = spinFree.value = false }, 700)
+  }, 160)
+}
+
+/* 喂蛋：PDF 精准丢在左上角蛋身上=它吃掉——论文缩成小纸片翻着跟头飞进蛋里，
+   鼓一下咽下（一次三篇起改演「撑到」）。导入照旧走 onImport：吃只是仪式，活照干；
+   拖到窗口其他地方仍是老样子，两条路互不打扰。 */
+const hungry = ref(false)       // 有纸悬在头顶：等饭的小幅急摆
+const gulping = ref('')         // '' | 'gulp' | 'stuff'
+const ghosts = ref([])          // 飞行途中的纸片
+const eggEl = ref(null)
+let ghostId = 0
+function eggDragEnter(e) { if (hasFiles(e)) hungry.value = true }
+function eggDragOver(e) { if (hasFiles(e)) e.preventDefault() }
+function eggDragLeave(e) {
+  if (hasFiles(e) && !e.currentTarget.contains(e.relatedTarget)) hungry.value = false
+}
+function onEggDrop(e) {
+  if (!hasFiles(e)) return          // 拖文字之类的不归它管，照走默认
+  e.preventDefault()
+  e.stopPropagation()               // 别再冒给 .app 的 onDrop——一次导入只做一遍
+  hungry.value = false
+  dragOver.value = false            // .app 的 onDrop 收不到这一拍了，浮层自己收
+  const files = Array.from(e.dataTransfer?.files || []).filter(f => f && f.name)
+  if (!files.length) return
+  feedShow(e.clientX, e.clientY, files.length)
+  onImport(files)
+}
+function feedShow(x, y, n) {
+  if (sleepEgg.value) return    // 它睡着了：饭照收（导入照跑），仪式免了
+  const r = eggEl.value?.getBoundingClientRect?.()
+  if (!r) return
+  const tx = r.left + r.width / 2
+  const ty = r.top + r.height / 2
+  ghosts.value = Array.from({ length: Math.min(n, 4) }, (_, i) => ({
+    id: ++ghostId,
+    x: x + (i ? Math.random() * 36 - 18 : 0),
+    y: y + (i ? Math.random() * 24 - 12 : 0),
+    tx, ty,
+    delay: i * 90,
+  }))
+  clearTimeout(feedShow._t)
+  feedShow._t = setTimeout(() => {
+    ghosts.value = []
+    gulpOnce(n >= 3 ? 'stuff' : 'gulp')
+  }, 420 + (Math.min(n, 4) - 1) * 90)
+}
+function gulpOnce(kind) {
+  gulping.value = ''
+  requestAnimationFrame(() => { gulping.value = kind })
+  clearTimeout(gulpOnce._t)
+  gulpOnce._t = setTimeout(() => (gulping.value = ''), kind === 'stuff' ? 1350 : 850)
+}
+
 const tranReady = computed(() => store.paper?.translate_status === 'done')
 
 /* ---------------- 拖入导入 ----------------
@@ -99,7 +182,7 @@ function onDrop(e) {
   dragOver.value = false
   onImport(Array.from(e.dataTransfer?.files || []))     // 一次拖进来的全收下
 }
-function endDrag() { dragOver.value = false }
+function endDrag() { dragOver.value = false; hungry.value = false }   // 中途在窗口外松手也得收：否则蛋一直馋着
 
 onMounted(async () => {
   // 监听与轮询**先装上**：它们不该依赖任何一次网络请求成功。
@@ -148,6 +231,7 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(pollTimer)
   clearTimeout(idleTimer)
+  clearTimeout(spinTimer)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('dragend', endDrag)
   window.removeEventListener('blur', endDrag)
@@ -482,8 +566,11 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark">
-        <span class="egg-wrap" @click="pokeEgg">
-          <EggMark class="egg" :class="[{ roll }, { wobble: wobbling }, { sleep: sleepEgg }, { busy: eggBusy }, { cheer: eggCheer }, { doze: dozing }]" />
+        <span class="egg-wrap" ref="eggEl" @click="pokeEgg" @wheel="onEggWheel"
+              @dragenter="eggDragEnter" @dragover="eggDragOver" @dragleave="eggDragLeave" @drop="onEggDrop">
+          <EggMark class="egg"
+            :class="[{ hungry }, { roll }, { wobble: wobbling }, surprise, { sleep: sleepEgg }, { busy: eggBusy }, gulping, { cheer: eggCheer }, { doze: dozing }, { spun: spinning }, { free: spinFree }]"
+            :style="spinning ? { transform: `rotate(${spinDeg}deg)` } : null" />
           <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
         </span>
         <span class="name">eggpaper</span>
@@ -623,6 +710,9 @@ function onKey(e) {
     <Transition name="pop">
       <div class="toast" v-if="store.toast">{{ store.toast }}</div>
     </Transition>
+    <!-- 喂蛋的纸片：从松手的位置翻着跟头飞进蛋里（fixed 定位，挂在哪层都行） -->
+    <i class="feed-ghost" v-for="g in ghosts" :key="g.id" aria-hidden="true"
+       :style="{ left: g.x + 'px', top: g.y + 'px', '--dx': (g.tx - g.x) + 'px', '--dy': (g.ty - g.y) + 'px', animationDelay: g.delay + 'ms' }" />
     <Transition name="fade">
     <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(29,27,23,.22)">
       <div class="modal" style="text-align:center">

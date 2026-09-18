@@ -15,6 +15,7 @@ const BARS = [
   { y: 32, w: 30 }, { y: 44, w: 36 }, { y: 56, w: 22 },
 ]
 const BAR_H = 7
+// 字条带 .bar/.b0-2 类：几何一个数都不动，只是钩子——「忙碌时字条流过」靠它点亮（styles.css）
 </script>
 
 <template>
@@ -25,6 +26,7 @@ const BAR_H = 7
     <!-- 里面的字条：宽度跟着椭圆轮廓收，末行短一截 -->
     <g fill="currentColor">
       <rect v-for="(b, i) in BARS" :key="i"
+            class="bar" :class="'b' + i"
             :x="48 - b.w / 2" :y="b.y - BAR_H / 2"
             :width="b.w" :height="BAR_H" :rx="BAR_H / 2" />
     </g>
