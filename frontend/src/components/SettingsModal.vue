@@ -20,6 +20,7 @@ const f = reactive({
   engine_path: (S.pdf2zh || {}).path || '',
   feed: (S.update || {}).feed_url || '',
   auto_check: (S.update || {}).auto_check !== false,
+  shot_save: S.shot_save !== false,
   layers: { ...store.viewer.layers },
   data_dir: (S.data_dir || '').replace(/\$/, ''),
   data_new: '',
@@ -111,6 +112,12 @@ async function openWindow() {
   catch (e) { toast(e.message) }
 }
 
+/* 截图目录：资源管理器直接开（目录没建过后端会现建）。 */
+async function openShots() {
+  try { await api.screenshotFolder() }
+  catch (e) { toast(e.message) }
+}
+
 function openGuide() { window.open('/guide', '_blank') }
 
 /* 整本翻译引擎（pdf2zh）：不在安装包里（AGPL 引擎另装）。
@@ -188,7 +195,8 @@ function save() {
   emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key,
                              vision_model: f.vision ? f.model : '' },
                  mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim() },
-                 update: { feed_url: f.feed, auto_check: f.auto_check } })
+                 update: { feed_url: f.feed, auto_check: f.auto_check },
+                 shot_save: f.shot_save })
 }
 </script>
 
@@ -304,6 +312,11 @@ function save() {
         <label class="ck"><input type="checkbox" v-model="f.auto_check" />{{ t('打开时自动检查') }}</label>
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
                 @click="checkNow" :disabled="checking">{{ checking ? t('检查中…') : t('立即检查更新') }}</button>
+      </div>
+      <div class="f-line">
+        <span class="mono-label" style="margin:0">{{ t('截图') }}</span>
+        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.shot_save" />{{ t('保存到本地') }}</label>
+        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openShots">{{ t('打开目录') }}</button>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('窗口') }}</span>

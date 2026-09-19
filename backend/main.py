@@ -271,6 +271,7 @@ def get_settings():
                          "has_key": bool(p["api_key"]), "key_masked": (p["api_key"][:6] + "…") if p["api_key"] else ""},
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
             "ui_lang": cfg.get("ui_lang", "zh"),
+            "shot_save": cfg.get("shot_save", True),
             "data_dir": appinfo.data_dir()}
 
 @app.put("/api/settings")
@@ -286,6 +287,8 @@ def put_settings(body: dict):
         cfg["mock"] = bool(body["mock"])
     if body.get("ui_lang") in ("zh", "en"):
         cfg["ui_lang"] = body["ui_lang"]
+    if "shot_save" in body:
+        cfg["shot_save"] = bool(body["shot_save"])
     if "pdf2zh" in body:
         cfg["pdf2zh"].update(body["pdf2zh"])
     if "update" in body:
@@ -448,6 +451,35 @@ def open_native_window():
     if not how:
         raise HTTPException(503, "没找到可用的浏览器（Edge/Chrome），用当前这个窗口看就行")
     return {"ok": True, "how": how}
+
+@app.post("/api/screenshot")
+def take_screenshot(body: dict = None):
+    """应用内截图：抓独立窗口当前画面，必回 PNG（base64，前端写剪贴板）；
+    设置开了「保存到本地」就顺手落一份到 screenshots/。"""
+    import screenshot as shot
+    try:
+        png = shot.capture_window()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"截图失败了：{e}")
+    b = body or {}
+    name = None
+    if config.load().get("shot_save", True):
+        try:
+            name = shot.save(png, b.get("title") or "", b.get("page") or 0)
+        except OSError:
+            pass    # 存不下去不拦着复制：剪贴板才是底线
+    return {"png": shot.to_base64(png), "name": name}
+
+@app.post("/api/screenshot/folder")
+def open_screenshot_folder():
+    """打开截图目录（资源管理器）；目录此刻还没建过就现建一个。"""
+    import screenshot as shot
+    d = shot.folder()
+    os.makedirs(d, exist_ok=True)
+    os.startfile(d)     # noqa: S606 - 本机服务代开资源管理器
+    return {"ok": True}
 
 _QUITTING = {"user": False}
 

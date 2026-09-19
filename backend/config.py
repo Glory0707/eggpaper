@@ -16,6 +16,7 @@ DEFAULTS = {
         "vision_model": "",
     },
     "ui_lang": "zh",
+    "shot_save": True,
     "mock": False,
     "pdf2zh": {
         "service": "bing",

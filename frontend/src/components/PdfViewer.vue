@@ -920,7 +920,22 @@ async function translateCurrent() {
   else toast(t('先滚动到要译的段落'))
 }
 
-store.viewerApi = { step, translateCurrent, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
+/* 应用内截图：后端抓独立窗口当前画面原样回传；剪贴板是底线，落盘看设置里的开关。 */
+const shotBusy = ref(false)
+async function capture() {
+  if (shotBusy.value) return
+  shotBusy.value = true
+  try {
+    const r = await api.screenshot(store.paper?.title || store.paper?.filename || '', pageNum.value)
+    const bin = Uint8Array.from(atob(r.png), c => c.charCodeAt(0))
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bin], { type: 'image/png' }) })])
+    toast(r.name ? t('已复制 · 已保存 {n}', { n: r.name }) : t('已复制到剪贴板'))
+  } catch (e) {
+    toast(t('截图失败：{m}', { m: e.message }))
+  } finally { shotBusy.value = false }
+}
+
+store.viewerApi = { step, translateCurrent, capture, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
 
 function openSearch() { searchOpen.value = true }
 /* 别的面板（术语表）说"去原文里找这个词"：预填 + 打开 + 自动搜（searchQ 的 watch 会跑）。
@@ -1267,6 +1282,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <button :title="t('放大')" @click="stepZoom(1)">＋</button>
       <span class="zb-sep"></span>
       <button :title="t('查找（Ctrl+F）')" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">{{ t('查找') }}</button>
+      <button :title="t('截图（复制到剪贴板）')" :disabled="shotBusy" @click="capture">{{ t('截图') }}</button>
     </div>
     </Transition>
 

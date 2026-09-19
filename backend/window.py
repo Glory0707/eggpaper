@@ -139,7 +139,11 @@ def _give_window_icon(pid: int):
             SM_CXICON, SM_CXSMICON = 11, 49
             CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-            def find_hwnd(timeout=20):
+            def find_hwnds(timeout=20):
+                """所有标题为 "eggpaper" 的可见窗口（exact=窗口进程就是本进程起的）。
+                **收集全部而不是挑一个**：Edge/Chrome 已在跑时 --app 会挂到已有进程上、
+                Popen 那个 pid 立刻退场，exact 落空后 titled 里往往不止一个候选
+                （用户开着多个窗口、测试窗口也在）——全部注入才不会漏。"""
                 deadline = time.time() + timeout
                 while time.time() < deadline:
                     exact, titled = [], []
@@ -160,21 +164,19 @@ def _give_window_icon(pid: int):
                         return True
 
                     u.EnumWindows(CB(cb), 0)
-                    if exact:
-                        return exact[0]
-                    if titled:
-                        return titled[0]
+                    if exact or titled:
+                        return exact + titled
                     time.sleep(0.5)
-                return 0
+                return []
 
-            hwnd = find_hwnd()
-            if not hwnd:
+            hwnds = find_hwnds()
+            if not hwnds:
                 _window_log("注入窗口图标：没找到独立窗口，放弃")
                 return
 
             def metrics(idx):
                 try:
-                    return u.GetSystemMetricsForDpi(idx, u.GetDpiForWindow(hwnd), hwnd)
+                    return u.GetSystemMetricsForDpi(idx, u.GetDpiForWindow(hwnds[0]), hwnds[0])
                 except OSError:
                     return u.GetSystemMetrics(idx)
 
@@ -197,19 +199,20 @@ def _give_window_icon(pid: int):
                 return
 
             def apply():
-                if hbig:
-                    u.SendMessageW(hwnd, WM_SETICON, 1, hbig)
-                if hsmall:
-                    u.SendMessageW(hwnd, WM_SETICON, 0, hsmall)
-                if hbig:
-                    u.SendMessageW(hwnd, WM_SETICON, 2, hbig)
+                for h in hwnds:
+                    if hbig:
+                        u.SendMessageW(h, WM_SETICON, 1, hbig)
+                    if hsmall:
+                        u.SendMessageW(h, WM_SETICON, 0, hsmall)
+                    if hbig:
+                        u.SendMessageW(h, WM_SETICON, 2, hbig)
 
             for _ in range(27):
                 apply()
                 time.sleep(0.75)
             time.sleep(10)
             apply()
-            _window_log(f"窗口图标已按物理像素注入（大 {bx}px / 小 {sx}px，任务栏用大图档）")
+            _window_log(f"窗口图标已按物理像素注入（大 {bx}px / 小 {sx}px，任务栏用大图档，{len(hwnds)} 个窗口）")
         except Exception:
             _window_log("注入窗口图标出错：\n" + traceback.format_exc())
 

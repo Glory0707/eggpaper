@@ -79,6 +79,8 @@ export const api = {
   revealUpdate: (path) => req('POST', '/api/update/reveal', { path }),
   quit: (body) => req('POST', '/api/quit', body || {}),
   nativeWindow: () => req('POST', '/api/window'),
+  screenshot: (title, page) => req('POST', '/api/screenshot', { title, page }),
+  screenshotFolder: () => req('POST', '/api/screenshot/folder'),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
   pdf2zhEngine: (path = '') =>
