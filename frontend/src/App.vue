@@ -141,8 +141,9 @@ function pokeTally(pet) {
 const topPet = makePet()         // 顶栏那枚；析读完成/整本译完的动作滚跳也归它
 const deskPet = makePet()        // 书桌空态那枚大的
 
-/* 陪伴节拍：没人戳的时候它自己也活着——每隔一阵随机做一个小动作。
-   只挑闲着的蛋（被戳/被喂/在干活都让路）、只在页面看得见时动、优先在屏幕上那只。 */
+/* 陪伴节拍：没人戳的时候它自己也活着——约半小时随机做一个小动作（每 10 分钟看一眼时机，
+   三分之一概率动），像真人一样没有准点。只挑闲着的蛋（被戳/被喂/在干活都让路）、
+   只在页面看得见时动、优先在屏幕上那只。 */
 const IDLE_POOL = [
   ['tilt', 1700], ['stretch', 2100], ['yawn', 2500], ['shiver', 700], ['sway', 1500],
 ]
@@ -150,7 +151,7 @@ function idleTick() {
   if (document.hidden || sleepEgg.value || dozing.value) return
   const free = [topPet, deskPet]
     .filter(p => !(p.idle || p.wobbling || p.surprise || p.gulping || p.roll || p.hungry || p.spinning))
-  if (!free.length || Math.random() > 0.25) return
+  if (!free.length || Math.random() > 1 / 3) return
   const seen = free.filter(p => p.el)
   const pick = seen.length ? seen : free
   const pet = pick[Math.floor(Math.random() * pick.length)]
@@ -242,7 +243,7 @@ onMounted(async () => {
     toast(t('出错了：{m}', { m: msg.slice(0, 120) }), 5000)
   })
   pollTimer = setInterval(poll, 3000)
-  idleTimerId = setInterval(idleTick, 20000)   // 陪伴节拍：平均八十秒一个小动作
+  idleTimerId = setInterval(idleTick, 600000)   // 陪伴节拍：平均半小时左右一个小动作
   sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后
   window.addEventListener('pointermove', wakeEgg, { passive: true })
   window.addEventListener('pointerdown', wakeEgg, { passive: true })
