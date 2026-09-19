@@ -12,7 +12,11 @@ import CiteCard from './components/CiteCard.vue'
 import UpdateCard from './components/UpdateCard.vue'
 import { dlg, dlgCancel } from './dialog'
 import EggMark from './components/EggMark.vue'
+import { festivalSkin } from './festival'
 import { t, isEn, setLang } from './i18n'
+
+/* 节日换装：按日期给蛋换皮肤（egg-preview.html 定稿）；localStorage 的 eggpaper:skin 可手动预览任意一套 */
+const eggSkin = festivalSkin()
 
 const showSettings = ref(false)
 const dragOver = ref(false)
@@ -804,7 +808,7 @@ function onKey(e) {
         <span class="egg-wrap" :class="{ gone: petPos || dragFloat }" :title="t('彩蛋')"
               :ref="r => (homeEl = r)" @pointerdown="petDown" @click.stop="petClick" @wheel="topPet.wheel"
               @dragenter="topPet.enter" @dragover="topPet.over" @dragleave="topPet.leave" @drop="topPet.drop">
-          <EggMark class="egg pet" v-if="!petPos && !dragFloat" :class="petCls(topPet)" :style="spinStyle(topPet)" />
+          <EggMark :skin="eggSkin" class="egg pet" v-if="!petPos && !dragFloat" :class="petCls(topPet)" :style="spinStyle(topPet)" />
           <span class="egg-z" v-if="sleepEgg && !petPos && !dragFloat" aria-hidden="true"><i>z</i><i>z</i></span>
         </span>
         <span class="name">eggpaper</span>
@@ -901,7 +905,7 @@ function onKey(e) {
                 <div class="empty" v-if="!store.paper">
           <span class="egg-wrap" :title="t('彩蛋')" :ref="r => (deskPet.el = r)" @click.stop="deskPet.poke" @wheel="deskPet.wheel"
                 @dragenter="deskPet.enter" @dragover="deskPet.over" @dragleave="deskPet.leave" @drop="deskPet.drop">
-            <EggMark class="egg-big pet" :class="petCls(deskPet, { hop: dragOver })" :style="spinStyle(deskPet)" />
+            <EggMark :skin="eggSkin" class="egg-big pet" :class="petCls(deskPet, { hop: dragOver })" :style="spinStyle(deskPet)" />
             <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
           </span>
           <div class="e-title" role="button" tabindex="0" @click="pickFiles"
@@ -987,7 +991,7 @@ function onKey(e) {
           :ref="r => (topPet.el = r)" @pointerdown="petDown" @click.stop="petClick"
           @wheel="topPet.wheel"
           @dragenter="topPet.enter" @dragover="topPet.over" @dragleave="topPet.leave" @drop="topPet.drop">
-      <EggMark class="egg pet" :class="petCls(topPet)" :style="spinStyle(topPet)" />
+      <EggMark :skin="eggSkin" class="egg pet" :class="petCls(topPet)" :style="spinStyle(topPet)" />
       <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
     </span>
     <Transition name="fade">
