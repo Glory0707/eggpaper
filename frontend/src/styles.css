@@ -1055,11 +1055,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .shot-mask { position: fixed; inset: 0; z-index: 880; cursor: crosshair; }
 .shot-mask.dim { background: rgba(29, 27, 23, 0.30); }
 .shot-rect { position: absolute; border: 1.5px solid var(--accent); box-shadow: 0 0 0 100000px rgba(29, 27, 23, 0.30); }
-.shot-hint {
-  position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%);
-  background: var(--card); color: var(--ink-2); border: 1px solid var(--hairline); border-radius: 6px;
-  padding: 6px 14px; font-size: var(--fs-sm); box-shadow: var(--shadow-pop); pointer-events: none;
-}
 
 .mc-step { padding: 2px 0; line-height: 1.55; }
 

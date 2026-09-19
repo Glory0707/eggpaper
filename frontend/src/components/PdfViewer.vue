@@ -1447,7 +1447,6 @@ watch(() => store.marginalia.notes, (n, o) => {
       <div class="shot-rect" v-if="shotSel"
            :style="{ left: Math.min(shotSel.x0, shotSel.x1) + 'px', top: Math.min(shotSel.y0, shotSel.y1) + 'px',
                      width: Math.abs(shotSel.x1 - shotSel.x0) + 'px', height: Math.abs(shotSel.y1 - shotSel.y0) + 'px' }"></div>
-      <div class="shot-hint" v-if="!shotSel">{{ t('拖拽框选要截取的区域 · Esc 取消') }}</div>
     </div>
   </div>
 </template>

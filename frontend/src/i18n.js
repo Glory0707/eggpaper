@@ -228,7 +228,6 @@ const EN = {
   '彩蛋': 'Easter egg',
   '截图': 'Screenshot',
   '截图（复制到剪贴板）': 'Screenshot (copies to clipboard)',
-  '拖拽框选要截取的区域 · Esc 取消': 'Drag to select the area · Esc to cancel',
   '保存到本地': 'Save locally',
   '打开目录': 'Open folder',
   '已复制到剪贴板': 'Copied to clipboard',
