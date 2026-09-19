@@ -316,6 +316,7 @@ onMounted(async () => {
   })
   pollTimer = setInterval(poll, 3000)
   idleTimerId = setInterval(idleTick, 600000)   // 陪伴节拍：平均半小时左右一个小动作
+  greetBootT = setTimeout(maybeGreet, 2500)     // 开场问候：界面站稳后轻轻说一句
   sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后
   window.addEventListener('pointermove', wakeEgg, { passive: true })
   window.addEventListener('pointerdown', wakeEgg, { passive: true })
@@ -343,6 +344,8 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(pollTimer)
   clearInterval(idleTimerId)
+  clearTimeout(greetHideT)
+  clearTimeout(greetBootT)
   clearTimeout(idleTimer)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('dragend', endDrag)
@@ -430,20 +433,53 @@ async function onQuitApp() {
 }
 
 /* 深夜彩蛋：0–5 点 eggpaper 还开着，蛋就躺下睡了（纯 CSS 躺倒，印章几何不变），
-   问候一晚只说一次（本地记日期）。开着跨进零点的那一拍由 3 秒轮询接住；天亮自己醒。 */
+   每天一晚说一句晚安（统一的时段文字框）。开着跨进零点的那一拍由 3 秒轮询接住；天亮自己醒。 */
 const sleepEgg = ref(false)
 const _deepNight = () => new Date().getHours() < 5
 function sleepGreet() {
   if (_deepNight()) {
     sleepEgg.value = true
-    const today = new Date().toDateString()
-    if (localStorage.getItem('egg:sleep-greet') !== today) {
-      localStorage.setItem('egg:sleep-greet', today)
-      toast(t('蛋都睡了，你还在读。'), 8000)
-    }
+    maybeGreet()
   } else if (sleepEgg.value) {
     sleepEgg.value = false
   }
+}
+
+/* 时段问候：固定几个有情绪的时刻，打开软件时轻轻说一句话。
+   每个时段每天最多一次（本地记日期）；出现与消失是同一个文字框（取景框纸卡），
+   pointer-events none 不挡操作。 */
+const GREET_POOL = {
+  midnight: ['怎么还没睡？照顾好身体。'],
+  dawn: ['这么早就打卡啦！？'],
+  morning: ['打起精神！'],
+  noon: ['你先读着，我眯一会。'],
+  afternoon: ['论文还是摸鱼，这是一个问题。'],
+  night: ['生活不止眼前的苟且，还有诗和论文。'],
+}
+function greetSlot() {
+  const h = new Date().getHours()
+  if (h < 5) return 'midnight'
+  if (h < 8) return 'dawn'
+  if (h < 12) return 'morning'
+  if (h < 14) return 'noon'
+  if (h < 19) return 'afternoon'
+  return 'night'
+}
+const greetText = ref('')
+const greetShow = ref(false)
+let greetHideT = 0
+let greetBootT = 0
+function maybeGreet() {
+  const slot = greetSlot()
+  if (!slot || greetShow.value) return
+  const key = `egg:greet-${new Date().toDateString()}-${slot}`
+  if (localStorage.getItem(key)) return
+  localStorage.setItem(key, '1')
+  const pool = GREET_POOL[slot]
+  greetText.value = pool[new Date().getDate() % pool.length]
+  greetShow.value = true
+  clearTimeout(greetHideT)
+  greetHideT = setTimeout(() => (greetShow.value = false), 5600)
 }
 
 /* 本会话点过「析读」的凭据（哪篇、几点点的）：秒完的演示析读第一次拉状态就直接是
@@ -831,6 +867,12 @@ function onKey(e) {
     <Transition name="pop">
       <div class="toast" v-if="store.toast">{{ store.toast }}</div>
     </Transition>
+        <Transition name="greet">
+          <div class="greet-box" v-if="greetShow">
+            <i class="gtl"></i><i class="gtr"></i><i class="gbl"></i><i class="gbr"></i>
+            <span class="gt">{{ greetText }}</span>
+          </div>
+        </Transition>
         <i class="feed-ghost" v-for="g in ghosts" :key="g.id" aria-hidden="true"
        :style="{ left: g.x + 'px', top: g.y + 'px', '--dx': (g.tx - g.x) + 'px', '--dy': (g.ty - g.y) + 'px', animationDelay: g.delay + 'ms' }" />
     <!-- 浮动的蛋：长按抓起来安到哪算哪，拖回左上角原位附近自动归位 -->

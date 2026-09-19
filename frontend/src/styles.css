@@ -506,6 +506,23 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .drop-hint:hover, .drop-hint.over { border-color: var(--accent-deep); background: var(--accent-soft); color: var(--accent-deep); }
 
+/* 时段问候：取景框纸卡，淡入浮起、角标展开、下沉淡出；纯展示不挡操作 */
+.greet-box { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); z-index: 700;
+  pointer-events: none; background: var(--card); border-radius: 10px; padding: 18px 30px;
+  box-shadow: 0 8px 30px rgba(29, 27, 23, .10); }
+.greet-box .gt { font-size: 17px; color: var(--ink); letter-spacing: .03em; font-weight: 500; white-space: nowrap; }
+.greet-box i { position: absolute; width: 13px; height: 13px; border: 0 solid var(--accent);
+  animation: greetCorner .45s var(--ease-out) .12s both; }
+.greet-box .gtl { top: -1px; left: -1px; border-top-width: 1.5px; border-left-width: 1.5px; border-top-left-radius: 10px; }
+.greet-box .gtr { top: -1px; right: -1px; border-top-width: 1.5px; border-right-width: 1.5px; border-top-right-radius: 10px; }
+.greet-box .gbl { bottom: -1px; left: -1px; border-bottom-width: 1.5px; border-left-width: 1.5px; border-bottom-left-radius: 10px; }
+.greet-box .gbr { bottom: -1px; right: -1px; border-bottom-width: 1.5px; border-right-width: 1.5px; border-bottom-right-radius: 10px; }
+@keyframes greetCorner { from { opacity: 0; transform: scale(1.5); } to { opacity: 1; transform: none; } }
+.greet-enter-active { transition: opacity .45s var(--ease-out), transform .45s var(--ease-spring); }
+.greet-enter-from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+.greet-leave-active { transition: opacity .5s var(--ease-smooth), transform .5s var(--ease-smooth); }
+.greet-leave-to { opacity: 0; transform: translateX(-50%) translateY(8px); }
+
 .desk {
   flex: 1; min-width: 0; overflow: auto; position: relative;
   background: var(--paper);
