@@ -96,6 +96,7 @@ async def _bad_params(request, exc):
                         status_code=400)
 
 PAPERS_DIR = os.path.join(config.DATA_DIR, "papers")
+_import_lock = threading.Lock()     # 查重到建库必须一气呵成：并发导入同一份文件会各得一篇
 
 def paper_dir(pid: str) -> str:
     """一篇论文的全部盘上数据都收在它自己的文件夹里：
@@ -592,16 +593,21 @@ async def upload(file: UploadFile = File(...)):
     if len(raw) < 256:
         raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
     name = (file.filename or "paper.pdf").split("/")[-1].split("\\")[-1]
-    dup = db.find_duplicate(name, len(raw), _pdf_hash_bytes(raw))
-    if dup:
-        return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
-                "duplicate": True}
-    pid = db.new_id()
-    os.makedirs(paper_dir(pid), exist_ok=True)
-    path = os.path.join(paper_dir(pid), "paper.pdf")
-    with open(path, "wb") as f:
-        f.write(raw)
-    return await run_in_threadpool(_ingest, pid, name, path, _pdf_hash_bytes(raw))
+
+    def _import():
+        with _import_lock:
+            dup = db.find_duplicate(name, len(raw), _pdf_hash_bytes(raw))
+            if dup:
+                return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
+                        "duplicate": True}
+            pid = db.new_id()
+            os.makedirs(paper_dir(pid), exist_ok=True)
+            path = os.path.join(paper_dir(pid), "paper.pdf")
+            with open(path, "wb") as f:
+                f.write(raw)
+            return _ingest(pid, name, path, _pdf_hash_bytes(raw))
+
+    return await run_in_threadpool(_import)
 
 @app.post("/api/papers/import-path")
 def import_path(body: dict):
@@ -619,20 +625,21 @@ def import_path(body: dict):
     pid = db.new_id()
     os.makedirs(paper_dir(pid), exist_ok=True)
     dest = os.path.join(paper_dir(pid), "paper.pdf")
-    try:
-        pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
-    except OSError as e:
-        raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
-    dup = db.find_duplicate(name, size, pdf_hash)
-    if dup:
-        _rm(dest)
+    with _import_lock:
         try:
-            os.rmdir(paper_dir(pid))    # 刚建的空文件夹顺手收掉
-        except OSError:
-            pass
-        _pending_open["pid"] = dup
-        return {"paper": db.get_paper(dup), "duplicate": True}
-    out = _ingest(pid, name, dest, pdf_hash)
+            pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
+        except OSError as e:
+            raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
+        dup = db.find_duplicate(name, size, pdf_hash)
+        if dup:
+            _rm(dest)
+            try:
+                os.rmdir(paper_dir(pid))    # 刚建的空文件夹顺手收掉
+            except OSError:
+                pass
+            _pending_open["pid"] = dup
+            return {"paper": db.get_paper(dup), "duplicate": True}
+        out = _ingest(pid, name, dest, pdf_hash)
     _pending_open["pid"] = pid
     return out
 
@@ -1153,6 +1160,8 @@ def _run_marginalia(pid: str):
 @app.post("/api/papers/{pid}/marginalia")
 def marginalia_start(pid: str):
     _paper_or_404(pid)
+    if _analysis_inflight(pid):
+        raise HTTPException(400, "析读还在跑——它和眉批会互相清对方的缓存，先等析读结束")
     _cancel_clear(pid)              # 上次取消留下的旗子别误杀这次
     with _live_lock:
         if _job_live("marginalia", pid):
@@ -1219,7 +1228,10 @@ def pin_lookup(pid: str, body: dict):
         para_idx = int(body.get("para_idx") or 0)
     except (TypeError, ValueError):
         raise HTTPException(400, "para_idx 得是整数")
-    page = int(body.get("page") or 0)
+    try:
+        page = int(body.get("page") or 0)
+    except (TypeError, ValueError):
+        page = 0
     if (body.get("kind") or "").strip() == "note":
         return {"id": db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
                                         kind="note", band="mine")}
@@ -2198,6 +2210,14 @@ def qa_save(pid: str, body: dict):
     conv_id = body.get("conv_id")
     if not content:
         return {"ok": False}
+    if conv_id:
+        try:
+            conv_id = int(conv_id)
+        except (TypeError, ValueError):
+            raise HTTPException(404, "会话不存在")
+        c = db.conv_get(conv_id)
+        if not c or c["paper_id"] != pid:
+            raise HTTPException(404, "会话不存在")
     aid = db.qa_add(pid, "assistant", content, llm.cites_of(content), conv_id=conv_id)
     return {"ok": True, "citations": llm.cites_of(content),
             "assistant_id": aid, "user_id": db.qa_last_user_id(pid, conv_id) if conv_id else None}
@@ -2209,7 +2229,11 @@ def qa_regenerate(pid: str, body: dict):
     conv_id = body.get("conv_id")
     if not conv_id:
         raise HTTPException(400, "缺少会话")
-    q = db.qa_drop_last_assistant(pid, int(conv_id))
+    try:
+        conv_id = int(conv_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "缺少会话")
+    q = db.qa_drop_last_assistant(pid, conv_id)
     if not q:
         raise HTTPException(400, "没有可重新生成的问题")
     return {"question": q}
@@ -2262,6 +2286,10 @@ def paper_collections_set(pid: str, body: dict):
     ids = body.get("ids") or []
     if not isinstance(ids, list):
         raise HTTPException(400, "ids 必须是数组")
+    try:
+        ids = [int(x) for x in ids]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "ids 必须是整数数组")
     db.set_paper_collections(pid, ids)
     return {"ok": True, "ids": ids}
 
