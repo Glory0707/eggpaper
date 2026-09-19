@@ -154,11 +154,6 @@ function petDown(e) {
       return
     }
     ev.preventDefault()
-    const home = homeCenter()
-    if (home && Math.hypot(ev.clientX - home.x, ev.clientY - home.y) < 60) {
-      petPos.value = { x: home.left, y: home.top }   // 靠近原位：磁吸
-      return
-    }
     petPos.value = clampPos(ev.clientX - dragOff.x, ev.clientY - dragOff.y)
   }
   const cancel = () => { clearTimeout(armT); cleanup() }
