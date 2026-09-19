@@ -467,14 +467,13 @@ function greetSlot() {
 }
 const greetText = ref('')
 const greetShow = ref(false)
+const greetShown = new Set()     // 本次运行里已经问候过的时段：冷启动清零，跨时段会再问候
 let greetHideT = 0
 let greetBootT = 0
 function maybeGreet() {
   const slot = greetSlot()
-  if (!slot || greetShow.value) return
-  const key = `egg:greet-${new Date().toDateString()}-${slot}`
-  if (localStorage.getItem(key)) return
-  localStorage.setItem(key, '1')
+  if (!slot || greetShow.value || greetShown.has(slot)) return
+  greetShown.add(slot)
   const pool = GREET_POOL[slot]
   greetText.value = pool[new Date().getDate() % pool.length]
   greetShow.value = true
