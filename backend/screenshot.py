@@ -111,5 +111,19 @@ def save(png: bytes, title: str, page: int) -> str:
     return cand
 
 
+def crop_viewport(png: bytes, chrome_top: float, border: float, dpr: float) -> bytes:
+    """窗口截图 → 纯视口区域：前端量好的浏览器镶边（标题栏 + 边框，CSS 像素）×
+    dpr 裁掉，选区坐标从此和 client 坐标一一对应。"""
+    from PIL import Image
+    img = Image.open(io.BytesIO(png))
+    d = max(1.0, dpr or 1)
+    t = max(0, round((chrome_top or 0) * d))
+    b = max(0, round((border or 0) * d))
+    img = img.crop((b, t, max(b + 1, img.width - b), max(t + 1, img.height - b)))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
 def to_base64(png: bytes) -> str:
     return base64.b64encode(png).decode("ascii")

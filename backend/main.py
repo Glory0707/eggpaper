@@ -1,4 +1,5 @@
 """eggpaper 本地服务。唯一出网：用户配置的 LLM API 与 pdf2zh 翻译服务。"""
+import base64
 import json
 import os
 import queue
@@ -454,23 +455,33 @@ def open_native_window():
 
 @app.post("/api/screenshot")
 def take_screenshot(body: dict = None):
-    """应用内截图：抓独立窗口当前画面，必回 PNG（base64，前端写剪贴板）；
-    设置开了「保存到本地」就顺手落一份到 screenshots/。"""
+    """抓 eggpaper 窗口当前画面回 PNG（base64，前端按选区裁剪后写剪贴板）。
+    body 带前端量好的浏览器镶边（标题栏/边框，CSS px）就裁成纯视口，选区坐标
+    从此和 client 坐标一一对应。"""
     import screenshot as shot
     try:
         png = shot.capture_window()
+        b = body or {}
+        if "chrome_top" in b or "border" in b:
+            png = shot.crop_viewport(png, b.get("chrome_top"), b.get("border"), b.get("dpr"))
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"截图失败了：{e}")
-    b = body or {}
-    name = None
-    if config.load().get("shot_save", True):
-        try:
-            name = shot.save(png, b.get("title") or "", b.get("page") or 0)
-        except OSError:
-            pass    # 存不下去不拦着复制：剪贴板才是底线
-    return {"png": shot.to_base64(png), "name": name}
+    return {"png": shot.to_base64(png)}
+
+@app.post("/api/screenshot/save")
+def save_screenshot(body: dict):
+    """把前端裁好的选区 PNG 落盘（统一命名 egg_时间_标题_页码）。"""
+    import screenshot as shot
+    raw = base64.b64decode((body or {}).get("png") or "")
+    if not raw:
+        raise HTTPException(400, "没有图片内容")
+    try:
+        name = shot.save(raw, (body or {}).get("title") or "", (body or {}).get("page") or 0)
+    except OSError as e:
+        raise HTTPException(500, f"存不下去：{e}")
+    return {"name": name}
 
 @app.post("/api/screenshot/folder")
 def open_screenshot_folder():

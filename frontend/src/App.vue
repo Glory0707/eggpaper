@@ -551,7 +551,7 @@ function onKey(e) {
     case 't': store.viewerApi?.translateCurrent(); break
     case 's': store.viewerApi?.translateSelectionKey(); break
     case 'r': store.viewer.frame = !store.viewer.frame; break
-    case 'c': store.viewerApi?.capture(); break
+    case 'c': store.viewerApi?.startShot(); break
     case '1': store.viewer.variant = 'original'; break
     case '2': if (tranSt.value === 'done') store.viewer.variant = 'mono'; break
     case '3': if (tranSt.value === 'done') store.viewer.variant = 'dual'; break

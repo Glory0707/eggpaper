@@ -920,22 +920,89 @@ async function translateCurrent() {
   else toast(t('先滚动到要译的段落'))
 }
 
-/* 应用内截图：后端抓独立窗口当前画面原样回传；剪贴板是底线，落盘看设置里的开关。 */
+/* ---------------- 截图：拖拽框选，选区直接成图（Windows 截图的手感） ----------------
+   进入模式后盖全屏暗罩、十字光标；松手先撤罩、等屏幕恢复原样这一拍再抓窗口
+   物理像素（后端按前端量好的镶边裁成纯视口），前端按选区 × devicePixelRatio
+   裁剪——所见即所得，缩放屏上天然比显示分辨率高一档。剪贴板是底线，落盘看设置。 */
+const shotMode = ref(false)
+const shotSel = ref(null)
 const shotBusy = ref(false)
-async function capture() {
+function startShot() {
+  if (shotBusy.value || shotMode.value) return
+  shotMode.value = true
+  window.addEventListener('keydown', shotEsc, true)
+}
+function stopShot() {
+  if (!shotMode.value) return
+  shotMode.value = false
+  shotSel.value = null
+  window.removeEventListener('keydown', shotEsc, true)
+}
+function shotEsc(e) {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stopShot() }
+}
+function shotDown(e) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  const p0 = { x: e.clientX, y: e.clientY }
+  shotSel.value = { x0: p0.x, y0: p0.y, x1: p0.x, y1: p0.y }
+  const move = ev => { shotSel.value = { x0: p0.x, y0: p0.y, x1: ev.clientX, y1: ev.clientY } }
+  const cancel = () => stopShot()
+  const up = ev => {
+    document.removeEventListener('mousemove', move)
+    document.removeEventListener('mouseup', up)
+    window.removeEventListener('blur', cancel)
+    const s = shotSel.value
+    shotSel.value = null
+    if (!s) return
+    const x0 = Math.min(p0.x, ev.clientX), y0 = Math.min(p0.y, ev.clientY)
+    const x1 = Math.max(p0.x, ev.clientX), y1 = Math.max(p0.y, ev.clientY)
+    if (x1 - x0 < 8 || y1 - y0 < 8) return     // 点一下不算：留在模式里继续拖
+    shotMode.value = false                     // 撤罩先——抓的是没有暗罩的原画面
+    window.removeEventListener('keydown', shotEsc, true)
+    finishShot({ x0, y0, x1, y1 })
+  }
+  document.addEventListener('mousemove', move)
+  document.addEventListener('mouseup', up)
+  window.addEventListener('blur', cancel)
+}
+async function finishShot(sel) {
   if (shotBusy.value) return
   shotBusy.value = true
+  await new Promise(r => setTimeout(r, 150))   // 等暗罩从屏幕上消失这一拍
   try {
-    const r = await api.screenshot(store.paper?.title || store.paper?.filename || '', pageNum.value)
-    const bin = Uint8Array.from(atob(r.png), c => c.charCodeAt(0))
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bin], { type: 'image/png' }) })])
-    toast(r.name ? t('已复制 · 已保存 {n}', { n: r.name }) : t('已复制到剪贴板'))
+    const r = await api.screenshot({
+      chrome_top: window.outerHeight - window.innerHeight,
+      border: (window.outerWidth - window.innerWidth) / 2,
+      dpr: window.devicePixelRatio,
+    })
+    const img = new Image()
+    img.src = 'data:image/png;base64,' + r.png
+    await img.decode()
+    const d = window.devicePixelRatio || 1
+    const sw = Math.max(1, Math.round((sel.x1 - sel.x0) * d))
+    const sh = Math.max(1, Math.round((sel.y1 - sel.y0) * d))
+    const cv = document.createElement('canvas')
+    cv.width = sw; cv.height = sh
+    cv.getContext('2d').drawImage(img, Math.round(sel.x0 * d), Math.round(sel.y0 * d), sw, sh, 0, 0, sw, sh)
+    const blob = await new Promise(res => cv.toBlob(res, 'image/png'))
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+    let name = null
+    if (store.settings?.shot_save !== false) {
+      const b64 = await new Promise(res => {
+        const fr = new FileReader()
+        fr.onload = () => res(String(fr.result).split(',')[1])
+        fr.readAsDataURL(blob)
+      })
+      name = (await api.screenshotSave(store.paper?.title || store.paper?.filename || '', pageNum.value, b64)).name
+    }
+    toast(name ? t('已复制 · 已保存 {n}', { n: name }) : t('已复制到剪贴板'))
   } catch (e) {
     toast(t('截图失败：{m}', { m: e.message }))
   } finally { shotBusy.value = false }
 }
 
-store.viewerApi = { step, translateCurrent, capture, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
+store.viewerApi = { step, translateCurrent, startShot, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
 
 function openSearch() { searchOpen.value = true }
 /* 别的面板（术语表）说"去原文里找这个词"：预填 + 打开 + 自动搜（searchQ 的 watch 会跑）。
@@ -1282,7 +1349,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <button :title="t('放大')" @click="stepZoom(1)">＋</button>
       <span class="zb-sep"></span>
       <button :title="t('查找（Ctrl+F）')" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">{{ t('查找') }}</button>
-      <button :title="t('截图（复制到剪贴板）')" :disabled="shotBusy" @click="capture">{{ t('截图') }}</button>
+      <button :title="t('截图（复制到剪贴板）')" :class="{ on: shotMode }" :disabled="shotBusy" @click="startShot">{{ t('截图') }}</button>
     </div>
     </Transition>
 
@@ -1374,5 +1441,13 @@ watch(() => store.marginalia.notes, (n, o) => {
         {{ t('返回原位 · Alt+←') }}
       </button>
     </Transition>
+
+    <div v-if="shotMode" class="shot-mask" :class="{ dim: !shotSel }"
+         @contextmenu.prevent="stopShot" @wheel.prevent @mousedown="shotDown">
+      <div class="shot-rect" v-if="shotSel"
+           :style="{ left: Math.min(shotSel.x0, shotSel.x1) + 'px', top: Math.min(shotSel.y0, shotSel.y1) + 'px',
+                     width: Math.abs(shotSel.x1 - shotSel.x0) + 'px', height: Math.abs(shotSel.y1 - shotSel.y0) + 'px' }"></div>
+      <div class="shot-hint" v-if="!shotSel">{{ t('拖拽框选要截取的区域 · Esc 取消') }}</div>
+    </div>
   </div>
 </template>
