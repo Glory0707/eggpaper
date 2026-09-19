@@ -447,14 +447,55 @@ function sleepGreet() {
 
 /* 时段问候：固定几个有情绪的时刻，打开软件时轻轻说一句话。
    每个时段每天最多一次（本地记日期）；出现与消失是同一个文字框（取景框纸卡），
-   pointer-events none 不挡操作。 */
+   pointer-events none 不挡操作。文案每次启动随机抽一条。 */
 const GREET_POOL = {
-  midnight: ['怎么还没睡？照顾好身体。'],
-  dawn: ['这么早就打卡啦！？'],
-  morning: ['打起精神！'],
-  noon: ['你先读着，我眯一会。'],
-  afternoon: ['论文还是摸鱼，这是一个问题。'],
-  night: ['生活不止眼前的苟且，还有诗和论文。'],
+  midnight: [
+    '怎么还没睡？照顾好身体。',
+    '再读一篇就睡——这话你昨晚也说过。',
+    '凌晨的文献，自带荧光标记。',
+    '黑眼圈和 impact factor，总得涨一个。',
+    '困了就睡，文献又不会跑。',
+    '这个点的你，硬控整个书桌。',
+  ],
+  dawn: [
+    '这么早就打卡啦！？',
+    '早起的人，先拿捏今天的 DDL。',
+    '你是懂卷的。',
+    '太阳还没你努力。',
+    '水灵灵地，就开始读文献了。',
+    '晨读 buff 已上线。',
+  ],
+  morning: [
+    '打起精神！',
+    '上午的脑子，是全新的。',
+    '文献都醒了，就等你了。',
+    '这波稳了，好好读。',
+    '上午啃硬骨头，下午不心虚。',
+    '咖啡就位，精神状态已拉满。',
+  ],
+  noon: [
+    '你先读着，我眯一会。',
+    '饭后困是生理学，不是态度问题。',
+    '眯十分钟，下午效率翻倍。',
+    '午休不是摆烂，是科学。',
+    '下午的你，需要一场中场休息。',
+  ],
+  afternoon: [
+    '论文还是摸鱼，这是一个问题。',
+    '摸鱼一时爽，DDL 火葬场。',
+    '下午三点，人类的至暗时刻。',
+    '再刷五分钟就学——你上周也这么说。',
+    '偷感很重地开始卷文献。',
+    '此刻读文献的你，水灵灵的。',
+  ],
+  night: [
+    '生活不止眼前的苟且，还有诗和论文。',
+    '今晚的月亮，和 deadline 一起加班。',
+    '读 paper 的你，比月亮还亮。',
+    '这盏灯，陪你到最后一页。',
+    '夜读的快乐，是偷来的。',
+    '别熬太晚，明天蛋还要叫你。',
+  ],
 }
 function greetSlot() {
   const h = new Date().getHours()
@@ -475,7 +516,7 @@ function maybeGreet() {
   if (!slot || greetShow.value || greetShown.has(slot)) return
   greetShown.add(slot)
   const pool = GREET_POOL[slot]
-  greetText.value = pool[new Date().getDate() % pool.length]
+  greetText.value = t(pool[Math.floor(Math.random() * pool.length)])
   greetShow.value = true
   clearTimeout(greetHideT)
   greetHideT = setTimeout(() => (greetShow.value = false), 5600)
