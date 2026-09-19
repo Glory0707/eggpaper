@@ -606,8 +606,10 @@ async def upload(file: UploadFile = File(...)):
         with _import_lock:
             dup = db.find_duplicate(name, len(raw), _pdf_hash_bytes(raw))
             if dup:
-                return {"paper": db.get_paper(dup), "n_paragraphs": len(db.get_paragraphs(dup)),
-                        "duplicate": True}
+                paras = db.get_paragraphs(dup)
+                return {"paper": db.get_paper(dup), "n_paragraphs": len(paras),
+                        "n_captions": sum(1 for pp in paras if pp.get("caption")),
+                        "no_text": not paras, "duplicate": True}
             pid = db.new_id()
             os.makedirs(paper_dir(pid), exist_ok=True)
             path = os.path.join(paper_dir(pid), "paper.pdf")
@@ -815,12 +817,16 @@ def paper_pdf(pid: str, variant: str = "original"):
         mono = p.get("mono_path") or os.path.join(paper_dir(pid), "mono.pdf")
         src = p.get("path") or ""
         if (mono and os.path.exists(mono) and src and os.path.exists(src)):
-            with _key_lock("variant:" + pid + ":dual"):
-                dual = os.path.join(paper_dir(pid), "dual.pdf")
-                if not os.path.exists(dual):
-                    translate_full.derive_dual(src, mono, dual)
-                db.update_paper(pid, dual_path=dual)
-            return FileResponse(dual, media_type="application/pdf")
+            try:
+                with _key_lock("variant:" + pid + ":dual"):
+                    dual = os.path.join(paper_dir(pid), "dual.pdf")
+                    if not os.path.exists(dual):
+                        translate_full.derive_dual(src, mono, dual)
+                    db.update_paper(pid, dual_path=dual)
+                return FileResponse(dual, media_type="application/pdf")
+            except OSError:
+                # Windows 上刚换名的产物可能还被上一个响应占着句柄：当作没生成好，让前端走原文
+                raise HTTPException(404, "双语版尚未生成")
         raise HTTPException(404, "双语版尚未生成")
     if variant == "mono":
         mono = p.get("mono_path") or ""
@@ -851,6 +857,8 @@ def paragraphs(pid: str):
         try:
             if os.path.exists(path):
                 fresh = pdfparse.extract_paragraphs(path)
+                if _pid_gone(pid):        # 解析的几秒里论文被删：别把段落插回已清空的库
+                    return db.get_paragraphs(pid)
                 if db.paragraphs_match(pid, fresh):
                     db.replace_paragraphs(pid, fresh)
                 else:
@@ -868,8 +876,8 @@ def _run_analysis(pid: str, paras: list):
         use = [p for p in paras if not p.get("in_refs")]
         kind = _ensure_paper_type(pid)
         demo = _demo_mode()
-        if _cancel_requested(pid):
-            _cancel_clear(pid)
+        if _cancel_requested("analysis", pid):
+            _cancel_clear("analysis", pid)
             db.update_paper(pid, analysis_status="none", analysis_error=None)
             _applog(f"析读 {pid}: 已取消（开始前）")
             return
@@ -889,8 +897,8 @@ def _run_analysis(pid: str, paras: list):
         db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
                         abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
-        if _cancel_requested(pid):
-            _cancel_clear(pid)
+        if _cancel_requested("analysis", pid):
+            _cancel_clear("analysis", pid)
             db.update_paper(pid, analysis_status="none", analysis_error=None)
             _applog(f"析读 {pid}: 已取消（骨架完成后，骨架保留）")
             return
@@ -906,7 +914,7 @@ def _run_analysis(pid: str, paras: list):
         _analysis_progress[pid] = {"done": 1, "total": 1 + len(futs)}   # 骨架算已完成的 1 项
         for fut in as_completed(futs):
             k = futs[fut]
-            if _cancel_requested(pid):
+            if _cancel_requested("analysis", pid):
                 break
             try:
                 got = fut.result()
@@ -937,8 +945,8 @@ def _run_analysis(pid: str, paras: list):
             d = _analysis_progress.get(pid)
             if d:
                 d["done"] = min(d.get("total") or 0, d.get("done", 0) + 1)
-        if _cancel_requested(pid):
-            _cancel_clear(pid)
+        if _cancel_requested("analysis", pid):
+            _cancel_clear("analysis", pid)
             db.update_paper(pid, analysis_status="none", analysis_error=None)
             _applog(f"析读 {pid}: 已取消，已完成的部分保留")
             return
@@ -947,7 +955,7 @@ def _run_analysis(pid: str, paras: list):
         _applog(f"析读失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
         db.fail_analysis(pid, hint)
     finally:
-        _cancel_clear(pid)
+        _cancel_clear("analysis", pid)
         _analysis_progress.pop(pid, None)
         if ex:
             ex.shutdown(wait=False, cancel_futures=True)
@@ -956,14 +964,16 @@ def _run_analysis(pid: str, paras: list):
 @app.post("/api/papers/{pid}/analyze")
 def analyze(pid: str):
     p = _paper_needing_paras(pid)
-    if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
-        # 眉批也在收网析读：两边都会清五问/导师缓存，先结束的一方会删掉刚花钱生成的结果
-        raise HTTPException(400, "AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束")
-    if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
-        return {"status": p["analysis_status"]}
-    if p["analysis_status"] in ("running", "queued"):
-        _applog(f"析读 {pid}: 数据库里是 {p['analysis_status']} 但本进程没有这个任务（上次被中断），重来")
-    _enqueue_analysis(pid, db.get_paragraphs(pid))
+    # 查互斥与占位排队必须同锁：拆开就有 TOCTOU——两边都过了检查再各自启动，照样互相清缓存
+    with _key_lock("job:" + pid):
+        if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
+            # 眉批也在收网析读：两边都会清五问/导师缓存，先结束的一方会删掉刚花钱生成的结果
+            raise HTTPException(400, "AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束")
+        if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
+            return {"status": p["analysis_status"]}
+        if p["analysis_status"] in ("running", "queued"):
+            _applog(f"析读 {pid}: 数据库里是 {p['analysis_status']} 但本进程没有这个任务（上次被中断），重来")
+        _enqueue_analysis(pid, db.get_paragraphs(pid))
     return {"status": "queued"}
 
 @app.get("/api/papers/{pid}/analysis")
@@ -1040,20 +1050,20 @@ _live_lock = threading.Lock()
 _margin_progress = {}
 
 # ---- 长任务取消：协作式。线程在阶段边界查探针，查到就不再写库、状态归回"没做过"。
-_cancel_flags: set = set()
+_cancel_flags: set = set()        # (kind, pid)：旗子按任务种类隔离，取消析读不误杀同篇的眉批
 _cancel_lock = threading.Lock()
 
-def _cancel_requested(pid: str) -> bool:
+def _cancel_requested(kind: str, pid: str) -> bool:
     with _cancel_lock:
-        return pid in _cancel_flags
+        return (kind, pid) in _cancel_flags
 
-def _cancel_request(pid: str):
+def _cancel_request(kind: str, pid: str):
     with _cancel_lock:
-        _cancel_flags.add(pid)
+        _cancel_flags.add((kind, pid))
 
-def _cancel_clear(pid: str):
+def _cancel_clear(kind: str, pid: str):
     with _cancel_lock:
-        _cancel_flags.discard(pid)
+        _cancel_flags.discard((kind, pid))
 
 _analysis_progress: dict = {}   # pid -> {"done": n, "total": m}：析读子任务计数，给"已完成 n/m 项"用
 
@@ -1077,7 +1087,7 @@ def _enqueue_analysis(pid: str, paras: list):
     with _q_lock:
         if pid in _analysis_pending:
             return
-        _cancel_clear(pid)          # 上次取消留下的旗子别误杀这次
+        _cancel_clear("analysis", pid)   # 上次取消留下的旗子别误杀这次
         _analysis_pending.add(pid)
         db.update_paper(pid, analysis_status="queued", analysis_error=None)
         _analysis_q.put((pid, paras))
@@ -1150,8 +1160,8 @@ def _run_marginalia(pid: str):
             on_chunk(1, 1)
         else:
             notes, misses = llm.analyze_marginalia(title, use, on_chunk=on_chunk, kind=kind,
-                                                   should_stop=lambda: _cancel_requested(pid))
-        if _cancel_requested(pid):
+                                                   should_stop=lambda: _cancel_requested("marginalia", pid))
+        if _cancel_requested("marginalia", pid):
             db.update_paper(pid, marginalia_status="none", marginalia_error=None)
             _applog(f"眉批 {pid}: 已取消")
             return
@@ -1177,24 +1187,25 @@ def _run_marginalia(pid: str):
         _applog(f"眉批失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
         db.fail_marginalia(pid, _human_msg(e))
     finally:
-        _cancel_clear(pid)
+        _cancel_clear("marginalia", pid)
         _margin_progress.pop(pid, None)
         _job_done("marginalia", pid)
 
 @app.post("/api/papers/{pid}/marginalia")
 def marginalia_start(pid: str):
     _paper_or_404(pid)
-    if _analysis_inflight(pid):
-        raise HTTPException(400, "析读还在跑——它和眉批会互相清对方的缓存，先等析读结束")
-    _cancel_clear(pid)              # 上次取消留下的旗子别误杀这次
-    with _live_lock:
-        if _job_live("marginalia", pid):
-            return {"status": "running"}
-        _live_jobs.add(("marginalia", pid))
-    _margin_progress[pid] = {"done": 0, "total": 0, "t0": time.time()}
-    db.update_paper(pid, marginalia_status="running", marginalia_error=None)
-    threading.Thread(target=_run_marginalia, args=(pid,), daemon=True).start()
-    return {"status": "running"}
+    with _key_lock("job:" + pid):       # 与 analyze 同一把每篇锁：检查+占位原子化
+        if _analysis_inflight(pid):
+            raise HTTPException(400, "析读还在跑——它和眉批会互相清对方的缓存，先等析读结束")
+        _cancel_clear("marginalia", pid)    # 上次取消留下的旗子别误杀这次
+        with _live_lock:
+            if _job_live("marginalia", pid):
+                return {"status": "running"}
+            _live_jobs.add(("marginalia", pid))
+        _margin_progress[pid] = {"done": 0, "total": 0, "t0": time.time()}
+        db.update_paper(pid, marginalia_status="running", marginalia_error=None)
+        threading.Thread(target=_run_marginalia, args=(pid,), daemon=True).start()
+        return {"status": "running"}
 
 @app.get("/api/papers/{pid}/marginalia")
 def marginalia_get(pid: str):
@@ -1221,13 +1232,13 @@ def marginalia_get(pid: str):
 def analysis_cancel(pid: str):
     """请求取消析读：正在跑的线程在阶段边界看到旗子就停，已生成的部分保留。"""
     _paper_or_404(pid)
-    _cancel_request(pid)
+    _cancel_request("analysis", pid)
     return {"ok": True}
 
 @app.post("/api/papers/{pid}/marginalia/cancel")
 def marginalia_cancel(pid: str):
     _paper_or_404(pid)
-    _cancel_request(pid)
+    _cancel_request("marginalia", pid)
     return {"ok": True}
 
 @app.post("/api/papers/{pid}/translate-full/cancel")
@@ -1307,6 +1318,10 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
         return JSONResponse(json.loads(p[field]))
     if cached and cached_value is not None:
         return cached_value
+    if precond:                              # 锁外快返：前置不满足就别排在一次真生成后面
+        empty = precond(p)
+        if empty is not None:
+            return empty
     with _key_lock(lock + ":" + pid):
         p = db.get_paper(pid)
         if p[field]:

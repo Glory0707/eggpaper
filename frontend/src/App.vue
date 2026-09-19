@@ -516,7 +516,7 @@ const greetKey = ref('')
 const greetText = computed(() => t(greetKey.value))
 /* 日历/目录抽屉与文库同宽：文库面板自己内联 --lib-w，这里是给另外两个抽屉的全局兜底。
    模板表达式拿不到 localStorage 全局，读法收在这里。 */
-const libWCss = () => (lsGet('libW', null) ?? 300) + 'px' 
+const libWCss = () => (store.viewer.libW ?? 300) + 'px'   // 响应式：拖宽后另两只抽屉立刻跟宽
 const greetShow = ref(false)
 const greetShown = new Set()     // 本次运行里已经问候过的时段：冷启动清零，跨时段会再问候
 let greetHideT = 0
@@ -760,6 +760,7 @@ function onKey(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
   if (e.key === 'Escape') {
+    gPending.value = false         // 弦按到一半被 Esc 打断：整条作废
     store.viewer.libOpen = false
     store.viewer.calOpen = false
     store.viewer.tocOpen = false

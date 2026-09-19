@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper, goHome } from '../store'
 import { confirmBox } from '../dialog'
 import { t } from '../i18n'
-import { lsGet, lsSet } from '../ls'
 import { useEdgeResize } from '../edgeResize'
 
 const emit = defineEmits(['import', 'close', 'split'])
@@ -12,11 +11,12 @@ const over = ref(false)
 
 /* ---------- 分栏宽度：和右栏同一个手势（edgeResize.js） ---------- */
 const LIB_MIN = 236, LIB_MAX = 560, LIB_DEF = 300
-const libW = ref(lsGet('libW', null) ?? LIB_DEF)
+const libW = ref(store.viewer.libW)
 const lib = useEdgeResize({
-  get: () => libW.value, set: w => { libW.value = w },
-  min: LIB_MIN, max: LIB_MAX, def: LIB_DEF, persist: w => lsSet('libW', w),
+  get: () => libW.value, set: w => { libW.value = w; store.viewer.libW = w },
+  min: LIB_MIN, max: LIB_MAX, def: LIB_DEF,
 })
+onBeforeUnmount(() => lib.end())
 
 /* ---------- 列表：分类过滤 → 搜索 → 排序 ---------- */
 const q = ref('')
@@ -78,7 +78,11 @@ watch(menuFor, (v, was) => {
     document.removeEventListener('keydown', escMenu, { capture: true })
   }
 })
-function closeMenu() { menuFor.value = null }
+function closeMenu(e) {
+  // ＋ 按钮的点击交给 openMenu 自己的开/关切换（capture 监听先于 @click 触发）
+  if (e?.target?.closest?.('.p-tag')) return
+  menuFor.value = null
+}
 function escMenu(e) { if (e.key === 'Escape') closeMenu() }
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeMenu, { capture: true })

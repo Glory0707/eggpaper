@@ -1,5 +1,5 @@
 import { reactive, watch, computed } from 'vue'
-import { api } from './api'
+import { api, kindZH } from './api'
 import { t, ui } from './i18n'
 import { lsGet, lsSet } from './ls'
 
@@ -31,6 +31,7 @@ export const store = reactive({
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
     railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
+    libW: lsGet('libW', null) ?? 300,      // 文库抽屉宽：日历/目录抽屉共用这把尺
     noteBands: lsGet('noteBands', { good: true, warn: true, noise: true, mine: true }),
     frame: false,
     libOpen: false,
@@ -90,6 +91,7 @@ watch(() => store.viewer.spread, v => lsSet('spread', v))
 watch(() => store.viewer.layers, v => lsSet('layers', v), { deep: true })
 watch(() => store.viewer.railUser, v => lsSet('railUser', v))
 watch(() => store.viewer.railW, v => lsSet('railW', v))
+watch(() => store.viewer.libW, v => lsSet('libW', v))
 watch(() => store.viewer.noteBands, v => lsSet('noteBands', v), { deep: true })
 watch(() => store.lib.sort, v => lsSet('libSort', v))
 

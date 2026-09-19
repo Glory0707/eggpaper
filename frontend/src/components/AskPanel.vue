@@ -1,7 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, store, jumpPara } from '../store'
+import { api, askStream, store, toast, jumpPara } from '../store'
 import { confirmBox, inputBox } from '../dialog'
+import { copyWithToast } from '../clip'
 import { t } from '../i18n'
 import MdLite from './MdLite.vue'
 

@@ -921,7 +921,7 @@ function jumpQuote(n) {
 function jumpBack() {
   const t = backStack.pop()
   if (t == null) return
-  scroller().scrollTo({ top: t, behavior: 'smooth' })
+  scroller()?.scrollTo({ top: t, behavior: 'smooth' })   // 卸载后迟到的调用：没有滚动容器就作罢
   backChip.value = false
 }
 
@@ -1131,6 +1131,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (store.viewerApi === viewerApiObj) store.viewerApi = null   // 活动窗格卸载了，快捷键别再打进来
   selStream?.abort()
   clearTimeout(spyT); clearTimeout(saveT); clearTimeout(scheduleRender._t)
   clearTimeout(focusNote._t); clearTimeout(applyJump._t)

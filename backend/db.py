@@ -285,6 +285,10 @@ def replace_paragraphs(pid: str, paras: list):
         c = _get()
         try:
             c.execute("BEGIN")
+            # 论文行已经不在（刚被删）就不插：惰性补解析的几秒里可能撞上 purge
+            if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
+                c.rollback()
+                return
             c.execute("DELETE FROM paragraphs WHERE paper_id=?", (pid,))
             c.executemany(
                 "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs, lines) VALUES(?,?,?,?,?,?,?)",

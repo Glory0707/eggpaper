@@ -10,6 +10,7 @@ export function useEdgeResize({ get, set, min, max, def, dir = 1, persist = null
   const clamp = w => Math.round(Math.min(max, Math.max(min, w)))
 
   function start(e) {
+    if (e.button !== 0) return     // 右键留着出上下文菜单，别吞掉也别开始拖
     e.preventDefault()
     startX = e.clientX
     startW = get()

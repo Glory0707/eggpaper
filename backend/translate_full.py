@@ -281,7 +281,9 @@ def cancel(pid: str):
     已删掉的论文文件夹里写回 mono.pdf，用户以为删干净了、盘上却留下孤立的译文文件。
     """
     j = job(pid)
-    j["_abort"] = True
+    if j.get("status") in ("running", "queued"):
+        # 只给在跑/在排队的一轮置旗：空闲时置旗会被下一轮 start 当成"取消前到达"误吞
+        j["_abort"] = True
     procs = _RUNNING.get(pid) or []
     for proc in procs:
         try:
@@ -509,7 +511,10 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
 
     def run():
         _say = say = log or (lambda _m: None)
-        j.pop("_abort", None)
+        if j.pop("_abort", None):
+            # start 返回后、线程还没调度到就被取消（或删论文）：安静收场，别照跑到底
+            j.update(status="none", error="", pages=[0, 0])
+            return
         j.update(status="running", error="", dual="", mono="", service=service,
                  note=note, pages=[0, 0], started=time.time())
         page_root = os.path.join(out_dir, ".pages")
@@ -550,8 +555,9 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 n = len(doc)
             stem = os.path.splitext(os.path.basename(pdf_path))[0]
             for pno in range(n):
+                # 页目录名是 1 基（worker 写 p{batch[0]+1}-…），预扫描必须同制，否则永远续不上
                 for t in range(PAGE_TRIES):
-                    got = _page_done(_page_dir(out_dir, pno, t), stem)
+                    got = _page_done(_page_dir(out_dir, pno + 1, t), stem)
                     if got:
                         results[pno] = got
                         break
@@ -628,7 +634,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 j.update(status="error", error=auth_error[0])
                 say(f"整本翻译失败 {pid}：{auth_error[0]}")
                 return
-            if j.get("_abort"):
+            if j.pop("_abort", None):
                 j.update(status="none", error="")      # 用户主动取消，不算一次失败
                 return
 
@@ -688,5 +694,6 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 except Exception:
                     pass
 
+    j.update(status="queued", error="", pages=[0, 0])   # 线程还没跑到的窗口期也让 cancel 有归属
     threading.Thread(target=run, daemon=True).start()
     return j

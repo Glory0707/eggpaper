@@ -2480,3 +2480,42 @@ make_icon.py / icon.md 的「compact 稿/双稿」说法改为一套基准几何
 （g l/g o 互斥、拖宽持久化、cite-foot 实线边 594px、确认框接焦、提问面板、零页面
 错误）；test_edge_concurrency 35 项、test_round2_ui 13 项、test_ui_fixes 14 项全绿
 （首轮「析读最终 done」为冷实例首次解析超 15s 轮询窗的时序偶发，复跑全绿）。
+
+## M4.54 · 第二轮测试员轮：对抗性审计 + 实弹修复 ✅ 已完成（2026-09-20）
+
+0.1.32 不 bump。两路对抗性审计（后端并发/状态机、前端竞态/引用链）+ 实弹验证，
+15 条发现全部修复——其中 3 条是上一轮重构自己引入的回归，实弹测试当场抓住。
+
+**前端回归（重构引入，实弹抓住）**：store.js 的 re-export 不建立局部绑定，
+`askNotePrefill` 里 `kindZH` 未定义 → 页边/右栏两个「问 ↗」全灭（ReferenceError）；
+AskPanel 换 `copyWithToast` 漏 import → 消息复制按钮必炸；同文件 5 处 catch 里的
+`toast` 漏 import → 删消息/重生成等错误路径二次崩。新增 `_qa/check_undef.py` 全站
+扫描「用了但没 import」防复发。
+
+**前端其余**：回书桌后 Alt+←/Ctrl+F 打到已卸载的 viewerApi（jumpBack 里
+`scroller().scrollTo` 空指针）——卸载时归还 viewerApi + jumpBack 空守卫；文库拖宽
+后日历/目录抽屉不跟宽（libW 提进 store 变响应式）；文库「归入分类」＋ 的第二击
+永远关不掉菜单（document capture 监听先于 @click，closeMenu 跳过 ＋ 本体交给
+openMenu 切换）；edgeResize 不看 e.button（右键也开始拖）；LeftRail 拖宽中途卸载
+无清场（补 onBeforeUnmount）；g 弦被 Esc 打断后仍活着（Esc 清 gPending）。
+
+**后端**：
+- **断点续译永远不命中（真·老 bug）**：`.pages/` 预扫描用 0 基页号、worker 写入用
+  1 基目录名，永不重合 → 取消/中断后整本重译重花钱。对齐基制，单测双向验证
+  （修复后命中 p1-0；旧查询确实查不到）。
+- **analyze↔marginalia 互斥的 TOCTOU**：两处 check-then-act 用两把不同的锁，交错
+  进入则双双启动、互相清对方刚花钱生成的缓存。收进同一把每篇任务锁（查互斥+占位
+  原子化），锁序 job→q/live 无反向，无死锁。
+- **取消旗子按 (kind,pid) 隔离**：原先裸 pid 共享，取消析读会误杀同篇正在跑的眉批
+  （反之亦然）；cancel 端点与 worker 两侧全部换键。
+- **整本翻译取消窗口**：start 返回后、线程未调度时的取消会被 `pop("_abort")` 吞掉
+  照跑到底——start 同步占位 queued、cancel 只对 running/queued 置旗、run 收尾清旗
+  （旧旗不残留误杀下一轮）；取消前到达的旗子安静收场不花钱。
+- `_gen_card` precond 补锁外快返（前置不满足的空响应不排在 30s 真生成后面）；
+  双语/译文派生的 `os.replace` 撞被占用句柄时兜 404 而非 500；惰性补解析与删论文
+  并发不再复活孤儿段落（端点复查 + replace_paragraphs 库层校验双重防）；重复上传
+  duplicate 分支补 `no_text/n_captions` 返回键。
+
+**回归**：verify_tester2 实弹 9 项（含并发 analyze×marginalia 互斥、duplicate 形状、
+问↗复活、复制不炸、Alt+← 不炸）；check_undef 0；三套 UI/并发套件 + i18n 513 零缺失
++ 模板匹配 12 单测全绿。
