@@ -9,7 +9,9 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
+import { api, store, toast, jumpPara, askNotePrefill, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
+import { lsGet, lsSet } from '../ls'
+import { copyWithToast } from '../clip'
 
 const props = defineProps({ pid: { type: String, required: true } })
 /* 篇级数据自持：多窗格下每个实例只读自己这篇的段落/角色/批注/元信息，
@@ -40,7 +42,6 @@ import { t, isEn } from '../i18n'
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
 const GUTTER_FULL = 184   // 页边批注带（184 宽 + 12 的左边距）
-const LS_POS = 'eggpaper:pos:'
 
 const deskEl = ref(null)
 const ready = ref(false)
@@ -552,10 +553,9 @@ function hoverNote(id) { hotNote.value = id }
 
 /* 批注的标签：九种常用款用它自己的名字；模型自造的类型（kind='custom'）用模型起的标签；
    你自己钉的那些前面加"你 · "——一眼分得清哪句是别人说的、哪句是你自己写的。 */
-const MINE = new Set(['lookup', 'region', 'note'])
 function kindLabel(n) {
   const zh = kindZH(n)
-  return MINE.has(n.kind) && zh ? t('你 · ') + zh : zh
+  return USER_KINDS.has(n.kind) && zh ? t('你 · ') + zh : zh
 }
 
 /* 引文默认只看开头，想看全句点「全句」。
@@ -706,15 +706,6 @@ function focusNote(n) {
     el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
 }
-function askNote(n) {
-  const kind = kindZH(n) || t('批注')
-  store.viewer.railUser = true
-  store.askPrefill = {
-    question: t('眉批标了「{kind}」：「{note}」——引文是“{quote}”。这条判断站得住吗？依据在哪几段？[¶{n}]',
-                { kind, note: n.note, quote: (n.quote || '').slice(0, 60), n: n.para_idx }),
-    send: true,
-  }
-}
 
 let selStream = null       // 进行中的划词翻译：换选区/关气泡时要掐掉，别让它往已关的气泡里写字
 function closeSel() {
@@ -748,10 +739,7 @@ async function pinSel() {
 }
 
 async function copySel() {
-  try {
-    await navigator.clipboard.writeText(sel.zh || '')
-    toast(t('译文已复制'))
-  } catch { toast(t('复制失败，手动选吧')) }
+  await copyWithToast(sel.zh || '', t('译文已复制'))
 }
 function sendToGlossary() {
   store.glossaryPrefill = { term_en: sel.text.slice(0, 80), term_zh: (sel.zh || '').replace('〔演示译文〕', '').slice(0, 24) }
@@ -1110,10 +1098,10 @@ function onScroll() {
 
 function savePos() {
   if (!scroller()) return
-  localStorage.setItem(LS_POS + props.pid, JSON.stringify({
+  lsSet('pos:' + props.pid, {
     scroll: scroller().scrollTop, variant: store.viewer.variant,
     spread: store.viewer.spread, zoom: zoom.value, fit: fit.value,
-  }))
+  })
 }
 function saveLater() { clearTimeout(saveT); saveT = setTimeout(savePos, 250) }
 
@@ -1124,16 +1112,10 @@ onMounted(async () => {
       setTimeout(() => (freshNotes.value = false), 1800)
     }
   }).catch(() => {})
-  if (mnotes.value.length) {
-    freshNotes.value = true
-    setTimeout(() => (freshNotes.value = false), 1800)
-  }
-  try {
-    const saved = JSON.parse(localStorage.getItem(LS_POS + props.pid) || '{}')
-    savedScroll = saved.scroll ?? null
-    if (saved.fit) fit.value = saved.fit
-    if (saved.zoom) zoom.value = saved.zoom
-  } catch { /* */ }
+  const saved = lsGet('pos:' + props.pid, {})
+  savedScroll = saved.scroll ?? null
+  if (saved.fit) fit.value = saved.fit
+  if (saved.zoom) zoom.value = saved.zoom
   await load()
   await nextTick()
   await measureNotes()
@@ -1374,7 +1356,7 @@ watch(store.marginalia, m => {
                   {{ pending ? t('翻译中') : kindLabel(n) }}
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? t('收起') : t('展开') }}</span>
-                                <button v-if="!pending" class="mg-ask" @click.stop="askNote(n)">{{ t('问 ↗') }}</button>
+                                <button v-if="!pending" class="mg-ask" @click.stop="askNotePrefill(n, { openRail: true })">{{ t('问 ↗') }}</button>
                 <button v-if="!pending" class="mg-del" @click.stop="unpin(n.id)">×</button>
               </div>
               <div class="mg-body">{{ prettyChem(n.note) }}</div>

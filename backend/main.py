@@ -49,12 +49,7 @@ def _demo_mode(cfg: dict = None) -> bool:
     cfg = cfg or config.load()
     return bool(cfg["mock"]) or not (cfg.get("provider", {}).get("api_key") or "").strip()
 
-def _demo_txt(zh: str, en: str) -> str:
-    """演示数据的语言跟界面走：纯英文用户不该拿到一手中文假数据。"""
-    try:
-        return en if (config.load().get("ui_lang") or "zh") == "en" else zh
-    except Exception:
-        return zh
+_demo_txt = llm._demo_txt          # 演示文案双语：与 llm 共用同一份实现
 
 def _human_msg(exc: Exception) -> str:
     """把模型服务最常见的几种失败翻成人话。异常处理器与新加的流式问答共用这一份，
@@ -126,8 +121,7 @@ def _migrate_paper_layout():
     """旧平铺布局（library/{pid}.pdf、translated/{pid}-mono/dual.pdf、translated/.pages-{pid}/）
     一次性搬进 papers/{pid}/，db 里的路径同步改写。
 
-    0.1.29 之前原 PDF 和译文平铺在两个公共目录里，论文一多就对不上号；
-    现在每篇一个文件夹：paper.pdf + mono.pdf + dual.pdf + .pages/，删论文 = 删文件夹。
+    布局：每篇一个文件夹——paper.pdf + mono.pdf + dual.pdf + .pages/，删论文 = 删文件夹。
     搬完后旧目录里剩下的必然是没有论文指向的孤儿，整个清掉；
     有文件搬不动（被占用）就不删目录，下次启动接着试。"""
     lib = os.path.join(config.DATA_DIR, "library")
@@ -681,11 +675,30 @@ def _require_paras(pid: str) -> None:
     if not db.get_paragraphs(pid):
         raise HTTPException(400, NO_TEXT)
 
+
+def _int_arg(v, status: int, msg: str) -> int:
+    """请求参数里的裸 int：坏值回一句人话，别让 ValueError 冒成 500 被误译成模型错误。"""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(status, msg)
+
+
+def _paper_needing_paras(pid: str) -> dict:
+    """「这篇存在且读得了」是绝大多数生成端点的共同前置。"""
+    p = _paper_or_404(pid)
+    _require_paras(pid)
+    return p
+
 @app.get("/api/papers/{pid}")
 def get_paper(pid: str):
+    """打开/换篇每次都拉：各生成卡的大 JSON 留在各自端点里，别跟着这一趟白跑。"""
     p = _paper_or_404(pid)
     paras = db.get_paragraphs(pid)
     p["n_paragraphs"] = len(paras)
+    for k in ("summary", "suggest", "advisor", "method_card", "citation",
+              "evidence_qs", "path", "mono_path", "dual_path", "pdf_hash"):
+        p.pop(k, None)
     return p
 
 def _detect_paper_type(title: str, paras: list) -> str:
@@ -785,18 +798,12 @@ def delete_paper(pid: str):
     _rm(p["dual_path"]); _rm(p.get("mono_path"))
     return {"ok": True}
 
-_variant_locks: dict = {}
-_gen_locks: dict = {}
+_key_locks: dict = {}
 
-def _gen_lock(key: str) -> threading.Lock:
-    """同步生成端点的按篇锁：同一篇的摘要/建议/五问/方法卡/引用连点只跑一次，
-    第二个请求等在锁上，拿到锁后命中缓存直接返回——不再双倍烧钱。"""
-    return _gen_locks.setdefault(key, threading.Lock())
-_variant_guard = threading.Lock()
-
-def _variant_lock(key: str) -> threading.Lock:
-    with _variant_guard:
-        return _variant_locks.setdefault(key, threading.Lock())
+def _key_lock(key: str) -> threading.Lock:
+    """按 key 取进程内互斥锁（dict.setdefault 本身原子，不需要守护锁）：
+    同一 key 的生成任务并发请求在这里排队，拿锁的一方真生成，后到者重读缓存直接返回。"""
+    return _key_locks.setdefault(key, threading.Lock())
 
 @app.get("/api/papers/{pid}/pdf")
 def paper_pdf(pid: str, variant: str = "original"):
@@ -808,7 +815,7 @@ def paper_pdf(pid: str, variant: str = "original"):
         mono = p.get("mono_path") or os.path.join(paper_dir(pid), "mono.pdf")
         src = p.get("path") or ""
         if (mono and os.path.exists(mono) and src and os.path.exists(src)):
-            with _variant_lock(pid + ":dual"):
+            with _key_lock("variant:" + pid + ":dual"):
                 dual = os.path.join(paper_dir(pid), "dual.pdf")
                 if not os.path.exists(dual):
                     translate_full.derive_dual(src, mono, dual)
@@ -821,7 +828,7 @@ def paper_pdf(pid: str, variant: str = "original"):
             return FileResponse(mono, media_type="application/pdf")
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
-            with _variant_lock(pid + ":mono"):
+            with _key_lock("variant:" + pid + ":mono"):
                 mono = os.path.join(paper_dir(pid), "mono.pdf")
                 if not os.path.exists(mono):
                     translate_full.derive_mono(dual, mono)
@@ -948,8 +955,7 @@ def _run_analysis(pid: str, paras: list):
 
 @app.post("/api/papers/{pid}/analyze")
 def analyze(pid: str):
-    p = _paper_or_404(pid)
-    _require_paras(pid)
+    p = _paper_needing_paras(pid)
     if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
         # 眉批也在收网析读：两边都会清五问/导师缓存，先结束的一方会删掉刚花钱生成的结果
         raise HTTPException(400, "AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束")
@@ -1242,10 +1248,7 @@ def pin_lookup(pid: str, body: dict):
     note = (body.get("note") or "").strip()
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
-    try:
-        para_idx = int(body.get("para_idx") or 0)
-    except (TypeError, ValueError):
-        raise HTTPException(400, "para_idx 得是整数")
+    para_idx = _int_arg(body.get("para_idx") or 0, 400, "para_idx 得是整数")
     try:
         page = int(body.get("page") or 0)
     except (TypeError, ValueError):
@@ -1279,55 +1282,6 @@ def marginalia_remove(pid: str, mid: int):
 
 # ---------------- 一眼卡 ----------------
 
-@app.get("/api/papers/{pid}/summary")
-def summary(pid: str):
-    p = _paper_or_404(pid)
-    _require_paras(pid)
-    if p["summary"]:
-        return JSONResponse(json.loads(p["summary"]))
-    with _gen_lock("summary:" + pid):
-        p = db.get_paper(pid)                      # 锁内重读：等锁期间可能已被首个请求写回
-        if p["summary"]:
-            return JSONResponse(json.loads(p["summary"]))
-        if _demo_mode():
-            data = {"one_line": _demo_txt("〔演示模式〕这是一篇测试论文的一眼卡摘要。",
-                                          "[demo mode] A one-glance summary of a test paper."),
-                    "contributions": _demo_txt("演示贡献", "demo contributions"),
-                    "methods": _demo_txt("演示方法", "demo methods"),
-                    "findings": _demo_txt("演示发现", "demo findings"),
-                    "keywords": [_demo_txt("演示", "demo")]}
-        else:
-            paras = db.get_paragraphs(pid)
-            hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
-            data = llm.summarize(p["title"], paras, hits)
-            _require_shape(data, ("one_line", "findings", "keywords"), "一眼卡")
-        db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
-    return data
-
-@app.get("/api/papers/{pid}/suggest")
-def suggest(pid: str):
-    p = _paper_or_404(pid)
-    _require_paras(pid)
-    if p["suggest"]:
-        return JSONResponse(json.loads(p["suggest"]))
-    if p["analysis_status"] != "done":
-        return {"questions": []}
-    with _gen_lock("suggest:" + pid):
-        p = db.get_paper(pid)
-        if p["suggest"]:
-            return JSONResponse(json.loads(p["suggest"]))
-        if p["analysis_status"] != "done":
-            return {"questions": []}
-        if _demo_mode():
-            data = {"questions": [_demo_txt("〔演示〕核心证据的强度如何？", "[demo] How strong is the core evidence?"),
-                                  _demo_txt("〔演示〕方法上有什么可挑剔的？", "[demo] What is methodologically questionable?")]}
-        else:
-            _, claims, annos = db.get_analysis(pid)
-            data = llm.suggest_questions(p["title"], claims, annos)
-            _require_shape(data, ("questions",), "提问建议")
-        db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
-    return data
-
 def _require_shape(data, keys: tuple, what: str):
     """模型返回的形状不对/是空的，就别把它当成功缓存下来。
 
@@ -1339,36 +1293,81 @@ def _require_shape(data, keys: tuple, what: str):
     if not isinstance(data, dict) or not any(data.get(k) for k in keys):
         raise HTTPException(503, f"{what}没生成出来（模型这次返回的是空的），过一会儿再点一次")
 
+
+def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
+              demo_fn, real_fn, precond=None, cached_value=None, cached: bool = False):
+    """一眼卡/提问建议/导师三问/方法卡四个端点同用的骨架：
+
+    锁外缓存命中 → （cached=1 只读不生成）→ 按篇锁 → 锁内重读（等锁期间可能已被
+    首个请求写回）→ 前置条件 → 演示或真身生成 → 形状闸 → 写回。
+    precond(p) 返回非 None 即"前置条件不满足"的空响应（如还没析读的提问建议）。
+    """
+    p = _paper_needing_paras(pid)
+    if p[field]:
+        return JSONResponse(json.loads(p[field]))
+    if cached and cached_value is not None:
+        return cached_value
+    with _key_lock(lock + ":" + pid):
+        p = db.get_paper(pid)
+        if p[field]:
+            return JSONResponse(json.loads(p[field]))
+        if cached and cached_value is not None:
+            return cached_value
+        empty = precond(p) if precond else None
+        if empty is not None:
+            return empty
+        if _demo_mode():
+            data = demo_fn()
+        else:
+            data = real_fn(p)
+            _require_shape(data, shape, what)
+        db.update_paper(pid, **{field: json.dumps(data, ensure_ascii=False)})
+    return data
+
+
+@app.get("/api/papers/{pid}/summary")
+def summary(pid: str):
+    def real(p):
+        paras = db.get_paragraphs(pid)
+        hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
+        return llm.summarize(p["title"], paras, hits)
+    return _gen_card(pid, "summary", "summary", what="一眼卡", shape=("one_line", "findings", "keywords"),
+                     demo_fn=lambda: {"one_line": _demo_txt("〔演示模式〕这是一篇测试论文的一眼卡摘要。",
+                                                            "[demo mode] A one-glance summary of a test paper."),
+                                      "contributions": _demo_txt("演示贡献", "demo contributions"),
+                                      "methods": _demo_txt("演示方法", "demo methods"),
+                                      "findings": _demo_txt("演示发现", "demo findings"),
+                                      "keywords": [_demo_txt("演示", "demo")]},
+                     real_fn=real)
+
+@app.get("/api/papers/{pid}/suggest")
+def suggest(pid: str):
+    def real(p):
+        _, claims, annos = db.get_analysis(pid)
+        return llm.suggest_questions(p["title"], claims, annos)
+    return _gen_card(pid, "suggest", "suggest", what="提问建议", shape=("questions",),
+                     demo_fn=lambda: {"questions": [_demo_txt("〔演示〕核心证据的强度如何？", "[demo] How strong is the core evidence?"),
+                                                    _demo_txt("〔演示〕方法上有什么可挑剔的？", "[demo] What is methodologically questionable?")]},
+                     real_fn=real,
+                     precond=lambda p: {"questions": []} if p["analysis_status"] != "done" else None)
+
 KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别扭", "redundant": "多余重复",
            "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑",
            "conflict": "前后打架", "lookup": "查译", "region": "选区问答", "note": "批注"}
 
 @app.get("/api/papers/{pid}/advisor")
 def advisor(pid: str, cached: bool = False):
-    p = _paper_or_404(pid)
-    _require_paras(pid)
-    if p["advisor"]:
-        return JSONResponse(json.loads(p["advisor"]))
-    if cached:
-        return {"questions": []}
-    with _gen_lock("advisor:" + pid):        # 连点只付一次钱：锁内重读缓存，第二拍直接命中
-        p = db.get_paper(pid)
-        if p["advisor"]:
-            return JSONResponse(json.loads(p["advisor"]))
-        if cached:
-            return {"questions": []}
-        if p["analysis_status"] != "done":
-            return {"questions": []}
-        if _demo_mode():
-            data = {"questions": [{"q": _demo_txt("〔演示〕证据够硬吗？", "[demo] Is the evidence solid enough?"),
-                                   "outline": [_demo_txt("演示要点", "demo outline")]}]}
-        else:
-            _, claims, annos = db.get_analysis(pid)
-            warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
-            data = llm.advisor_questions(p["title"], claims, warns, kind=_ensure_paper_type(pid))
-            _require_shape(data, ("questions",), "导师三问")
-        db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
-    return data
+    """连点只付一次钱：锁内重读缓存，第二拍直接命中。"""
+    def real(p):
+        _, claims, annos = db.get_analysis(pid)
+        warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
+        return llm.advisor_questions(p["title"], claims, warns, kind=_ensure_paper_type(pid))
+    empty = {"questions": []}
+    return _gen_card(pid, "advisor", "advisor", what="导师三问", shape=("questions",),
+                     demo_fn=lambda: {"questions": [{"q": _demo_txt("〔演示〕证据够硬吗？", "[demo] Is the evidence solid enough?"),
+                                                     "outline": [_demo_txt("演示要点", "demo outline")]}]},
+                     real_fn=real, cached=cached, cached_value=empty,
+                     precond=lambda p: empty if p["analysis_status"] != "done" else None)
 
 @app.post("/api/ask-visual")
 def ask_visual(body: dict):
@@ -1503,7 +1502,7 @@ def six_answer(pid: str, key: str):
     _paper_or_404(pid)
     if key not in SIX_KEYS:
         raise HTTPException(404, "没有这个问题")
-    with _gen_lock("six:" + pid + ":" + key):
+    with _key_lock("six:" + pid + ":" + key):
         cached = db.answer_get(pid, key)
         if cached and key in ("lens", "next") and not cached.get("v"):
             cached = None
@@ -1518,32 +1517,19 @@ def six_answer(pid: str, key: str):
 
 @app.get("/api/papers/{pid}/method-card")
 def method_card(pid: str, cached: bool = False):
-    p = _paper_or_404(pid)
-    _require_paras(pid)
-    if p["method_card"]:
-        return JSONResponse(json.loads(p["method_card"]))
-    if cached:
-        return {}
-    with _gen_lock("mcard:" + pid):
-        p = db.get_paper(pid)
-        if p["method_card"]:
-            return JSONResponse(json.loads(p["method_card"]))
-        if cached:
-            return {}
-        if _demo_mode():
-            data = {"goal": _demo_txt("〔演示〕可复现 protocol", "[demo] Reproducible protocol"),
-                    "system": _demo_txt("演示体系", "demo system"),
-                    "conditions": _demo_txt("演示条件", "demo conditions"),
-                    "steps": [_demo_txt("步骤一", "Step one"), _demo_txt("步骤二", "Step two")],
-                    "notes": ""}
-        elif p.get("paper_type") == "review":
-            data = llm.survey_card(p["title"], db.get_paragraphs(pid))
-            _require_shape(data, ("goal", "steps"), "谱系卡")
-        else:
-            data = llm.method_card(p["title"], db.get_paragraphs(pid))
-            _require_shape(data, ("goal", "steps"), "方法卡")
-        db.update_paper(pid, method_card=json.dumps(data, ensure_ascii=False))
-    return data
+    def real(p):
+        what, fn = (("谱系卡", llm.survey_card) if p.get("paper_type") == "review"
+                    else ("方法卡", llm.method_card))
+        data = fn(p["title"], db.get_paragraphs(pid))
+        _require_shape(data, ("goal", "steps"), what)
+        return data
+    return _gen_card(pid, "method_card", "mcard", what="方法卡", shape=("goal", "steps"),
+                     demo_fn=lambda: {"goal": _demo_txt("〔演示〕可复现 protocol", "[demo] Reproducible protocol"),
+                                      "system": _demo_txt("演示体系", "demo system"),
+                                      "conditions": _demo_txt("演示条件", "demo conditions"),
+                                      "steps": [_demo_txt("步骤一", "Step one"), _demo_txt("步骤二", "Step two")],
+                                      "notes": ""},
+                     real_fn=real, cached=cached, cached_value={})
 
 @app.get("/api/papers/{pid}/citation")
 def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
@@ -1566,7 +1552,7 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
                 "journal_abbr": "J. Demo Chem.", "year": "2024", "volume": "12",
                 "issue": "3", "pages": "345-352", "doi": "10.0000/demo.2024.12345"}
     else:
-      with _gen_lock("cite:" + pid):
+      with _key_lock("cite:" + pid):
         p = db.get_paper(pid)
         if p["citation"] and not refresh:
             meta = json.loads(p["citation"])
@@ -1861,10 +1847,11 @@ def _figure_regions(path):
                     caps.append({"rect": brect, "kind": cap[0], "label": cap[1],
                                  "caption": cap_txt[:260] + ("…" if len(cap_txt) > 260 else "")})
                     continue
-                if sum(_wide_flags(rects, colw_of, lm, rm)) * 2 >= len(rects):
+                wide = _wide_flags(rects, colw_of, lm, rm)   # O(n²) 邻行扫描，只算一遍
+                if sum(wide) * 2 >= len(rects):
                     blockers.append(brect)
                 else:
-                    cands.extend((r, False, w) for r, w in zip(rects, _wide_flags(rects, colw_of, lm, rm)))
+                    cands.extend((r, False, w) for r, w in zip(rects, wide))
             for info in page.get_image_info():
                 r = pymupdf.Rect(info["bbox"])
                 if r.width < 12 or r.height < 8 or r.get_area() > 0.85 * pw * ph:
@@ -2180,10 +2167,7 @@ def ask(pid: str, body: dict):
     _require_paras(pid)
     conv_id = body.get("conv_id")
     if conv_id:
-        try:
-            conv_id = int(conv_id)
-        except (TypeError, ValueError):
-            raise HTTPException(404, "会话不存在")
+        conv_id = _int_arg(conv_id, 404, "会话不存在")
         c = db.conv_get(conv_id)
         if not c or c["paper_id"] != pid:
             raise HTTPException(404, "会话不存在")
@@ -2239,10 +2223,7 @@ def qa_save(pid: str, body: dict):
     if not content:
         return {"ok": False}
     if conv_id:
-        try:
-            conv_id = int(conv_id)
-        except (TypeError, ValueError):
-            raise HTTPException(404, "会话不存在")
+        conv_id = _int_arg(conv_id, 404, "会话不存在")
         c = db.conv_get(conv_id)
         if not c or c["paper_id"] != pid:
             raise HTTPException(404, "会话不存在")
@@ -2257,10 +2238,7 @@ def qa_regenerate(pid: str, body: dict):
     conv_id = body.get("conv_id")
     if not conv_id:
         raise HTTPException(400, "缺少会话")
-    try:
-        conv_id = int(conv_id)
-    except (TypeError, ValueError):
-        raise HTTPException(400, "缺少会话")
+    conv_id = _int_arg(conv_id, 400, "缺少会话")
     q = db.qa_drop_last_assistant(pid, conv_id)
     if not q:
         raise HTTPException(400, "没有可重新生成的问题")
@@ -2366,10 +2344,7 @@ def translate_selection(pid: str, body: dict):
 def translate_para(pid: str, body: dict):
     _paper_or_404(pid)
     paras = {p_["idx"]: p_ for p_ in db.get_paragraphs(pid)}
-    try:
-        idx = int(body.get("idx"))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "缺 idx（要译哪一段）")
+    idx = _int_arg(body.get("idx"), 400, "缺 idx（要译哪一段）")
     if idx not in paras:
         raise HTTPException(404, "段落不存在")
     _require_paras(pid)
@@ -2476,23 +2451,15 @@ def glossary_add(pid: str, body: dict):
                           body.get("source", "manual"))
     return {"id": gid}
 
-_terms_locks: dict = {}
-_terms_guard = threading.Lock()
-
-def _terms_lock(pid: str) -> threading.Lock:
-    with _terms_guard:
-        return _terms_locks.setdefault(pid, threading.Lock())
-
 @app.post("/api/papers/{pid}/glossary/generate")
 def glossary_generate(pid: str):
     """按篇发掘术语（+这篇自己的缩写）：这一篇还没有词表时，打开术语页调它一次。
 
-    为什么要懒生成：0.1.12 之前词表是全库共用的（那批种子行已删），旧论文的按篇词表是空的，
-    而"为了看一眼术语把整篇重新析读一遍"的代价太大。这里只在**确实为空**时花钱，
-    生成过就纯读库（第二次进来不发请求）。析读时照样会生成，这条路只是补历史欠账。
+    这里只在**确实为空**时花钱，生成过就纯读库（第二次进来不发请求）——
+    为了看一眼术语把整篇重新析读一遍的代价不能有。析读时照样会生成，这条路只是兜漏网。
     """
     _paper_or_404(pid)
-    with _terms_lock(pid):
+    with _key_lock("terms:" + pid):
         rows = db.glossary_list(pid)
         if rows:
             return {"items": rows, "generated": False, "abbrs": _abbrs_of(pid)}

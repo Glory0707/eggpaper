@@ -6,19 +6,6 @@ import httpx
 
 import config
 
-ROLES = ["background", "gap", "claim", "evidence", "control", "boilerplate", "extension", "limitation"]
-
-ROLE_ZH = {
-    "background": "背景铺垫",
-    "gap": "缺口转折",
-    "claim": "核心主张",
-    "evidence": "关键证据",
-    "control": "对照参比",
-    "boilerplate": "标准流程",
-    "extension": "优化拓展",
-    "limitation": "让步局限",
-}
-
 # ---------------- 基础调用 ----------------
 
 # 连接复用：每次 httpx.post 都要重新 TCP+TLS 握手（走代理时上百毫秒），
@@ -456,8 +443,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
 def suggest_questions(title: str, claims: list, annos: dict) -> dict:
     """提问面板空态里的起步问题。
 
-    这一栏和"导师三问"曾经撞车：两边都拿主张当素材、都在挑"证据强度/方法选择/适用边界"，
-    生成出来是同一批问题换两种说法。这里改口径——**这一栏只帮读者读懂**（这里到底怎么做的、
+    口径与"导师三问"划死边界：**这一栏只帮读者读懂**（这里到底怎么做的、
     数字是在什么条件下得的、这个说法能不能推广到我要用的体系），审稿人式挑刺归导师三问。
     """
     claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
@@ -479,8 +465,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
 def _clip_q(q: str) -> str:
     """问题的长度上限只做兜底，且断在标点处。
 
-    原来直接 `[:80]`——四个问题末尾全是半句（"…是否包含 vdW 色散修正与零点能"），
-    读者拿到的是残句，比长一点糟糕得多。口径收窄成"短问题"后，兜底也跟着收：
+    兜底截断必须断在标点：残句（"…与零点能"）比长一点糟糕得多。
     超 60 字按用户的标准已经是长的了。"""
     q = q.strip()
     if len(q) <= 60:
@@ -583,10 +568,6 @@ def summarize_dialog(prev: str, messages: list) -> str:
     except Exception:
         return prev
 
-def ask(title: str, paras: list, history: list, question: str, hits=None, summary: str = "") -> dict:
-    out = chat(ask_messages(title, paras, history, question, hits, summary), max_tokens=6000, temperature=0.3)
-    return {"answer": out, "citations": cites_of(out)}
-
 # ---------------- 划词/段落翻译 ----------------
 
 def translate_messages(text: str, context: str = "", hits: list = None) -> list:
@@ -603,10 +584,6 @@ def translate_messages(text: str, context: str = "", hits: list = None) -> list:
         {"role": "system", "content": "你是资深学术翻译，擅长化学/材料/工程领域论文的中英互译。"},
         {"role": "user", "content": user},
     ]
-
-def translate(text: str, context: str = "", hits: list = None) -> str:
-    out = chat(translate_messages(text, context, hits), max_tokens=4000, temperature=0.1)
-    return out.strip()
 
 def translate_stream(text: str, context: str = "", hits: list = None):
     """逐字翻译。划词等场景等不了 10 秒的整段——首字 1 秒内就该出现。

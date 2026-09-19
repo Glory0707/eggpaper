@@ -1,4 +1,5 @@
 import { reactive, watch } from 'vue'
+import { lsGet, lsSet } from './ls'
 
 /* 界面语言（zh/en）与暗色模式。
  *
@@ -9,9 +10,6 @@ import { reactive, watch } from 'vue'
  * 暗色模式是纯前端的事：localStorage + <html> 上的一个 class。
  */
 
-const LS = 'eggpaper:'
-const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(LS + k)) ?? d } catch { return d } }
-const lsSet = (k, v) => localStorage.setItem(LS + k, JSON.stringify(v))
 
 export const ui = reactive({
   lang: lsGet('lang', 'zh'),     // 'zh' | 'en'
@@ -488,8 +486,6 @@ const EN = {
   '复制图片': 'Copy image',
   '下载图片': 'Download image',
   '图片已复制': 'Image copied',
-
-  /* ---- v0.1.32：取消长任务 / 演示徽标 / 导师三问去回答 / 导出复制 / 键位补齐 ---- */
   '停止': 'Stop',
   '已请求停止，收个尾就停': 'Stop requested — wrapping up',
   '已停止整本翻译': 'Full-text translation stopped',

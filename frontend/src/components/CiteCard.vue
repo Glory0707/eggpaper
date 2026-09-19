@@ -48,7 +48,6 @@ async function load() {
 
 watch(() => store.cite.open, v => { if (v) { data.value = null; load() } })
 watch(() => store.currentId, () => { if (store.cite.open) { data.value = null; load() } })
-watch(() => store.escTick, () => { if (store.cite.open) store.cite.open = false })
 
 async function recognize() {
   busy.value = true

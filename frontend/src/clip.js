@@ -16,3 +16,14 @@ export async function copyText(text) {
   document.body.removeChild(ta)
   return ok
 }
+
+/* 复制 + 吐司：成功说 okMsg，失败说人话（execCommand 兜底也失败才算失败）。
+   各处的成功文案不一样，作为参数传进来；失败文案全站统一。 */
+import { toast } from './store'
+import { t } from './i18n'
+
+export async function copyWithToast(text, okMsg) {
+  const ok = await copyText(text)
+  toast(ok ? okMsg : t('复制失败，手动选吧'))
+  return ok
+}

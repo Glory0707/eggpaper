@@ -32,7 +32,7 @@ import appinfo
 
 _cache = {}
 _lock = threading.Lock()
-_progress = {"state": "idle", "pct": 0, "got": 0, "total": 0, "path": "", "error": "", "message": ""}
+_progress = {"state": "idle", "pct": 0, "got": 0, "total": 0, "path": "", "error": ""}
 
 def _ver_tuple(v: str):
     """版本号比较用：0.10.2 → (0,10,2)。非数字段一律当 0，不抛异常。"""
@@ -95,7 +95,7 @@ def download_dir() -> str:
 
 def download(url: str, sha256: str = "", size: int = 0):
     """把安装包下到临时目录，校验哈希。后台线程里跑，进度用 progress() 轮。"""
-    _set(state="downloading", pct=0, got=0, total=size, path="", error="", message="")
+    _set(state="downloading", pct=0, got=0, total=size, path="", error="")
     try:
         out_dir = download_dir()
         os.makedirs(out_dir, exist_ok=True)
@@ -120,7 +120,7 @@ def download(url: str, sha256: str = "", size: int = 0):
             os.remove(out)
             _set(state="error", error="下下来的安装包校验不一致（可能没下完或被改过），已丢弃")
             return
-        _set(state="ready", path=out, pct=100, message="安装包已就绪")
+        _set(state="ready", path=out, pct=100)
     except Exception as e:
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:160]}")
 

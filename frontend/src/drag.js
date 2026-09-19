@@ -1,3 +1,5 @@
+import { lsGet, lsSet } from './ls'
+
 const EDGE = 8
 
 export const vDrag = {
@@ -50,7 +52,7 @@ export const vDrag = {
           node.addEventListener('click', swallow, { capture: true, once: true })
           setTimeout(() => node.removeEventListener('click', swallow, true), 0)
         }
-        if (opts.key) localStorage.setItem('eggpaper:drag:' + opts.key, JSON.stringify(off))
+        if (opts.key) lsSet('drag:' + opts.key, off)
       }
       moved = 0
     }
@@ -75,7 +77,7 @@ export const vDrag = {
     el.__dragResize = onResize
     el.classList.add('draggable')
     if (opts.key) {
-      try { off = JSON.parse(localStorage.getItem('eggpaper:drag:' + opts.key) || '') || off } catch { /* */ }
+      off = lsGet('drag:' + opts.key, null) || off
       if (off.x || off.y) { requestAnimationFrame(() => { off = clamp(off.x, off.y); apply() }) }
     }
     el.addEventListener('pointerdown', onDown)

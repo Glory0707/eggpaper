@@ -1,34 +1,22 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper } from '../store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, goHome } from '../store'
 import { confirmBox } from '../dialog'
 import { t } from '../i18n'
+import { lsGet, lsSet } from '../ls'
+import { useEdgeResize } from '../edgeResize'
 
 const emit = defineEmits(['import', 'close', 'split'])
 const fileInput = ref(null)
 const over = ref(false)
 
-/* ---------- 分栏宽度：和右栏一个手势 ---------- */
+/* ---------- 分栏宽度：和右栏同一个手势（edgeResize.js） ---------- */
 const LIB_MIN = 236, LIB_MAX = 560, LIB_DEF = 300
-const libW = ref(JSON.parse(localStorage.getItem('eggpaper:libW') || 'null') ?? LIB_DEF)
-let lStartX = 0, lStartW = 0
-function startResize(e) {
-  e.preventDefault()
-  lStartX = e.clientX
-  lStartW = libW.value
-  document.body.classList.add('rail-resizing')
-  document.addEventListener('mousemove', onResize)
-  document.addEventListener('mouseup', endResize)
-}
-function onResize(e) {
-  libW.value = Math.round(Math.min(LIB_MAX, Math.max(LIB_MIN, lStartW + (e.clientX - lStartX))))
-}
-function endResize() {
-  document.body.classList.remove('rail-resizing')
-  document.removeEventListener('mousemove', onResize)
-  document.removeEventListener('mouseup', endResize)
-  localStorage.setItem('eggpaper:libW', JSON.stringify(libW.value))
-}
+const libW = ref(lsGet('libW', null) ?? LIB_DEF)
+const lib = useEdgeResize({
+  get: () => libW.value, set: w => { libW.value = w },
+  min: LIB_MIN, max: LIB_MAX, def: LIB_DEF, persist: w => lsSet('libW', w),
+})
 
 /* ---------- 列表：分类过滤 → 搜索 → 排序 ---------- */
 const q = ref('')
@@ -182,12 +170,7 @@ async function del(pid, name) {
     if (next) {
       await store.activatePaper(next, false)             // 同屏还有别的篇：切过去
     } else {
-      store.currentId = null
-      store.paper = null
-      store.paras = []
-      store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-      store.marginalia = { status: 'none', notes: [] }
-      store.summary = null
+      goHome()          // 清场走 store 的正主：epoch/summaryErr/lastPaper 一个不漏
     }
   }
   await refreshPapers()
@@ -199,7 +182,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 <template>
   <div class="lib-panel" :style="{ '--lib-w': libW + 'px' }" @keydown.esc="emit('close')">
     <div class="rail-grip lib-grip" :title="t('拖动改宽度 · 双击复位')"
-         @mousedown="startResize" @dblclick="libW = LIB_DEF"></div>
+         @mousedown="lib.start" @dblclick="lib.reset"></div>
 
     <div class="rail-head">
             <span class="mono-label">{{ t('文库') }}</span>

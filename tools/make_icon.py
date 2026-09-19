@@ -1,6 +1,6 @@
 """从 EggMark.vue 的几何生成应用图标（多尺寸 .ico / 网页 PNG）。
 
-形状来源：frontend/src/components/EggMark.vue 的 **compact 稿**（椭圆环 + 三条线）。
+形状来源：frontend/src/components/EggMark.vue 的**基准几何**（椭圆环 + 三条线）。
 **不是截屏**，是用 Pillow 按同一份几何重画——构建时就地生成，不依赖浏览器。
 几何数字只在 backend/mark.py 里维护一份。
 

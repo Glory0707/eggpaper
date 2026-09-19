@@ -402,19 +402,16 @@ async function poll() {
   } catch { /* 同上 */ }
 }
 
-/* 文库与论文日历同侧互斥：开一个收另一个，永远只有一层抽屉。 */
-function toggleLib() {
-  store.viewer.libOpen = !store.viewer.libOpen
-  if (store.viewer.libOpen) { store.viewer.calOpen = false; store.viewer.tocOpen = false }
+/* 左侧三只抽屉互斥：开一个收另一个，永远只有一层。按钮（可切换）和 g l/c/o（只开不关）
+   都走这一个口，避免各写一份互斥清单后越改越漏。 */
+function openDrawer(name) {
+  store.viewer.libOpen = name === 'lib'
+  store.viewer.calOpen = name === 'cal'
+  store.viewer.tocOpen = name === 'toc'
 }
-function toggleCal() {
-  store.viewer.calOpen = !store.viewer.calOpen
-  if (store.viewer.calOpen) { store.viewer.libOpen = false; store.viewer.tocOpen = false }
-}
-function toggleToc() {
-  store.viewer.tocOpen = !store.viewer.tocOpen
-  if (store.viewer.tocOpen) { store.viewer.libOpen = false; store.viewer.calOpen = false }
-}
+const toggleLib = () => openDrawer(store.viewer.libOpen ? null : 'lib')
+const toggleCal = () => openDrawer(store.viewer.calOpen ? null : 'cal')
+const toggleToc = () => openDrawer(store.viewer.tocOpen ? null : 'toc')
 
 /* 窄窗：右栏改浮层，进窄窗时自动收起一次，把宽度还给论文
    （只在跨过门槛那一拍动手，否则用户手动展开会被反复关掉） */
@@ -519,9 +516,7 @@ const greetKey = ref('')
 const greetText = computed(() => t(greetKey.value))
 /* 日历/目录抽屉与文库同宽：文库面板自己内联 --lib-w，这里是给另外两个抽屉的全局兜底。
    模板表达式拿不到 localStorage 全局，读法收在这里。 */
-const libWCss = () => {
-  try { return (JSON.parse(localStorage.getItem('eggpaper:libW')) ?? 300) + 'px' } catch { return '300px' }
-}
+const libWCss = () => (lsGet('libW', null) ?? 300) + 'px' 
 const greetShow = ref(false)
 const greetShown = new Set()     // 本次运行里已经问候过的时段：冷启动清零，跨时段会再问候
 let greetHideT = 0
@@ -777,9 +772,9 @@ function onKey(e) {
   }
   if (gPending.value) {
     gPending.value = false
-    if (e.key === 'l') { store.viewer.libOpen = true; store.viewer.calOpen = false; e.preventDefault() }
-    if (e.key === 'c') { store.viewer.calOpen = true; store.viewer.libOpen = false; store.viewer.tocOpen = false; e.preventDefault() }
-    if (e.key === 'o') { store.viewer.tocOpen = true; store.viewer.libOpen = false; store.viewer.calOpen = false; e.preventDefault() }
+    if (e.key === 'l') { openDrawer('lib'); e.preventDefault() }
+    if (e.key === 'c') { openDrawer('cal'); e.preventDefault() }
+    if (e.key === 'o') { openDrawer('toc'); e.preventDefault() }
     if (e.key === 'h') { goHome(); e.preventDefault() }
     return
   }

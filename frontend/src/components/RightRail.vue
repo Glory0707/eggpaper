@@ -1,14 +1,16 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf,
+import { api, store, toast, jumpTo, jumpPara, askNotePrefill, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf,
          paperEpoch, samePaper, reloadSummary } from '../store'
+import { useEdgeResize } from '../edgeResize'
 import { lineSpanOf, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import { t, isEn } from '../i18n'
+import { copyText } from '../clip'
 import AskPanel from './AskPanel.vue'
 import MdLite from './MdLite.vue'
 
-/* 眉批只有一个家：纸面页边那些卡。右栏这里曾经还有一份「眉批速览」列表——
+/* 眉批只有一个家：纸面页边那些卡，右栏只给生成入口与档位开关——
    同一批句子在同一页里出现两遍（④里一遍、速览里一遍），删了。 */
 
 const emit = defineEmits(['analyze', 'marginalia'])
@@ -35,7 +37,6 @@ watch(() => store.marginalia.status, (s) => {
   }
 })
 onUnmounted(() => { if (marginTimer) clearInterval(marginTimer) })
-const marginElapsed = computed(() => marginSecs.value)
 
 function excerpt(text, cap = 132) {
   const t = String(text || '').replace(/\s+/g, ' ').trim()
@@ -45,10 +46,6 @@ function excerpt(text, cap = 132) {
   return (stop > cap * 0.55 ? cut.slice(0, stop + 1) : cut + '…')
 }
 
-function jumpPara(idx) {
-  const p = paraByIdx.value[idx]
-  if (p) jumpTo(p.page, p.bbox.y0, p.bbox.y1)
-}
 function jumpNote(n) {
   const p = paraByIdx.value[n.para_idx]
   const span = p ? lineSpanOf(p, sentenceAround(p.text, n.quote) || n.quote) : null
@@ -124,15 +121,6 @@ function gotoSix(k) {
     if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }, 120)
 }
-function askNote(n) {
-  const kind = kindZH(n) || t('批注')
-  store.askPrefill = {
-    question: t('眉批标了「{kind}」：「{note}」——引文是“{quote}”。这条判断站得住吗？依据在哪几段？[¶{n}]',
-                { kind, note: n.note, quote: (n.quote || '').slice(0, 60), n: n.para_idx }),
-    send: true,
-  }
-}
-
 function askIt(q) {
   if (!q) return
   store.askPrefill = { question: q, send: true }
@@ -161,9 +149,10 @@ const exportCopied = ref(false)
 async function copyExport() {
   try {
     const md = await (await fetch(api.exportMdUrl(store.currentId))).text()
-    await navigator.clipboard.writeText(md)
-    exportCopied.value = true
-    setTimeout(() => (exportCopied.value = false), 1600)
+    if (await copyText(md)) {
+      exportCopied.value = true
+      setTimeout(() => (exportCopied.value = false), 1600)
+    } else toast(t('复制失败，手动选吧'))
   } catch (e) { toast(t('复制失败：{m}', { m: e.message })) }
 }
 
@@ -306,36 +295,14 @@ watch(() => store.marginalia.status, s => {
    （body.rail-resizing），松手再交还给 CSS，否则边缘会黏在手后面。
    键盘也能改（←/→），拖不动鼠标的人不该被挡在外面。 */
 const RAIL_MIN = 268, RAIL_MAX = 760, RAIL_DEF = 336
-const railDragging = ref(false)
-let rStartX = 0, rStartW = 0
-
-function startRailResize(e) {
-  e.preventDefault()
-  rStartX = e.clientX
-  rStartW = store.viewer.railW
-  railDragging.value = true
-  document.body.classList.add('rail-resizing')
-  document.addEventListener('mousemove', onRailResize)
-  document.addEventListener('mouseup', endRailResize)
-}
-function onRailResize(e) {
-  const w = rStartW - (e.clientX - rStartX)      // 往左拖 = 变宽
-  store.viewer.railW = Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)))
-}
-function endRailResize() {
-  railDragging.value = false
-  document.body.classList.remove('rail-resizing')
-  document.removeEventListener('mousemove', onRailResize)
-  document.removeEventListener('mouseup', endRailResize)
-  store.reflowTick++          // 拖完了才让论文重新定标，拖的过程中不重排（不然每帧都在重画）
-}
-function nudgeRail(d) {
-  store.viewer.railW = Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, store.viewer.railW + d)))
-  store.reflowTick++
-}
-onUnmounted(() => {
-  endRailResize()
+/* 经典分栏拖动：位移直接写进 railW，宽度过渡由 CSS 负责；拖完才 reflow（不然每帧重画论文）。 */
+const rail = useEdgeResize({
+  get: () => store.viewer.railW, set: w => { store.viewer.railW = w },
+  min: RAIL_MIN, max: RAIL_MAX, def: RAIL_DEF, dir: -1,      // 抓手在左缘：往左拖 = 变宽
+  onEnd: () => { store.reflowTick++ },
 })
+const railDragging = rail.dragging
+onUnmounted(() => { rail.end() })
 
 const isReview = computed(() => store.paper?.paper_type === 'review')
 const methodCard = ref(null)
@@ -517,8 +484,8 @@ watch(() => store.currentId, () => {
   <aside class="rail-right">
         <div class="rail-grip" :class="{ on: railDragging }" role="separator" aria-orientation="vertical"
          tabindex="0" :title="t('拖动改宽度 · 双击复位 · ←→')"
-         @mousedown="startRailResize" @dblclick="store.viewer.railW = RAIL_DEF; store.reflowTick++"
-         @keydown.left.prevent="nudgeRail(28)" @keydown.right.prevent="nudgeRail(-28)"></div>
+         @mousedown="rail.start" @dblclick="rail.reset"
+         @keydown.left.prevent="rail.nudge(28)" @keydown.right.prevent="rail.nudge(-28)"></div>
     <div class="rtabs">
       <button class="rt" :class="{ on: tab === 'skeleton' }" @click="tab = 'skeleton'">{{ t('问题') }}</button>
       <button class="rt" :class="{ on: tab === 'eye' }" @click="tab = 'eye'">{{ t('速览') }}</button>
@@ -614,7 +581,7 @@ watch(() => store.currentId, () => {
                   <span class="e-bar" :style="{ background: kindColor(n) }"></span>
                   <span class="e-note">
                     {{ prettyChem(n.note) }}
-                    <button class="ev-ask" @click.stop="askNote(n)">{{ t('问 ↗') }}</button>
+                    <button class="ev-ask" @click.stop="askNotePrefill(n)">{{ t('问 ↗') }}</button>
                   </span>
                 </div>
                 <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
@@ -661,7 +628,7 @@ watch(() => store.currentId, () => {
               <div class="blk-prog-line">
                 <span v-if="store.marginalia.progress?.total">{{ t('已读 {n}/{m} 块', { n: store.marginalia.progress.done, m: store.marginalia.progress.total }) }}</span>
                 <span v-else>{{ t('正在通读全文') }}</span>
-                <span class="blk-elapsed">{{ marginElapsed }}s</span>
+                <span class="blk-elapsed">{{ marginSecs }}s</span>
               </div>
             </div>
                         <div class="band-bar" v-if="mnotes.length">

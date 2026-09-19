@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, store, toast, jumpTo, paraByIdx } from '../store'
+import { api, askStream, store, jumpPara } from '../store'
 import { confirmBox, inputBox } from '../dialog'
 import { t } from '../i18n'
 import MdLite from './MdLite.vue'
@@ -8,11 +8,6 @@ import MdLite from './MdLite.vue'
 const props = defineProps({ quick: { type: Array, default: () => [] } })
 
 const pid = computed(() => store.currentId)
-
-function jumpPara(idx) {
-  const p = paraByIdx.value[idx]
-  if (p) jumpTo(p.page, p.bbox.y0, p.bbox.y1)
-}
 
 const convs = ref([])
 const convId = ref(null)
@@ -166,10 +161,7 @@ async function delMsg(i) {
   msgs.value.splice(i, 1)
 }
 async function copy(m) {
-  try {
-    await navigator.clipboard.writeText(m.content || '')
-    toast(t('已复制'))
-  } catch { toast(t('复制失败，手动选吧')) }
+  await copyWithToast(m.content || '', t('已复制'))
 }
 
 async function newConv() {

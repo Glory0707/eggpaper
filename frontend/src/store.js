@@ -1,18 +1,14 @@
 import { reactive, watch, computed } from 'vue'
 import { api } from './api'
 import { t, ui } from './i18n'
+import { lsGet, lsSet } from './ls'
 
 /* 只转出组件真的会 import 的那些。颜色/标签的字典（KIND_*、BAND_*）不再对外——
    它们只该通过下面这三个解析口被读到，散出去就又会有人绕过口径直接取色。 */
 export { api, askStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
          bandOf, kindColor, kindText, kindZH } from './api'
+export { lsGet, lsSet } from './ls'
 
-const LS = 'eggpaper:'
-
-export function lsGet(k, d) {
-  try { return JSON.parse(localStorage.getItem(LS + k)) ?? d } catch { return d }
-}
-export function lsSet(k, v) { localStorage.setItem(LS + k, JSON.stringify(v)) }
 
 export const store = reactive({
   vw: window.innerWidth,     // 视口宽度：窄窗要换一套排布（右栏改浮层、栏位让给论文）
@@ -26,7 +22,7 @@ export const store = reactive({
   summaryErr: '',
   settings: null,
   openIds: [],           // 多文献同屏的窗格（1=单篇；2/3 横排、4 四宫格）；currentId = 活动窗格那篇
-  lib: { colls: [], map: {}, coll: 'all', q: '', sort: lsGet('libSort', 'added') },
+  lib: { colls: [], map: {}, coll: 'all', sort: lsGet('libSort', 'added') },
   viewer: {
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
@@ -298,6 +294,23 @@ export async function reloadSummary() {
   store.summaryErr = ''
   try { store.summary = await api.summary(store.currentId) }
   catch (e) { store.summaryErr = e.message }
+}
+
+/* 眉批卡上的「问 ↗」：质疑这条批注的问题直接带进提问面板并发出去。
+   原先在 RightRail（右栏的卡）和 PdfViewer（纸上的卡）各写一份，措辞一改就漏一边。 */
+export function askNotePrefill(n, { openRail = false } = {}) {
+  if (openRail) store.viewer.railUser = true
+  const kind = kindZH(n) || t('批注')
+  store.askPrefill = {
+    question: t('眉批标了「{kind}」：「{note}」——引文是“{quote}”。这条判断站得住吗？依据在哪几段？[¶{n}]',
+                { kind, note: n.note, quote: (n.quote || '').slice(0, 60), n: n.para_idx }),
+    send: true,
+  }
+}
+
+export function jumpPara(idx) {
+  const p = paraByIdx.value[idx]
+  if (p) jumpTo(p.page, p.bbox.y0, p.bbox.y1)
 }
 
 export function jumpTo(page, y0, y1) {

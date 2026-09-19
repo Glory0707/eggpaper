@@ -2441,3 +2441,42 @@ PDF 要 open 四次（title/authors/paras/pymupdf 各一次）；translate_para 
 **回归**：vite 构建；i18n 513 零缺失；模板匹配 12 项单测；verify_r3 实拍验证 10 项
 （terms 渲染/日历 300px/greet 退场/保存栏吸底/后端边界 4 断言/零页面错误）；
 test_edge_concurrency 35 项、test_round2_ui 13 项、test_ui_fixes 14 项全绿。
+
+## M4.53 · 第二轮冗余清理：复用性专项 ✅ 已完成（2026-09-20）
+
+0.1.32 不 bump。三路只读审计（前端复用/后端复用/注释冗余）48 条发现，全部落地。
+
+**纯删除**：llm.py 死代码四段（ask/translate 非流式旧路、ROLES/ROLE_ZH 后端字典）；
+db.py 重复迁移语句与 annotations 的 inferred_role/user_override 死字段（改判链残留，
+列保留兼容旧库）；update.py 无人消费的 message 键；conv_touch 死参数分支；
+Dialog/CiteCard 的 escTick 死监听（触发路径早已不可达）；PdfViewer onMounted 同步必假
+的 freshNotes 块；MINE 与 USER_KINDS 重复 Set；store.lib.q 死字段；marginElapsed 转发
+computed；i18n「停止」词条错误缩进（词条在但检查器看不见）。
+
+**复用性收敛（重点）**：
+- 后端：一眼卡/提问建议/导师三问/方法卡四端点共用骨架抽成 `_gen_card()`（80→30 行，
+  行为逐字等价：锁外缓存→cached 只读→锁内重读→precond→demo/真身→形状闸→写回）；
+  三套锁注册表并成 `_key_lock()`（setdefault 本就原子）；`_int_arg()` 收编 5 处裸
+  try-int；`_paper_needing_paras()` 合并 5 处连用守卫；`_demo_txt` 与 llm 共用一份；
+  glossary_hit 单篇版复用跨篇版；GET /api/papers/{pid} 不再白送六个大 JSON 缓存列；
+  _wide_flags 在图表提取热路径只算一遍（O(n²)）。
+- 前端：左侧三抽屉互斥收成 `openDrawer()`（顺带修了 g l 漏关目录抽屉的真 bug）；
+  ls.js 统一 localStorage 读写（store/i18n/LeftRail/drag/PdfViewer/App 六处收敛，
+  三份实现+四处裸写归一）；clip.js 的 copyText 接管全部剪贴板路径（execCommand 兜底
+  补齐三处裸写）；edgeResize.js 收编左右栏拖宽手势（约 70 行重复归一）；眉批「问 ↗」
+  的预填文案两份归 store.askNotePrefill；jumpPara 两份归 store；LeftRail 删除清场改走
+  goHome()（补回 epoch++/lastPaper 三个漏项）；Dialog 接入 modalFocus（Tab 圈闭+归还，
+  helper 支持初始焦点元素）；styles.css 四处同选择器两半合并；cite-pop 遗物
+  `.cite-foot`（正在把 CiteCard 的实线边改成虚线）删除、`.cite-group` 收窄作用域。
+
+**文档与注释**：README/ux.md/visual.md 清掉已删的略读与旧六问编号（④⑤⑥→③④⑤、
+六行→五行、键盘卡 f 行、动效清单略读行、ASCII 顶栏）；ux.md 右栏默认宽 288→336；
+原则 7「反馈可撤销」（改判已删）换成现行的「长任务可停」；visual.md/ mark.py /
+make_icon.py / icon.md 的「compact 稿/双稿」说法改为一套基准几何；design.md 改判链
+原则改写为如实呈现；版本号叙事注释（0.1.29/0.1.12/[:80]/撞车/眉批速览/fail 前史）
+压成约束本身。
+
+**回归**：vite 构建；i18n 513 零缺失；模板匹配 12 单测；verify_clean 实拍 6 项
+（g l/g o 互斥、拖宽持久化、cite-foot 实线边 594px、确认框接焦、提问面板、零页面
+错误）；test_edge_concurrency 35 项、test_round2_ui 13 项、test_ui_fixes 14 项全绿
+（首轮「析读最终 done」为冷实例首次解析超 15s 轮询窗的时序偶发，复跑全绿）。

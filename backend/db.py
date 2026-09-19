@@ -109,7 +109,6 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE papers ADD COLUMN method_card TEXT",
         "ALTER TABLE papers ADD COLUMN abbrs TEXT",
         "ALTER TABLE papers ADD COLUMN evidence_qs TEXT",
-        "ALTER TABLE papers ADD COLUMN advisor TEXT",
         "ALTER TABLE paragraphs ADD COLUMN lines TEXT",
         "ALTER TABLE qa_messages ADD COLUMN conv_id INTEGER",
         "ALTER TABLE papers ADD COLUMN last_read_at TEXT",
@@ -337,8 +336,8 @@ def set_analysis(pid: str, claims: list, annos: list, status: str = "done", erro
         c.execute("DELETE FROM claims WHERE paper_id=?", (pid,))
         c.executemany("INSERT INTO claims(paper_id, cid, text, anchors) VALUES(?,?,?,?)",
                       [(pid, c_["id"], c_["text"], json.dumps(c_.get("anchors", []))) for c_ in claims])
-        c.executemany("INSERT OR REPLACE INTO annotations(paper_id, para_idx, role, inferred_role, purpose, user_override) VALUES(?,?,?,?,?,0)",
-                      [(pid, int(k), v["role"], v["role"], v.get("purpose", "")) for k, v in annos.items()])
+        c.executemany("INSERT OR REPLACE INTO annotations(paper_id, para_idx, role, purpose) VALUES(?,?,?,?)",
+                      [(pid, int(k), v["role"], v.get("purpose", "")) for k, v in annos.items()])
         c.execute("UPDATE papers SET analysis_status=?, analysis_error=? WHERE id=?", (status, error, pid))
         c.commit()
 
@@ -360,7 +359,7 @@ def clear_ai_results() -> int:
 def fail_analysis(pid: str, error: str):
     """析读失败：**只记状态与原因，不动已经存在的 claims/annotations**。
 
-    为什么单独开一个：失败分支原来走的是 set_analysis(pid, [], {}, status="error")，
+    为什么单独开一个：失败绝不能走会删表的 set_analysis（
     它先把两张表删空再写——一次限流/超时就把用户刚才花过 token 读出来的骨架清空了。
     重算失败应该只是"这次没成"，不该把上次的成果一起赔进去
     （summarize_dialog 早就是"失败退回原摘要"的写法，这里是同一个道理）。"""
@@ -381,9 +380,8 @@ def get_analysis(pid: str):
         m = re.search(r"\d+", str(r["id"]) or "")
         return int(m.group()) if m else 0
     claims = sorted(rows, key=_num)
-    annos = {str(r["para_idx"]): {"role": r["role"], "inferred_role": r["inferred_role"] or r["role"],
-                                  "purpose": r["purpose"], "user_override": bool(r["user_override"])}
-             for r in q("SELECT * FROM annotations WHERE paper_id=?", (pid,))}
+    annos = {str(r["para_idx"]): {"role": r["role"], "purpose": r["purpose"]}
+             for r in q("SELECT para_idx, role, purpose FROM annotations WHERE paper_id=?", (pid,))}
     return paper["analysis_status"], claims, annos
 
 def glossary_list(pid: str):
@@ -436,13 +434,9 @@ def merge_abbrs(pid: str, abbrs: dict) -> int:
     return added
 
 def glossary_hit(pid: str, text: str):
-    """这一篇的词里，有哪些出现在给定文本里（大小写不敏感的子串匹配）。"""
-    hits = []
-    low = text.lower()
-    for r in q("SELECT term_en, term_zh FROM glossary WHERE paper_id=?", (pid,)):
-        if r["term_en"].lower() in low:
-            hits.append({"en": r["term_en"], "zh": r["term_zh"]})
-    return hits
+    """这一篇的词里，有哪些出现在给定文本里（大小写不敏感的子串匹配）。
+    单篇版复用跨篇版：命中结构去掉 paper_id 就是原样。"""
+    return [{k: v for k, v in h.items() if k != "paper_id"} for h in glossary_hits_all([pid], text)]
 
 def glossary_hits_all(pids: list, text: str):
     """跨篇版 glossary_hit：几篇的词一起查，命中时带上所属篇 id——
@@ -513,11 +507,8 @@ def conv_get(cid: int):
     rows = q("SELECT * FROM conversations WHERE id=?", (cid,))
     return dict(rows[0]) if rows else None
 
-def conv_touch(cid: int, title: str = None):
-    if title:
-        q("UPDATE conversations SET updated_at=?, title=? WHERE id=?", (_now(), title[:60], cid), commit=True)
-    else:
-        q("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), cid), commit=True)
+def conv_touch(cid: int):
+    q("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), cid), commit=True)
 
 def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: int = None) -> int:
     """写一条问答。会话已经被删掉时**不写**（返回 0）——否则会留下一条谁也看不到的孤儿，
