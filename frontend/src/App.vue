@@ -414,8 +414,14 @@ const toggleCal = () => openDrawer(store.viewer.calOpen ? null : 'cal')
 const toggleToc = () => openDrawer(store.viewer.tocOpen ? null : 'toc')
 
 /* 窄窗：右栏改浮层，进窄窗时自动收起一次，把宽度还给论文
-   （只在跨过门槛那一拍动手，否则用户手动展开会被反复关掉） */
-watch(() => store.narrow, (n, o) => { if (n && !o) store.viewer.railUser = false })
+   （只在跨过门槛那一拍动手，否则用户手动展开会被反复关掉）。
+   去抖 300ms：视口宽度的瞬时抖动（窗口恢复、嵌入容器重排）不算数——
+   只认"持续停在窄窗"的跨入，否则一次抖动就把用户展开的右栏永久收走。 */
+let narrowDeb = 0
+watch(() => store.narrow, (n, o) => {
+  clearTimeout(narrowDeb)
+  if (n && !o) narrowDeb = setTimeout(() => { if (store.narrow) store.viewer.railUser = false }, 300)
+})
 
 /* 「退出 eggpaper」的页面侧收尾：独立窗口是浏览器 --app 模式，window.close() 有效；
    普通浏览器标签页浏览器不许脚本关（安全模型），关不掉就亮一层兜底遮罩，

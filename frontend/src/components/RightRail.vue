@@ -382,6 +382,8 @@ const figures = ref([])
 const figuresLoading = ref(false)
 const figIdx = ref(-1)
 const lightbox = computed(() => (figIdx.value >= 0 ? figures.value[figIdx.value] || null : null))
+const lbLoaded = ref(false)
+watch(() => figIdx.value, () => { lbLoaded.value = false })
 function figStep(d) {
   if (figures.value.length < 2) return
   figIdx.value = (figIdx.value + d + figures.value.length) % figures.value.length
@@ -776,7 +778,10 @@ watch(() => store.currentId, () => {
     <div class="lightbox" v-if="lightbox" @click="figIdx = -1">
       <div class="lb-stage" @click.stop>
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('上一张（←）')" @click="figStep(-1)">‹</button>
-        <img :src="api.figureUrl(store.currentId, lightbox, 200)" />
+        <span class="lb-imgwrap" :class="{ loading: !lbLoaded }">
+          <span class="lb-loading" v-if="!lbLoaded">{{ t('正在提取原图…') }}</span>
+          <img :src="api.figureUrl(store.currentId, lightbox, 200)" @load="lbLoaded = true" />
+        </span>
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('下一张（→）')" @click="figStep(1)">›</button>
       </div>
             <div class="lb-cap" v-if="lightbox.caption" @click.stop>{{ lightbox.caption }}</div>

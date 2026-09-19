@@ -483,6 +483,7 @@ const EN = {
   '收起目录': 'Hide contents',
   '这份 PDF 没有书签目录': 'This PDF has no embedded outline.',
   '正在找图表…': 'Finding figures…',
+  '正在提取原图…': 'Extracting the original figure…',
   '复制图片': 'Copy image',
   '下载图片': 'Download image',
   '图片已复制': 'Image copied',
