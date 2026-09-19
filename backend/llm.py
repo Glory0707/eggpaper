@@ -804,11 +804,27 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
                           "kind": kind, "label": label, "band": band, "note": note})
     return notes[:48], len(failed)
 
+def _demo_txt(zh: str, en: str) -> str:
+    """演示数据的语言跟界面走（ui_lang）：纯英文用户不该拿到一手中文假数据。"""
+    try:
+        return en if (config.load().get("ui_lang") or "zh") == "en" else zh
+    except Exception:
+        return zh
+
 _MOCK_PURPOSE = {
     "gap": "作者真正的出发点（演示）", "claim": "论文要证明的核心（演示）", "evidence": "核心数据段（演示）",
     "control": "仅为严谨的对照（演示）", "boilerplate": "样板段，可跳过（演示）", "limitation": "作者心虚处（演示）",
     "extension": "锦上添花（演示）", "background": "领域铺垫（演示）",
 }
+_MOCK_PURPOSE_EN = {
+    "gap": "The authors' real starting point (demo)", "claim": "The core the paper proves (demo)",
+    "evidence": "Core data paragraph (demo)", "control": "Control, for rigor only (demo)",
+    "boilerplate": "Boilerplate, skippable (demo)", "limitation": "Where authors hedge (demo)",
+    "extension": "Bonus extension (demo)", "background": "Field background (demo)",
+}
+
+def _mock_purpose(role: str) -> str:
+    return _demo_txt(_MOCK_PURPOSE.get(role, "（演示）"), _MOCK_PURPOSE_EN.get(role, "(demo)"))
 
 def mock_marginalia(paras: list) -> list:
     kinds = ["insight", "padding", "hedge", "ai", "warning", "redundant"]
@@ -816,7 +832,7 @@ def mock_marginalia(paras: list) -> list:
     for i, p in enumerate([p for p in paras if not p["in_refs"]][:6]):
         k = kinds[i % len(kinds)]
         notes.append({"para_idx": p["idx"], "page": p["page"], "quote": p["text"][:60], "kind": k,
-                      "label": "", "band": BAND_OF[k], "note": "〔演示〕" + _MOCK_PURPOSE.get(k, "演示批注")})
+                      "label": "", "band": BAND_OF[k], "note": _mock_purpose(k)})
     return notes
 
 def mock_analyze(paras: list) -> dict:
@@ -844,13 +860,15 @@ def mock_analyze(paras: list) -> dict:
         else:
             r = "background"
         roles[str(p["idx"])] = r
-        purposes[str(p["idx"])] = _MOCK_PURPOSE.get(r, "（演示）")
+        purposes[str(p["idx"])] = _mock_purpose(r)
     claims = [{"id": f"C{i+1}", "text": paras[ci-1]["text"][:40] + "…", "anchors": [
         int(k) for k, v in roles.items() if v == "evidence"][:2]} for i, ci in enumerate(claim_idx[:3])]
     if not claims:
-        claims = [{"id": "C1", "text": "（演示模式：未识别到明确主张）", "anchors": []}]
+        claims = [{"id": "C1", "text": _demo_txt("（演示模式：未识别到明确主张）",
+                                                 "(demo mode: no explicit claim recognized)"), "anchors": []}]
     return {"claims": claims, "roles": roles, "purposes": purposes,
-            "problem": "（演示模式）这篇论文要解决的问题是：演示用的占位陈述 [¶2]。"}
+            "problem": _demo_txt("（演示模式）这篇论文要解决的问题是：演示用的占位陈述 [¶2]。",
+                                 "(demo mode) The problem this paper solves: a placeholder statement [¶2].")}
 
 # ---------------- 方法卡（可复现 protocol）/ 谱系卡（综述导览） ----------------
 

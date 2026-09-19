@@ -509,7 +509,10 @@ function greetSlot() {
   if (h < 19) return 'afternoon'
   return 'night'
 }
-const greetText = ref('')
+const greetKey = ref('')
+/* 文案存键、显示时才过 t()：开场问候比启动设置先到，界面语言随后切过去时卡片跟着换，
+   不然纯英文用户开场会看到一句中文。 */
+const greetText = computed(() => t(greetKey.value))
 const greetShow = ref(false)
 const greetShown = new Set()     // 本次运行里已经问候过的时段：冷启动清零，跨时段会再问候
 let greetHideT = 0
@@ -519,7 +522,7 @@ function maybeGreet() {
   if (!slot || greetShow.value || greetShown.has(slot)) return
   greetShown.add(slot)
   const pool = GREET_POOL[slot]
-  greetText.value = t(pool[Math.floor(Math.random() * pool.length)])
+  greetKey.value = pool[Math.floor(Math.random() * pool.length)]
   greetShow.value = true
   clearTimeout(greetHideT)
   greetHideT = setTimeout(() => (greetShow.value = false), 5600)
@@ -905,7 +908,8 @@ function onKey(e) {
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('论文，启动！') }}</div>
           <div class="stamp" role="button" tabindex="0" @click="pickFiles"
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
-          <div class="desk-hint">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
+          <div class="desk-hint" role="button" tabindex="0" @click="pickFiles"
+               @keydown.enter.prevent="pickFiles">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
           <div class="desk-hint demo-hint" v-if="demoOn" role="button" tabindex="0"
                @click="showSettings = true" @keydown.enter.prevent="showSettings = true">
             {{ t('没配模型，进去都是演示数据——先到设置里配好') }}

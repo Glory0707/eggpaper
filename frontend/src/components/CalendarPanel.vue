@@ -42,6 +42,12 @@ const monthStat = computed(() => {
   const keys = Object.keys(days.value).filter(k => (days.value[k].reads?.length || 0) > 0)
   return { n: keys.length, m: keys.reduce((a, k) => a + days.value[k].reads.length, 0) }
 })
+/* 英文带单复数（"1 day · 1 read"），中文照走词典。 */
+const statText = computed(() => {
+  const { n, m } = monthStat.value
+  if (ui.lang !== 'en') return t('本月 {n} 天 · {m} 篇', { n, m })
+  return `${n} day${n === 1 ? '' : 's'} · ${m} read${m === 1 ? '' : 's'} this month`
+})
 const selEntry = computed(() => days.value[sel.value] || null)
 
 async function load() {
@@ -120,7 +126,7 @@ watch(open, v => {
     </div>
 
     <div class="cal-stat">
-      <span>{{ t('本月 {n} 天 · {m} 篇', monthStat) }}</span>
+      <span>{{ statText }}</span>
       <button class="lnk" v-if="monthStat.m" @click="exportMonth">{{ t('导出本月 .md') }}</button>
     </div>
 

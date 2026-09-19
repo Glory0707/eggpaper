@@ -927,7 +927,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .empty .e-title { font-family: var(--sans); font-size: var(--fs-display); font-weight: 700; letter-spacing: -0.01em; cursor: pointer; }
 .empty .e-title:hover { color: var(--ink); }
 .empty .e-title:focus-visible, .empty .stamp:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 4px; }
-.empty .desk-hint { position: absolute; right: 18px; bottom: 12px; font-size: var(--fs-xs); color: var(--ink-3); }
+.empty .desk-hint { position: absolute; right: 18px; bottom: 12px; font-size: var(--fs-xs); color: var(--ink-3); cursor: pointer; border-radius: 4px; padding: 2px 6px; }
+.empty .desk-hint:hover { color: var(--ink-2); background: var(--btn-hover); }
 .empty .stamp {
   font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.16em; cursor: pointer;
   color: var(--vermilion); border: 1.5px solid var(--vermilion);

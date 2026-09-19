@@ -49,6 +49,13 @@ def _demo_mode(cfg: dict = None) -> bool:
     cfg = cfg or config.load()
     return bool(cfg["mock"]) or not (cfg.get("provider", {}).get("api_key") or "").strip()
 
+def _demo_txt(zh: str, en: str) -> str:
+    """演示数据的语言跟界面走：纯英文用户不该拿到一手中文假数据。"""
+    try:
+        return en if (config.load().get("ui_lang") or "zh") == "en" else zh
+    except Exception:
+        return zh
+
 def _human_msg(exc: Exception) -> str:
     """把模型服务最常见的几种失败翻成人话。异常处理器与新加的流式问答共用这一份，
     免得"哪里报错"决定"用户看到什么"。"""
@@ -1255,8 +1262,12 @@ def summary(pid: str):
         if p["summary"]:
             return JSONResponse(json.loads(p["summary"]))
         if _demo_mode():
-            data = {"one_line": "〔演示模式〕这是一篇测试论文的一眼卡摘要。", "contributions": "演示贡献", "methods": "演示方法",
-                    "findings": "演示发现", "keywords": ["演示"]}
+            data = {"one_line": _demo_txt("〔演示模式〕这是一篇测试论文的一眼卡摘要。",
+                                          "[demo mode] A one-glance summary of a test paper."),
+                    "contributions": _demo_txt("演示贡献", "demo contributions"),
+                    "methods": _demo_txt("演示方法", "demo methods"),
+                    "findings": _demo_txt("演示发现", "demo findings"),
+                    "keywords": [_demo_txt("演示", "demo")]}
         else:
             paras = db.get_paragraphs(pid)
             hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
@@ -1280,7 +1291,8 @@ def suggest(pid: str):
         if p["analysis_status"] != "done":
             return {"questions": []}
         if _demo_mode():
-            data = {"questions": ["〔演示〕核心证据的强度如何？", "〔演示〕方法上有什么可挑剔的？"]}
+            data = {"questions": [_demo_txt("〔演示〕核心证据的强度如何？", "[demo] How strong is the core evidence?"),
+                                  _demo_txt("〔演示〕方法上有什么可挑剔的？", "[demo] What is methodologically questionable?")]}
         else:
             _, claims, annos = db.get_analysis(pid)
             data = llm.suggest_questions(p["title"], claims, annos)
@@ -1320,7 +1332,8 @@ def advisor(pid: str, cached: bool = False):
         if p["analysis_status"] != "done":
             return {"questions": []}
         if _demo_mode():
-            data = {"questions": [{"q": "〔演示〕证据够硬吗？", "outline": ["演示要点"]}]}
+            data = {"questions": [{"q": _demo_txt("〔演示〕证据够硬吗？", "[demo] Is the evidence solid enough?"),
+                                   "outline": [_demo_txt("演示要点", "demo outline")]}]}
         else:
             _, claims, annos = db.get_analysis(pid)
             warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
@@ -1395,26 +1408,53 @@ def _save_terms(pid: str, got) -> int:
 
 def _mock_six(key: str) -> dict:
     if key == "how":
-        return {"text": "〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
-                        "最后落到位开放问题上 [¶5]。", "cites": [5]}
+        return {"text": _demo_txt("〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
+                                  "最后落到位开放问题上 [¶5]。",
+                                  "[demo mode] This review organizes the literature into three blocks along its "
+                                  "own classification, compares them block by block, and closes with open "
+                                  "questions [¶5]."), "cites": [5]}
     if key == "motive":
-        return {"text": "〔演示模式〕现有做法依赖随机、不可控的缺陷位点，做出来的活性没法设计 [¶3]；"
-                        "这件事卡住了下游一整类应用，而这到今天没有好解法 [¶2]——"
-                        "所以这篇要用本征有序的结构位点来实现可控的高活性。", "cites": [2, 3]}
+        return {"text": _demo_txt("〔演示模式〕现有做法依赖随机、不可控的缺陷位点，做出来的活性没法设计 [¶3]；"
+                                  "这件事卡住了下游一整类应用，而这到今天没有好解法 [¶2]——"
+                                  "所以这篇要用本征有序的结构位点来实现可控的高活性。",
+                                  "[demo mode] Current practice relies on random, uncontrollable defect sites, "
+                                  "so the activity cannot be designed [¶3]; this blocks a whole class of "
+                                  "downstream applications and still lacks a good solution [¶2] — hence this "
+                                  "work uses intrinsically ordered structural sites for controllable, high "
+                                  "activity."), "cites": [2, 3]}
     if key == "lens":
         return {"v": 2, "items": [
-            {"lead": "做表征的", "text": "〔演示模式〕会盯着原位数据太少这件事——漂亮的机理说法要配原位证据才站得住。",
-             "ask": "有没有原位数据支持这条机理？", "cites": []},
-            {"lead": "做计算的", "text": "〔演示模式〕想拿这套实验数字先验一验自己的力场，对不上就说明模型缺项。",
-             "ask": "这套数据能用来校准力场吗？", "cites": []},
-            {"lead": "做政策的", "text": "〔演示模式〕看到的是成本表里那笔没算进去的外部性，会追问谁承担。",
-             "ask": "成本核算包含外部性吗？", "cites": []},
+            {"lead": _demo_txt("做表征的", "Characterization"),
+             "text": _demo_txt("〔演示模式〕会盯着原位数据太少这件事——漂亮的机理说法要配原位证据才站得住。",
+                               "[demo mode] Would zero in on how thin the in-situ data is — a pretty "
+                               "mechanism story needs in-situ evidence to stand."),
+             "ask": _demo_txt("有没有原位数据支持这条机理？", "Is there in-situ data supporting this mechanism?"),
+             "cites": []},
+            {"lead": _demo_txt("做计算的", "Simulation"),
+             "text": _demo_txt("〔演示模式〕想拿这套实验数字先验一验自己的力场，对不上就说明模型缺项。",
+                               "[demo mode] Would validate a force field against these experimental numbers; "
+                               "mismatches would reveal missing terms."),
+             "ask": _demo_txt("这套数据能用来校准力场吗？", "Can this data calibrate a force field?"),
+             "cites": []},
+            {"lead": _demo_txt("做政策的", "Policy"),
+             "text": _demo_txt("〔演示模式〕看到的是成本表里那笔没算进去的外部性，会追问谁承担。",
+                               "[demo mode] Sees the unpriced externality missing from the cost table, and "
+                               "asks who bears it."),
+             "ask": _demo_txt("成本核算包含外部性吗？", "Does the cost accounting include externalities?"),
+             "cites": []},
         ]}
     return {"items": [
-        {"lead": "它承认的", "text": "〔演示模式〕换一组对照样品把这条路径单离出来 [¶12]。",
-         "ask": "怎么设计对照才能单离这条路径？", "cites": [12]},
-        {"lead": "新方向", "text": "〔演示模式〕把这套判据搬去另一族氧化物，够撑一篇新论文："
-         "体系换了、结论还没人验证过 [¶18]。", "ask": "换到另一族氧化物要先验证什么？", "cites": [18]},
+        {"lead": _demo_txt("它承认的", "Admitted"),
+         "text": _demo_txt("〔演示模式〕换一组对照样品把这条路径单离出来 [¶12]。",
+                           "[demo mode] Isolate this pathway with a different set of control samples [¶12]."),
+         "ask": _demo_txt("怎么设计对照才能单离这条路径？", "What controls would isolate this pathway?"),
+         "cites": [12]},
+        {"lead": _demo_txt("新方向", "New direction"),
+         "text": _demo_txt("〔演示模式〕把这套判据搬去另一族氧化物，够撑一篇新论文：体系换了、结论还没人验证过 [¶18]。",
+                           "[demo mode] Carry these criteria to another oxide family — enough for a new paper: "
+                           "new system, conclusions nobody has tested yet [¶18]."),
+         "ask": _demo_txt("换到另一族氧化物要先验证什么？", "What must be validated first in the new family?"),
+         "cites": [18]},
     ]}
 
 @app.get("/api/papers/{pid}/six-answers")
@@ -1456,8 +1496,11 @@ def method_card(pid: str, cached: bool = False):
         if cached:
             return {}
         if _demo_mode():
-            data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
-                    "steps": ["步骤一", "步骤二"], "notes": ""}
+            data = {"goal": _demo_txt("〔演示〕可复现 protocol", "[demo] Reproducible protocol"),
+                    "system": _demo_txt("演示体系", "demo system"),
+                    "conditions": _demo_txt("演示条件", "demo conditions"),
+                    "steps": [_demo_txt("步骤一", "Step one"), _demo_txt("步骤二", "Step two")],
+                    "notes": ""}
         elif p.get("paper_type") == "review":
             data = llm.survey_card(p["title"], db.get_paragraphs(pid))
             _require_shape(data, ("goal", "steps"), "谱系卡")
@@ -1483,7 +1526,8 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         return {"meta": None, "groups": []}
     if _demo_mode():
         meta = {"authors": [{"family": "Zhang", "given": "Wei"}, {"family": "Li", "given": "Na"}],
-                "title": "〔演示〕一篇论文的标题", "journal": "Journal of Demo Chemistry",
+                "title": _demo_txt("〔演示〕一篇论文的标题", "[demo] A paper title"),
+                "journal": "Journal of Demo Chemistry",
                 "journal_abbr": "J. Demo Chem.", "year": "2024", "volume": "12",
                 "issue": "3", "pages": "345-352", "doi": "10.0000/demo.2024.12345"}
     else:
@@ -1779,8 +1823,9 @@ def _figure_regions(path):
                 texts = ["".join(sp["text"] for sp in ln["spans"]) for ln in blines]
                 cap = _caption_of(texts[0].strip())
                 if cap:
+                    cap_txt = re.sub(r"\s+", " ", " ".join(t.strip() for t in texts))
                     caps.append({"rect": brect, "kind": cap[0], "label": cap[1],
-                                 "caption": re.sub(r"\s+", " ", " ".join(t.strip() for t in texts))[:260]})
+                                 "caption": cap_txt[:260] + ("…" if len(cap_txt) > 260 else "")})
                     continue
                 if sum(_wide_flags(rects, colw_of, lm, rm)) * 2 >= len(rects):
                     blockers.append(brect)
