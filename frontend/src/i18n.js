@@ -507,6 +507,27 @@ const EN = {
   '复制图片': 'Copy image',
   '下载图片': 'Download image',
   '图片已复制': 'Image copied',
+
+  /* ---- v0.1.32：取消长任务 / 演示徽标 / 导师三问去回答 / 导出复制 / 键位补齐 ---- */
+  '停止': 'Stop',
+  '已请求停止，收个尾就停': 'Stop requested — wrapping up',
+  '已停止整本翻译': 'Full-text translation stopped',
+  '《{t}》翻译完成': '“{t}” — translation done',
+  '停掉 pdf2zh；已译好的页会留着，下次接着译': 'Stops pdf2zh. Pages already translated are kept and reused next time.',
+  '析读在阶段边界收手，已生成的部分保留': 'Analysis stops at the next stage boundary; finished parts are kept.',
+  '没配模型，现在全是演示数据——点这里去设置': 'No model configured — everything below is demo data. Click to open Settings.',
+  '没配模型，进去都是演示数据——先到设置里配好': 'No model configured: you’ll see demo data. Set your model up in Settings first.',
+  '翻页': 'Page up / down',
+  '这张卡': 'This card',
+  '去回答': 'Answer it',
+  '这是「导师三问」的第 {n} 问：「{q}」。请帮我组织一份口头回答提纲：先给结论，再给论据（标注依据段号 [¶n]），最后补一句最可能被追问的地方。':
+    'This is advisor question {n}: “{q}”. Draft an outline for an oral answer: conclusion first, then arguments (cite paragraphs as [¶n]), and end with the most likely follow-up challenge.',
+  '复制 Markdown': 'Copy Markdown',
+  '复制失败：{m}': 'Copy failed: {m}',
+  '在文中查找': 'Find in paper',
+  '跳到这一段': 'Jump to this paragraph',
+  '已完成 {n}/{m} 项': '{n}/{m} tasks done',
+  '导出本月 .md': 'Export month .md',
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。

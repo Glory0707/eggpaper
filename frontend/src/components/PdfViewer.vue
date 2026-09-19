@@ -632,6 +632,20 @@ async function translateParaAndPin(idx) {
 /* ---------------- 划词 ---------------- */
 
 const sel = reactive({ visible: false, x: 0, y: 0, text: '', context: '', paraIdx: 0, page: 0, zh: '', hits: [], busy: false, err: '' })
+const selEl = ref(null)
+const visEl = ref(null)
+/* 气泡是流式长高的（译文一段段写进来、答案一行行出来），开的时候按 230/340px 预留的位置
+   在内容长成后会探出窗口底——fixed 定位滚不到，只能把气泡挪上来。内容每次变化后按
+   真实尺寸再钳一次；拖动过的位置也照钳，只是保证不出屏。钳位 watch 挂在 vis 声明之后
+   （三个 reactive 都得已存在）。 */
+function refitPop(el, pos) {
+  if (!el || !pos?.visible) return
+  const h = el.offsetHeight, w = el.offsetWidth
+  if (!h) return
+  const y = Math.max(8, Math.min(pos.y, window.innerHeight - h - 8))
+  const x = Math.max(8, Math.min(pos.x, window.innerWidth - w - 8))
+  pos.y = y; pos.x = x
+}
 
 function onMouseUp(e) {
   const s = window.getSelection()
@@ -1169,6 +1183,12 @@ function cropItem(it, r) {
 const vis = reactive({ visible: false, x: 0, y: 0, img: '', question: '', answer: '', busy: false, err: '',
                        page: 0, paraIdx: 0, rect: null })
 
+/* 气泡长高不出屏的钳位（见 refitPop 注释）。写在三个 reactive 都声明之后。 */
+watch([() => sel.visible, () => sel.zh, () => sel.busy, () => sel.err, () => mine.open],
+  () => nextTick(() => refitPop(selEl.value, sel)))
+watch([() => vis.visible, () => vis.answer, () => vis.busy, () => vis.err],
+  () => nextTick(() => refitPop(visEl.value, vis)))
+
 function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
   if (it.origPage < 0) { toast(t('译文页不能框选，切回「原文」再圈')); return }
@@ -1423,7 +1443,7 @@ watch(store.marginalia, m => {
     </Transition>
 
         <Transition name="pop">
-    <div class="sel-pop" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }"
+    <div class="sel-pop" ref="selEl" v-if="sel.visible" :style="{ left: sel.x + 'px', top: sel.y + 'px' }"
          v-drag="{ key: 'selpop' }" data-drag @mouseup.stop>
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
         {{ t('已选 {n} 字符', { n: sel.text.length }) }}<span v-if="sel.paraIdx >= 0" class="mono-num"> · ¶{{ sel.paraIdx }}</span>
@@ -1440,8 +1460,8 @@ watch(store.marginalia, m => {
       </div>
       <div class="sp-actions">
         <template v-if="mine.open">
-          <button class="primary" style="padding:4px 10px" :disabled="!mine.text.trim()" @click="saveMine">写到页边</button>
-          <button style="padding:4px 10px" @click="mine.open = false">取消</button>
+          <button class="primary" style="padding:4px 10px" :disabled="!mine.text.trim()" @click="saveMine">{{ t('写到页边') }}</button>
+          <button style="padding:4px 10px" @click="mine.open = false">{{ t('取消') }}</button>
         </template>
         <template v-else>
           <template v-if="!isEn()">
@@ -1462,11 +1482,11 @@ watch(store.marginalia, m => {
     </Transition>
 
             <Transition name="pop">
-    <div class="sel-pop vis-pop" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }"
+    <div class="sel-pop vis-pop" ref="visEl" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }"
          v-drag="{ key: 'vispop' }" data-drag @mouseup.stop>
       <div class="vp-head">
         <span class="mono-label">{{ t('选区问 AI') }}</span>
-        <button class="vp-x" title="关闭（Esc）" @click="closeVis">×</button>
+        <button class="vp-x" :title="t('关闭（Esc）')" @click="closeVis">×</button>
       </div>
       <img class="vis-img" :src="vis.img" />
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"

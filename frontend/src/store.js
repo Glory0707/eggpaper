@@ -64,16 +64,22 @@ export const store = reactive({
 
   get narrow() { return this.vw < 1180 },
   get railRight() {
-    if (this.openIds.length > 1) return false    // 多窗格：整屏让给文献，右栏强制收起
     if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
     return this.viewer.railUser
+  },
+  /* 多窗格（对比读两篇）也要能提问/看五问/导出：右栏改浮层盖上来，不再硬收——
+     原来是 getter 硬 false，「展开右栏」成了死按钮。 */
+  get railOverlay() {
+    if (this.openIds.length <= 1) return false
+    if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
+    return this.viewer.railUser && !this.narrow
   },
 })
 
 window.addEventListener('resize', () => { store.vw = window.innerWidth })
 
 export function toast(msg, ms = 2600) {
-  store.toast = t(msg)
+  store.toast = t(String(msg ?? '')).slice(0, 160)   // 后端偶发的长报错别把黑条撑满屏
   store.toastN++
   clearTimeout(toast._t)
   toast._t = setTimeout(() => (store.toast = ''), ms)

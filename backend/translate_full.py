@@ -316,6 +316,7 @@ PAGE_WORKERS_FREE = 3
 PAGE_WORKERS_LLM = 2
 PAGE_TIMEOUT = 150
 PAGE_TRIES = 2
+BATCH_PAGES = 4          # 一次 pdf2zh 进程译几页：冷启动 ~3s/次，批得越大摊得越薄；失败整批拆单页兜底
 
 LLM_SERVICES = {"openai", "deepseek", "zhipu", "silicon", "modelscope",
                 "gemini", "grok", "groq"}
@@ -415,17 +416,30 @@ def _page_env(envs: dict) -> dict:
         pass
     return env
 
-def _run_page(pdf_path: str, pno: int, out_dir: str, service: str, extra: str,
+def _pages_count(pages: str) -> int:
+    """--pages 的页数："5" → 1，"5-8" → 4。给超时预算用。"""
+    m = re.match(r"^(\d+)(?:-(\d+))?$", (pages or "").strip())
+    if not m:
+        return 1
+    a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+    return max(1, b - a + 1)
+
+def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
               envs: dict, cfg: str, proc_reg: list, auth_out: list, engine: str = "") -> tuple:
-    """翻译一页。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
+    """翻译一页（或一个页区间）。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
     proc_reg：正在跑的进程都登记进来，删论文时 cancel() 能把它们掐掉。
     auth_out：一旦在输出里看到鉴权失败就**立刻**杀进程并记到这里——
-    pdf2zh 对 401 是无限重试，等它自己结束要磨到天荒地老。"""
-    cmd = _cmd(pdf_path, out_dir, service, extra, cfg, engine) + ["--pages", str(pno)]
+    pdf2zh 对 401 是无限重试，等它自己结束要磨到天荒地老。
+
+    为什么收"页区间"：pdf2zh 每次冷启动约 3s（全套依赖 import），一页一进程时 30 页
+    = 30 次纯开销。按 4 页一批冷启动摊薄 4 倍；批里单页坏了拆成单页再各试一遍，
+    复用粒度从"页"退到"批"，断点续译（_page_done 逐页认）不变。
+    """
+    cmd = _cmd(pdf_path, out_dir, service, extra, cfg, engine) + ["--pages", pages]
     tail = collections.deque(maxlen=5)
     flags, si = _no_window()
     proc = None
-    deadline = time.time() + _page_timeout(service)
+    deadline = time.time() + _page_timeout(service) * _pages_count(pages)
 
     def _kill_when_stale():
         while proc.poll() is None and time.time() < deadline:
@@ -547,50 +561,72 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             lock = threading.Lock()
             auth_error = []
 
-            def worker(pno: int):
+            def worker(batch: list):
                 try:
-                    _worker(pno)
+                    _worker(batch)
                 except Exception as e:
-                    _say(f"整本翻译 {pid}: 第 {pno + 1} 页异常（{type(e).__name__}），保留原文")
+                    _say(f"整本翻译 {pid}: 第 {batch[0] + 1} 页起的一批异常（{type(e).__name__}），保留原文")
 
-            def _worker(pno: int):
-                pdir = _page_dir(out_dir, pno, 0)
-                os.makedirs(pdir, exist_ok=True)
-                cfg = (pinned_config(pdir, pid, overlay=envs) if envs else "") or cfg_copy
-                got, tail = None, []
-                auth_out = []
+            def _worker(batch: list):
+                """batch：连续的 0 基页号。整批两次都没成时拆成单页各再试一遍——
+                别让一页坏页连坐同批的没坏页。"""
+                a, b = batch[0] + 1, batch[-1] + 1
+                label = str(a) if a == b else f"{a}-{b}"
+                got, tail, auth_out = None, [], []
                 for t in range(PAGE_TRIES):
                     if auth_error or j.get("_abort"):
                         return
-                    pdir_t = _page_dir(out_dir, pno, t)
+                    pdir_t = _page_dir(out_dir, a, t)
                     os.makedirs(pdir_t, exist_ok=True)
-                    got, tail = _run_page(pdf_path, pno + 1, pdir_t, service, extra,
+                    cfg = (pinned_config(pdir_t, pid, overlay=envs) if envs else "") or cfg_copy
+                    got, tail = _run_page(pdf_path, label, pdir_t, service, extra,
                                           envs, cfg, procs, auth_out, engine)
                     if auth_out:
                         auth_error.append(auth_out[0])
                         return
                     if got:
                         if t > 0:
-                            _say(f"整本翻译 {pid}: 第 {pno + 1} 页第二次尝试成功")
+                            _say(f"整本翻译 {pid}: 第 {label} 页第二次尝试成功")
                         break
-                with lock:
-                    if got:
-                        results[pno] = got
-                    j["pages"] = [len(results), n]
-                if not got:
-                    _say(f"整本翻译 {pid}: 第 {pno + 1} 页两次都没译成，这一页保留原文"
-                         f"（{' / '.join(tail[-2:])}）")
+                if got:
+                    # pdf2zh 对 --pages 的产物有两种形态：整本（只有选中的页被译了）或只含选中页。
+                    # 记下每页在产物里的真实位置，组装时按它取，别猜。
+                    try:
+                        with pymupdf.open(got["mono"]) as m:
+                            ml = len(m)
+                    except Exception:
+                        ml = 0
+                    with lock:
+                        for p in batch:
+                            if ml == n:
+                                at = p                       # 整本产物：0 基页号即位置
+                            elif ml == len(batch):
+                                at = p - (a - 1)             # 只含区间：按批内顺序排
+                            else:
+                                at = min(p, max(0, ml - 1))
+                            results[p] = {"mono": got["mono"], "at": at}
+                        j["pages"] = [len(results), n]
+                    return
+                if len(batch) > 1:
+                    _say(f"整本翻译 {pid}: 第 {label} 页整批两次都没成，拆成单页再各试一遍")
+                    for p in batch:
+                        _worker([p])
+                    return
+                _say(f"整本翻译 {pid}: 第 {a} 页两次都没译成，这一页保留原文"
+                     f"（{' / '.join(tail[-2:])}）")
 
             from concurrent.futures import ThreadPoolExecutor
+            pending = [p for p in range(n) if p not in results]
+            batches = [pending[i:i + BATCH_PAGES] for i in range(0, len(pending), BATCH_PAGES)]
             with ThreadPoolExecutor(max_workers=_page_workers(service)) as pool:
-                list(pool.map(worker, [p for p in range(n) if p not in results]))
+                list(pool.map(worker, batches))
 
             if auth_error:
                 j.update(status="error", error=auth_error[0])
                 say(f"整本翻译失败 {pid}：{auth_error[0]}")
                 return
             if j.get("_abort"):
-                j.update(status="error", error="已取消")
+                j.update(status="none", error="")      # 用户主动取消，不算一次失败
                 return
 
             # ---- 组装：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文
@@ -605,7 +641,8 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     if got:
                         try:
                             with pymupdf.open(got["mono"]) as m:
-                                at = min(pno, len(m) - 1)
+                                at = got.get("at")
+                                at = min(pno, len(m) - 1) if at is None else max(0, min(int(at), len(m) - 1))
                                 mono.insert_pdf(m, from_page=at, to_page=at)
                             ok = True
                         except Exception:

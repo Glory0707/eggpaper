@@ -77,6 +77,26 @@ function openPaperAndClose(pid) {
   store.viewer.calOpen = false
 }
 
+/* 导出本月：组会/汇报"这个月读了哪些"直接要一份清单。前端就地拼 Markdown，零后端改动。 */
+function exportMonth() {
+  const keys = Object.keys(days.value).filter(k => (days.value[k]?.reads?.length || days.value[k]?.added?.length)).sort()
+  if (!keys.length) return
+  const lines = [`# ${label.value}`, '']
+  for (const k of keys) {
+    const e = days.value[k] || {}
+    lines.push(`## ${k}`)
+    for (const r of e.reads || []) lines.push(`- ${t('读过')}：${r.title}`)
+    for (const a of e.added || []) lines.push(`- ${t('新入库')}：${a.title}`)
+    lines.push('')
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `eggpaper-${y.value}-${pad(m.value)}.md`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 /* 面板是 v-if 挂进来的：挂上来那刻 open 已经是 true，必须 immediate 才接得住首拍 */
 watch(open, v => {
   if (!v) return
@@ -99,7 +119,10 @@ watch(open, v => {
       <button class="cal-today" @click="goToday">{{ t('今天') }}</button>
     </div>
 
-    <div class="cal-stat">{{ t('本月 {n} 天 · {m} 篇', monthStat) }}</div>
+    <div class="cal-stat">
+      <span>{{ t('本月 {n} 天 · {m} 篇', monthStat) }}</span>
+      <button class="lnk" v-if="monthStat.m" @click="exportMonth">{{ t('导出本月 .md') }}</button>
+    </div>
 
     <div class="cal-grid">
       <span class="cal-wd" v-for="w in weekdays" :key="w">{{ w }}</span>

@@ -21,6 +21,12 @@ ROLE_ZH = {
 
 # ---------------- 基础调用 ----------------
 
+# 连接复用：每次 httpx.post 都要重新 TCP+TLS 握手（走代理时上百毫秒），
+# 析读一条管线 8+ 次调用全在白付这笔钱。模块级 Client 只管连接池，鉴权在每次请求头里，
+# 换 key/base_url 不用重建。线程安全是 httpx.Client 的合同内行为。
+_http = httpx.Client(timeout=httpx.Timeout(600, connect=20),
+                     limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
+
 def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
          no_think: bool = False, timeout: int = 600) -> str:
     """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。"""
@@ -36,7 +42,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
         if no_think:
             body["thinking"] = {"type": "disabled"}
         try:
-            r = httpx.post(
+            r = _http.post(
                 f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
                 json=body,
@@ -74,7 +80,7 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
                "max_tokens": max_tokens, "temperature": temperature, "stream": True}
     if no_think:
         payload["thinking"] = {"type": "disabled"}
-    with httpx.stream(
+    with _http.stream(
         "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
         headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
         json=payload, timeout=httpx.Timeout(600, connect=20),
@@ -213,17 +219,12 @@ def extract_terms(title: str, paras: list) -> dict:
         {"role": "system", "content": TERMS_SYSTEM + _lang_tail()},
         {"role": "user", "content": "论文标题：" + (title or "") + "\n\n" + body[:48000]},
     ]
-    out = ""
-    data = None
-    for _ in range(3):
-        out = chat(msgs, max_tokens=8000, temperature=0.2)
-        if not out.strip():
-            continue
-        try:
-            data = parse_json(out)
-            break
-        except (json.JSONDecodeError, ValueError):
-            continue
+    # 坏 JSON 交给 chat_json 带纠错说明重发——原来的自建循环是原样重发 48k 全文，
+    # 三次全挂就白烧三遍整本上下文；chat_json 的重试成功率更高且次数有顶。
+    try:
+        data = chat_json(msgs, max_tokens=8000, temperature=0.2)
+    except Exception:
+        return {"terms": [], "abbrs": {}}
     if not isinstance(data, dict):
         return {"terms": [], "abbrs": {}}
     clean = _clean_terms(data.get("terms"))
@@ -321,8 +322,7 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 只输出 JSON，不要 markdown 代码块，不要任何解释：
 {"claims":[{"id":"C1","text":"<主张的中文概括，≤30字>","anchors":[<支撑该主张的关键证据段编号>]}],
  "roles":{"<¶编号>":"<角色>"},
- "purposes":{"<¶编号>":"<作者写这段的目的，≤22字，说人话>"},
- "problem":"<这篇论文要解决的问题：直接说清楚，一到两句，见要求 7>"}
+ "purposes":{"<¶编号>":"<作者写这段的目的，≤22字，说人话>"}}
 
 要求：
 1. claims 取 2~5 条，按论文叙事顺序；anchors 只能填 evidence 或 control 角色、且真实支撑该主张的段落编号
@@ -332,10 +332,7 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 4b. 图注（以 FIG./Figure/Table/Scheme 开头的段落）是**结果的一部分**，按它描述的内容给
     evidence 或 extension，绝不要标 boilerplate——读者正要看图注
 5. 顺便抽取本文的缩写表 abbrs：{"abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}，没有就给空对象
-6. 每条关键证据都要给出它直接回答的问题：{"evidence_qs":{"<¶编号>":"<该实验/数据直接回答的问题，≤22字>"}}
-7. problem 是给读者看的**一句话答案**，不是摘抄：原文通常没有哪一句直接写着"我们要解决什么"，
-   所以要用你自己的话把引言里的缺口综合成一句明确的陈述——谁在什么条件下没做到什么、
-   因此这篇要回答什么；句尾用 [¶n] 标出它是从哪几段看出来的"""
+6. 每条关键证据都要给出它直接回答的问题：{"evidence_qs":{"<¶编号>":"<该实验/数据直接回答的问题，≤22字>"}}"""
 
 PURPOSE_FALLBACK = {
     "background": "领域铺垫，可跳过", "gap": "作者真正的出发点", "claim": "论文要证明的核心",
@@ -418,6 +415,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
         claims.append({"id": str(c.get("id") or c.get("cid") or f"C{i}"),
                        "text": str(c["text"])[:60],
                        "anchors": clean})
+    claims = claims[:6]        # 提示词的 2~5 条只是软约束：话痨一次给十几条时硬顶住，骨架页装不下
 
     roles_raw = data.get("roles") or {}
     if isinstance(roles_raw, list):
@@ -472,7 +470,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
             "（面板里是竖排按钮，长句读着累）。"
             "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
-    ], max_tokens=4000, temperature=0.5)
+    ], max_tokens=4000, temperature=0.5, no_think=True)
     qs = [_clip_q(str(q)) for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
     return {"questions": qs[:4]}
 
@@ -669,6 +667,18 @@ band 只有一个作用——决定它在纸上怎么被划、页边是什么颜
 
 """
 
+REVIEW_MARGINALIA_APPENDIX = """
+
+这是一篇**综述/回顾**：它的"证据"是它对文献的组织与评述，不是实验。换一套刀法——
+- **不要批**"对照组/样本量/参数缺没缺/能不能复现"这类实验口径的事：综述没有实验层，
+  照研究型批会满页"没提对照"式的错批；
+- 重点批：分类框架公不公允、哪条重要线索被漏掉或轻描淡写、它的评判标准是否一以贯之、
+  下结论（"X 已是主流 / Y 已解决"）的地方与它引的证据对不对得上、开放问题点没点到位；
+- 它汇总的表格、数据、图照样按证据批：数字与引文对不上、口径前后不一致是硬伤；
+- 前后一致与"读者的坑"两条通用刀法照旧。
+
+"""
+
 KINDS = ("hedge", "padding", "stiff", "redundant", "hype", "ai", "insight", "warning", "conflict")
 BANDS = ("good", "warn", "noise")
 BAND_OF = {"insight": "good",
@@ -681,9 +691,14 @@ PROSE_MAX = 4
 CHUNK_PARAS = 12
 CHUNK_WORKERS = 6
 
-def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
+def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "research",
+                       should_stop=None) -> tuple:
     """分块细读，返回 `(notes, failed_blocks)`：notes 是
     [{para_idx, page, quote, kind, label, band, note}]，failed_blocks 是**重试之后仍没成**的块数。
+
+    kind：research / review（综述换批注刀法，见 REVIEW_MARGINALIA_APPENDIX）。
+    should_stop：调用方给的取消探针（返回 True 就别再发起下一波、也别再组装）——
+    眉批是几十分钟级的活，"手滑点了大部头"得有地方喊停。
 
     为什么把失败数交出去：块级失败原来被静默吞掉——一次 429 只挂一块，界面照样显示"完成"，
     用户以为那些段落没问题。现在调用方能把"8 块里 1 块没成"写成一条提示，让他知道这片是空的。
@@ -706,7 +721,8 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
     def run(chunk):
         body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in chunk)
         msgs = [
-            {"role": "system", "content": MARGINALIA_SYSTEM + _lang_tail()},
+            {"role": "system", "content": MARGINALIA_SYSTEM
+                + (REVIEW_MARGINALIA_APPENDIX if kind == "review" else "") + _lang_tail()},
             {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
         ]
         out = ""
@@ -748,8 +764,10 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None) -> tuple:
         return bad
 
     failed = wave(list(range(total)))
-    if failed and len(failed) < total:
+    if failed and len(failed) < total and not (should_stop and should_stop()):
         failed = wave(failed)
+    if should_stop is not None and should_stop():
+        return [], total        # 已取消：调用方不会落库，这里把没写的都算没成
     if total and len(failed) == total:
         raise RuntimeError(f"{total} 块全部失败（模型或网络问题）")
 
@@ -844,9 +862,10 @@ def method_card(title: str, paras: list) -> dict:
             '{"goal":"<这套方法要达成什么，≤40字>",'
             '"system":"<材料体系/研究对象，≤60字>",'
             '"conditions":"<关键条件与参数：仪器、软件、参数值，≤120字>",'
-            '"steps":["<步骤1，≤40字>", "<步骤2>", "..."],'
+            '"steps":["<步骤1，≤40字，句尾用 [¶n] 标出这一步写在哪段>", "<步骤2>", "..."],'
             '"notes":"<复现时要注意的坑，≤60字>"}'
-            "步骤要具体可执行，保留关键数字。写法：化学式与上下标用 Unicode 字符"
+            "步骤要具体可执行，保留关键数字，每条步骤句尾都带上依据段号 [¶n]——"
+            "读者要点着它跳回原文核对。写法：化学式与上下标用 Unicode 字符"
             "（Sc₂O₃、10⁻⁷、Oₛ），不要 LaTeX、不要 $…$、不要用下划线代替下标。"
             "不要 markdown 代码块，不要解释。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
@@ -866,7 +885,8 @@ def survey_card(title: str, paras: list) -> dict:
             '"conditions":"<覆盖范围与边界：时间跨度、含与不含哪些分支，≤120字>",'
             '"steps":["<一条主线/分支：名字 + 核心思路 + 代表工作或适用场景，≤60字>", "<...>"],'
             '"notes":"<入门建议：先读哪条线、适合谁，≤60字>"}'
-            "steps 就是这篇综述自己的分类/脉络（有几条写几条，3~8 条为宜），每条自成一格。"
+            "steps 就是这篇综述自己的分类/脉络（有几条写几条，3~8 条为宜），每条自成一格，"
+            "句尾用 [¶n] 标出这条线主要写在哪段——读者要点着它跳回原文。"
             "**普适性**：领域不同载体不同——它用数据集/基准/材料体系/理论模型中的哪一种，就写哪一种；"
             "没提到的东西不要编。化学式与上下标用 Unicode 字符（Sc₂O₃、10⁻⁷），不要 LaTeX。"
             "不要 markdown 代码块，不要解释。" + _lang_tail()},
@@ -904,20 +924,30 @@ def extract_citation(title: str, src: str) -> dict:
 
 # ---------------- 导师三问 ----------------
 
-def advisor_questions(title: str, claims: list, warnings: list) -> dict:
+def advisor_questions(title: str, claims: list, warnings: list, kind: str = "research") -> dict:
     claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
     warn_txt = "\n".join(f"- {w}" for w in warnings) or "（无）"
+    if kind == "review":
+        sys = ("你是苛刻但建设性的导师。学生要拿这篇**综述**去组会汇报/答辩。"
+               "综述没有实验证据层，你问的是组织与评述的骨头：分类框架站不站得住、"
+               "哪条重要线索被漏了或轻轻带过、它的评判标准是否一以贯之、"
+               "下结论的地方有没有它自己的梳理撑住。"
+               "出 3 个最可能把学生问住的问题，每个配一份过关要点提纲。"
+               '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。'
+               + _lang_tail())
+    else:
+        sys = ("你是苛刻但建设性的导师。学生要拿这篇论文去组会汇报/答辩。"
+               "下面这些『作者已承认的薄弱点』当作已知前提——它们本身不必再复述一遍，"
+               "你要问的是更往里的问题：承认了还不够在哪里？缺的是哪一步证据？"
+               "结论到底能走到哪一步？换个做法会怎样？"
+               "出 3 个最可能把学生问住的问题（证据强度、方法选择、结论推广性都是好切入口，"
+               "你也可以从自己对这篇的判断出发），每个配一份过关要点提纲。"
+               '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。'
+               + _lang_tail())
     data = chat_json([
-        {"role": "system", "content":
-            "你是苛刻但建设性的导师。学生要拿这篇论文去组会汇报/答辩。"
-            "下面这些『作者已承认的薄弱点』当作已知前提——它们本身不必再复述一遍，"
-            "你要问的是更往里的问题：承认了还不够在哪里？缺的是哪一步证据？"
-            "结论到底能走到哪一步？换个做法会怎样？"
-            "出 3 个最可能把学生问住的问题（证据强度、方法选择、结论推广性都是好切入口，"
-            "你也可以从自己对这篇的判断出发），每个配一份过关要点提纲。"
-            '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。' + _lang_tail()},
+        {"role": "system", "content": sys},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n已承认的薄弱点（已知前提）：\n{warn_txt}"},
-    ], max_tokens=6000, temperature=0.5)
+    ], max_tokens=6000, temperature=0.5, no_think=True)
     qs = []
     for q in data.get("questions", []):
         if isinstance(q, dict) and q.get("q"):
@@ -944,7 +974,7 @@ def vision_ask(image_dataurl: str, question: str) -> str:
     last = None
     for _ in range(2):                       # 视觉调用要整页渲染作垫，失败就地补一次
         try:
-            r = httpx.post(
+            r = _http.post(
                 f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
                 json={"model": vm, "max_tokens": 6000, "temperature": 0.3,

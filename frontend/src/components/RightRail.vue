@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf,
-         paperEpoch, samePaper } from '../store'
+         paperEpoch, samePaper, reloadSummary } from '../store'
 import { lineSpanOf, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import { t, isEn } from '../i18n'
@@ -135,6 +135,35 @@ function askNote(n) {
 function askIt(q) {
   if (!q) return
   store.askPrefill = { question: q, send: true }
+}
+
+/* 导师三问的「去回答」：把这道题连提纲一起递给提问页，让模型帮起草口头回答——
+   组会前一晚最想要的那个按钮。 */
+function askAdvisor(q, i) {
+  store.askPrefill = {
+    question: t('这是「导师三问」的第 {n} 问：「{q}」。请帮我组织一份口头回答提纲：先给结论，再给论据（标注依据段号 [¶n]），最后补一句最可能被追问的地方。',
+                { n: i + 1, q: q.q }),
+    send: true,
+  }
+}
+
+/* 眉批跑到一半喊停：后端在块边界收手，已写完的批注保留。 */
+async function stopMarginalia() {
+  try { await api.marginaliaCancel(store.currentId) } catch { /* 状态轮询会自己归位 */ }
+}
+async function stopAnalyzeHere() {
+  try { await api.analysisCancel(store.currentId) } catch { /* 同上 */ }
+}
+
+/* 同一份笔记的第二条路：不落盘、直接进剪贴板，粘进 Notion/Obsidian/组会文档。 */
+const exportCopied = ref(false)
+async function copyExport() {
+  try {
+    const md = await (await fetch(api.exportMdUrl(store.currentId))).text()
+    await navigator.clipboard.writeText(md)
+    exportCopied.value = true
+    setTimeout(() => (exportCopied.value = false), 1600)
+  } catch (e) { toast(t('复制失败：{m}', { m: e.message })) }
 }
 
 const parasOfRole = roles => store.paras.filter(p => roles.includes(annoRole(p.idx)))
@@ -312,7 +341,15 @@ const mcMore = ref(false)          // 方法卡展开：默认只露前三步
 const MC_STEPS = 3
 const stepsShown = computed(() => {
   const all = methodCard.value?.steps || []
-  return mcMore.value ? all : all.slice(0, MC_STEPS)
+  /* 新口径下步骤句尾带依据段号 [¶n]——拆出来做成可点角标，跳回原文核对；
+     老缓存没有段号就照旧整句渲染。 */
+  const split = s => {
+    const txt = String(s || '')
+    const m = txt.match(/\[¶([0-9,，、\s]+)\]\s*$/)
+    if (!m) return { text: txt, cites: [] }
+    return { text: txt.slice(0, m.index).trim(), cites: (m[1].match(/\d+/g) || []).map(Number) }
+  }
+  return (mcMore.value ? all : all.slice(0, MC_STEPS)).map(split)
 })
 async function genMethodCard() {
   const mine = paperEpoch()
@@ -493,6 +530,10 @@ watch(() => store.currentId, () => {
         <div class="reading" v-if="store.analysis.status === 'running'">
           <div class="r-line">{{ t('正在通读…') }}</div>
           <div class="r-bar"><i /></div>
+          <div class="blk-prog-line" v-if="store.analysis.progress?.total">
+            <span>{{ t('已完成 {n}/{m} 项', { n: store.analysis.progress.done, m: store.analysis.progress.total }) }}</span>
+            <button class="lnk" @click="stopAnalyzeHere">{{ t('停止') }}</button>
+          </div>
         </div>
         <div v-else-if="store.analysis.status === 'error'" style="padding:8px 2px">
           <div style="font-size:var(--fs-sm);color:var(--vermilion);line-height:1.6">{{ store.analysis.error }}</div>
@@ -607,7 +648,8 @@ watch(() => store.currentId, () => {
                       :title="mnotes.length ? t('替换现有眉批') : ''">
                 {{ mnotes.length ? t('重写') : t('AI 眉批') }}
               </button>
-              <span v-else class="blk-busy">{{ t('写批注中') }}<span class="r-dots">…</span></span>
+              <span v-else class="blk-busy">{{ t('写批注中') }}<span class="r-dots">…</span>
+                <button class="lnk" style="margin-left:8px" @click="stopMarginalia">{{ t('停止') }}</button></span>
             </div>
                         <div class="blk-prog" v-if="store.marginalia.status === 'running'">
               <div class="r-bar">
@@ -638,7 +680,9 @@ watch(() => store.currentId, () => {
       </template>
 
                   <template v-if="tab === 'eye'">
-        <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}</div>
+          <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}
+            <button class="lnk" style="margin-left:6px" @click="reloadSummary()">{{ t('重试') }}</button>
+          </div>
         <div v-else-if="!store.summary" class="reading">
           <div class="r-line">{{ t('正在写一眼卡…') }}</div>
           <div class="r-bar"><i /></div>
@@ -649,7 +693,8 @@ watch(() => store.currentId, () => {
             <span class="ce-k">{{ t('发现') }}</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>
-          <div class="ce-kw"><span class="chip" v-for="k in store.summary.keywords" :key="k">{{ k }}</span></div>
+          <div class="ce-kw"><button class="chip kw-chip" v-for="k in store.summary.keywords" :key="k"
+                     :title="t('在文中查找')" @click="store.viewerApi?.findInPaper(k)">{{ k }}</button></div>
         </div>
 
                 <div class="blk" v-if="figures.length || figuresLoading">
@@ -681,7 +726,9 @@ watch(() => store.currentId, () => {
               <span class="ce-v">
                 <div class="mc-step" :class="{ unfold: mcMore && i >= MC_STEPS }"
                      :style="mcMore && i >= MC_STEPS ? { animationDelay: (i - MC_STEPS) * 45 + 'ms' } : null"
-                     v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ prettyChem(s) }}</div>
+                     v-for="(s, i) in stepsShown" :key="i">{{ i + 1 }}. {{ prettyChem(s.text) }}<button
+                     v-for="c in s.cites" :key="c" class="md-cite" :title="t('跳到这一段')"
+                     @click="jumpPara(c)">¶{{ c }}</button></div>
               </span>
             </div>
             <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">{{ t(isReview ? '入门' : '注意') }}</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
@@ -702,12 +749,14 @@ watch(() => store.currentId, () => {
             <div class="adv-item" v-for="(q, i) in advisor" :key="i">
               <div class="adv-q">Q{{ i + 1 }} · {{ prettyChem(q.q) }}</div>
               <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ prettyChem(o) }}</li></ul>
+              <button class="si-ask" @click="askAdvisor(q, i)">{{ t('去回答') }} ↗</button>
             </div>
           </div>
         </div>
 
-                <div class="blk" style="display:flex;gap:8px">
+                <div class="blk" style="display:flex;gap:8px;flex-wrap:wrap">
           <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>{{ t('导出笔记 .md') }}</a>
+          <button class="exp-btn" @click="copyExport">{{ exportCopied ? t('已复制') : t('复制 Markdown') }}</button>
         </div>
       </template>
 

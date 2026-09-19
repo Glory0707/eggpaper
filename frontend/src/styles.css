@@ -523,7 +523,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 /* 时段问候：取景框纸卡，淡入浮起、角标展开、下沉淡出；纯展示不挡操作 */
 .greet-box { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); z-index: 700;
   pointer-events: none; background: var(--card); border-radius: 10px; padding: 18px 30px;
-  box-shadow: 0 8px 30px rgba(29, 27, 23, .10); }
+  box-shadow: 0 8px 30px rgba(var(--wash-rgb), .10); }
 .greet-box .gt { font-size: calc(17px * var(--fs-scale)); color: var(--ink); letter-spacing: .03em; font-weight: 500; white-space: nowrap; }
 .greet-box i { position: absolute; width: 13px; height: 13px; border: 0 solid var(--accent);
   animation: greetCorner .45s var(--ease-out) .12s both; }
@@ -731,6 +731,12 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   position: relative;
 }
 .rail-wrap.collapsed { width: 0; }
+/* 多窗格下的右栏：不占格子的宽度，以浮层盖上来（关掉就还整屏给文献） */
+.rail-wrap.overlay {
+  position: fixed; right: 0; top: 56px; bottom: 0; z-index: 210;
+  width: min(var(--rail-w, 336px), 92vw);
+  box-shadow: -10px 0 30px -14px rgba(var(--wash-rgb), 0.32);
+}
 
 body.rail-resizing .rail-wrap { transition: none; }
 body.rail-resizing { cursor: col-resize; user-select: none; }
@@ -1058,10 +1064,14 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 
 .keys-card {
-  position: fixed; z-index: 480; right: 372px; top: 76px;
+  /* 跟着右栏宽走：右栏可拖到 760px，钉死 372px 会被压在栏上 */
+  position: fixed; z-index: 480; right: calc(var(--rail-w, 336px) + 36px); top: 76px;
   width: 300px; background: var(--card-2);
   border: 1px solid var(--hairline); border-radius: 5px;
   box-shadow: var(--shadow-pop); padding: 14px 16px;
+}
+@media (max-width: 1179px) {
+  .keys-card { right: 16px; }      /* 窄窗右栏改浮层，钉在旧位置会被推出屏 */
 }
 
 .quit-mask {
@@ -1143,6 +1153,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   z-index: 600; background: var(--ink); color: var(--card);
   font-size: var(--fs-sm); padding: 9px 16px; border-radius: 4px;
   box-shadow: var(--shadow-pop);
+  max-width: min(76vw, 620px);        /* 长报错/长 URL 别撑成半屏黑条 */
+  white-space: normal; text-align: center; line-height: 1.55;
+  overflow-wrap: anywhere; word-break: break-word;
 }
 
 /* 截图模式：全屏暗罩十字光标，选区外暗选区内亮（Windows 截图的手感） */
@@ -1160,7 +1173,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 3px; padding: 5px 10px; text-decoration: none;
   transition: transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
 }
-.exp-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 6px -2px rgba(38,32,21,.35); }
+.exp-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 6px -2px rgba(var(--wash-rgb), .35); }
 
 .claim-item {
   padding: 12px 2px 10px; border-top: 1px solid var(--hairline-soft);
@@ -1269,7 +1282,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .vis-pop .vp-x:hover { color: var(--ink); box-shadow: none; transform: none; }
 .vis-img { width: 100%; max-height: 180px; object-fit: contain; background: #fff; border: 1px solid var(--hairline-soft); border-radius: 2px; }
 
-.vis-pop { width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 110px); display: flex; flex-direction: column; }
+.vis-pop { width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 110px); display: flex; flex-direction: column; overflow-y: auto; }
 .vis-pop .vp-state { font-size: var(--fs-sm); color: var(--ink-3); margin-top: 8px; }
 .vis-pop .vp-state.err { color: var(--vermilion); }
 .vis-pop .vp-answer {
@@ -1409,7 +1422,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .lib-tools { display: flex; gap: 6px; padding: 0 10px 8px; flex-shrink: 0; }
 .lib-tools .lib-search { flex: 1; min-width: 0; font-size: var(--fs-sm); }
-.lib-tools .lib-sort { flex: 0 0 auto; font-size: var(--fs-sm); padding: 3px 4px; max-width: 92px; }
+.lib-tools .lib-sort { flex: 0 0 auto; font-size: var(--fs-sm); padding: 3px 4px; max-width: 132px; }  /* 92px 裁掉英文 "Recently added" */
 
 .coll-list { padding: 0 8px 8px; border-bottom: 1px solid var(--hairline); flex-shrink: 0; max-height: 38vh; overflow-y: auto; }
 .coll-row {
@@ -1451,7 +1464,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .paper-item .p-tag:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent-line); }
 .coll-menu {
-  position: fixed; z-index: 60; width: 220px;
+  /* Teleport 到 body 后与 lib-panel(250)/modal-mask(500) 同栈比较，60 会被文库面板整个盖死 */
+  position: fixed; z-index: 460; width: 220px;
   background: var(--card-2); border: 1px solid var(--hairline); border-radius: 4px;
   box-shadow: var(--shadow-pop); padding: 8px 10px;
 }
@@ -1682,7 +1696,22 @@ html.dark .sp-shot { background: #fff; }
 .cal-nav-btn:hover, .cal-today:hover { background: var(--btn-hover); box-shadow: none; transform: none; }
 .cal-today { margin-left: 4px; }
 
-.cal-stat { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 8px; letter-spacing: 0.04em; }
+.cal-stat { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 8px; letter-spacing: 0.04em;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cal-stat .lnk { flex-shrink: 0; font-family: var(--sans); }
+
+/* 演示模式徽标：没配 key 时常驻顶栏，一眼知道现在全是假数据，点了直达设置 */
+.demo-badge {
+  font-size: var(--fs-xs); font-family: var(--sans); color: var(--accent-deep);
+  background: var(--accent-soft); border: 1px solid var(--accent-line);
+  border-radius: 999px; padding: 4px 11px; white-space: nowrap;
+}
+.demo-badge:hover { box-shadow: none; transform: translateY(-1px); }
+.empty .desk-hint.demo-hint {
+  position: static; display: block; margin: 14px auto 0; width: fit-content;
+  color: var(--accent-deep); cursor: pointer; border-radius: 4px; padding: 2px 6px;
+}
+.empty .desk-hint.demo-hint:hover { background: var(--accent-soft); }
 
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .cal-wd {
@@ -1725,7 +1754,9 @@ html.dark .sp-shot { background: #fff; }
 .toc-row .toc-p { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
 
 .md, .qa-msg .q-body, .cal-paper, .paper-item .fn, .ce-v, .six-txt,
-.claim-item .c-txt, .gap-row .g-txt { overflow-wrap: anywhere; }
+.claim-item .c-txt, .gap-row .g-txt,
+.sel-pop .sp-zh, .sp-hits .chip, .ev-row .e-note, .adv-q, .adv-outline,
+.cal-paper, .t-zh, .p-author { overflow-wrap: anywhere; }
 
 @keyframes imgIn { from { opacity: 0; } }
 .fig-thumb { animation: imgIn 360ms var(--ease-out) both; }

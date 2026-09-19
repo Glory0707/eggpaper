@@ -27,8 +27,10 @@ export const api = {
   paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
   analyze: (pid) => req('POST', `/api/papers/${pid}/analyze`),
   analysis: (pid) => req('GET', `/api/papers/${pid}/analysis`),
+  analysisCancel: (pid) => req('POST', `/api/papers/${pid}/analysis/cancel`),
   marginaliaStart: (pid) => req('POST', `/api/papers/${pid}/marginalia`),
   marginalia: (pid) => req('GET', `/api/papers/${pid}/marginalia`),
+  marginaliaCancel: (pid) => req('POST', `/api/papers/${pid}/marginalia/cancel`),
   pin: (pid, body) => req('POST', `/api/papers/${pid}/pin`, body),
   unpin: (pid, mid) => req('DELETE', `/api/papers/${pid}/marginalia/${mid}`),
   summary: (pid) => req('GET', `/api/papers/${pid}/summary`),
@@ -66,6 +68,7 @@ export const api = {
 
   translateFull: (pid, force) => req('POST', `/api/papers/${pid}/translate-full${force ? '?force=1' : ''}`),
   translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
+  translateCancel: (pid) => req('POST', `/api/papers/${pid}/translate-full/cancel`),
   glossary: (pid) => req('GET', `/api/papers/${pid}/glossary`),
   glossaryGen: (pid) => req('POST', `/api/papers/${pid}/glossary/generate`),
   glossaryAdd: (pid, item) => req('POST', `/api/papers/${pid}/glossary`, item),

@@ -1,6 +1,7 @@
 """SQLite 存储：论文、段落、骨架标注、术语表、问答。全部本地。"""
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -286,10 +287,12 @@ def replace_paragraphs(pid: str, paras: list):
             c.rollback()
             raise
 
-def get_paragraphs(pid: str):
+def get_paragraphs(pid: str, with_lines: bool = True):
+    """with_lines=False 给纯文本消费方（问答/析读语料）：行级坐标是段落里最重的一块，
+    不画线就不必反序列化它。"""
     rows = q("SELECT idx, page, bbox, text, in_refs, lines FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,))
     return [dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
-                 lines=json.loads(r["lines"]) if r["lines"] else []) for r in rows]
+                 lines=(json.loads(r["lines"]) if (with_lines and r["lines"]) else [])) for r in rows]
 
 def paragraphs_need_lines(pid: str) -> bool:
     """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。"""
@@ -362,8 +365,13 @@ def fail_marginalia(pid: str, error: str):
 
 def get_analysis(pid: str):
     paper = get_paper(pid)
-    claims = [{"id": r["cid"], "text": r["text"], "anchors": json.loads(r["anchors"])}
-              for r in q("SELECT cid, text, anchors FROM claims WHERE paper_id=? ORDER BY cid", (pid,))]
+    rows = [{"id": r["cid"], "text": r["text"], "anchors": json.loads(r["anchors"])}
+            for r in q("SELECT cid, text, anchors FROM claims WHERE paper_id=?", (pid,))]
+    # 按编号的数字部分排（C2 在 C10 前面）：字典序会把 10+ 条主张排成 C1,C10,C11,…,C2
+    def _num(r):
+        m = re.search(r"\d+", str(r["id"]) or "")
+        return int(m.group()) if m else 0
+    claims = sorted(rows, key=_num)
     annos = {str(r["para_idx"]): {"role": r["role"], "inferred_role": r["inferred_role"] or r["role"],
                                   "purpose": r["purpose"], "user_override": bool(r["user_override"])}
              for r in q("SELECT * FROM annotations WHERE paper_id=?", (pid,))}

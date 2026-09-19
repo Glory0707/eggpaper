@@ -373,6 +373,7 @@ async function poll() {
       await openPaper(r.pid)
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
+  try { if (store.papers.some(p => p.translate_status === 'running')) await bgTranslateTick() } catch { /* 同上 */ }
   if (bootVersion && !verHintShown && ++verTick % 5 === 0) {
     try {
       const v = await api.version()
@@ -555,6 +556,15 @@ async function doMarginalia() {
   startMarginFast()
 }
 
+/* 长任务的「停止」：后端是协作式取消，析读在阶段边界收手（已生成的部分保留），
+   整本翻译直接掐 pdf2zh 进程（已译好的页留着，下次接着译）。 */
+async function stopAnalyze() {
+  try { await api.analysisCancel(store.currentId); toast(t('已请求停止，收个尾就停')) } catch { /* 不打扰 */ }
+}
+async function stopTranslate() {
+  try { await api.translateCancel(store.currentId); toast(t('已停止整本翻译')); await refreshPapers() } catch { /* 同上 */ }
+}
+
 /* 眉批是**唯一**会持续几十秒到几分钟的任务。全局那条 3 秒轮询在它跑完那一刻最多还要
    再等 3 秒才把结果取回来——"明明好了却还显示在写"就是这么来的。只给它一条 1 秒的
    快轮询，跑完立刻停；其他功能照旧 3 秒，互不影响。 */
@@ -596,6 +606,27 @@ async function pollTranslate() {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()
     toast(t('整本翻译失败：{m}', { m: (j.error || '').slice(0, 100) }), 6000)
+  }
+}
+
+/* 后台篇的整本翻译：人已经转到别的论文上，那条 3 秒轮询只看当前篇——译完悄无声息，
+   用户只能反复切回去看。这里替"还在跑"的每篇问一次状态（顺带让后端把孤儿译文认领了），
+   完成时补一条通知；庆祝动画仍然只留给在场的这篇。 */
+const _bgTran = new Set()
+async function bgTranslateTick() {
+  for (const p of store.papers.filter(x => x.translate_status === 'running')) {
+    if (_bgTran.has(p.id)) continue
+    _bgTran.add(p.id)
+    try {
+      const j = await api.translateStatus(p.id)
+      if (j.status === 'done') {
+        await refreshPapers()
+        if (p.id !== store.currentId) {
+          toast(t('《{t}》翻译完成', { t: (p.title || p.filename || '').slice(0, 24) }))
+        }
+      }
+      if (j.status !== 'running') _bgTran.delete(p.id)
+    } catch { _bgTran.delete(p.id) }
   }
 }
 
@@ -656,6 +687,9 @@ async function saveSettings(body) {
 }
 
 const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.status))
+/* 演示模式 = 没配 key 或勾了演示。界面上不标注的话，新用户拿到一手假数据
+   还以为是 AI 就这水平——常驻一枚小徽标，点了直达设置。 */
+const demoOn = computed(() => !!store.settings && (store.settings.mock || !store.settings.provider?.has_key))
 /* 日历图标上的小点：今天已经读过点什么——轻提醒，不弹任何东西 */
 const readToday = computed(() => {
   const d = new Date()
@@ -751,6 +785,8 @@ function onKey(e) {
     case '3': if (tranSt.value === 'done') store.viewer.variant = 'dual'; break
     case '/': e.preventDefault(); store.askFocusTick++; break
     case 'x': store.viewer.railUser = !store.viewer.railUser; break
+    case 'a': doAnalyze(); break
+    case 'm': doMarginalia(); break
     case 'g': gPending.value = true; setTimeout(() => (gPending.value = false), 700); break
     case '?': store.shortcutCard = !store.shortcutCard; break
   }
@@ -758,7 +794,8 @@ function onKey(e) {
 </script>
 
 <template>
-  <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+  <div class="app" :style="{ '--rail-w': store.viewer.railW + 'px' }"
+       @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" :title="t('回书桌')" @click="goHome">
         <span class="egg-wrap" :class="{ gone: petPos || dragFloat }" :title="t('彩蛋')"
@@ -796,12 +833,18 @@ function onKey(e) {
                 :title="tranTip">
           {{ tranLabel }}
         </button>
+        <button v-if="tranSt === 'running'" class="ghost" @click="stopTranslate"
+                :title="t('停掉 pdf2zh；已译好的页会留着，下次接着译')">{{ t('停止') }}</button>
         <button class="primary" @click="doAnalyze" :disabled="anaBusy">
           {{ store.analysis.status === 'queued' ? t('排队中…') : (store.analysis.status === 'running' ? t('通读中…')
              : (store.analysis.status === 'done' ? t('重新析读') : t('析读'))) }}
         </button>
+        <button v-if="anaBusy" class="ghost" @click="stopAnalyze"
+                :title="t('析读在阶段边界收手，已生成的部分保留')">{{ t('停止') }}</button>
       </div>
       <div class="actions">
+        <button class="demo-badge" v-if="demoOn" @click="showSettings = true"
+                :title="t('没配模型，现在全是演示数据——点这里去设置')">{{ t('演示模式') }}</button>
         <button class="ghost" @click="showSettings = true" :title="t('设置')">⚙</button>
       </div>
             <div class="tran-line" v-if="tranSt === 'running' && !isEn()">
@@ -863,14 +906,17 @@ function onKey(e) {
           <div class="stamp" role="button" tabindex="0" @click="pickFiles"
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
           <div class="desk-hint">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
+          <div class="desk-hint demo-hint" v-if="demoOn" role="button" tabindex="0"
+               @click="showSettings = true" @keydown.enter.prevent="showSettings = true">
+            {{ t('没配模型，进去都是演示数据——先到设置里配好') }}
+          </div>
         </div>
         <PdfViewer v-else :pid="store.currentId" :key="store.currentId" />
       </main>
 
             <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
               @click="store.viewer.railUser = true">◂</button>
-            <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight }"
-           :style="{ '--rail-w': store.viewer.railW + 'px' }">
+            <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight, overlay: store.railOverlay }">
         <RightRail @analyze="doAnalyze" @marginalia="doMarginalia" />
       </div>
     </div>
@@ -901,6 +947,8 @@ function onKey(e) {
     <div class="keys-card" v-if="store.shortcutCard" @click="store.shortcutCard = false">
       <div class="mono-label" style="margin-bottom:8px">{{ t('键盘') }}</div>
       <div class="k-row"><span>{{ t('下一段 / 上一段') }}</span><kbd>j / k</kbd></div>
+      <div class="k-row"><span>{{ t('翻页') }}</span><kbd>PageUp / PageDown</kbd></div>
+      <div class="k-row"><span>{{ t('查找') }}</span><kbd>Ctrl + F</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('译当前段并钉页边') }}</span><kbd>t</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('翻译划选') }}</span><kbd>s</kbd></div>
       <div class="k-row"><span>{{ t('框选问 AI（Esc 退出）') }}</span><kbd>r</kbd></div>
@@ -908,10 +956,13 @@ function onKey(e) {
       <div class="k-row" v-if="!isEn()"><span>{{ t('原文 / 译文 / 双语') }}</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>{{ t('聚焦提问') }}</span><kbd>/</kbd></div>
       <div class="k-row"><span>{{ t('折叠右栏') }}</span><kbd>x</kbd></div>
+      <div class="k-row" v-if="!isEn()"><span>{{ t('析读') }}</span><kbd>a</kbd></div>
+      <div class="k-row" v-if="!isEn()"><span>{{ t('AI 眉批') }}</span><kbd>m</kbd></div>
       <div class="k-row"><span>{{ t('文库 / 日历 / 目录') }}</span><kbd>g l / g c / g o</kbd></div>
       <div class="k-row"><span>{{ t('回书桌') }}</span><kbd>g h</kbd></div>
       <div class="k-row"><span>{{ t('返回原位') }}</span><kbd>Alt + ←</kbd></div>
       <div class="k-row"><span>{{ t('收起所有浮层 / 退出框选') }}</span><kbd>Esc</kbd></div>
+      <div class="k-row"><span>{{ t('这张卡') }}</span><kbd>?</kbd></div>
     </div>
     </Transition>
 
@@ -936,7 +987,7 @@ function onKey(e) {
       <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
     </span>
     <Transition name="fade">
-    <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(29,27,23,.22)">
+    <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(var(--wash-rgb), .22)">
       <div class="modal" style="text-align:center">
         <div style="font-size:var(--fs-xl);font-weight:650">{{ t('松手，放到书桌上') }}</div>
       </div>

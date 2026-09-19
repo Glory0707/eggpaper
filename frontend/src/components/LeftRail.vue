@@ -256,6 +256,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
       </div>
       </TransitionGroup>
       <Teleport to="body">
+        <Transition name="pop">
         <div class="coll-menu" v-if="menuFor" @click.stop
              :style="{ left: menuXY.x + 'px', top: menuXY.y + 'px' }">
           <div class="cm-head">{{ t('归入分类') }}</div>
@@ -266,6 +267,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
           <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
           <button class="cm-done" @click="menuFor = null">{{ t('完成') }}</button>
         </div>
+        </Transition>
       </Teleport>
       <div v-if="!shown.length" class="p-empty">
         <template v-if="!store.papers.length">{{ t('文库是空的') }}</template>

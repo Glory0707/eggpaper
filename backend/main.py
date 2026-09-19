@@ -537,6 +537,16 @@ def _pdf_hash_bytes(raw: bytes) -> str:
     import hashlib
     return hashlib.sha256(raw).hexdigest()
 
+def _copy_with_hash(src: str, dest: str) -> str:
+    """边复制边喂 sha256：原来的「整读算哈希 + copyfile 整读整写」把源文件读了两遍。"""
+    import hashlib
+    h = hashlib.sha256()
+    with open(src, "rb") as fsrc, open(dest, "wb") as fdst:
+        for chunk in iter(lambda: fsrc.read(1 << 20), b""):
+            h.update(chunk)
+            fdst.write(chunk)
+    return h.hexdigest()
+
 def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     """把已经落在 papers/<pid>/ 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
 
@@ -601,18 +611,22 @@ def import_path(body: dict):
     if not src.lower().endswith(".pdf"):
         raise HTTPException(400, "eggpaper 只认 PDF")
     name, size = os.path.basename(src), os.path.getsize(src)
-    pdf_hash = _pdf_hash_file(src)
-    dup = db.find_duplicate(name, size, pdf_hash)
-    if dup:
-        _pending_open["pid"] = dup
-        return {"paper": db.get_paper(dup), "duplicate": True}
     pid = db.new_id()
     os.makedirs(paper_dir(pid), exist_ok=True)
     dest = os.path.join(paper_dir(pid), "paper.pdf")
     try:
-        shutil.copyfile(src, dest)
+        pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
     except OSError as e:
         raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
+    dup = db.find_duplicate(name, size, pdf_hash)
+    if dup:
+        _rm(dest)
+        try:
+            os.rmdir(paper_dir(pid))    # 刚建的空文件夹顺手收掉
+        except OSError:
+            pass
+        _pending_open["pid"] = dup
+        return {"paper": db.get_paper(dup), "duplicate": True}
     out = _ingest(pid, name, dest, pdf_hash)
     _pending_open["pid"] = pid
     return out
@@ -653,7 +667,10 @@ def _detect_paper_type(title: str, paras: list) -> str:
     "this review / this survey / we review"。三个信号命中其一就算；拿不准一律算
     研究型——综述策略（只灰参考文献、谱系卡）误用到研究型论文上比反过来更难看。
     """
-    rx = re.compile(r"\b(reviews?|surveys?|tutorial|primer|state[- ]of[- ]the[- ]art)\b|综述|述评", re.I)
+    rx = re.compile(r"\b(reviews?|surveys?|tutorial|primer|state[- ]of[- ]the[- ]art"
+                    r"|recent advances|challenges and opportunities|opportunities and challenges"
+                    r"|perspectives? on|roadmap|progress and (?:challenges|prospects))\b"
+                    r"|综述|述评|进展与挑战", re.I)
     title_hit = bool((title or "").strip()) and bool(rx.search(title or ""))
     lead = " ".join((p.get("text") or "") for p in (paras or [])[:8])
     lead_hit = bool(re.search(r"in (this|the) (review|survey)|we (review|survey)|本(文|篇)综述|这篇综述", lead, re.I))
@@ -817,6 +834,11 @@ def _run_analysis(pid: str, paras: list):
         use = [p for p in paras if not p.get("in_refs")]
         kind = _ensure_paper_type(pid)
         demo = _demo_mode()
+        if _cancel_requested(pid):
+            _cancel_clear(pid)
+            db.update_paper(pid, analysis_status="none", analysis_error=None)
+            _applog(f"析读 {pid}: 已取消（开始前）")
+            return
         ex = ThreadPoolExecutor(max_workers=5)
         tfut = ex.submit(_demo_terms if demo else llm.extract_terms, title, paras)
         if demo:
@@ -833,6 +855,11 @@ def _run_analysis(pid: str, paras: list):
         db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
                         abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
                         evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
+        if _cancel_requested(pid):
+            _cancel_clear(pid)
+            db.update_paper(pid, analysis_status="none", analysis_error=None)
+            _applog(f"析读 {pid}: 已取消（骨架完成后，骨架保留）")
+            return
         p2 = db.get_paper(pid)
         todo = ["motive", "next", "lens"]
         futs = {ex.submit(_mock_six, k) if demo else ex.submit(_gen_six, p2, k): k
@@ -842,8 +869,11 @@ def _run_analysis(pid: str, paras: list):
             _, claims2, annos2 = db.get_analysis(pid)
             futs[ex.submit(llm.suggest_questions, p2["title"], claims2, annos2)] = "suggest"
         futs[tfut] = "terms"
+        _analysis_progress[pid] = {"done": 1, "total": 1 + len(futs)}   # 骨架算已完成的 1 项
         for fut in as_completed(futs):
             k = futs[fut]
+            if _cancel_requested(pid):
+                break
             try:
                 got = fut.result()
                 if k == "terms":
@@ -870,11 +900,21 @@ def _run_analysis(pid: str, paras: list):
                     _applog(f"析读 {pid}: 五问·{k} 这次是空的")
             except Exception as e:
                 _applog(f"析读 {pid}: {k} 没生成（{_human_msg(e)}）")
+            d = _analysis_progress.get(pid)
+            if d:
+                d["done"] = min(d.get("total") or 0, d.get("done", 0) + 1)
+        if _cancel_requested(pid):
+            _cancel_clear(pid)
+            db.update_paper(pid, analysis_status="none", analysis_error=None)
+            _applog(f"析读 {pid}: 已取消，已完成的部分保留")
+            return
     except Exception as e:
         hint = _human_msg(e)
         _applog(f"析读失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
         db.fail_analysis(pid, hint)
     finally:
+        _cancel_clear(pid)
+        _analysis_progress.pop(pid, None)
         if ex:
             ex.shutdown(wait=False, cancel_futures=True)
         _job_done("analysis", pid)
@@ -898,7 +938,8 @@ def analysis(pid: str):
         db.update_paper(pid, analysis_status="none")
         status = "none"
     eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
-    return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos, "evidence_qs": eqs}
+    return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos,
+            "evidence_qs": eqs, "progress": _analysis_progress.get(pid)}
 
 # ---------------- 眉批（句级批注） ----------------
 
@@ -926,26 +967,34 @@ def _resolve_rects(pid: str):
     p = db.get_paper(pid)
     if not p:
         return
+    # PDF 不在（被移动/网盘没同步）时就此打住：GET /marginalia 不能为它 500，
+    # 析读线程更不能在批注已经完整落库之后在这翻成"失败"。
+    if not (p.get("path") and os.path.exists(p["path"])):
+        return
     doc = None
-    for n in db.get_marginalia(pid):
-        if n["rect"] or n["kind"] == "region" or n["id"] in _rect_tried:
-            continue
-        _rect_tried.add(n["id"])
-        if doc is None:
-            doc = pymupdf.open(p["path"])
-        rects = []
-        for cut in (0, 60, 36, 20):
-            probe = n["quote"] if cut == 0 else n["quote"][:cut].strip()
-            if len(probe) < 8:
+    try:
+        for n in db.get_marginalia(pid):
+            if n["rect"] or n["kind"] == "region" or n["id"] in _rect_tried:
                 continue
-            rects = doc[n["page"]].search_for(probe)
+            _rect_tried.add(n["id"])
+            if doc is None:
+                doc = pymupdf.open(p["path"])
+            rects = []
+            for cut in (0, 60, 36, 20):
+                probe = n["quote"] if cut == 0 else n["quote"][:cut].strip()
+                if len(probe) < 8:
+                    continue
+                rects = doc[n["page"]].search_for(probe)
+                if rects:
+                    break
             if rects:
-                break
-        if rects:
-            r = rects[0]
-            db.marginalia_set_rect(n["id"], {"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1})
-    if doc:
-        doc.close()
+                r = rects[0]
+                db.marginalia_set_rect(n["id"], {"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1})
+    except Exception as e:
+        _applog(f"批注定位 {pid} 失败（不影响批注本身）: {e}")
+    finally:
+        if doc:
+            doc.close()
 
 _rect_tried = set()
 
@@ -953,6 +1002,24 @@ _live_jobs = set()
 _live_lock = threading.Lock()
 
 _margin_progress = {}
+
+# ---- 长任务取消：协作式。线程在阶段边界查探针，查到就不再写库、状态归回"没做过"。
+_cancel_flags: set = set()
+_cancel_lock = threading.Lock()
+
+def _cancel_requested(pid: str) -> bool:
+    with _cancel_lock:
+        return pid in _cancel_flags
+
+def _cancel_request(pid: str):
+    with _cancel_lock:
+        _cancel_flags.add(pid)
+
+def _cancel_clear(pid: str):
+    with _cancel_lock:
+        _cancel_flags.discard(pid)
+
+_analysis_progress: dict = {}   # pid -> {"done": n, "total": m}：析读子任务计数，给"已完成 n/m 项"用
 
 def _job_live(kind: str, pid: str) -> bool:
     return (kind, pid) in _live_jobs
@@ -974,6 +1041,7 @@ def _enqueue_analysis(pid: str, paras: list):
     with _q_lock:
         if pid in _analysis_pending:
             return
+        _cancel_clear(pid)          # 上次取消留下的旗子别误杀这次
         _analysis_pending.add(pid)
         db.update_paper(pid, analysis_status="queued", analysis_error=None)
         _analysis_q.put((pid, paras))
@@ -1040,11 +1108,17 @@ def _run_marginalia(pid: str):
         title = db.get_paper(pid)["title"]
         paras = db.get_paragraphs(pid)
         use = [p for p in paras if not p.get("in_refs")]
+        kind = _ensure_paper_type(pid)
         if _demo_mode():
             notes, misses = llm.mock_marginalia(paras), 0
             on_chunk(1, 1)
         else:
-            notes, misses = llm.analyze_marginalia(title, use, on_chunk=on_chunk)
+            notes, misses = llm.analyze_marginalia(title, use, on_chunk=on_chunk, kind=kind,
+                                                   should_stop=lambda: _cancel_requested(pid))
+        if _cancel_requested(pid):
+            db.update_paper(pid, marginalia_status="none", marginalia_error=None)
+            _applog(f"眉批 {pid}: 已取消")
+            return
         t_llm = _t.time() - t0
         db.set_marginalia(pid, notes)
         if misses:
@@ -1067,12 +1141,14 @@ def _run_marginalia(pid: str):
         _applog(f"眉批失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
         db.fail_marginalia(pid, _human_msg(e))
     finally:
+        _cancel_clear(pid)
         _margin_progress.pop(pid, None)
         _job_done("marginalia", pid)
 
 @app.post("/api/papers/{pid}/marginalia")
 def marginalia_start(pid: str):
     p = _paper_or_404(pid)
+    _cancel_clear(pid)              # 上次取消留下的旗子别误杀这次
     with _live_lock:
         if _job_live("marginalia", pid):
             return {"status": "running"}
@@ -1102,6 +1178,29 @@ def marginalia_get(pid: str):
     return {"status": status, "error": p.get("marginalia_error"),
             "progress": _margin_progress.get(pid),
             "notes": [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None) for n in notes]}
+
+@app.post("/api/papers/{pid}/analysis/cancel")
+def analysis_cancel(pid: str):
+    """请求取消析读：正在跑的线程在阶段边界看到旗子就停，已生成的部分保留。"""
+    _paper_or_404(pid)
+    _cancel_request(pid)
+    return {"ok": True}
+
+@app.post("/api/papers/{pid}/marginalia/cancel")
+def marginalia_cancel(pid: str):
+    _paper_or_404(pid)
+    _cancel_request(pid)
+    return {"ok": True}
+
+@app.post("/api/papers/{pid}/translate-full/cancel")
+def translate_cancel(pid: str):
+    """停整本翻译：掐掉 pdf2zh 进程；已译好的页留在 .pages/ 里，下次接着译。"""
+    p = _paper_or_404(pid)
+    stopped = translate_full.cancel(pid)
+    if stopped or p["translate_status"] == "running":
+        db.update_paper(pid, translate_status="none", translate_error="")
+        _applog(f"整本翻译 {pid}: 已取消")
+    return {"ok": True, "stopped": bool(stopped)}
 
 @app.post("/api/papers/{pid}/pin")
 def pin_lookup(pid: str, body: dict):
@@ -1212,16 +1311,22 @@ def advisor(pid: str, cached: bool = False):
         return JSONResponse(json.loads(p["advisor"]))
     if cached:
         return {"questions": []}
-    if p["analysis_status"] != "done":
-        return {"questions": []}
-    if _demo_mode():
-        data = {"questions": [{"q": "〔演示〕证据够硬吗？", "outline": ["演示要点"]}]}
-    else:
-        _, claims, annos = db.get_analysis(pid)
-        warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
-        data = llm.advisor_questions(p["title"], claims, warns)
-        _require_shape(data, ("questions",), "导师三问")
-    db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
+    with _gen_lock("advisor:" + pid):        # 连点只付一次钱：锁内重读缓存，第二拍直接命中
+        p = db.get_paper(pid)
+        if p["advisor"]:
+            return JSONResponse(json.loads(p["advisor"]))
+        if cached:
+            return {"questions": []}
+        if p["analysis_status"] != "done":
+            return {"questions": []}
+        if _demo_mode():
+            data = {"questions": [{"q": "〔演示〕证据够硬吗？", "outline": ["演示要点"]}]}
+        else:
+            _, claims, annos = db.get_analysis(pid)
+            warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
+            data = llm.advisor_questions(p["title"], claims, warns, kind=_ensure_paper_type(pid))
+            _require_shape(data, ("questions",), "导师三问")
+        db.update_paper(pid, advisor=json.dumps(data, ensure_ascii=False))
     return data
 
 @app.post("/api/ask-visual")
@@ -1265,6 +1370,10 @@ def _gen_six(p: dict, key: str):
                                _paras_of_role(pid, {"limitation"}),
                                _paras_of_role(pid, {"extension"}, 5),
                                claims, warns)
+    if key == "lens":
+        # 管线期 lens 与 summary 并行生成，调用方传入的快照里 summary 还是 None——
+        # 照抄快照会让「换个学科」永远拿不到那句话，还被 v=2 缓存固化。现场重读一次。
+        p = db.get_paper(pid) or p
     s = json.loads(p["summary"]) if p.get("summary") else {}
     return llm.answer_lens(p["title"], s.get("one_line", ""), claims, db.get_paragraphs(pid))
 
@@ -1399,6 +1508,9 @@ def export_md(pid: str):
     en = (config.load().get("ui_lang") or "zh") == "en"
     T = {
         "skeleton": ("论证骨架", "Argument skeleton"),
+        "six": ("五个问题", "Five questions"),
+        "mcard": ("方法卡", "Method card"),
+        "scard": ("谱系卡", "Survey map"),
         "notes": ("眉批与查译", "Margin notes & lookups"),
         "qa": ("问答", "Q&A"),
         "you": ("你", "You"),
@@ -1423,6 +1535,43 @@ def export_md(pid: str):
                 anno = annos.get(str(a))
                 if anno:
                     lines.append(f"  - ¶{a}：{anno['purpose']}")
+            lines.append("")
+    # 五问：它们存在 answers 表里，原先导出漏了——写综述/组会汇报时最值钱的恰是这几问
+    answers = db.answers_all(pid)
+    SIX_LABELS = {"motive": ("① 要解决什么、为什么", "① What & why"),
+                  "how": ("② 怎么解决的", "② How"),
+                  "next": ("④ 还能做什么", "④ What next"),
+                  "lens": ("⑤ 换个学科怎么看", "⑤ Other lenses")}
+    six_lines = []
+    for k, lab in SIX_LABELS.items():
+        a = answers.get(k)
+        if not isinstance(a, dict):
+            continue
+        if a.get("text"):
+            six_lines.append(f"- **{lab[1] if en else lab[0]}**：{a['text']}")
+        for it in a.get("items") or []:
+            head = f"{lab[1] if en else lab[0]} · {it.get('lead', '')}".strip(" ·")
+            six_lines.append(f"- **{head}**：{it.get('text', '')}")
+            if it.get("ask"):
+                six_lines.append(f"  - ↗ {it['ask']}")
+    if six_lines:
+        lines += [f"## {L('six')}", ""] + six_lines + [""]
+    if p["method_card"]:
+        try:
+            mc = json.loads(p["method_card"])
+        except ValueError:
+            mc = {}
+        if mc.get("goal") or mc.get("steps"):
+            is_rev = (p.get("paper_type") == "review")
+            lines += [f"## {L('scard' if is_rev else 'mcard')}", ""]
+            if mc.get("goal"):
+                lab = ("Position" if is_rev else "Goal") if en else ("定位" if is_rev else "目标")
+                lines.append(f"- {lab}: {mc['goal']}")
+            for s in mc.get("steps") or []:
+                lines.append(f"- {s}")
+            if mc.get("notes"):
+                lab = "Notes" if en else ("入门" if is_rev else "注意")
+                lines.append(f"- {lab}: {mc['notes']}")
             lines.append("")
     notes = db.get_marginalia(pid)
     if notes:
@@ -1878,14 +2027,17 @@ def _recon_pick(question: str, papers: list):
     try:
         out = llm.chat([{"role": "system", "content": RECON_SYSTEM},
                         {"role": "user", "content": f"文献清单：\n{lines}\n\n问题：{question}"}],
-                       max_tokens=150, temperature=0)
+                       max_tokens=150, temperature=0, no_think=True)
         nums = [int(n) for n in re.findall(r"\d+", out)]
         picked = []
         for n in nums:
             if 0 <= n < len(papers) and papers[n]["id"] not in picked:
                 picked.append(papers[n]["id"])
+        if not picked:
+            _applog(f"跨文献侦察没挑出篇目（输出：{out[:60]!r}），退回前 3 篇")
         return picked[:4]
-    except Exception:
+    except Exception as e:
+        _applog(f"跨文献侦察失败，退回前 3 篇: {_human_msg(e)}")
         return [p["id"] for p in papers[:3]]
 
 def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
@@ -1904,7 +2056,8 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
         else:
             summary, ctx = _context(pid, conv_id, hist)
             pids = [pid] + [x for x in (ref_pids or []) if x != pid]
-            hits = db.glossary_hits_all(pids, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
+            paras = db.get_paragraphs(pid, with_lines=False)   # 一问只取一遍：下面三处全用它
+            hits = db.glossary_hits_all(pids, " ".join(pp["text"] for pp in paras)[:60000])
             others = []
             cand = [x for x in (ref_pids or []) if x != pid]
             if len(cand) > 3:
@@ -1912,8 +2065,9 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             for x in cand[:3]:
                 o = db.get_paper(x)
                 if o:
-                    others.append({"title": o.get("title") or o.get("filename") or "未命名", "paras": db.get_paragraphs(x)})
-            gen = llm.chat_stream(llm.ask_messages(p["title"], db.get_paragraphs(pid), ctx, question,
+                    others.append({"title": o.get("title") or o.get("filename") or "未命名",
+                                   "paras": db.get_paragraphs(x, with_lines=False)})
+            gen = llm.chat_stream(llm.ask_messages(p["title"], paras, ctx, question,
                                                    hits, summary, others))
         for piece in gen:
             buf.append(piece)
@@ -2186,6 +2340,15 @@ def translate_full_start(pid: str, force: bool = False):
 def translate_full_status(pid: str):
     p = _paper_or_404(pid)
     j = translate_full.job(pid)
+    if j["status"] == "none" and p["translate_status"] not in ("running", "done", "error"):
+        # pdf2zh 是独立进程：它可能在本进程启动**之后**才把成品写完，没人认领界面上
+        # 就永远显示「整本翻译」。这里顺手认领一次（两次 stat + 尾部读，够便宜）。
+        got = translate_full.adopt_existing(paper_dir(pid))
+        if got:
+            db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
+                            translate_status="done", translate_error="")
+            _applog(f"整本翻译 {pid}: 运行中发现已写完的成品，直接认领")
+            p = _paper_or_404(pid)
     if j["status"] == "done":
         if (j["mono"] or "") != (p["mono_path"] or ""):
             old_dual = p.get("dual_path") or ""
