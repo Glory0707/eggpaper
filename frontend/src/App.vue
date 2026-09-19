@@ -90,12 +90,12 @@ function makePet() {
     dragOver.value = false              // .app 的 onDrop 收不到这一拍了，浮层自己收
     const files = Array.from(e.dataTransfer?.files || []).filter(f => f && f.name)
     if (!files.length) return
-    feed(e.clientX, e.clientY, files.length)
+    feed(e.clientX, e.clientY, files.length, e.currentTarget)
     onImport(files)
   }
-  function feed(x, y, n) {
+  function feed(x, y, n, targetEl) {
     if (sleepEgg.value) return          // 它睡着了：饭照收（导入照跑），仪式免了
-    const r = pet.el?.getBoundingClientRect?.()
+    const r = (targetEl || pet.el)?.getBoundingClientRect?.()
     if (!r) return
     ghosts.value = Array.from({ length: Math.min(n, 4) }, (_, i) => ({
       id: ++ghostId,
@@ -118,6 +118,83 @@ function makePet() {
 }
 const ghosts = ref([])           // 飞行途中的纸片（两只蛋共用一条渲染通道）
 let ghostId = 0
+/* 拖动蛋：长按 400ms 抓起（期间松手仍是戳，互不打架），可拖到屏幕任意位置安家；
+   拖回左上角原位附近自动磁吸归位。位置记在本机，刷新后它还在原地。 */
+const homeEl = ref(null)         // 顶栏原位的蛋占位（蛋被拖走后仍占着坑）
+const petPos = ref(null)         // null = 原位；{x,y} = 浮动位（视口 CSS 像素）
+const dragFloat = ref(false)     // 正被拖着走
+let armT = 0, dragOff = { x: 0, y: 0 }, suppressClick = false
+const FLOAT_W = 27
+
+function clampPos(x, y) {
+  return { x: Math.min(Math.max(8, x), window.innerWidth - FLOAT_W - 8),
+           y: Math.min(Math.max(8, y), window.innerHeight - FLOAT_W - 8) }
+}
+function homeCenter() {
+  const r = homeEl.value?.getBoundingClientRect?.()
+  return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2, left: r.left, top: r.top } : null
+}
+function petDown(e) {
+  if (e.button !== 0 || topPet.spinning) return
+  const r = e.currentTarget.getBoundingClientRect()
+  dragOff = { x: e.clientX - r.left, y: e.clientY - r.top }
+  clearTimeout(armT)
+  suppressClick = false
+  armT = setTimeout(() => {       // 按住 400ms：抓起来
+    suppressClick = true
+    dragFloat.value = true
+    if (!petPos.value) petPos.value = clampPos(r.left, r.top)   // 从原位抓起的一瞬
+  }, 400)
+  const move = ev => {
+    if (!dragFloat.value) {
+      if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > 10) {
+        clearTimeout(armT)        // 没抓起来就滑走了：当普通划过
+        cleanup()
+      }
+      return
+    }
+    ev.preventDefault()
+    const home = homeCenter()
+    if (home && Math.hypot(ev.clientX - home.x, ev.clientY - home.y) < 60) {
+      petPos.value = { x: home.left, y: home.top }   // 靠近原位：磁吸
+      return
+    }
+    petPos.value = clampPos(ev.clientX - dragOff.x, ev.clientY - dragOff.y)
+  }
+  const cancel = () => { clearTimeout(armT); cleanup() }
+  const up = () => {
+    cleanup()
+    clearTimeout(armT)
+    if (!dragFloat.value) return
+    dragFloat.value = false
+    const c = petPos.value, home = homeCenter()
+    if (c && home && Math.hypot(c.x + FLOAT_W / 2 - home.x, c.y + FLOAT_W / 2 - home.y) < 60) {
+      petPos.value = null                     // 放回原位：晃一下算打招呼
+      topPet.wobbleOnce()
+      lsSet('pet-pos', null)
+      return
+    }
+    if (c) lsSet('pet-pos', c)
+    setTimeout(() => (suppressClick = false), 60)   // 让落位这一下 click 被抑制掉
+  }
+  const cleanup = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+    window.removeEventListener('blur', cancel)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+  window.addEventListener('blur', cancel)
+}
+function petClick() {
+  if (suppressClick) { suppressClick = false; return }   // 抓起又放下的那一下不是戳
+  topPet.poke()
+}
+onMounted(() => {
+  const saved = lsGet('pet-pos', null)
+  if (saved && typeof saved.x === 'number') petPos.value = clampPos(saved.x, saved.y)
+  window.addEventListener('resize', () => { if (petPos.value) petPos.value = clampPos(petPos.value.x, petPos.value.y) })
+})
 /* 彩蛋：戳满随机 5–12 下，三条线亮出彩色；彩色时再点一下就回去，回去后重新抽签。
    不提示不庆祝，滚一圈就是全部动静；悬浮蛋上的「彩蛋」是唯一的暗示。 */
 const rainbow = ref(lsGet('pet-rainbow', false))
@@ -596,10 +673,11 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" :title="t('回书桌')" @click="goHome">
-        <span class="egg-wrap" :title="t('彩蛋')" :ref="r => (topPet.el = r)" @click.stop="topPet.poke" @wheel="topPet.wheel"
+        <span class="egg-wrap" :class="{ gone: petPos || dragFloat }" :title="t('彩蛋')"
+              :ref="r => (homeEl = r)" @pointerdown="petDown" @click.stop="petClick" @wheel="topPet.wheel"
               @dragenter="topPet.enter" @dragover="topPet.over" @dragleave="topPet.leave" @drop="topPet.drop">
-          <EggMark class="egg pet" :class="petCls(topPet)" :style="spinStyle(topPet)" />
-          <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
+          <EggMark class="egg pet" v-if="!petPos && !dragFloat" :class="petCls(topPet)" :style="spinStyle(topPet)" />
+          <span class="egg-z" v-if="sleepEgg && !petPos && !dragFloat" aria-hidden="true"><i>z</i><i>z</i></span>
         </span>
         <span class="name">eggpaper</span>
       </div>
@@ -739,6 +817,15 @@ function onKey(e) {
     </Transition>
         <i class="feed-ghost" v-for="g in ghosts" :key="g.id" aria-hidden="true"
        :style="{ left: g.x + 'px', top: g.y + 'px', '--dx': (g.tx - g.x) + 'px', '--dy': (g.ty - g.y) + 'px', animationDelay: g.delay + 'ms' }" />
+    <!-- 浮动的蛋：长按抓起来安到哪算哪，拖回左上角原位附近自动归位 -->
+    <span class="egg-float" v-if="petPos || dragFloat" :class="{ drag: dragFloat }" :title="t('彩蛋')"
+          :style="petPos ? { left: petPos.x + 'px', top: petPos.y + 'px' } : null"
+          :ref="r => (topPet.el = r)" @pointerdown="petDown" @click.stop="petClick"
+          @wheel="topPet.wheel"
+          @dragenter="topPet.enter" @dragover="topPet.over" @dragleave="topPet.leave" @drop="topPet.drop">
+      <EggMark class="egg pet" :class="petCls(topPet)" :style="spinStyle(topPet)" />
+      <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
+    </span>
     <Transition name="fade">
     <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(29,27,23,.22)">
       <div class="modal" style="text-align:center">

@@ -256,7 +256,13 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   50% { transform: rotate(18deg); }
 }
 
-.egg-wrap { position: relative; display: block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.egg-wrap { position: relative; display: block; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none; }
+.wordmark .egg-wrap { width: 27px; height: 27px; }   /* 蛋被拖走后原位仍占着坑，wordmark 不跳 */
+.egg-float { position: fixed; z-index: 480; display: block; width: 27px; height: 27px; cursor: grab; touch-action: none; }
+.egg-float.drag { cursor: grabbing; }
+.egg-float .egg-z { left: 20px; top: -11px; width: 22px; height: 20px; }
+.egg-float .egg-z i:nth-child(1) { left: 0; bottom: 3px; font-size: 10px; }
+.egg-float .egg-z i:nth-child(2) { left: 9px; bottom: 10px; font-size: 13px; animation-delay: 1.8s; }
 .pet.wobble { animation: eggWobble 0.42s var(--ease-spring); transform-origin: 50% 85%; }
 @keyframes eggWobble {
   0%, 100% { transform: rotate(0); }
