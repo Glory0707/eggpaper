@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { goHome, lsGet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
@@ -16,66 +16,116 @@ import { t, isEn, setLang } from './i18n'
 
 const showSettings = ref(false)
 const dragOver = ref(false)
-const roll = ref(false)          // 完成一个动作时，印章滚一下（借蛋仔的"动作"，不借它的配色）
 const gPending = ref(false)
 const VARIANTS = ['original', 'mono', 'dual']
 let pollTimer = null
 let marginFastTimer = null     // 眉批运行时那条 1 秒快轮询（跑完即停）
 let _lastErrToast = { msg: '', at: 0 }   // 全局兜底报错的限流记号
 
-function rollOnce(ms = 700) {
-  roll.value = false
-  requestAnimationFrame(() => { roll.value = true })
-  clearTimeout(rollOnce._t)
-  rollOnce._t = setTimeout(() => (roll.value = false), ms)
-}
-
-/* 戳一戳蛋：点一下晃一下；3 秒内戳满三下翻滚一圈。无声——戳了会动，仅此而已。
+/* ---- 蛋宠物：顶栏一枚、书桌空态一枚大的，同一套脾气的两个实例。
+   戳一下晃一下；3 秒内戳满三下翻滚一圈；光标压在蛋上滚滚轮，它跟着转，停手一拍后
+   带弹性摆回正（转角折进 ±180°——回正永远走最近那半圈）；把 PDF 精准丢在蛋身上，
+   论文缩成小纸片翻着跟头飞进蛋里、鼓一下咽下——吃只是仪式，导入照走 onImport。
    活物有破绽：24 下里有 1 下不是常规晃动，是打喷嚏或打趔趄——不预告、不收集，
-   只能被撞见。 */
-const wobbling = ref(false)
-function wobbleOnce(ms = 450) {
-  wobbling.value = false
-  requestAnimationFrame(() => { wobbling.value = true })
-  clearTimeout(wobbleOnce._t)
-  wobbleOnce._t = setTimeout(() => (wobbling.value = false), ms)
-}
-const surprise = ref('')        // '' | 'sneeze' | 'stumble'
-const sleepPoke = ref(false)    // 睡着被戳：躺姿上抖一下
-function surpriseOnce(kind) {
-  surprise.value = ''
-  requestAnimationFrame(() => { surprise.value = kind })
-  clearTimeout(surpriseOnce._t)
-  surpriseOnce._t = setTimeout(() => (surprise.value = ''), kind === 'sneeze' ? 650 : 1000)
-}
-function sleepPokeOnce() {
-  sleepPoke.value = false
-  requestAnimationFrame(() => { sleepPoke.value = true })
-  clearTimeout(sleepPokeOnce._t)
-  sleepPokeOnce._t = setTimeout(() => (sleepPoke.value = false), 650)
-}
-let pokes = 0
-let pokeReset = 0
-/* 蛋的状态优先级（由 styles.css 的定义顺序决定谁盖谁）：
+   只能被撞见。打盹/深夜/干活/庆祝是共享的时辰，两只蛋一起受；戳、搓、馋、咽各归各。
+   状态优先级（styles.css 的定义顺序决定谁盖谁）：
    hungry < busy(含字条流过) < doze < wobble < 喷嚏/趔趄 < sleep < gulp/stuff < roll < cheer；
    sleep-poke 专盖 sleep；spin 是行内 transform，只在没有任何动画类时可见。
-   JS 侧守卫：睡着不庆祝/不打盹/不馋/不搓/被戳只抖不醒；干活时不搓；搓着时不接戳。 */
-function pokeEgg() {
-  if (spinning.value) return          // 搓着的时候不接戳：一只手只做一件事
-  pokes++
-  clearTimeout(pokeReset)
-  if (pokes >= 3) {
-    pokes = 0
-    rollOnce()
-    return
+   JS 侧守卫：睡着不馋/不搓/不庆祝，被戳只抖不醒；干活时不搓；搓着时不接戳。 */
+function makePet() {
+  const pet = reactive({
+    el: null,
+    wobbling: false, surprise: '', sleepPoke: false, roll: false,
+    spinDeg: 0, spinning: false, spinFree: false, hungry: false, gulping: '',
+  })
+  const timers = {}
+  let pokes = 0, pokeReset = 0, spinTimer = 0
+  function flash(key, ms, val = true) {
+    const off = typeof val === 'string' ? '' : false
+    pet[key] = off
+    requestAnimationFrame(() => { pet[key] = val })
+    clearTimeout(timers[key])
+    timers[key] = setTimeout(() => (pet[key] = off), ms)
   }
-  pokeReset = setTimeout(() => (pokes = 0), 3000)
-  if (sleepEgg.value) { sleepPokeOnce(); return }
-  if (Math.random() < 1 / 24) {
-    surpriseOnce(Math.random() < 0.5 ? 'sneeze' : 'stumble')
-    return
+  function poke() {
+    if (pet.spinning) return            // 搓着的时候不接戳：一只手只做一件事
+    pokes++
+    clearTimeout(pokeReset)
+    if (pokes >= 3) { pokes = 0; flash('roll', 700); return }
+    pokeReset = setTimeout(() => (pokes = 0), 3000)
+    if (sleepEgg.value) { flash('sleepPoke', 650); return }
+    if (Math.random() < 1 / 24) {
+      const kind = Math.random() < 0.5 ? 'sneeze' : 'stumble'
+      flash('surprise', kind === 'sneeze' ? 650 : 1000, kind)
+      return
+    }
+    flash('wobbling', 450)
   }
-  wobbleOnce()
+  function wheel(e) {
+    if (e.ctrlKey) return               // Ctrl+滚轮是页面缩放，不抢浏览器的
+    if (sleepEgg.value || eggBusy.value || pet.hungry || pet.gulping) return
+    e.preventDefault()
+    pet.spinFree = false
+    pet.spinning = true
+    pet.spinDeg = ((pet.spinDeg + e.deltaY * 0.18 + 180) % 360 + 360) % 360 - 180
+    clearTimeout(spinTimer)
+    spinTimer = setTimeout(() => {
+      pet.spinFree = true
+      pet.spinDeg = 0
+      setTimeout(() => { pet.spinning = pet.spinFree = false }, 700)
+    }, 160)
+  }
+  function enter(e) { if (hasFiles(e)) pet.hungry = true }
+  function over(e) { if (hasFiles(e)) e.preventDefault() }
+  function leave(e) {
+    if (hasFiles(e) && !e.currentTarget.contains(e.relatedTarget)) pet.hungry = false
+  }
+  function drop(e) {
+    if (!hasFiles(e)) return            // 拖文字之类的不归它管，照走默认
+    e.preventDefault()
+    e.stopPropagation()                 // 别再冒给 .app 的 onDrop——一次导入只做一遍
+    pet.hungry = false
+    dragOver.value = false              // .app 的 onDrop 收不到这一拍了，浮层自己收
+    const files = Array.from(e.dataTransfer?.files || []).filter(f => f && f.name)
+    if (!files.length) return
+    feed(e.clientX, e.clientY, files.length)
+    onImport(files)
+  }
+  function feed(x, y, n) {
+    if (sleepEgg.value) return          // 它睡着了：饭照收（导入照跑），仪式免了
+    const r = pet.el?.getBoundingClientRect?.()
+    if (!r) return
+    ghosts.value = Array.from({ length: Math.min(n, 4) }, (_, i) => ({
+      id: ++ghostId,
+      x: x + (i ? Math.random() * 36 - 18 : 0),
+      y: y + (i ? Math.random() * 24 - 12 : 0),
+      tx: r.left + r.width / 2, ty: r.top + r.height / 2,
+      delay: i * 90,
+    }))
+    clearTimeout(timers.feed)
+    timers.feed = setTimeout(() => {
+      ghosts.value = []
+      flash('gulping', n >= 3 ? 1350 : 850, n >= 3 ? 'stuff' : 'gulp')
+    }, 420 + (Math.min(n, 4) - 1) * 90)
+  }
+  return Object.assign(pet, {
+    poke, wheel, enter, over, leave, drop,
+    rollOnce: () => flash('roll', 700),
+    wobbleOnce: () => flash('wobbling', 450),
+  })
+}
+const ghosts = ref([])           // 飞行途中的纸片（两只蛋共用一条渲染通道）
+let ghostId = 0
+const topPet = makePet()         // 顶栏那枚；析读完成/整本译完的动作滚跳也归它
+const deskPet = makePet()        // 书桌空态那枚大的
+function petCls(p, extra) {
+  return [{ hungry: p.hungry }, { roll: p.roll }, { wobble: p.wobbling }, p.surprise,
+    { sleep: sleepEgg.value }, { 'sleep-poke': p.sleepPoke }, { busy: eggBusy.value }, p.gulping,
+    { cheer: eggCheer.value }, { doze: dozing.value }, { spun: p.spinning }, { free: p.spinFree },
+    ...(extra ? [extra] : [])]
+}
+function spinStyle(p) {
+  return p.spinning ? { transform: `rotate(${p.spinDeg}deg) scale(${p.spinFree ? 1 : 0.94})` } : null
 }
 
 /* 干活与庆祝：整本翻译跑着的时候，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）。
@@ -105,81 +155,9 @@ function wakeEgg() {
   idleTimer = setTimeout(napCheck, IDLE_MS)
   if (dozing.value) {
     dozing.value = false
-    wobbleOnce()
+    topPet.wobbleOnce(); deskPet.wobbleOnce()
   }
 }
-
-/* 滚轮搓蛋：光标压在蛋上滚滚轮，它跟着转；停手一拍后带着弹性自己摆回正。
-   转角始终折进 ±180°——回正永远走最近的那半圈，不会解开一麻花再回来。 */
-const spinDeg = ref(0)
-const spinning = ref(false)     // 正被搓着：transform-origin 才落到支点上
-const spinFree = ref(false)     // 停手回正的这一段才挂弹性过渡
-let spinTimer = 0
-function onEggWheel(e) {
-  if (e.ctrlKey) return         // Ctrl+滚轮是页面缩放，不抢浏览器的
-  if (sleepEgg.value || eggBusy.value || hungry.value || gulping.value) return
-  e.preventDefault()
-  spinFree.value = false
-  spinning.value = true
-  spinDeg.value = ((spinDeg.value + e.deltaY * 0.18 + 180) % 360 + 360) % 360 - 180
-  clearTimeout(spinTimer)
-  spinTimer = setTimeout(() => {
-    spinFree.value = true
-    spinDeg.value = 0
-    setTimeout(() => { spinning.value = spinFree.value = false }, 700)
-  }, 160)
-}
-
-/* 喂蛋：PDF 精准丢在左上角蛋身上=它吃掉——论文缩成小纸片翻着跟头飞进蛋里，
-   鼓一下咽下（一次三篇起改演「撑到」）。导入照旧走 onImport：吃只是仪式，活照干；
-   拖到窗口其他地方仍是老样子，两条路互不打扰。 */
-const hungry = ref(false)       // 有纸悬在头顶：等饭的小幅急摆
-const gulping = ref('')         // '' | 'gulp' | 'stuff'
-const ghosts = ref([])          // 飞行途中的纸片
-const eggEl = ref(null)
-let ghostId = 0
-function eggDragEnter(e) { if (hasFiles(e)) hungry.value = true }
-function eggDragOver(e) { if (hasFiles(e)) e.preventDefault() }
-function eggDragLeave(e) {
-  if (hasFiles(e) && !e.currentTarget.contains(e.relatedTarget)) hungry.value = false
-}
-function onEggDrop(e) {
-  if (!hasFiles(e)) return          // 拖文字之类的不归它管，照走默认
-  e.preventDefault()
-  e.stopPropagation()               // 别再冒给 .app 的 onDrop——一次导入只做一遍
-  hungry.value = false
-  dragOver.value = false            // .app 的 onDrop 收不到这一拍了，浮层自己收
-  const files = Array.from(e.dataTransfer?.files || []).filter(f => f && f.name)
-  if (!files.length) return
-  feedShow(e.clientX, e.clientY, files.length)
-  onImport(files)
-}
-function feedShow(x, y, n) {
-  if (sleepEgg.value) return    // 它睡着了：饭照收（导入照跑），仪式免了
-  const r = eggEl.value?.getBoundingClientRect?.()
-  if (!r) return
-  const tx = r.left + r.width / 2
-  const ty = r.top + r.height / 2
-  ghosts.value = Array.from({ length: Math.min(n, 4) }, (_, i) => ({
-    id: ++ghostId,
-    x: x + (i ? Math.random() * 36 - 18 : 0),
-    y: y + (i ? Math.random() * 24 - 12 : 0),
-    tx, ty,
-    delay: i * 90,
-  }))
-  clearTimeout(feedShow._t)
-  feedShow._t = setTimeout(() => {
-    ghosts.value = []
-    gulpOnce(n >= 3 ? 'stuff' : 'gulp')
-  }, 420 + (Math.min(n, 4) - 1) * 90)
-}
-function gulpOnce(kind) {
-  gulping.value = ''
-  requestAnimationFrame(() => { gulping.value = kind })
-  clearTimeout(gulpOnce._t)
-  gulpOnce._t = setTimeout(() => (gulping.value = ''), kind === 'stuff' ? 1350 : 850)
-}
-
 
 /* ---------------- 拖入导入 ----------------
    之前只挂 dragover/dragleave，所以浮层「进得来、出不去」：dragleave 会为每个子元素
@@ -197,7 +175,11 @@ function onDrop(e) {
   dragOver.value = false
   onImport(Array.from(e.dataTransfer?.files || []))     // 一次拖进来的全收下
 }
-function endDrag() { dragOver.value = false; hungry.value = false }   // 中途在窗口外松手也得收：否则蛋一直馋着
+function endDrag() {
+  dragOver.value = false        // 中途在窗口外松手也得收：否则浮层/两只蛋一直馋着
+  topPet.hungry = false
+  deskPet.hungry = false
+}
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
@@ -349,7 +331,7 @@ let analyzeReq = { id: '', at: 0 }
 
 watch(() => store.analysis.status, (n, o) => {
   if (n === 'done' && o && o !== 'done' && o !== 'none') {
-    rollOnce(); reloadSummary()
+    topPet.rollOnce(); reloadSummary()
     const mine = analyzeReq.id === store.currentId && Date.now() - analyzeReq.at < 600000
     if (o === 'running' || o === 'queued' || mine) store.viewer.railUser = true
   }
@@ -361,7 +343,7 @@ async function doAnalyze() {
   await api.analyze(store.currentId)
   await refreshAnalysis()
   if (store.analysis.status === 'done') {
-    rollOnce(); reloadSummary()
+    topPet.rollOnce(); reloadSummary()
     store.viewer.railUser = true
   }
 }
@@ -572,11 +554,9 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" :title="t('回书桌')" @click="goHome">
-        <span class="egg-wrap" ref="eggEl" @click.stop="pokeEgg" @wheel="onEggWheel"
-              @dragenter="eggDragEnter" @dragover="eggDragOver" @dragleave="eggDragLeave" @drop="onEggDrop">
-          <EggMark class="egg"
-            :class="[{ hungry }, { roll }, { wobble: wobbling }, surprise, { sleep: sleepEgg }, { 'sleep-poke': sleepPoke }, { busy: eggBusy }, gulping, { cheer: eggCheer }, { doze: dozing }, { spun: spinning }, { free: spinFree }]"
-            :style="spinning ? { transform: `rotate(${spinDeg}deg) scale(${spinFree ? 1 : 0.94})` } : null" />
+        <span class="egg-wrap" :ref="r => (topPet.el = r)" @click.stop="topPet.poke" @wheel="topPet.wheel"
+              @dragenter="topPet.enter" @dragover="topPet.over" @dragleave="topPet.leave" @drop="topPet.drop">
+          <EggMark class="egg pet" :class="petCls(topPet)" :style="spinStyle(topPet)" />
           <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
         </span>
         <span class="name">eggpaper</span>
@@ -652,12 +632,17 @@ function onKey(e) {
       </div>
 
             <main class="desk">
-                <div class="empty" v-if="!store.paper" role="button" tabindex="0"
-             @click="pickFiles" @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">
-          <EggMark class="egg-big" :class="{ hop: dragOver }" />
-          <div class="e-title">{{ t('论文，启动！') }}</div>
-          <div class="stamp">EGGPAPER · LOCAL-FIRST</div>
-          <div class="desk-hint">{{ t('拖入PDF或点击任意位置选择文件') }}</div>
+                <div class="empty" v-if="!store.paper">
+          <span class="egg-wrap" :ref="r => (deskPet.el = r)" @click.stop="deskPet.poke" @wheel="deskPet.wheel"
+                @dragenter="deskPet.enter" @dragover="deskPet.over" @dragleave="deskPet.leave" @drop="deskPet.drop">
+            <EggMark class="egg-big pet" :class="petCls(deskPet, { hop: dragOver })" :style="spinStyle(deskPet)" />
+            <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
+          </span>
+          <div class="e-title" role="button" tabindex="0" @click="pickFiles"
+               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('论文，启动！') }}</div>
+          <div class="stamp" role="button" tabindex="0" @click="pickFiles"
+               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
+          <div class="desk-hint">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
         </div>
         <PdfViewer v-else :key="store.currentId" @override="onOverride" />
       </main>

@@ -196,35 +196,35 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .wordmark { display: flex; align-items: center; gap: 12px; user-select: none; position: relative; cursor: pointer; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
 
-.wordmark .egg.hungry { animation: eggHungry .46s ease-in-out infinite; transform-origin: 50% 88%; }
+.pet.hungry { animation: eggHungry .46s ease-in-out infinite; transform-origin: 50% 88%; }
 @keyframes eggHungry {
   0%, 100% { transform: scale(1.08) rotate(-4.5deg); }
   50% { transform: scale(1.08) translateY(-2px) rotate(4.5deg); }
 }
 
-.wordmark .egg.busy { animation: eggBusy 2.6s ease-in-out infinite; transform-origin: 50% 85%; }
+.pet.busy { animation: eggBusy 2.6s ease-in-out infinite; transform-origin: 50% 85%; }
 @keyframes eggBusy {
   0%, 100% { transform: rotate(0); }
   25% { transform: rotate(-2.6deg); }
   75% { transform: rotate(2.6deg); }
 }
 
-.wordmark .egg.busy .bar { animation: eggRead 2.4s linear infinite; }
-.wordmark .egg.busy .b1 { animation-delay: .8s; }
-.wordmark .egg.busy .b2 { animation-delay: 1.6s; }
+.pet.busy .bar { animation: eggRead 2.4s linear infinite; }
+.pet.busy .b1 { animation-delay: .8s; }
+.pet.busy .b2 { animation-delay: 1.6s; }
 @keyframes eggRead {
   0%, 30%, 100% { opacity: 1; }
   12% { opacity: .4; }
 }
 
-.wordmark .egg.doze { animation: eggDoze 4.2s var(--ease-smooth) infinite; transform-origin: 50% 85%; }
+.pet.doze { animation: eggDoze 4.2s var(--ease-smooth) infinite; transform-origin: 50% 85%; }
 @keyframes eggDoze {
   0%, 100% { transform: rotate(12deg); }
   50% { transform: rotate(18deg); }
 }
 
 .egg-wrap { position: relative; display: block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-.wordmark .egg.wobble { animation: eggWobble 0.42s var(--ease-spring); transform-origin: 50% 85%; }
+.pet.wobble { animation: eggWobble 0.42s var(--ease-spring); transform-origin: 50% 85%; }
 @keyframes eggWobble {
   0%, 100% { transform: rotate(0); }
   25% { transform: rotate(-9deg) scale(1.05); }
@@ -232,7 +232,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   80% { transform: rotate(-4deg); }
 }
 
-.wordmark .egg.sneeze { animation: eggSneeze .6s var(--ease-spring); transform-origin: 50% 88%; }
+.pet.sneeze { animation: eggSneeze .6s var(--ease-spring); transform-origin: 50% 88%; }
 @keyframes eggSneeze {
   0% { transform: none; }
   16% { transform: scale(.92, .74); }
@@ -240,7 +240,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   62% { transform: scale(.95, 1.04) rotate(-3deg); }
   100% { transform: none; }
 }
-.wordmark .egg.stumble { animation: eggStumble .95s var(--ease-smooth); transform-origin: 50% 92%; }
+.pet.stumble { animation: eggStumble .95s var(--ease-smooth); transform-origin: 50% 92%; }
 @keyframes eggStumble {
   0%, 100% { transform: rotate(0); }
   26% { transform: rotate(-17deg); }
@@ -249,13 +249,13 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   84% { transform: rotate(-3deg); }
 }
 
-.wordmark .egg.sleep { animation: eggSleep 4.2s var(--ease-smooth) infinite; }
+.pet.sleep { animation: eggSleep 4.2s var(--ease-smooth) infinite; }
 @keyframes eggSleep {
   0%, 100% { transform: rotate(90deg); }
   50% { transform: rotate(98deg); }
 }
 
-.wordmark .egg.sleep-poke { animation: eggSleepPoke .55s var(--ease-spring); }
+.pet.sleep-poke { animation: eggSleepPoke .55s var(--ease-spring); }
 @keyframes eggSleepPoke {
   0%, 100% { transform: rotate(90deg); }
   30% { transform: rotate(100deg) scale(1.05, 0.95); }
@@ -263,14 +263,14 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   78% { transform: rotate(94deg); }
 }
 
-.wordmark .egg.gulp { animation: eggGulp .8s var(--ease-spring); transform-origin: 50% 88%; }
+.pet.gulp { animation: eggGulp .8s var(--ease-spring); transform-origin: 50% 88%; }
 @keyframes eggGulp {
   0% { transform: none; }
   22% { transform: scale(1.24, .84); }
   50% { transform: scale(.95, 1.07); }
   100% { transform: none; }
 }
-.wordmark .egg.stuff { animation: eggStuff 1.3s var(--ease-spring); transform-origin: 50% 88%; }
+.pet.stuff { animation: eggStuff 1.3s var(--ease-spring); transform-origin: 50% 88%; }
 @keyframes eggStuff {
   0%, 100% { transform: none; }
   14% { transform: scale(1.32, .8); }
@@ -280,8 +280,8 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   82% { transform: scale(1.05, .98) rotate(3deg); }
 }
 
-.wordmark .egg.spun { transform-origin: 50% 85%; }
-.wordmark .egg.spun.free { transition: transform .65s var(--ease-spring); }
+.pet.spun { transform-origin: 50% 85%; }
+.pet.spun.free { transition: transform .65s var(--ease-spring); }
 
 .feed-ghost {
   position: fixed; z-index: 550; width: 24px; height: 32px;
@@ -304,17 +304,20 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   to { transform: translate(var(--dx), var(--dy)) rotate(170deg) scale(0.1); opacity: 0; }
 }
 
-.wordmark .egg-z {
-  position: absolute; left: 20px; top: -11px; width: 22px; height: 20px;
-  pointer-events: none; color: var(--ink-3);
+.egg-z {
+  position: absolute; pointer-events: none; color: var(--ink-3);
   font-family: var(--brand); font-style: italic; font-weight: 600;
 }
-.wordmark .egg-z i {
+.wordmark .egg-z { left: 20px; top: -11px; width: 22px; height: 20px; }
+.empty .egg-z { left: 74px; top: -6px; width: 46px; height: 42px; }
+.egg-z i {
   position: absolute; font-style: inherit;
   animation: eggZ 3.6s ease-in-out infinite;
 }
 .wordmark .egg-z i:nth-child(1) { left: 0; bottom: 3px; font-size: 10px; }
 .wordmark .egg-z i:nth-child(2) { left: 9px; bottom: 10px; font-size: 13px; animation-delay: 1.8s; }
+.empty .egg-z i:nth-child(1) { left: 0; bottom: 8px; font-size: 16px; }
+.empty .egg-z i:nth-child(2) { left: 19px; bottom: 24px; font-size: 21px; animation-delay: 1.8s; }
 @keyframes eggZ {
   0% { opacity: 0; transform: translateY(3px); }
   35% { opacity: 0.85; }
@@ -840,18 +843,19 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .abbr-list .term-row .t-zh { flex: 1 1 auto; }
 .abbr-list .term-row:last-child { border-bottom: none; }
 
-.empty { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); cursor: pointer; }
-
-.empty:focus-visible { outline: 2px solid var(--accent); outline-offset: 8px; border-radius: 4px; }
+.empty { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); }
 .empty .egg-big { width: 112px; height: 112px; opacity: 0.94; color: var(--accent); transition: opacity var(--t-slow) var(--ease-smooth); }
 .empty .egg-big.hop { opacity: 1; }
-.empty .e-title { font-family: var(--sans); font-size: var(--fs-display); font-weight: 700; letter-spacing: -0.01em; }
+.empty .e-title { font-family: var(--sans); font-size: var(--fs-display); font-weight: 700; letter-spacing: -0.01em; cursor: pointer; }
+.empty .e-title:hover { color: var(--ink); }
+.empty .e-title:focus-visible, .empty .stamp:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 4px; }
 .empty .desk-hint { position: absolute; right: 18px; bottom: 12px; font-size: var(--fs-xs); color: var(--ink-3); }
 .empty .stamp {
-  font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.16em;
+  font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.16em; cursor: pointer;
   color: var(--vermilion); border: 1.5px solid var(--vermilion);
   border-radius: 3px; padding: 4px 10px; transform: rotate(-4deg); opacity: 0.75;
 }
+.empty .stamp:hover { opacity: 1; }
 
 .reading { padding: 8px 2px; }
 .reading .r-line { font-size: var(--fs-md); color: var(--ink-2); }
@@ -1443,7 +1447,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .rtabs .rt-collapse:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
 
-.wordmark .egg.roll { animation: markRoll 0.68s var(--ease-spring); transform-origin: 50% 85%; }
+.pet.roll { animation: markRoll 0.68s var(--ease-spring); transform-origin: 50% 85%; }
 @keyframes markRoll {
   0%   { transform: none }
   28%  { transform: translateY(-3px) scale(1.06, 0.94) rotate(-15deg) }
@@ -1452,7 +1456,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   100% { transform: none }
 }
 
-.wordmark .egg.cheer { animation: eggCheer 1.15s var(--ease-spring); transform-origin: 50% 92%; }
+.pet.cheer { animation: eggCheer 1.15s var(--ease-spring); transform-origin: 50% 92%; }
 @keyframes eggCheer {
   0%   { transform: translateY(0) }
   13%  { transform: translateY(-7px) }
@@ -1464,6 +1468,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 
 .empty .egg-big.hop { animation: eggHop 1.05s var(--ease-smooth) infinite; transform-origin: 50% 92%; }
+.empty .egg-big.hungry { animation: eggHungry .46s ease-in-out infinite; transform-origin: 50% 88%; opacity: 1; }
 @keyframes eggHop {
   0%, 100% { transform: translateY(0) scale(1, 1) }
   10%  { transform: translateY(0) scale(1.08, 0.9) }

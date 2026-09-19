@@ -40,7 +40,7 @@ const EN = {
   '重新析读': 'Re-read',
   '设置': 'Settings',
   '论文，启动！': 'Start reading',
-  '拖入PDF或点击任意位置选择文件': 'Drop a PDF here, or click anywhere to browse',
+  '拖入PDF或点击论文启动选择文件': 'Drop a PDF here, or click "Start reading" to browse',
   '文库 · g l': 'Library · g l',
   '展开右栏 · x': 'Show sidebar · x',
   'eggpaper 已退出，这个页面可以关掉了。': 'eggpaper has quit — you can close this tab.',
