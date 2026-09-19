@@ -400,9 +400,11 @@ def version_info():
 
 @app.get("/api/update/check")
 def update_check(force: bool = False):
-    """查更新源。auto=0 时只读缓存不联网（打开软件时的那次安静探测走这条）。"""
+    """查更新源。auto=0 时只读缓存不联网（打开软件时的那次安静探测走这条）。
+    更新源留空 = 用内置的 Gitee 源（用户零配置）；想彻底关掉检查用「自动检查」开关。"""
     cfg = config.load().get("update", {})
-    return update.check(cfg.get("feed_url", ""), force=force,
+    feed = cfg.get("feed_url") or config.DEFAULTS["update"]["feed_url"]
+    return update.check(feed, force=force,
                         cache_hours=float(cfg.get("cache_hours") or 6))
 
 @app.post("/api/update/download")

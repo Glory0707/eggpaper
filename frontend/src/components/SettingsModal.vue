@@ -305,7 +305,7 @@ function save() {
       </div>
       <div class="f-row">
         <label class="mono-label">{{ t('更新源') }}</label>
-        <input type="text" v-model="f.feed" :placeholder="t('http://… 或 https://…（留空不检查）')" />
+        <input type="text" v-model="f.feed" :placeholder="t('留空 = 用内置的 Gitee 更新源')" />
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('更新') }}</span>

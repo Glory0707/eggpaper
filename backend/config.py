@@ -24,7 +24,7 @@ DEFAULTS = {
         "path": "",
     },
     "update": {
-        "feed_url": "",
+        "feed_url": "https://gitee.com/zhouao1207/eggpaper/raw/master/update",
         "auto_check": True,
         "cache_hours": 6,
     },
