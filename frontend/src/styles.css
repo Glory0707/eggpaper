@@ -323,7 +323,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
   35% { opacity: 0.85; }
   100% { opacity: 0; transform: translateY(-7px); }
 }
-.wordmark .name { font-family: var(--brand); font-style: italic; font-weight: 600; font-size: var(--fs-display); }
+.wordmark .name { font-family: var(--brand); font-style: italic; font-weight: 600; font-size: var(--fs-display); transform: translateY(-2px); }
 .doc-head { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .doc-head .t {
   font-family: var(--sans); font-weight: 650; font-size: var(--fs-xl); letter-spacing: -0.01em;
