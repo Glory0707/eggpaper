@@ -243,7 +243,6 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(pollTimer)
   clearTimeout(idleTimer)
-  clearTimeout(spinTimer)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('dragend', endDrag)
   window.removeEventListener('blur', endDrag)
