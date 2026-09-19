@@ -622,7 +622,7 @@ def _ensure_paper_type(pid: str) -> str:
     t = _detect_paper_type(p.get("title"), db.get_paragraphs(pid))
     db.update_paper(pid, paper_type=t)
     if t == "review":
-        _applog(f"{pid}: 判定为综述，③/谱系卡/略读按综述策略走")
+        _applog(f"{pid}: 判定为综述，③/谱系卡按综述策略走")
     return t
 
 @app.post("/api/papers/{pid}/touch")
@@ -829,24 +829,6 @@ def analysis(pid: str):
         status = "none"
     eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
     return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos, "evidence_qs": eqs}
-
-@app.post("/api/papers/{pid}/override-role")
-def override_role(pid: str, body: dict):
-    """人工改判某段的角色。
-
-    界面上没有入口（角色现在只影响略读蒙纱），接口与数据留着：万一模型把该读的段落
-    蒙掉了，可以用它改判；读者那边还有一个"这段也要读"的手选（PdfViewer 的 skimKeep）。
-    """
-    _paper_or_404(pid)
-    role = body.get("role") or ""
-    if role and role not in llm.ROLES:
-        raise HTTPException(400, "角色不合法")
-    try:
-        ridx = int(body["para_idx"])
-    except (KeyError, TypeError, ValueError):
-        raise HTTPException(400, "缺 para_idx（要改哪一段）")
-    db.override_annotation(pid, ridx, role)
-    return {"ok": True}
 
 # ---------------- 眉批（句级批注） ----------------
 

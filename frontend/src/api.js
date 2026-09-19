@@ -27,7 +27,6 @@ export const api = {
   paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
   analyze: (pid) => req('POST', `/api/papers/${pid}/analyze`),
   analysis: (pid) => req('GET', `/api/papers/${pid}/analysis`),
-  overrideRole: (pid, paraIdx, role) => req('POST', `/api/papers/${pid}/override-role`, { para_idx: paraIdx, role }),
   marginaliaStart: (pid) => req('POST', `/api/papers/${pid}/marginalia`),
   marginalia: (pid) => req('GET', `/api/papers/${pid}/marginalia`),
   pin: (pid, body) => req('POST', `/api/papers/${pid}/pin`, body),
@@ -214,4 +213,3 @@ export function kindZH(n) {
   if (n.kind === 'custom') return n.label || '新批注'   // 模型自造的：用它自己起的那个短标签
   return t(KIND_ZH[n.kind] || '')
 }
-export const CORE_ROLES = ['gap', 'claim', 'evidence', 'limitation']

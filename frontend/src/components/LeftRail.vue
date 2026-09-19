@@ -227,11 +227,9 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
         </div>
       </div>
       <div v-if="!shown.length" class="p-empty">
-        <template v-if="!store.papers.length">{{ t('文库是空的。拖一份 PDF 进来就开始。') }}</template>
+        <template v-if="!store.papers.length">{{ t('文库是空的') }}</template>
         <template v-else-if="q.trim()">{{ t('没有匹配「{q}」的文献。', { q: q.trim() }) }}</template>
-        <template v-else-if="typeof SEL === 'number'">
-          {{ t('还没有文献。到「全部」点条目旁 ＋ 归入，或直接拖进来。') }}
-        </template>
+        <template v-else-if="typeof SEL === 'number'">{{ t('这个分类还没有文献。') }}</template>
         <template v-else-if="SEL === 'none'">{{ t('每一篇都归类了。') }}</template>
         <template v-else>{{ t('没有符合条件的文献。') }}</template>
       </div>

@@ -274,7 +274,7 @@ def paragraphs_match(pid: str, paras: list) -> bool:
     """新解析出来的段落和库里存的**是不是同一批**（段数一样、每段的正文也一样）。
 
     为什么要问这个：行级坐标是靠"重解析一次"补的，而补的动作是整表替换。批注、主张锚点、
-    略读蒙纱全是按 para_idx 指位置的——只要新解析把段落分组改了一点点（解析规则演进过、
+    页边笔迹全是按 para_idx 指位置的——只要新解析把段落分组改了一点点（解析规则演进过、
     或者这份 PDF 抽出来的结果本来就不稳定），替换就会把这些锚点整体挪位，而且是**静默**的。
     对不上时宁可这次不补（页边退回按段落框画），也别把用户已有的批注挪到别的段上。
     """
@@ -342,14 +342,6 @@ def get_analysis(pid: str):
                                   "purpose": r["purpose"], "user_override": bool(r["user_override"])}
              for r in q("SELECT * FROM annotations WHERE paper_id=?", (pid,))}
     return paper["analysis_status"], claims, annos
-
-def override_annotation(pid: str, para_idx: int, role: str):
-    if role:
-        q("UPDATE annotations SET role=?, user_override=1 WHERE paper_id=? AND para_idx=?", (role, pid, para_idx), commit=True)
-    else:
-        q("UPDATE annotations SET role=inferred_role, user_override=0 WHERE paper_id=? AND para_idx=?", (pid, para_idx), commit=True)
-
-# ---------- 术语：**按篇**，不设全库共用的词表 ----------
 
 def glossary_list(pid: str):
     return [dict(r) for r in q("SELECT * FROM glossary WHERE paper_id=? ORDER BY term_en", (pid,))]

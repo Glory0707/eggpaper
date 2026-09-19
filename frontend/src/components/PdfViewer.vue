@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, paraByIdx, CORE_ROLES, bandOf, kindColor, kindText, kindZH } from '../store'
+import { api, store, toast, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
@@ -88,189 +88,7 @@ const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 function roleOf(p) {
   return store.analysis.annotations[String(p.idx)]?.role || null
 }
-function isCore(p) { return CORE_ROLES.includes(roleOf(p) || 'background') }
-
-/* ---------------- 略读：把不用细读的段落整段变灰，读者要看得见、也要能自己扳 ----------------
-   略读只做一件事：把"不用细读"的段落**整段**变灰（用户定的：大段大段地灰才算略读，
-   一段中间突然留一句不灰反而迷乱）。三条规定：
-   ① 位置正确——只灰**正文段落**（析读判成背景/样板/参考文献的段），图注表注、
-      图片、首页一概不灰；参考文献既然不用看，就**整段全灰**（不打折）；
-   ② 整段整段——按段为单位灰，不做句级切分；段落灰与不灰的边界就是段界；
-   ③ 效果干净——没有"蒙版"：那一段的文字和符号**本体变成灰色**（纱与纸同色，只把
-      下面的深色像素统一变浅，任何黑点都透不出来）；悬停掀开看一眼（字回黑），
-      点一下是"这段我也要读"（按篇记在本地）。 */
-const LS_KEEP = 'eggpaper:skimKeep:'
-function loadKeep() {
-  try { return new Set(JSON.parse(localStorage.getItem(LS_KEEP + store.currentId) || '[]')) } catch { return new Set() }
-}
-const skimKeep = ref(loadKeep())
-const figs = ref([])                        // 这一篇的图片框（略读时避开它们）
-async function loadFigs() {
-  if (!store.currentId) return
-  const pid = store.currentId
-  try {
-    const r = await api.figures(pid)
-    if (store.currentId !== pid) return     // 等待期间换了篇：旧图框不落新篇
-    figs.value = r.figures || []
-  } catch { figs.value = [] }
-}
 const pingId = ref(null)                  // 刚从纸上点回来的那条批注（亮一下）
-const kept = idx => skimKeep.value.has(idx)
-function toggleKeep(idx) {
-  const s = new Set(skimKeep.value)
-  if (s.has(idx)) s.delete(idx); else s.add(idx)
-  skimKeep.value = s
-  try { localStorage.setItem(LS_KEEP + store.currentId, JSON.stringify([...s])) } catch { /* 存不下就只管这一次会话 */ }
-}
-/* 点蒙纱 = "这段也要读"，但**拖选**（想复制那几个字）不该改状态：
-   位移超过 4px、或者真的选出了东西，就当成一次没选上的选字，什么都不做。 */
-const veilDown = ref(null)
-function onVeilClick(e, idx) {
-  const d = veilDown.value
-  veilDown.value = null
-  if (d && (Math.abs(e.clientX - d.x) > 4 || Math.abs(e.clientY - d.y) > 4)) return
-  if (window.getSelection()?.isCollapsed === false) return
-  toggleKeep(idx)
-}
-/* 有「值得读 / 要当心」批注、或读者自己钉过东西的段落不蒙。那儿已经插了话/钉了子，
-   把整段蒙掉等于把读者自己的锚点一起藏起来。略读该略的是没有信息量的铺垫。 */
-const protectedIdx = computed(() => {
-  const s = new Set()
-  for (const n of store.marginalia.notes) {
-    const b = bandOf(n)
-    if (b === 'good' || b === 'warn' || b === 'mine') s.add(n.para_idx)
-  }
-  return s
-})
-/* 图区（/figures 认出来的图片框）不蒙，图上的坐标轴文字、图注也不蒙——用户原话
-   "不要在图片以及图片上的文字加蒙版"。两个坐标系都是 PDF 点，直接比。
-   **必须带页号**：图片框只属于它那一页，拿别页的图框比坐标，正文行会因为
-   "跟另一页的图同一位置"被整行丢掉（实测：第 2 页的句子撞上第 4 页的图框）。 */
-function onFigure(pno, b) {
-  return figs.value.some(f => f.page === pno && !(b.x1 <= f.x0 || b.x0 >= f.x1 || b.y1 <= f.y0 || b.y0 >= f.y1))
-}
-/* 该灰哪些段——段落级的判断写在一处。
-   ① 候选只有两类：模型判成 background / boilerplate 的，以及参考文献段；
-      图注/表注（解析器标了 caption）不是正文，永不入围；
-   ② 首页不灰（标题、摘要、引言是"这篇讲什么"，灰掉它略读就没意义了）；
-   ③ 有批注的段、读者手选的段不灰；
-   ④ **不打折**：参考文献既然不用看就整个全灰，背景/样板段也是一段就整段灰——
-      不设数量上限、不做句级切分（用户定的：大段大段地灰才算略读，
-      一段中间突然留一句不灰反而迷乱）。 */
-const skimSkip = computed(() => {
-  if (!store.viewer.layers.skim) return new Set()
-  const review = store.paper?.paper_type === 'review'
-  return new Set(store.paras.filter(p => {
-    if (p.page <= 0 || p.caption) return false
-    if (review) return !!p.in_refs
-    if (kept(p.idx) || protectedIdx.value.has(p.idx)) return false
-    const r = roleOf(p)
-    return !!p.in_refs || r === 'boilerplate' || r === 'background'
-  }).map(p => p.idx))
-})
-function veiled(p, pno) { return pno > 0 && skimSkip.value.has(p.idx) }
-
-/* 参考文献区多数根本不在段落流里：解析器会丢掉每条 <14 词的文献条目，
-   甚至从 References 标题起整页跳过。段落流**之后**的那些页（参考文献/附录/
-   补充材料——正是"不用看"的部分）整页变灰；不拦鼠标，想复制引文照样能选。 */
-const lastParaPage = computed(() => store.paras.reduce((m, p) => Math.max(m, p.page), -1))
-
-const veilRects = ref({})                 // origPage -> { paraIdx: [{x,y,w,h}] }
-const veilPageRects = ref({})             // origPage -> [{x,y,w,h}]：整页置灰的那些页
-
-/* 页级的文字行：不限段落，整页的 span 按 y 归组（首页页眉例外——首页不参与略读） */
-function pageRows(el, s) {
-  const base = el.getBoundingClientRect()
-  const rows = new Map()
-  for (const span of el.querySelectorAll('.textLayer span')) {
-    const r = span.getBoundingClientRect()
-    if (r.width < 1 || r.height < 1) continue
-    const x = r.left - base.left, y = r.top - base.top
-    if (y + r.height < 4 || y > base.height - 4) continue
-    const k = Math.round(y)
-    const cur = rows.get(k)
-    if (cur) { cur.x0 = Math.min(cur.x0, x); cur.x1 = Math.max(cur.x1, x + r.width) }
-    else rows.set(k, { x0: x, x1: x + r.width, y, h: r.height })
-  }
-  return [...rows.values()]
-}
-
-/* 段内的文字行（跨栏安全）：中心落在这一段框里的 span 按 y 归组合并成整行。
-   蒙纱的段落模式和句子模式都用它。
-   **一个 span 都不能丢**：宽度过滤会把"l"、"1"、"."这类窄字形 span 排掉，
-   它们的墨迹没被灰到，就成了灰字里的黑点（用户报的"还有黑色噪点"）。
-   行盒四周留 1–2px 余量：字形的墨迹常比 pdf.js 量的矩形宽出一丝（斜体、字肩），
-   lighten 混合下余量本身不可见，只会把这点墨迹也一并变灰。 */
-function paraRows(p, el, s) {
-  const base = el.getBoundingClientRect()
-  const bx0 = p.bbox.x0 * s - 2, bx1 = p.bbox.x1 * s + 2
-  const by0 = p.bbox.y0 * s - 2, by1 = p.bbox.y1 * s + 2
-  const rows = new Map()
-  for (const span of el.querySelectorAll('.textLayer span')) {
-    const r = span.getBoundingClientRect()
-    if (r.width < 1 || r.height < 1) continue
-    const x = r.left - base.left, y = r.top - base.top
-    const cx = x + r.width / 2
-    if (cx < bx0 || cx > bx1 || y + r.height < by0 || y > by1) continue
-    const k = Math.round(y)
-    const cur = rows.get(k)
-    if (cur) { cur.x0 = Math.min(cur.x0, x); cur.x1 = Math.max(cur.x1, x + r.width) }
-    else rows.set(k, { x0: x, x1: x + r.width, y, h: r.height })
-  }
-  return [...rows.values()]
-}
-
-function paraRowBoxes(p, el, s) {
-  return paraRows(p, el, s)
-    .filter(l => !onFigure(p.page, { x0: (l.x0 - 1) / s, x1: (l.x1 + 1) / s, y0: (l.y - 2.5) / s, y1: (l.y + l.h + 2.5) / s }))
-    .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3 }))
-}
-
-function computeVeils() {
-  const out = {}
-  const outPage = {}
-  const s = scale.value
-  if (!store.viewer.layers.skim) {
-    veilRects.value = out
-    veilPageRects.value = outPage
-    return
-  }
-  for (const it of flatItems.value) {
-    if (it.origPage < 0) continue
-    const el = pageEls.value[it.gi]
-    if (!el) continue
-    if (store.viewer.layers.skim && lastParaPage.value >= 0 &&
-        it.origPage > lastParaPage.value && it.origPage > 0) {
-      const boxes = pageRows(el, s)
-        .filter(l => !onFigure(it.origPage, { x0: (l.x0 - 1) / s, x1: (l.x1 + 1) / s, y0: (l.y - 2.5) / s, y1: (l.y + l.h + 2.5) / s }))
-        .map(l => ({ x: l.x0 - 1, y: l.y - 1.5, w: l.x1 - l.x0 + 2, h: l.h + 3 }))
-      if (boxes.length) outPage[it.origPage] = boxes
-      continue
-    }
-    const per = {}
-    for (const p of parasByPage.value[it.origPage] || []) {
-      if (!veiled(p, it.origPage)) continue
-      const boxes = paraRowBoxes(p, el, s)
-      if (boxes.length) per[p.idx] = boxes
-    }
-    out[it.origPage] = per
-  }
-  veilRects.value = out
-  veilPageRects.value = outPage
-}
-function veilBoxes(p, pno) { return veilRects.value[pno]?.[p.idx] || [] }
-/* 段落流之后的页（参考文献/附录）整页灰：pointer-events:none——不拦选字，
-   想复制一条引文照样行；要细读就按 f 关掉略读。 */
-function pageVeils(pno) { return veilPageRects.value[pno] || [] }
-
-/* 蒙纱盖住的段不再画批注笔迹：那条"可跳过"的点线画在纱的**上面**（DOM 顺序靠后），
-   透过纱看就是一排小黑点——用户原话"蒙的位置还有小黑点"。页边卡片照旧，
-   掀开蒙纱照样能对上这段被谁标过。 */
-function marksShownOnPage(pno) {
-  const list = notesOnPage(pno)
-  if (!store.viewer.layers.skim) return list
-  return list.filter(n => !skimSkip.value.has(n.para_idx))
-}
 
 /* ---------------- 文档装载与 sheets 构建 ---------------- */
 
@@ -603,7 +421,6 @@ function noteHeight(n) {
 async function measureNotes() {
   await nextTick()
   computeQuoteMarks()
-  computeVeils()
   const next = { ...noteHeights.value }
   let changed = false
   for (const el of document.querySelectorAll('.mg-note[data-nid]')) {
@@ -1083,9 +900,7 @@ function paraAbsY(idx) {
 
 function step(dir) {
   if (!store.paras.length) return
-  const skim = store.viewer.layers.skim
-  let list = store.paras.filter(p => !skim || isCore(p))
-  if (!list.length) list = store.paras
+  const list = store.paras
   const cur = store.readingPara
   let target
   if (cur == null) target = dir > 0 ? list[0] : list[list.length - 1]
@@ -1184,7 +999,6 @@ onMounted(async () => {
   await load()
   await nextTick()
   await measureNotes()
-  loadFigs()
   ro = new ResizeObserver(() => { reflow() })
   ro.observe(deskEl.value.parentElement || deskEl.value)
   document.addEventListener('mouseup', onMouseUp)
@@ -1373,24 +1187,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                            width: Math.abs(frameRect.x1 - frameRect.x0) + 'px', height: Math.abs(frameRect.y1 - frameRect.y0) + 'px' }"></div>
 
             <div class="para-zone">
-                            <div v-for="(vb, vi) in pageVeils(it.origPage)" :key="'pv' + vi"
-                   class="para-fade veil page-veil"
-                   :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
-                             animationDelay: Math.min(400, vi * 8) + 'ms' }"></div>
               <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
-                                <template v-if="veiled(p, it.origPage)">
-                  <div v-for="(vb, vi) in veilBoxes(p, it.origPage)" :key="'v' + vi"
-                       class="para-fade veil" :title="vi ? '' : t('这段也要读')"
-                       :style="{ left: vb.x + 'px', top: vb.y + 'px', width: vb.w + 'px', height: vb.h + 'px',
-                                 animationDelay: Math.min(400, pi * 12 + vi * 8) + 'ms' }"
-                       @mousedown="veilDown = { x: $event.clientX, y: $event.clientY }"
-                       @click="onVeilClick($event, p.idx)"></div>
-                </template>
-                                <div v-else-if="store.viewer.layers.skim && it.origPage > 0 && (isCore(p) || kept(p.idx))"
-                     class="para-core-bar" :class="{ undo: kept(p.idx) }"
-                     :title="kept(p.idx) ? t('取消保留') : ''"
-                     :style="{ top: p.bbox.y0 * scale + 'px', height: (p.bbox.y1 - p.bbox.y0) * scale + 'px' }"
-                     @click.stop="kept(p.idx) && toggleKeep(p.idx)"></div>
                 <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
               </template>
 
@@ -1402,7 +1199,7 @@ watch(() => store.marginalia.notes, (n, o) => {
                                width: b.w * hitK(h) + 'px', height: b.h * hitK(h) + 'px' }"></div>
               </template>
 
-                            <template v-for="{ n } in marksShownOnPage(it.origPage)" :key="'n' + n.id">
+                            <template v-for="{ n } in notesOnPage(it.origPage)" :key="'n' + n.id">
                 <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark" :data-nid="n.id"
                      :class="['b-' + bandOf(n), { draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }]"
                      :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>

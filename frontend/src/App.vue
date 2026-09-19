@@ -348,14 +348,6 @@ async function doAnalyze() {
   }
 }
 
-async function onOverride({ idx, role }) {
-  try {
-    await api.overrideRole(store.currentId, idx, role)
-    await refreshAnalysis()
-    toast(role ? t('已改判') : t('已回到推断'))
-  } catch (e) { toast(t('改判失败：{m}', { m: e.message })) }
-}
-
 async function doMarginalia() {
   if (!store.currentId) return
   await api.marginaliaStart(store.currentId)
@@ -538,7 +530,6 @@ function onKey(e) {
     case 't': store.viewerApi?.translateCurrent(); break
     case 's': store.viewerApi?.translateSelectionKey(); break
     case 'r': store.viewer.frame = !store.viewer.frame; break
-    case 'f': store.viewer.layers.skim = !store.viewer.layers.skim; break
     case '1': store.viewer.variant = 'original'; break
     case '2': if (tranSt.value === 'done') store.viewer.variant = 'mono'; break
     case '3': if (tranSt.value === 'done') store.viewer.variant = 'dual'; break
@@ -582,10 +573,7 @@ function onKey(e) {
             <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">{{ t('交替') }}</button>
           </div>
         </Transition>
-                <button class="toggle" :class="{ on: store.viewer.layers.skim }"
-                :title="t('略读（f）')"
-                @click="store.viewer.layers.skim = !store.viewer.layers.skim">{{ t('略读') }}</button>
-        <button class="toggle" :class="{ on: store.viewer.frame }" :title="t('框选问 AI（r）')"
+                <button class="toggle" :class="{ on: store.viewer.frame }" :title="t('框选问 AI（r）')"
                 @click="store.viewer.frame = !store.viewer.frame">{{ t('框选') }}</button>
                         <button v-if="!isEn()" @click="doTranslateFull" :disabled="tranSt === 'running'"
                 :title="tranTip">
@@ -644,7 +632,7 @@ function onKey(e) {
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
           <div class="desk-hint">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
         </div>
-        <PdfViewer v-else :key="store.currentId" @override="onOverride" />
+        <PdfViewer v-else :key="store.currentId" />
       </main>
 
             <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
@@ -680,8 +668,7 @@ function onKey(e) {
         <Transition name="pop">
     <div class="keys-card" v-if="store.shortcutCard" @click="store.shortcutCard = false">
       <div class="mono-label" style="margin-bottom:8px">{{ t('键盘') }}</div>
-      <div class="k-row"><span>{{ t('略读开 / 关') }}</span><kbd>f</kbd></div>
-      <div class="k-row"><span>{{ t('下一段 / 上一段（略读时仅核心段）') }}</span><kbd>j / k</kbd></div>
+      <div class="k-row"><span>{{ t('下一段 / 上一段') }}</span><kbd>j / k</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('译当前段并钉页边') }}</span><kbd>t</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('翻译划选') }}</span><kbd>s</kbd></div>
       <div class="k-row"><span>{{ t('框选问 AI（Esc 退出）') }}</span><kbd>r</kbd></div>

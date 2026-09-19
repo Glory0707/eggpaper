@@ -55,7 +55,7 @@ const CARES = [
   { k: 'cyan', zh: '浅青绿', bg: '#cce8e8' },
   { k: 'sand', zh: '米黄', bg: '#f5f5dc' },
 ]
-function pickCare(k) { store.viewer.care = k }
+function pickCare(k) { store.viewer.care = k; if (ui.dark) setDark(false) }   // 点了具体底纹=要亮色背景
 
 /* 字号：四档，乘在 <html> 的 --fs-scale 上。点一下立刻生效，不进「保存」。 */
 const FSS = [
@@ -226,16 +226,16 @@ function save() {
         <span class="mono-label" style="margin:0">{{ t('图层') }}</span>
         <label class="ck"><input type="checkbox" v-model="f.layers.marginalia" />{{ t('AI 眉批') }}</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.mine" />{{ t('我的钉卡') }}</label>
-        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.skim" />{{ t('略读') }}</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.mock" />{{ t('演示模式') }}</label>
       </div>
       <div class="f-row">
         <label class="mono-label">{{ t('护眼底纹') }}</label>
         <div class="care-row">
-          <button v-for="c in CARES" :key="c.k" class="care-chip" :class="{ on: store.viewer.care === c.k }"
+          <button v-for="c in CARES" :key="c.k" class="care-chip" :class="{ on: store.viewer.care === c.k && !ui.dark }"
                   @click="pickCare(c.k)">
             <i :style="{ background: c.bg }"></i>{{ t(c.zh) }}
           </button>
+          <button class="care-chip" :class="{ on: ui.dark }" @click="setDark(!ui.dark)">{{ t('暗色') }}</button>
         </div>
       </div>
       <div class="f-row">
@@ -248,9 +248,8 @@ function save() {
         </div>
       </div>
       <div class="f-row">
-        <label class="mono-label">{{ t('外观') }}</label>
+        <label class="mono-label">{{ t('语言') }}</label>
         <div class="care-row">
-          <button class="care-chip" :class="{ on: ui.dark }" @click="setDark(!ui.dark)">{{ t('暗色') }}</button>
           <button class="care-chip" :class="{ on: isEn() }" @click="toggleLang">English</button>
         </div>
       </div>

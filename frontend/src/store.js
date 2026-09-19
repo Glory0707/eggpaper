@@ -4,7 +4,7 @@ import { t, ui } from './i18n'
 
 /* 只转出组件真的会 import 的那些。颜色/标签的字典（KIND_*、BAND_*）不再对外——
    它们只该通过下面这三个解析口被读到，散出去就又会有人绕过口径直接取色。 */
-export { api, askStream, ROLE_ZH, CORE_ROLES, ROLE_COLOR, ROLE_TEXT_COLOR,
+export { api, askStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
          bandOf, kindColor, kindText, kindZH } from './api'
 
 const LS = 'eggpaper:'
@@ -29,7 +29,7 @@ export const store = reactive({
   viewer: {
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
-    layers: { marginalia: true, skim: false, mine: true, ...lsGet('layers', {}) },
+    layers: { marginalia: true, mine: true, ...lsGet('layers', {}) },
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
