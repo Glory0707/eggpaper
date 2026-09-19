@@ -4,7 +4,7 @@ import { api, store, toast, refreshPapers, refreshCollections, openPaper } from 
 import { confirmBox } from '../dialog'
 import { t } from '../i18n'
 
-const emit = defineEmits(['import', 'close'])
+const emit = defineEmits(['import', 'close', 'split'])
 const fileInput = ref(null)
 const over = ref(false)
 
@@ -207,6 +207,7 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
     <div class="paper-list">
       <div v-for="p in shown" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId }"
            draggable="true" @dragstart="dragPid = p.id" @dragend="dragPid = null" @click="touch(p)">
+        <button class="p-split" :title="t('加入同屏阅读（最多 4 篇）')" @click.stop="emit('split', p.id)">⧉</button>
         <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
         <button class="p-tag" :title="t('归入分类')"
                 @click.stop="menuFor = menuFor === p.id ? null : p.id">＋</button>

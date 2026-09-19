@@ -25,6 +25,7 @@ export const store = reactive({
   summary: null,
   summaryErr: '',
   settings: null,
+  openIds: [],           // 多文献同屏的窗格（1=单篇；2/3 横排、4 四宫格）；currentId = 活动窗格那篇
   lib: { colls: [], map: {}, coll: 'all', q: '', sort: lsGet('libSort', 'added') },
   viewer: {
     variant: lsGet('variant', 'original'),
@@ -62,6 +63,7 @@ export const store = reactive({
 
   get narrow() { return this.vw < 1180 },
   get railRight() {
+    if (this.openIds.length > 1) return false    // 多窗格：整屏让给文献，右栏强制收起
     if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
     return this.viewer.railUser
   },
@@ -159,6 +161,7 @@ export function samePaper(mine) { return store.epoch === mine }
 export function goHome() {
   lsSet('lastPaper', '')
   store.currentId = null
+  store.openIds = []
   store.epoch++
   store.paper = null
   store.paras = []
@@ -170,25 +173,61 @@ export function goHome() {
 }
 
 export async function openPaper(pid) {
+  /* 多窗格模式下，文库/投递来的"打开这篇"= **替换活动窗格**（双开不打回单篇）；
+     单篇时 = 整屏换成这一篇。 */
+  if (store.openIds.length > 1 && store.openIds.includes(store.currentId)) {
+    store.openIds[store.openIds.indexOf(store.currentId)] = pid
+    await activatePaper(pid, false)      // 全局 variant 保持：另一窗格的姿势不被打扰
+    return
+  }
+  store.openIds = [pid]                  // 单篇打开：整个窗格组换成这一篇
+  await activatePaper(pid, true)
+}
+
+/* 多文献同屏：一屏最多四篇（2/3 篇横排、4 篇四宫格），openIds 驱动布局。
+   currentId = **活动窗格**那篇——右栏、顶栏、快捷键、析读翻译全跟着它走；
+   点哪个窗格谁就是活动篇。variant 是全局的（所有窗格一起切原文/译文）。 */
+export async function addPane(pid) {
+  if (store.openIds.includes(pid)) { await activatePaper(pid, false); return { dup: true } }
+  if (store.openIds.length >= 4) return { full: true }
+  if (!store.openIds.length || !store.currentId) { await openPaper(pid); return {} }
+  store.openIds.push(pid)
+  await activatePaper(pid, false)
+  return {}
+}
+
+export async function closePane(i) {
+  const pid = store.openIds[i]
+  store.openIds.splice(i, 1)
+  if (store.currentId === pid) {
+    const next = store.openIds[0]
+    if (next) await activatePaper(next, false)
+    else goHome()
+  }
+}
+
+export async function activatePaper(pid, applyVariant = true) {
   lsSet('lastPaper', pid)
   store.currentId = pid
   store.epoch++
   const pos = lsGet(`pos:${pid}`, {})
-  if (pos.variant) store.viewer.variant = pos.variant
-  if (pos.spread) store.viewer.spread = pos.spread
-  if (ui.lang === 'en') store.viewer.variant = 'original'   // 英文模式没有译文/双语
+  if (applyVariant) {
+    if (pos.variant) store.viewer.variant = pos.variant
+    if (pos.spread) store.viewer.spread = pos.spread
+    if (ui.lang === 'en') store.viewer.variant = 'original'   // 英文模式没有译文/双语
+  }
   store.paper = await api.paper(pid)
-  if (store.viewer.variant !== 'original' && store.paper.translate_status !== 'done') {
+  if (applyVariant && store.viewer.variant !== 'original' && store.paper.translate_status !== 'done') {
     store.viewer.variant = 'original'
   }
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-  store.marginalia = { status: 'none', notes: [], progress: null }
+  store.marginalia = { status: 'none', notes: [], progress: null, pid }
   store.readingPara = null
   store.paras = await api.paragraphs(pid)
   store.summary = null
   store.summaryErr = ''
-  store.viewer.restorePos = pos.scroll || 0
+  if (applyVariant) store.viewer.restorePos = pos.scroll || 0
   refreshAnalysis()
   refreshMarginalia()
   const mine = store.epoch
@@ -196,6 +235,10 @@ export async function openPaper(pid) {
     .catch(e => { if (store.epoch === mine) store.summaryErr = e.message })
   api.touchPaper(pid).then(() => refreshPapers()).catch(() => {})
 }
+
+store.activatePaper = activatePaper
+store.addPane = addPane
+store.closePane = closePane
 
 export async function refreshAnalysis() {
   if (!store.currentId) return
@@ -212,7 +255,7 @@ export async function refreshMarginalia() {
   const mine = store.epoch
   const m = await api.marginalia(store.currentId)
   if (store.epoch !== mine) return             // 同上：别把上一篇的批注装到这篇上
-  Object.assign(store.marginalia, m)
+  Object.assign(store.marginalia, m, { pid: store.currentId })
 }
 
 /* 重新析读会把一眼卡一并作废（它是旧主张的产物），所以析读完成后要重新取一次。
@@ -227,5 +270,5 @@ export async function reloadSummary() {
 }
 
 export function jumpTo(page, y0, y1) {
-  store.jump = { page, y0, y1, at: Date.now() }
+  store.jump = { pid: store.currentId, page, y0, y1, at: Date.now() }
 }

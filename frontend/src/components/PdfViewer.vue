@@ -1,9 +1,34 @@
+<script>
+/* 解析好的 PDF 文档缓存是**文件级**的：多窗格/重挂载共享同一份解析结果（key = pid:variant），
+   第二次打开秒出。LRU 上限 6 份，超出淘汰最久未用的一份。 */
+const docCache = new Map()
+</script>
+
 <script setup>
 import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
+
+const props = defineProps({ pid: { type: String, required: true } })
+/* 篇级数据自持：多窗格下每个实例只读自己这篇的段落/角色/批注/元信息，
+   与活动篇的全局 store（右栏/顶栏用）井水不犯河水。 */
+const paperMeta = ref(null)
+const paras = ref([])
+const annos = ref({})
+const mnotes = ref([])
+let savedScroll = null
+async function loadPaperData() {
+  const [pm, ps, a, m] = await Promise.all([
+    api.paper(props.pid), api.paragraphs(props.pid),
+    api.analysis(props.pid).catch(() => ({})), api.marginalia(props.pid).catch(() => ({})),
+  ])
+  paperMeta.value = pm
+  paras.value = ps || []
+  annos.value = a.annotations || {}
+  mnotes.value = m.notes || []
+}
 import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
@@ -51,7 +76,6 @@ const doneKeys = new Set()
 const renderQueues = new Map()   // gi -> 渲染链尾：同一画布严格串行，杜绝并发 render
 let passToken = 0
 const scroller = () => deskEl.value?.closest('.desk') || deskEl.value
-let docs = { orig: null, dual: null, mono: null }
 let ro = null
 
 const scale = computed(() => {
@@ -63,7 +87,7 @@ const scale = computed(() => {
 const zoomPct = computed(() => Math.round(scale.value * 100))
 const parasByPage = computed(() => {
   const m = {}
-  for (const p of store.paras) (m[p.page] ||= []).push(p)
+  for (const p of paras.value) (m[p.page] ||= []).push(p)
   return m
 })
 /* 页边摆哪些批注。读者自己钉的（查译/框选答疑/自己写的批注）是**读者资产**：
@@ -75,7 +99,7 @@ const USER_KINDS = new Set(['lookup', 'region', 'note'])
 const notesShown = computed(() => {
   const on = store.viewer.noteBands || {}
   const mineOn = store.viewer.layers.mine !== false
-  return store.marginalia.notes.filter(n =>
+  return mnotes.value.filter(n =>
     (USER_KINDS.has(n.kind) && mineOn) ||
     (store.viewer.layers.marginalia && !USER_KINDS.has(n.kind) && on[bandOf(n)] !== false))
 })
@@ -86,23 +110,32 @@ const gutterPad = computed(() => (gutterW.value ? 12 : 0))
 const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 
 function roleOf(p) {
-  return store.analysis.annotations[String(p.idx)]?.role || null
+  return annos.value[String(p.idx)]?.role || null
 }
 const pingId = ref(null)                  // 刚从纸上点回来的那条批注（亮一下）
 
 /* ---------------- 文档装载与 sheets 构建 ---------------- */
 
 async function getDoc(kind) {
-  if (!docs[kind]) {
-    const task = pdfjsLib.getDocument(`/api/papers/${store.currentId}/pdf?variant=${kind}`)
-    if (!sheets.value.length) {
-      task.onProgress = ({ loaded, total }) => {
-        if (total) loadPct.value = Math.max(loadPct.value, Math.min(0.94, loaded / total))
-      }
+  const key = `${props.pid}:${kind}`
+  const hit = docCache.get(key)
+  if (hit) { hit.at = Date.now(); return hit.doc }
+  const task = pdfjsLib.getDocument(`/api/papers/${props.pid}/pdf?variant=${kind}`)
+  if (!sheets.value.length) {
+    task.onProgress = ({ loaded, total }) => {
+      if (total) loadPct.value = Math.max(loadPct.value, Math.min(0.94, loaded / total))
     }
-    docs[kind] = await task.promise
   }
-  return docs[kind]
+  const doc = await task.promise
+  docCache.set(key, { doc, at: Date.now() })
+  while (docCache.size > 6) {              // LRU：最多留 6 份解析好的文档
+    let oldest = null, ot = Infinity
+    for (const [k, e] of docCache) if (e.at < ot) { ot = e.at; oldest = k }
+    const e = docCache.get(oldest)
+    try { e.doc.destroy() } catch { /* */ }
+    docCache.delete(oldest)
+  }
+  return doc
 }
 
 async function meta(doc) {
@@ -192,7 +225,7 @@ async function load({ keepPlace = false } = {}) {
   await nextTick()
   await measureNotes()
   if (anchor) applyAnchor(anchor)
-  else if (store.viewer.restorePos) { scroller().scrollTop = store.viewer.restorePos; store.viewer.restorePos = 0 }
+  else if (savedScroll != null) { scroller().scrollTop = savedScroll }
   updateProg()
   if (veryFirst) setTimeout(onScroll, 800)
   if (pendingFind) {                      // 「文中」等在切回原文之后的那一次搜索
@@ -577,16 +610,15 @@ function toggleNote(n) {
 
 async function translateParaAndPin(idx) {
   if (pendingPara.value != null) return
-  const pid = store.currentId
+  const pid = props.pid
   pendingPara.value = idx
   let zh = ''
   try {
-    await translateStream(store.currentId, 'para', { idx }, ev => {
+    await translateStream(props.pid, 'para', { idx }, ev => {
       if (ev.type === 'delta') zh += ev.text
       else if (ev.type === 'error') throw new Error(ev.message)
     }).done
     if (!zh.trim()) { toast(t('模型没返回内容，再试一次')); return }
-    if (store.currentId !== pid) return    // 等译文期间换了篇：这段译文属于原来的论文
     const p = paraByIdx.value[idx]
     await api.pin(pid, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
     await refreshM()
@@ -681,7 +713,7 @@ async function doTranslateSel() {
   selStream?.abort()
   sel.busy = true; sel.err = ''; sel.zh = ''; sel.hits = []
   try {
-    await translateStream(store.currentId, 'selection', { text: sel.text, context: sel.context }, ev => {
+    await translateStream(props.pid, 'selection', { text: sel.text, context: sel.context }, ev => {
       if (ev.type === 'delta') sel.zh += ev.text          // 字一到就显示，不等整段
       else if (ev.type === 'done') sel.hits = ev.hits || []
       else if (ev.type === 'error') { sel.err = ev.message; if (!sel.zh) sel.zh = '⚠ ' + ev.message }
@@ -695,7 +727,7 @@ async function doTranslateSel() {
 async function pinSel() {
   if (!sel.zh || sel.busy) await doTranslateSel()   // 流式版：busy 时也会把流等完
   if (!sel.zh) return
-  await api.pin(store.currentId, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
+  await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
   await refreshM()
   closeSel()
   toast(t('已钉在页边'))
@@ -731,7 +763,7 @@ function openMine() {
 async function saveMine() {
   const t = mine.text.trim()
   if (!t) return
-  await api.pin(store.currentId, { quote: sel.text.slice(0, 150), note: t, para_idx: sel.paraIdx,
+  await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: t, para_idx: sel.paraIdx,
                                    page: sel.page, kind: 'note' })
   mine.open = false; mine.text = ''
   await refreshM()
@@ -740,12 +772,13 @@ async function saveMine() {
 }
 
 async function refreshM() {
-  const m = await api.marginalia(store.currentId)
-  Object.assign(store.marginalia, m)
+  const m = await api.marginalia(props.pid)
+  mnotes.value = m.notes || []
+  if (props.pid === store.currentId) Object.assign(store.marginalia, m, { pid: props.pid })
 }
 
 async function unpin(mid) {
-  await api.unpin(store.currentId, mid)
+  await api.unpin(props.pid, mid)
   await refreshM()
 }
 
@@ -764,7 +797,7 @@ function commitPage() {
   else pageIn.value = String(pageNum.value)
 }
 function gotoPage(p) {
-  const pno = Math.min(store.paper?.n_pages || 1, Math.max(1, Math.round(p)))
+  const pno = Math.min(paperMeta.value?.n_pages || 1, Math.max(1, Math.round(p)))
   pageIn.value = String(pno)
   const it = pageItem(pno - 1)
   const el = it && pageEls.value[it.gi]
@@ -850,6 +883,7 @@ const backStack = []
 async function applyJump() {
   const j = store.jump
   if (!j || !deskEl.value) return
+  if (j.pid && j.pid !== props.pid) return
   backStack.push(scroller().scrollTop)
   if (backStack.length > 30) backStack.shift()
   await nextTick()
@@ -899,8 +933,8 @@ function paraAbsY(idx) {
 }
 
 function step(dir) {
-  if (!store.paras.length) return
-  const list = store.paras
+  if (!paras.value.length) return
+  const list = paras.value
   const cur = store.readingPara
   let target
   if (cur == null) target = dir > 0 ? list[0] : list[list.length - 1]
@@ -994,7 +1028,7 @@ async function finishShot(sel) {
         fr.onload = () => res(String(fr.result).split(',')[1])
         fr.readAsDataURL(blob)
       })
-      name = (await api.screenshotSave(store.paper?.title || store.paper?.filename || '', pageNum.value, b64)).name
+      name = (await api.screenshotSave(paperMeta.value?.title || paperMeta.value?.filename || '', pageNum.value, b64)).name
     }
     toast(name ? t('已复制 · 已保存 {n}', { n: name }) : t('已复制到剪贴板'))
   } catch (e) {
@@ -1002,7 +1036,8 @@ async function finishShot(sel) {
   } finally { shotBusy.value = false }
 }
 
-store.viewerApi = { step, translateCurrent, startShot, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
+const viewerApiObj = { step, translateCurrent, startShot, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
+watch(() => props.pid === store.currentId, act => { if (act) store.viewerApi = viewerApiObj }, { immediate: true })
 
 function openSearch() { searchOpen.value = true }
 /* 别的面板（术语表）说"去原文里找这个词"：预填 + 打开 + 自动搜（searchQ 的 watch 会跑）。
@@ -1047,21 +1082,21 @@ function onScroll() {
   spyT = setTimeout(() => {
     const focusY = sc.scrollTop + sc.clientHeight * 0.4
     let best = null, bestD = 1e9
-    for (const p of store.paras) {
+    for (const p of paras.value) {
       const y = paraAbsY(p.idx)
       if (y == null) continue
       const d = Math.abs(y - focusY)
       if (d < bestD) { bestD = d; best = p.idx }
     }
-    store.readingPara = best
+    if (props.pid === store.currentId) store.readingPara = best
     clearTimeout(saveT)
     saveT = setTimeout(savePos, 600)
   }, 220)
 }
 
 function savePos() {
-  if (!store.currentId || !scroller()) return
-  localStorage.setItem(LS_POS + store.currentId, JSON.stringify({
+  if (!scroller()) return
+  localStorage.setItem(LS_POS + props.pid, JSON.stringify({
     scroll: scroller().scrollTop, variant: store.viewer.variant,
     spread: store.viewer.spread, zoom: zoom.value, fit: fit.value,
   }))
@@ -1069,12 +1104,19 @@ function savePos() {
 function saveLater() { clearTimeout(saveT); saveT = setTimeout(savePos, 250) }
 
 onMounted(async () => {
-  if (store.marginalia.notes.length) {
+  loadPaperData().then(() => {
+    if (mnotes.value.length) {
+      freshNotes.value = true
+      setTimeout(() => (freshNotes.value = false), 1800)
+    }
+  }).catch(() => {})
+  if (mnotes.value.length) {
     freshNotes.value = true
     setTimeout(() => (freshNotes.value = false), 1800)
   }
   try {
-    const saved = JSON.parse(localStorage.getItem(LS_POS + store.currentId) || '{}')
+    const saved = JSON.parse(localStorage.getItem(LS_POS + props.pid) || '{}')
+    savedScroll = saved.scroll ?? null
     if (saved.fit) fit.value = saved.fit
     if (saved.zoom) zoom.value = saved.zoom
   } catch { /* */ }
@@ -1105,8 +1147,8 @@ onBeforeUnmount(() => {
   scroller()?.removeEventListener('wheel', onWheelZoom)
   scroller()?.removeEventListener('touchstart', onUserScroll)
   stopCreep()
-  for (const d of Object.values(docs)) { try { d?.destroy() } catch { /* */ } }
-  docs = { orig: null, dual: null, mono: null }
+  loadPct.value = 1
+  ready.value = true
 })
 
 const frameRect = ref(null)
@@ -1191,7 +1233,7 @@ async function pinVisual() {
   if (vis.busy) return
   if (!vis.answer) await askVisual()
   if (!vis.answer) return
-  await api.pin(store.currentId, {
+  await api.pin(props.pid, {
     quote: '[选区] ' + vis.question.slice(0, 60), note: vis.answer.slice(0, 560),
     para_idx: vis.paraIdx, page: vis.page, rect: vis.rect,
   })
@@ -1228,18 +1270,22 @@ watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 32
 watch(() => store.viewer.variant, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
 watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
-watch(() => store.paras, () => { spanCache.clear() })
+watch(paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
 watch(() => store.viewer.layers, () => reflow(), { deep: true })
 watch(() => store.reflowTick, () => reflow())
 watch(() => store.viewer.noteBands, () => reflow(), { deep: true })
-watch(() => store.marginalia.notes, (n, o) => {
+watch(mnotes, (n, o) => {
   spanCache.clear()
   if (n.length && (!o || n.length > o.length)) {
     freshNotes.value = true
     setTimeout(() => (freshNotes.value = false), 1600)
   }
   measureNotes()
+})
+/* 活动篇的眉批由 App 轮询进全局 store——是自己的就收下（生成中的实时刷新走这条） */
+watch(store.marginalia, m => {
+  if (m.pid === props.pid && m.notes) mnotes.value = m.notes
 })
 </script>
 
@@ -1338,7 +1384,7 @@ watch(() => store.marginalia.notes, (n, o) => {
       <span class="zb-page">
         <input ref="pageInputEl" v-model="pageIn" class="zb-input" :title="t('跳到第几页')"
                @keydown.enter="commitPage(); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
-        <em>/ {{ store.paper?.n_pages || 0 }}</em>
+        <em>/ {{ paperMeta?.n_pages || 0 }}</em>
       </span>
       <button :title="t('下一页（PageDown）')" @click="stepPage(1)">›</button>
       <span class="zb-sep"></span>

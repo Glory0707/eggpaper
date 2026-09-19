@@ -584,6 +584,14 @@ const readToday = computed(() => {
   const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   return store.papers.some(p => (p.last_read_at || '').startsWith(day))
 })
+function titleOf(pid) {
+  const p = store.papers.find(x => x.id === pid)
+  return p ? (p.title || p.filename) : t('正在打开…')
+}
+async function onSplit(pid) {
+  const r = await store.addPane(pid)
+  if (r?.full) toast(t('同屏最多 4 篇'))
+}
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0 })
 const tranPct = computed(() => tranProg.value.total
@@ -743,7 +751,20 @@ function onKey(e) {
         <div class="strip-sep"></div>
       </div>
 
-            <main class="desk">
+            <main class="panes" v-if="store.openIds.length > 1" :class="'cols' + store.openIds.length">
+        <section v-for="(pid, i) in store.openIds" :key="pid" class="pane"
+                 :class="{ active: pid === store.currentId }"
+                 @pointerdown="pid !== store.currentId && store.activatePaper(pid, false)">
+          <div class="pane-head">
+            <span class="p-t" :title="titleOf(pid)">{{ titleOf(pid) }}</span>
+            <button class="p-x" :title="t('关闭这篇')" @click.stop="store.closePane(i)">×</button>
+          </div>
+          <div class="desk pane-body">
+            <PdfViewer :pid="pid" :key="pid" />
+          </div>
+        </section>
+      </main>
+            <main class="desk" v-else>
                 <div class="empty" v-if="!store.paper">
           <span class="egg-wrap" :title="t('彩蛋')" :ref="r => (deskPet.el = r)" @click.stop="deskPet.poke" @wheel="deskPet.wheel"
                 @dragenter="deskPet.enter" @dragover="deskPet.over" @dragleave="deskPet.leave" @drop="deskPet.drop">
@@ -756,7 +777,7 @@ function onKey(e) {
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
           <div class="desk-hint">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
         </div>
-        <PdfViewer v-else :key="store.currentId" />
+        <PdfViewer v-else :pid="store.currentId" :key="store.currentId" />
       </main>
 
             <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
@@ -772,7 +793,7 @@ function onKey(e) {
            @click="store.viewer.libOpen = store.viewer.calOpen = store.viewer.tocOpen = false"></div>
     </Transition>
     <Transition name="slide-l">
-      <LibPanel v-if="store.viewer.libOpen" @import="onImport" @close="store.viewer.libOpen = false" />
+      <LibPanel v-if="store.viewer.libOpen" @import="onImport" @split="onSplit" @close="store.viewer.libOpen = false" />
     </Transition>
     <Transition name="slide-l">
       <CalendarPanel v-if="store.viewer.calOpen" />
