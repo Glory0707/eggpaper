@@ -110,6 +110,7 @@ async function send(q) {
   const body = picked.value.length
     ? { question: q, conv_id: id, refs: picked.value }
     : { question: q, conv_id: id }
+  store.egg.nod++                      // 蛋注意到你在提问，歪头看一眼
   const h = askStream(pid.value, body, ev => {
     if (ev.type === 'delta') queue(ev.text)
     else if (ev.type === 'done') { flush(); gotDone = true; m.citations = ev.citations || []; applyIds(ev) }

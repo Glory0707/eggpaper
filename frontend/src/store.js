@@ -42,6 +42,7 @@ export const store = reactive({
   },
   jump: null,            // {page, y0, y1, at}
   cite: { open: false }, // 「引用」浮层：开在顶栏标题旁，内容由 CiteCard 自己拉
+  egg: { nod: 0 },       // 陪伴信号：每次向 AI 提问 +1，蛋歪头看你一眼（App 侧 watch）
   update: {
     show: false, current: '', latest: '', notes: '', url: '', size: 0, sha256: '',
     pub_date: '', required: false, packaged: false, installing: false,

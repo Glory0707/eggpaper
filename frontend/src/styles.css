@@ -196,6 +196,39 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .wordmark { display: flex; align-items: center; gap: 12px; user-select: none; position: relative; cursor: pointer; }
 .wordmark .egg { width: 27px; height: 27px; color: var(--accent); }
 
+/* 自发的小动作（陪伴节拍）：优先级最低，被任何真交互盖过——歪头、伸懒腰、哈欠、抖毛、轻晃 */
+.pet.tilt { animation: eggTilt 1.7s var(--ease-smooth); transform-origin: 50% 88%; }
+@keyframes eggTilt {
+  0%, 100% { transform: none; }
+  35%, 62% { transform: rotate(9deg); }
+}
+.pet.stretch { animation: eggStretch 2.1s var(--ease-smooth); transform-origin: 50% 90%; }
+@keyframes eggStretch {
+  0%, 100% { transform: none; }
+  40%, 62% { transform: scale(1.05, 0.9) translateY(2px); }
+  82% { transform: scale(0.98, 1.06); }
+}
+.pet.yawn { animation: eggYawn 2.5s var(--ease-smooth); transform-origin: 50% 85%; }
+@keyframes eggYawn {
+  0%, 100% { transform: none; }
+  30%, 55% { transform: scale(1.06, 0.88); }
+  78% { transform: scale(0.97, 1.07); }
+}
+.pet.shiver { animation: eggShiver 0.7s linear; }
+@keyframes eggShiver {
+  0%, 100% { transform: none; }
+  18% { transform: rotate(-3deg); }
+  38% { transform: rotate(3deg); }
+  58% { transform: rotate(-2deg); }
+  78% { transform: rotate(2deg); }
+}
+.pet.sway { animation: eggSway 1.5s ease-in-out; transform-origin: 50% 88%; }
+@keyframes eggSway {
+  0%, 100% { transform: none; }
+  30% { transform: rotate(-2.5deg); }
+  70% { transform: rotate(2.5deg); }
+}
+
 .pet.hungry { animation: eggHungry .46s ease-in-out infinite; transform-origin: 50% 88%; }
 @keyframes eggHungry {
   0%, 100% { transform: scale(1.08) rotate(-4.5deg); }

@@ -29,7 +29,7 @@ let _lastErrToast = { msg: '', at: 0 }   // 全局兜底报错的限流记号
    活物有破绽：24 下里有 1 下不是常规晃动，是打喷嚏或打趔趄——不预告、不收集，
    只能被撞见。打盹/深夜/干活/庆祝是共享的时辰，两只蛋一起受；戳、搓、馋、咽各归各。
    状态优先级（styles.css 的定义顺序决定谁盖谁）：
-   hungry < busy(含字条流过) < doze < wobble < 喷嚏/趔趄 < sleep < gulp/stuff < roll < cheer；
+   idle(自发小动作) < hungry < busy(含字条流过) < doze < wobble < 喷嚏/趔趄 < sleep < gulp/stuff < roll < cheer；
    sleep-poke 专盖 sleep；spin 是行内 transform，只在没有任何动画类时可见。
    JS 侧守卫：睡着不馋/不搓/不庆祝，被戳只抖不醒；干活时不搓；搓着时不接戳。 */
 function makePet() {
@@ -37,6 +37,7 @@ function makePet() {
     el: null,
     wobbling: false, surprise: '', sleepPoke: false, roll: false,
     spinDeg: 0, spinning: false, spinFree: false, hungry: false, gulping: '',
+    idle: '',            // 自发的小动作（'tilt' | 'stretch' | 'yawn' | 'shiver' | 'sway'）：没人戳时它自己也活着
   })
   const timers = {}
   let pokes = 0, pokeReset = 0, spinTimer = 0
@@ -110,7 +111,7 @@ function makePet() {
     }, 420 + (Math.min(n, 4) - 1) * 90)
   }
   return Object.assign(pet, {
-    poke, wheel, enter, over, leave, drop,
+    poke, wheel, enter, over, leave, drop, flash,
     rollOnce: () => flash('roll', 700),
     wobbleOnce: () => flash('wobbling', 450),
   })
@@ -139,21 +140,46 @@ function pokeTally(pet) {
 }
 const topPet = makePet()         // 顶栏那枚；析读完成/整本译完的动作滚跳也归它
 const deskPet = makePet()        // 书桌空态那枚大的
+
+/* 陪伴节拍：没人戳的时候它自己也活着——每隔一阵随机做一个小动作。
+   只挑闲着的蛋（被戳/被喂/在干活都让路）、只在页面看得见时动、优先在屏幕上那只。 */
+const IDLE_POOL = [
+  ['tilt', 1700], ['stretch', 2100], ['yawn', 2500], ['shiver', 700], ['sway', 1500],
+]
+function idleTick() {
+  if (document.hidden || sleepEgg.value || dozing.value) return
+  const free = [topPet, deskPet]
+    .filter(p => !(p.idle || p.wobbling || p.surprise || p.gulping || p.roll || p.hungry || p.spinning))
+  if (!free.length || Math.random() > 0.25) return
+  const seen = free.filter(p => p.el)
+  const pick = seen.length ? seen : free
+  const pet = pick[Math.floor(Math.random() * pick.length)]
+  const [act, ms] = IDLE_POOL[Math.floor(Math.random() * IDLE_POOL.length)]
+  pet.flash('idle', ms, act)
+}
+watch(() => store.egg?.nod, () => {          // 提问时蛋歪头看你一眼：它在陪你思考
+  if (sleepEgg.value) return
+  const pet = deskPet.el ? deskPet : topPet
+  if (pet.idle || pet.wobbling || pet.surprise || pet.gulping || pet.roll) return
+  pet.flash('idle', 1400, 'tilt')
+})
+let idleTimerId = 0
 function petCls(p, extra) {
   return [{ hungry: p.hungry }, { roll: p.roll }, { wobble: p.wobbling }, p.surprise,
     { sleep: sleepEgg.value }, { 'sleep-poke': p.sleepPoke }, { busy: eggBusy.value }, p.gulping,
     { cheer: eggCheer.value }, { doze: dozing.value }, { spun: p.spinning }, { free: p.spinFree },
-    { rainbow: rainbow.value },
+    { rainbow: rainbow.value }, p.idle,
     ...(extra ? [extra] : [])]
 }
 function spinStyle(p) {
   return p.spinning ? { transform: `rotate(${p.spinDeg}deg) scale(${p.spinFree ? 1 : 0.94})` } : null
 }
 
-/* 干活与庆祝：整本翻译跑着的时候，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）。
-   这一篇译完跳两下（cheerEgg，pollTranslate 的完成拍调用）——整本书翻完比析读完
-   更有分量，跳两下；析读完成仍是滚一圈。轮询只看当前论文，人不在场就不庆祝。 */
-const eggBusy = computed(() => tranSt.value === 'running' && !sleepEgg.value)
+/* 干活与庆祝：整本翻译跑着、或析读在通读时，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）——
+   你在等析读，它也在一起读。这一篇译完跳两下（cheerEgg，pollTranslate 的完成拍调用）——
+   整本书翻完比析读完更有分量，跳两下；析读完成仍是滚一圈。轮询只看当前论文，人不在场就不庆祝。 */
+const eggBusy = computed(() =>
+  (tranSt.value === 'running' || ['running', 'queued'].includes(store.analysis.status)) && !sleepEgg.value)
 const eggCheer = ref(false)
 function cheerEgg() {
   if (sleepEgg.value) return          // 深夜它睡着干的活，不吵醒它庆祝
@@ -216,6 +242,7 @@ onMounted(async () => {
     toast(t('出错了：{m}', { m: msg.slice(0, 120) }), 5000)
   })
   pollTimer = setInterval(poll, 3000)
+  idleTimerId = setInterval(idleTick, 20000)   // 陪伴节拍：平均八十秒一个小动作
   sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后
   window.addEventListener('pointermove', wakeEgg, { passive: true })
   window.addEventListener('pointerdown', wakeEgg, { passive: true })
@@ -242,6 +269,7 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   clearInterval(pollTimer)
+  clearInterval(idleTimerId)
   clearTimeout(idleTimer)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('dragend', endDrag)
