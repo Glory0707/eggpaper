@@ -2231,6 +2231,11 @@ def serve(port: int = 8430, log_level: str = "info"):
     用户那头就是"双击图标没反应"。日志本来也没地方显示，索性不装。
     开发模式保持原样（终端里要看请求日志）。
     """
+    try:
+        import window
+        window.start_icon_guard()   # 任务栏图标守护：所有 eggpaper 窗口 15s 重钉一次
+    except Exception:
+        _applog("图标守护启动失败：\n" + traceback.format_exc())
     if appinfo.is_frozen():
         uvicorn.run(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     else:

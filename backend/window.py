@@ -220,6 +220,97 @@ def _give_window_icon(pid: int):
 
 _last_proc = None
 
+# ---- 图标守护 ---------------------------------------------------------------
+# 注入只在 open_window 起的那只窗口上有 30 秒压制；用户在浏览器里手动新开的
+# eggpaper 窗口（Ctrl+N、复制窗口）、favicon 加载失败或晚到的窗口，任务栏图标会
+# 掉回 Chromium 的 favicon 档甚至默认纸页图标——多只窗口同组时还会互相污染。
+# 守护线程常驻：每 15 秒把所有 eggpaper 顶层窗口的图标重钉一次（SetIcon 幂等、
+# 开销可忽略），任务栏从此钉死在按窗口 DPI 现画的清晰位图上，不再看 Chromium 心情。
+
+_icon_cache = {}          # dpi -> (hbig, hsmall)
+_guard_started = False
+
+def _pin_all():
+    """枚举标题恰好是 "eggpaper" 的可见顶层窗口，逐一重钉图标。"""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
+    hwnds = []
+    CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(h, _):
+        if not u.IsWindowVisible(h) or u.IsIconic(h):
+            return True
+        n = u.GetWindowTextLengthW(h)
+        if not n:
+            return True
+        b = ctypes.create_unicode_buffer(n + 1)
+        u.GetWindowTextW(h, b, n + 1)
+        if b.value.strip() == "eggpaper":
+            hwnds.append(h)
+        return True
+
+    u.EnumWindows(CB(cb), 0)
+    if not hwnds:
+        return
+    for h in hwnds:
+        dpi = 96
+        try:
+            dpi = u.GetDpiForWindow(h)
+        except Exception:
+            pass
+        if dpi not in _icon_cache:
+            _icon_cache[dpi] = _make_icon_pair(dpi, h)
+        hbig, hsmall = _icon_cache[dpi]
+        if hbig:
+            u.SendMessageW(h, 0x0080, 1, hbig)     # WM_SETICON ICON_BIG
+        if hsmall:
+            u.SendMessageW(h, 0x0080, 0, hsmall)   # WM_SETICON ICON_SMALL
+        if hbig:
+            u.SendMessageW(h, 0x0080, 2, hbig)     # ICON_BIG2：任务栏读的是这一档
+
+def _make_icon_pair(dpi: int, hwnd: int):
+    """按窗口 DPI 现画大小两枚 HICON（白底圆角卡片 + 三杠蛋，mark.draw 同一份几何）。"""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        try:
+            bx = u.GetSystemMetricsForDpi(11, dpi, hwnd)    # SM_CXICON
+            sx = u.GetSystemMetricsForDpi(49, dpi, hwnd)    # SM_CXSMICON
+        except Exception:
+            bx, sx = u.GetSystemMetrics(11), u.GetSystemMetrics(49)
+        bx, sx = max(16, bx or 32), max(16, sx or 16)
+        import mark
+        hbig = _hicon_from_pil(mark.draw(bx, tile=True))
+        hsmall = _hicon_from_pil(mark.draw(sx, tile=True))
+        if hbig or hsmall:
+            _window_log(f"守护现画图标：大 {bx}px / 小 {sx}px（dpi {dpi}）")
+        return hbig or None, hsmall or None
+    except Exception:
+        _window_log("守护现画图标失败：\n" + traceback.format_exc())
+        return None, None
+
+def start_icon_guard():
+    global _guard_started
+    if _guard_started or os.name != "nt":
+        return
+    _guard_started = True
+
+    def work():
+        while True:
+            try:
+                _pin_all()
+            except Exception:
+                _window_log("图标守护出错：\n" + traceback.format_exc())
+            time.sleep(15)
+
+    threading.Thread(target=work, daemon=True).start()
+    _window_log("图标守护已就位（15s 周期）")
+
 def open_window(url: str, size=(1440, 940)) -> str:
     """开一个独立窗口。返回用了哪种方式（给日志/界面提示用），失败返回空串。"""
     global _last_proc
