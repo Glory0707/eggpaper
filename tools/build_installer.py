@@ -122,7 +122,9 @@ def main():
             notes = f.read().strip()
     info = {
         "version": ver,
-        "url": os.path.basename(setup),          # 相对文件名：跟 latest.json 放同一个目录就行
+        # 安装包走 **Release 附件**（raw 对大文件要求登录，附件直链匿名可下）；
+        # latest.json 放仓库 raw，地址永不变。发布 = 建同名 Release 拖入 exe + 更新本文件。
+        "url": f"https://gitee.com/zhouao1207/eggpaper/releases/download/v{ver}/{os.path.basename(setup)}",
         "size": os.path.getsize(setup),
         "sha256": h.hexdigest(),
         "pub_date": time.strftime("%Y-%m-%d"),
