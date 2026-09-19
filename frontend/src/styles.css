@@ -1435,6 +1435,11 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 
 .pet.cheer { animation: eggCheer 1.15s var(--ease-spring); transform-origin: 50% 92%; }
+/* 彩蛋：戳满 24 下后三条线亮出各自的色（壳保持墨色） */
+.pet .bar { transition: fill .7s var(--ease-smooth); }
+.pet.rainbow .b0 { fill: #c2452d; }
+.pet.rainbow .b1 { fill: #d99a2b; }
+.pet.rainbow .b2 { fill: #4f7d5b; }
 @keyframes eggCheer {
   0%   { transform: translateY(0) }
   13%  { transform: translateY(-7px) }

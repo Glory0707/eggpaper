@@ -225,6 +225,7 @@ const EN = {
   '搜索论文…': 'Search papers…',
   '重发': 'Resend',
   '文库': 'Library',
+  '彩蛋': 'Easter egg',
   '文库是空的': 'The library is empty',
   '这个分类还没有文献。': 'Nothing in this collection yet.',
   '语言': 'Language',

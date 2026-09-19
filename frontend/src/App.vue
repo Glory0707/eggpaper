@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { goHome, lsGet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
+import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
@@ -50,6 +50,7 @@ function makePet() {
   function poke() {
     if (pet.spinning) return            // 搓着的时候不接戳：一只手只做一件事
     pokes++
+    pokeTally(pet)
     clearTimeout(pokeReset)
     if (pokes >= 3) { pokes = 0; flash('roll', 700); return }
     pokeReset = setTimeout(() => (pokes = 0), 3000)
@@ -116,12 +117,25 @@ function makePet() {
 }
 const ghosts = ref([])           // 飞行途中的纸片（两只蛋共用一条渲染通道）
 let ghostId = 0
+/* 彩蛋：戳满 24 下（1/24 的破绽的倒数），三条线亮出彩色，本机记住。
+   不提示不庆祝，滚一圈就是全部动静；悬浮蛋上的「彩蛋」是唯一的暗示。 */
+const rainbow = ref(lsGet('pet-rainbow', false))
+let pokeTallyN = 0
+function pokeTally(pet) {
+  if (rainbow.value) return
+  pokeTallyN++
+  if (pokeTallyN < 24) return
+  lsSet('pet-rainbow', true)
+  rainbow.value = true
+  pet.rollOnce()
+}
 const topPet = makePet()         // 顶栏那枚；析读完成/整本译完的动作滚跳也归它
 const deskPet = makePet()        // 书桌空态那枚大的
 function petCls(p, extra) {
   return [{ hungry: p.hungry }, { roll: p.roll }, { wobble: p.wobbling }, p.surprise,
     { sleep: sleepEgg.value }, { 'sleep-poke': p.sleepPoke }, { busy: eggBusy.value }, p.gulping,
     { cheer: eggCheer.value }, { doze: dozing.value }, { spun: p.spinning }, { free: p.spinFree },
+    { rainbow: rainbow.value },
     ...(extra ? [extra] : [])]
 }
 function spinStyle(p) {
@@ -545,7 +559,7 @@ function onKey(e) {
   <div class="app" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" :title="t('回书桌')" @click="goHome">
-        <span class="egg-wrap" :ref="r => (topPet.el = r)" @click.stop="topPet.poke" @wheel="topPet.wheel"
+        <span class="egg-wrap" :title="t('彩蛋')" :ref="r => (topPet.el = r)" @click.stop="topPet.poke" @wheel="topPet.wheel"
               @dragenter="topPet.enter" @dragover="topPet.over" @dragleave="topPet.leave" @drop="topPet.drop">
           <EggMark class="egg pet" :class="petCls(topPet)" :style="spinStyle(topPet)" />
           <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
@@ -621,7 +635,7 @@ function onKey(e) {
 
             <main class="desk">
                 <div class="empty" v-if="!store.paper">
-          <span class="egg-wrap" :ref="r => (deskPet.el = r)" @click.stop="deskPet.poke" @wheel="deskPet.wheel"
+          <span class="egg-wrap" :title="t('彩蛋')" :ref="r => (deskPet.el = r)" @click.stop="deskPet.poke" @wheel="deskPet.wheel"
                 @dragenter="deskPet.enter" @dragover="deskPet.over" @dragleave="deskPet.leave" @drop="deskPet.drop">
             <EggMark class="egg-big pet" :class="petCls(deskPet, { hop: dragOver })" :style="spinStyle(deskPet)" />
             <span class="egg-z" v-if="sleepEgg" aria-hidden="true"><i>z</i><i>z</i></span>
