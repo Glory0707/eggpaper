@@ -2398,3 +2398,46 @@ localStorage eggpaper:skin 可手动预览任意一套。
 
 **回归**：festivalSkin 31 项日期用例通过；16 套 × 大小两档真界面截图逐查与定稿一致；
 vite 构建、两套 UI 回归、i18n 零缺失。
+
+## M4.52 · 第三轮全功能打磨 + 高分辨视觉走查 ✅ 已完成（2026-09-20）
+
+不 bump 版本的一轮。28 张 2x 实拍覆盖全部主界面（桌面/文库/阅读四页签/灯箱/提问/
+日历/目录/钉译/查找/框选/快捷键/设置/指南/多窗格 × en/care/dark/narrow）逐张审读，
+配三路只读代码审计（交互动画、后端内核、文案一致性）共 33 条新发现，全部修复。
+
+**视觉走查当场抓到的 P0**：
+- 术语页签整栏白屏——`v-for="t in termsFiltered"` 的别名 `t` 遮蔽 i18n 的 t()，
+  行内 `:title="t('…')"` 渲染即炸（术语表非空的论文必现；此前测试库恰好空表没暴露）。
+  同根还有 tranElapsed 里 `const t` 遮蔽：整本翻译一跑起来计时器每秒炸一次。
+- 日历/目录抽屉宽度塌陷：`.cal-panel` 引用的 `--lib-w` 只在文库面板自己身上定义，
+  兄弟节点拿不到 → `width` 无效塌成内容宽。改在 `.app` 根统一注入。
+
+**交互/状态**：开论文后问候卡立即让位（原先悬在正文上 5.6 秒）；多窗格补关闭退场
+动画（panein-leave/move）；UpdateCard 两处 `installing` 漏写 `d.` 前缀（安装提示永远
+不出现）；一眼卡↗跳问等 out-in 退场完再滚（nextTick 时新内容还没插 DOM）；眉批引文
+跨窗格跳转补 pid；析读/眉批快捷键 a·m 与按钮同一条忙碌守卫；日历快速翻月结果竞态
+（月份令牌校验）；「立即检查更新」失败卡死按钮（try/finally）；确认框接管焦点
+（Enter 即确认）；loadTerms 错误兜底；删 restorePos 死状态；提示文字补 Space 键。
+
+**后端内核**：ask 的 conv_id 裸 int 500（→404）；analyze 不查眉批在跑、后结束方会
+删掉先结束方刚生成的五问/导师缓存（互斥补全另一向）；dual/mono 派生改 .part 原子写
+（半截产物不再被当成品固化）；英文问答提示词自相矛盾（语言尾巴必须压轴，QA_SYSTEM
+规则 4 写死中文）；summarize 关键词槽位去硬编码；six-answers 批量端点补 v=2 版本
+过滤（旧口径 lens/next 缓存永续的洞）；chat() 对 200 空 choices 形状设防（两处）；
+PUT settings/update.download 坏类型 500→400；purge_paper 十一张表收进单事务；
+find_duplicate 先 SQL 过滤同名再 stat。
+
+**文案/一致性**：t() 增加模板匹配——后端 f-string 在服务端就插好值，原文查词条永远
+落空；现在拿带槽位的词条当模式重插值，英文用户不再看到整句中文（12 项单测全过）；
+补 27 条后端消息的英文词条（485→513，零缺失）；「PDF 被移动」两版措辞统一为 PDF_GONE
+常量；右栏/更新卡裸错误过 t()；演示译文前缀跟界面语言（mock_marginalia 本就双语）；
+mock_analyze 删残留 problem 键；README/guide 删已移除的「f 略读」残留、guide 按钮名
+对齐「导出笔记 .md」；删 .cite-chip.lib/.sp-shot 死 CSS 与 AskPanel 死 closest 判断。
+
+**记录不修**（架构级，单独立项）：问答/翻译 SSE 同步生成器长占线程池线程；导入一篇
+PDF 要 open 四次（title/authors/paras/pymupdf 各一次）；translate_para 全篇行级坐标
+反序列化两遍。
+
+**回归**：vite 构建；i18n 513 零缺失；模板匹配 12 项单测；verify_r3 实拍验证 10 项
+（terms 渲染/日历 300px/greet 退场/保存栏吸底/后端边界 4 断言/零页面错误）；
+test_edge_concurrency 35 项、test_round2_ui 13 项、test_ui_fixes 14 项全绿。

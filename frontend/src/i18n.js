@@ -509,15 +509,73 @@ const EN = {
   '跳到这一段': 'Jump to this paragraph',
   '已完成 {n}/{m} 项': '{n}/{m} tasks done',
   '导出本月 .md': 'Export month .md',
+
+  // ---- 后端消息（静态原文，原样冒到界面上）----
+  'AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束': 'AI margin notes are still running — both jobs clear shared caches; wait for the notes to finish first',
+  '析读还在跑——它和眉批会互相清对方的缓存，先等析读结束': 'Deep read is still running — both jobs clear shared caches; wait for it to finish first',
+  'ids 必须是整数数组': 'ids must be an array of integers',
+  '下下来的安装包校验不一致（可能没下完或被改过），已丢弃': 'The downloaded installer failed its checksum (incomplete download, or tampered with) — discarded',
+  '更新源没给 sha256，无法校验完整性（发布方需要补上这一项）': 'The update feed provides no sha256, so integrity cannot be verified (the publisher needs to add it)',
+  '更新源那一栏格式不对': 'The update feed field is malformed',
+  '模型服务那一栏格式不对': 'The model provider field is malformed',
+  '翻译引擎那一栏格式不对': 'The translation engine field is malformed',
+  '设置内容格式不对': 'The settings payload is malformed',
+  '没有图片内容': 'No image content',
+  '要填完整路径（如 D:\\Papers\\Eggpaper）': 'Enter a full path (e.g. D:\\Papers\\Eggpaper)',
+  '这个文件太小了，不像是完整的 PDF（可能没传完）': 'This file is too small to be a complete PDF (it may not have finished uploading)',
+  '这份 PDF 没有可提取的文字层（多半是扫描件），析读和提问都无从下手；原文照样能读，图表也能框选问 AI':
+    'This PDF has no extractable text layer (likely a scan) — deep read and ask cannot work on it; the pages still read fine, and figures can be framed and asked',
+  '这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。把它拖回来重新导入一次即可，批注不会丢。':
+    'The PDF of this paper is gone from its original location (moved or deleted). Drop the file back in to re-import; your notes are safe.',
+  '这条消息不存在（可能已被删过）': 'That message no longer exists (it may have been deleted)',
+  '这条消息不属于这个会话': 'That message does not belong to this conversation',
+  '问题不能为空': 'The question cannot be empty',
+  '首页没认出文献信息，这份 PDF 可能没印刊头刊脚，只能手工补了': 'Could not recognize the paper info on page one — this PDF may not print a header/footer. Fill it in manually.',
+  '读取中…': 'Loading…',
+
+  // ---- 后端消息（f-string 插值后的形态，由 t() 的模板匹配兜住）----
+  '存不下去：{e}': 'Could not save: {e}',
+  '找不到这个文件：{p}': 'File not found: {p}',
+  '复制不出来：{m}': 'Could not copy: {m}',
+  '这份 PDF 读不了：{m}': 'This PDF cannot be read: {m}',
+  '这份 PDF 打不开：{m}': 'This PDF cannot be opened: {m}',
+  '这份 PDF 解析图表时失败了：{m}': 'Failed to extract figures from this PDF: {m}',
+  '页码越界：这篇只有 {n} 页': 'Page out of range: this paper has {n} pages',
+  '这个位置写不进去（{m}）': 'Cannot write to this location ({m})',
+  '缺 pdf2zh 引擎（{m}）。到「设置 → 翻译引擎」安装，或填写路径。': 'The pdf2zh engine is missing ({m}). Install it in Settings → Translation engine, or set its path.',
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。
  * vars 填 {n} 槽位——两种语言都要插值，中文原文里也可能带槽位。
- * 读 ui.lang 本身就是响应式依赖——切语言时所有用到它的模板一起重渲。 */
+ * 读 ui.lang 本身就是响应式依赖——切语言时所有用到它的模板一起重渲。
+ *
+ * 后端的报错是在服务端就插好值的（f"截图失败：{e}"），到达前端时槽位已填死，
+ * 直接查词条永远落空。这里退一步：拿带 {槽} 的词条当模板做模式匹配，命中就按
+ * 英文词条重插值——英文用户不再看到整句中文。中文模式不经过这条路（原文即所显）。 */
+const SLOT_RE = /\{[^{}]+\}/g                       // 全局版给 split/match 用（它们不受 lastIndex 影响）
+const HAS_SLOT = /\{[^{}]+\}/                       // test 用的非全局版（全局版的 test 会推进 lastIndex）
+const TEMPLATES = Object.keys(EN).filter(k => HAS_SLOT.test(k) && k.replace(SLOT_RE, '').trim() !== '')
+  .map(k => {
+    const lit = k.split(SLOT_RE).map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    return [new RegExp('^' + lit.join('(.*?)') + '$'), (k.match(SLOT_RE) || []).map(s => s.slice(1, -1)), k]
+  })
+
 export function t(s, vars) {
   let out = s
-  if (ui.lang === 'en') out = EN[s] ?? s
-  if (vars) for (const k in vars) out = out.replaceAll(`{${k}}`, String(vars[k] ?? ''))
+  if (ui.lang === 'en') {
+    out = EN[s]
+    if (out === undefined) {
+      for (const [re, slots, key] of TEMPLATES) {
+        const m = re.exec(s)
+        if (!m) continue
+        out = EN[key]
+        slots.forEach((name, i) => { out = out.replaceAll(`{${name}}`, m[i + 1] ?? '') })
+        break
+      }
+      out ??= s
+    }
+  }
+  if (vars && typeof out === 'string') for (const k in vars) out = out.replaceAll(`{${k}}`, String(vars[k] ?? ''))
   return out
 }
 

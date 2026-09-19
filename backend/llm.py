@@ -55,7 +55,9 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
         except (httpx.TransportError, httpx.TimeoutException) as e:
             last_err = e
             continue
-        out = (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
+        # 200 也可能是网关的错误 JSON / 空 choices：按缺内容走重试与兜底，别拿 KeyError 砸用户
+        choices = r.json().get("choices") or [{}]
+        out = ((choices[0].get("message") or {}).get("content", "")) or ""
         if out.strip():
             return out
         budget = int(budget * 1.6)
@@ -503,7 +505,7 @@ def summarize(title: str, paras: list, hits=None) -> dict:
             '"contributions":"<贡献：解决了什么问题、为什么重要，≤80字>",'
             '"methods":"<方法：关键思路/材料体系/表征手段，≤80字>",'
             '"findings":"<发现：最硬的数据结论，带关键数字；写得下就写，别硬压——按重要性排，读者先看到最要紧的那个>",'
-            '"keywords":["<3~5个中文关键词>"]}'
+            '"keywords":["<3~5个关键词>"]}'
             "不要 markdown 代码块，不要解释。"},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=4000, temperature=0.3)
@@ -535,7 +537,8 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
         if blocks:
             body += ("\n\n【用户同时引用的其他论文全文——每篇的 ¶ 编号是它自己的段落。"
                      "提到这些论文时先写《标题》再写 ¶ 编号（如《某论文》¶3）】\n" + "\n\n".join(blocks))
-    msgs = [{"role": "system", "content": _lang_tail() + QA_SYSTEM + _gloss_block(hits) + f"\n\n【当前论文】{title or ''}\n\n{body}"}]
+    # 语言尾巴必须压轴：QA_SYSTEM 规则 4 写死"回答用中文"，尾巴放前面会被它吃掉
+    msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n【当前论文】{title or ''}\n\n{body}" + _lang_tail()}]
     if summary:
         msgs.append({"role": "system", "content":
                      "以下是本次对话较早部分的摘要（其中的结论、术语译法、用户的关注点都继续有效，"
@@ -866,9 +869,7 @@ def mock_analyze(paras: list) -> dict:
     if not claims:
         claims = [{"id": "C1", "text": _demo_txt("（演示模式：未识别到明确主张）",
                                                  "(demo mode: no explicit claim recognized)"), "anchors": []}]
-    return {"claims": claims, "roles": roles, "purposes": purposes,
-            "problem": _demo_txt("（演示模式）这篇论文要解决的问题是：演示用的占位陈述 [¶2]。",
-                                 "(demo mode) The problem this paper solves: a placeholder statement [¶2].")}
+    return {"claims": claims, "roles": roles, "purposes": purposes}
 
 # ---------------- 方法卡（可复现 protocol）/ 谱系卡（综述导览） ----------------
 
@@ -1000,7 +1001,8 @@ def vision_ask(image_dataurl: str, question: str) -> str:
                 timeout=180,
             )
             r.raise_for_status()
-            out = (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
+            choices = r.json().get("choices") or [{}]
+            out = ((choices[0].get("message") or {}).get("content", "")) or ""
             if out.strip():
                 return out
             last = RuntimeError("视觉模型返回了空内容，已重试过一次")

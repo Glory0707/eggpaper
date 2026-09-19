@@ -117,11 +117,12 @@ function openMethod() {
 function gotoSix(k) {
   tab.value = 'skeleton'
   openSix[k] = true
-  nextTick(() => {
+  /* 外层 Transition 是 out-in：先等旧页签退场完（leave 90ms），新内容才插得进 DOM */
+  setTimeout(() => {
     const i = SIX.findIndex(s => s.k === k)
     const el = rbodyEl.value?.querySelectorAll('.six')[i]
     if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  })
+  }, 120)
 }
 function askNote(n) {
   const kind = kindZH(n) || t('批注')
@@ -229,9 +230,11 @@ const termsTried = ref('')          // 已经替**哪一篇**试过生成（试�
 async function loadTerms() {
   if (!store.currentId) { terms.value = []; return }
   const mine = paperEpoch()
-  const items = await api.glossary(store.currentId)      // 术语是按篇的
-  if (!samePaper(mine)) return                           // 等待期间换了篇：旧词表不落新篇
-  terms.value = items
+  try {
+    const items = await api.glossary(store.currentId)   // 术语是按篇的
+    if (!samePaper(mine)) return                        // 等待期间换了篇：旧词表不落新篇
+    terms.value = items
+  } catch { /* 词表拉不到就当空表，用户仍可手添 */ }
   maybeGenTerms(mine)
 }
 
@@ -536,7 +539,7 @@ watch(() => store.currentId, () => {
           </div>
         </div>
         <div v-else-if="store.analysis.status === 'error'" style="padding:8px 2px">
-          <div style="font-size:var(--fs-sm);color:var(--vermilion);line-height:1.6">{{ store.analysis.error }}</div>
+          <div style="font-size:var(--fs-sm);color:var(--vermilion);line-height:1.6">{{ t(store.analysis.error) }}</div>
           <button style="margin-top:10px" @click="emit('analyze')">{{ t('重试') }}</button>
         </div>
                 <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
@@ -672,15 +675,15 @@ watch(() => store.currentId, () => {
               <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true }">{{ t('全开') }}</button>
             </div>
             <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
-              {{ store.marginalia.error }}
+              {{ t(store.marginalia.error) }}
             </p>
-                        <p class="blk-warn" v-else-if="store.marginalia.error">{{ store.marginalia.error }}</p>
+                        <p class="blk-warn" v-else-if="store.marginalia.error">{{ t(store.marginalia.error) }}</p>
           </div>
         </template>
       </template>
 
                   <template v-if="tab === 'eye'">
-          <div v-if="store.summaryErr" class="r-note">{{ store.summaryErr }}
+          <div v-if="store.summaryErr" class="r-note">{{ t(store.summaryErr) }}
             <button class="lnk" style="margin-left:6px" @click="reloadSummary()">{{ t('重试') }}</button>
           </div>
         <div v-else-if="!store.summary" class="reading">
@@ -782,14 +785,14 @@ watch(() => store.currentId, () => {
         </div>
         <input type="text" v-model="termFilter" :placeholder="t('筛选…')" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>{{ t('导出 CSV') }}</a></div>
-        <div v-for="t in termsFiltered" :key="t.id" class="term-row">
-          <span class="t-en" :title="t.term_en">{{ t.term_en }}</span>
+        <div v-for="term in termsFiltered" :key="term.id" class="term-row">
+          <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>
           <span class="t-arrow">→</span>
-          <span class="t-zh">{{ t.term_zh }}</span>
-                    <button v-if="inPaper(t)" class="t-go" :title="t('在论文中查找该词')"
-                  @click="findTerm(t.term_en)">↗</button>
+          <span class="t-zh">{{ term.term_zh }}</span>
+                    <button v-if="inPaper(term)" class="t-go" :title="t('在论文中查找该词')"
+                  @click="findTerm(term.term_en)">↗</button>
           <span v-else class="t-no" :title="t('这篇论文的正文里没有这个词')">—</span>
-          <button class="t-del" @click="delTerm(t.id)" :title="t('删除')">×</button>
+          <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
         </div>
       </template>
       </div>

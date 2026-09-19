@@ -6,6 +6,7 @@ import { store } from '../store'
 import { vDrag } from '../drag'
 
 const inputEl = ref(null)
+const primaryEl = ref(null)
 function onKey(e) {
   if (e.key === 'Escape') { e.preventDefault(); dlgCancel() }
   else if (e.key === 'Enter') { e.preventDefault(); dlgOk() }
@@ -13,7 +14,10 @@ function onKey(e) {
 watch(() => store.escTick, () => { if (dlg.open) dlgCancel() })
 watch(() => dlg.open, v => {
   if (!v) return
-  nextTick(() => { inputEl.value?.focus({ preventScroll: true }); inputEl.value?.select() })
+  nextTick(() => {
+    if (dlg.kind === 'input') { inputEl.value?.focus({ preventScroll: true }); inputEl.value?.select() }
+    else primaryEl.value?.focus({ preventScroll: true })   // 确认框也把焦点接住：Enter 即确认，Tab 不再游走出遮罩
+  })
 })
 </script>
 
@@ -30,7 +34,7 @@ watch(() => dlg.open, v => {
                :placeholder="dlg.placeholder" @keydown="onKey" />
         <div class="f-actions">
           <button @click="dlgCancel">{{ dlg.cancel }}</button>
-          <button class="primary" :class="{ danger: dlg.danger }" @click="dlgOk">{{ dlg.ok }}</button>
+          <button class="primary" ref="primaryEl" :class="{ danger: dlg.danger }" @click="dlgOk">{{ dlg.ok }}</button>
         </div>
       </div>
     </div>

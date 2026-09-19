@@ -75,11 +75,11 @@ const mb = n => (n / 1048576).toFixed(1)
           <span v-else>{{ t('已下 {m} MB', { m: mb(d.prog.got) }) }}</span>
         </div>
       </div>
-      <div class="upd-note err" v-if="state === 'error'">{{ d.prog.error }}</div>
-      <div class="upd-note ok" v-if="state === 'ready' && !installing">
+      <div class="upd-note err" v-if="state === 'error'">{{ t(d.prog.error) }}</div>
+      <div class="upd-note ok" v-if="state === 'ready' && !d.installing">
         {{ t('装好之后软件会自动重启；文库、批注、问答都不会动（它们不在安装目录里）。') }}
       </div>
-      <div class="upd-note" v-if="installing">{{ t('安装器已经拉起，这个窗口可以关了。') }}</div>
+      <div class="upd-note" v-if="d.installing">{{ t('安装器已经拉起，这个窗口可以关了。') }}</div>
 
       <div class="f-actions">
         <button v-if="!d.required" @click="close">{{ t('稍后') }}</button>

@@ -352,7 +352,9 @@ def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
                 dual.insert_pdf(mono, from_page=i, to_page=i)
             else:
                 dual.insert_pdf(src, from_page=min(i, len(src) - 1), to_page=min(i, len(src) - 1))
-        dual.save(dual_path, garbage=4, deflate=True)
+        # 半截产物一旦被当成品服务就固化了：先落临时名再原子换名
+        dual.save(dual_path + ".part", garbage=4, deflate=True)
+        os.replace(dual_path + ".part", dual_path)
     finally:
         src.close(); mono.close(); dual.close()
     return dual_path
@@ -365,7 +367,8 @@ def derive_mono(dual_path: str, mono_path: str) -> str:
     try:
         for i in range(1, len(dual), 2):
             mono.insert_pdf(dual, from_page=i, to_page=i)
-        mono.save(mono_path, garbage=4, deflate=True)
+        mono.save(mono_path + ".part", garbage=4, deflate=True)
+        os.replace(mono_path + ".part", mono_path)
     finally:
         dual.close(); mono.close()
     return mono_path

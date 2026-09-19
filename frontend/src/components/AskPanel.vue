@@ -324,8 +324,7 @@ function onDocKey(e) {
 function onDocPointer(e) {
   if (!citeOpen.value) return
   const pop = document.querySelector('.cite-pop')
-  const inChips = e.target && e.target.closest && e.target.closest('.cite-chips')
-  if (pop && !pop.contains(e.target) && !inChips) closeCite()
+  if (pop && !pop.contains(e.target)) closeCite()
 }
 onMounted(async () => {
   document.addEventListener('keydown', onDocKey)

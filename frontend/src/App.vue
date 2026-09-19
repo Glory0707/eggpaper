@@ -517,6 +517,11 @@ const greetKey = ref('')
 /* 文案存键、显示时才过 t()：开场问候比启动设置先到，界面语言随后切过去时卡片跟着换，
    不然纯英文用户开场会看到一句中文。 */
 const greetText = computed(() => t(greetKey.value))
+/* 日历/目录抽屉与文库同宽：文库面板自己内联 --lib-w，这里是给另外两个抽屉的全局兜底。
+   模板表达式拿不到 localStorage 全局，读法收在这里。 */
+const libWCss = () => {
+  try { return (JSON.parse(localStorage.getItem('eggpaper:libW')) ?? 300) + 'px' } catch { return '300px' }
+}
 const greetShow = ref(false)
 const greetShown = new Set()     // 本次运行里已经问候过的时段：冷启动清零，跨时段会再问候
 let greetHideT = 0
@@ -531,6 +536,8 @@ function maybeGreet() {
   clearTimeout(greetHideT)
   greetHideT = setTimeout(() => (greetShow.value = false), 5600)
 }
+/* 论文一打开问候就让位：它悬在页面正中，不能压在正文上。 */
+watch(() => store.currentId, id => { if (id && greetShow.value) { clearTimeout(greetHideT); greetShow.value = false } })
 
 /* 本会话点过「析读」的凭据（哪篇、几点点的）：秒完的演示析读第一次拉状态就直接是
    done（前一拍还是 none），只看 running/queued 会漏掉这条路径，所以留一份记录。
@@ -546,7 +553,7 @@ watch(() => store.analysis.status, (n, o) => {
 })
 
 async function doAnalyze() {
-  if (!store.currentId) return
+  if (!store.currentId || anaBusy.value) return   // 快捷键和按钮同一条守卫，重复触发只会吃到 400
   analyzeReq = { id: store.currentId, at: Date.now() }
   await api.analyze(store.currentId)
   await refreshAnalysis()
@@ -557,7 +564,7 @@ async function doAnalyze() {
 }
 
 async function doMarginalia() {
-  if (!store.currentId) return
+  if (!store.currentId || store.marginalia.status === 'running') return
   await api.marginaliaStart(store.currentId)
   await refreshMarginalia()
   startMarginFast()
@@ -725,8 +732,8 @@ onUnmounted(() => clearInterval(tranTimer))
 const tranElapsed = computed(() => {
   tranTick.value
   if (!tranProg.value.started) return ''
-  const t = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
-  return t >= 90 ? t('{m} 分 {s} 秒', { m: Math.floor(t / 60), s: t % 60 }) : t('{s} 秒', { s: t })
+  const sec = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
+  return sec >= 90 ? t('{m} 分 {s} 秒', { m: Math.floor(sec / 60), s: sec % 60 }) : t('{s} 秒', { s: sec })
 })
 const tranLabel = computed(() => {
   if (tranSt.value === 'done') return t('重新整本翻译')
@@ -801,7 +808,7 @@ function onKey(e) {
 </script>
 
 <template>
-  <div class="app" :style="{ '--rail-w': store.viewer.railW + 'px' }"
+  <div class="app" :style="{ '--rail-w': store.viewer.railW + 'px', '--lib-w': libWCss() }"
        @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" :title="t('回书桌')" @click="goHome">
@@ -913,9 +920,10 @@ function onKey(e) {
           <div class="stamp" role="button" tabindex="0" @click="pickFiles"
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
           <div class="desk-hint" role="button" tabindex="0" @click="pickFiles"
-               @keydown.enter.prevent="pickFiles">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
+               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
           <div class="desk-hint demo-hint" v-if="demoOn" role="button" tabindex="0"
-               @click="showSettings = true" @keydown.enter.prevent="showSettings = true">
+               @click="showSettings = true" @keydown.enter.prevent="showSettings = true"
+               @keydown.space.prevent="showSettings = true">
             {{ t('没配模型，进去都是演示数据——先到设置里配好') }}
           </div>
         </div>

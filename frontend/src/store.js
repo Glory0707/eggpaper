@@ -257,7 +257,6 @@ export async function activatePaper(pid, applyVariant = true) {
     if (applyVariant && store.viewer.variant !== 'original' && paper.translate_status !== 'done') {
       store.viewer.variant = 'original'
     }
-    if (applyVariant) store.viewer.restorePos = pos.scroll || 0
     refreshAnalysis()
     refreshMarginalia()
     api.summary(pid).then(s => { if (store.epoch === mine) store.summary = s })

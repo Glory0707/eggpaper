@@ -181,9 +181,8 @@ def find_duplicate(filename: str, size: int, pdf_hash: str = ""):
     if pdf_hash:
         for r in q("SELECT id FROM papers WHERE pdf_hash=?", (pdf_hash,)):
             return r["id"]
-    for r in q("SELECT id, path, filename FROM papers"):
-        if (r["filename"] or "") != filename:
-            continue
+    # 先让 SQL 把范围缩到同名，再逐个 stat 核对字节数
+    for r in q("SELECT id, path FROM papers WHERE filename=?", (filename,)):
         try:
             if os.path.getsize(r["path"]) == size:
                 return r["id"]
@@ -198,11 +197,21 @@ def papers_missing_hash():
 
 def purge_paper(pid: str):
     """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
-    漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列。"""
-    for t in ("paragraphs", "annotations", "claims", "marginalia", "glossary",
-              "qa_messages", "conversations", "paper_collections", "answers", "reading_log"):
-        q(f"DELETE FROM {t} WHERE paper_id=?", (pid,), commit=True)
-    q("DELETE FROM papers WHERE id=?", (pid,), commit=True)
+    漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列；
+    全程一个事务——中途崩了就整体回滚，不留半删状态。"""
+    tables = ("paragraphs", "annotations", "claims", "marginalia", "glossary",
+              "qa_messages", "conversations", "paper_collections", "answers", "reading_log")
+    with _lock:
+        c = _get()
+        try:
+            c.execute("BEGIN")
+            for t in tables:
+                c.execute(f"DELETE FROM {t} WHERE paper_id=?", (pid,))
+            c.execute("DELETE FROM papers WHERE id=?", (pid,))
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
 
 # ---------- 现场生成问题的答案缓存 ----------
 

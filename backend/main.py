@@ -284,11 +284,16 @@ def get_settings():
 
 @app.put("/api/settings")
 def put_settings(body: dict):
+    if not isinstance(body, dict):
+        raise HTTPException(400, "设置内容格式不对")
     cfg = config.load()
     if "provider" in body:
+        if not isinstance(body["provider"], dict):
+            raise HTTPException(400, "模型服务那一栏格式不对")
         for k in ("base_url", "model", "vision_model"):
             if k in body["provider"]:
-                cfg["provider"][k] = body["provider"][k].strip()
+                v = body["provider"][k]
+                cfg["provider"][k] = v.strip() if isinstance(v, str) else ""
         if isinstance(body["provider"].get("api_key"), str) and "…" not in body["provider"]["api_key"]:
             cfg["provider"]["api_key"] = body["provider"]["api_key"].strip()
     if "mock" in body:
@@ -298,9 +303,13 @@ def put_settings(body: dict):
     if "shot_save" in body:
         cfg["shot_save"] = bool(body["shot_save"])
     if "pdf2zh" in body:
+        if not isinstance(body["pdf2zh"], dict):
+            raise HTTPException(400, "翻译引擎那一栏格式不对")
         cfg["pdf2zh"].update(body["pdf2zh"])
     if "update" in body:
         u = body["update"]
+        if not isinstance(u, dict):
+            raise HTTPException(400, "更新源那一栏格式不对")
         if isinstance(u.get("feed_url"), str):
             cfg["update"]["feed_url"] = u["feed_url"].strip()
         if "auto_check" in u:
@@ -416,10 +425,15 @@ def update_check(force: bool = False):
 
 @app.post("/api/update/download")
 def update_download(body: dict):
-    url = (body or {}).get("url") or ""
+    body = body if isinstance(body, dict) else {}
+    url = body.get("url") or ""
     if not url:
         raise HTTPException(400, "没有下载地址")
-    update.start_download(url, (body.get("sha256") or "").lower(), int(body.get("size") or 0))
+    try:
+        size = int(body.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    update.start_download(url, (body.get("sha256") or "").lower(), size)
     return update.progress()
 
 @app.get("/api/update/progress")
@@ -476,7 +490,7 @@ def take_screenshot(body: dict = None):
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"截图失败了：{e}")
+        raise HTTPException(500, f"截图失败：{e}")
     return {"png": shot.to_base64(png)}
 
 @app.post("/api/screenshot/save")
@@ -658,6 +672,8 @@ def _paper_or_404(pid: str) -> dict:
     return p
 
 NO_TEXT = "这份 PDF 没有可提取的文字层（多半是扫描件），析读和提问都无从下手；原文照样能读，图表也能框选问 AI"
+PDF_GONE = ("这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。"
+            "把它拖回来重新导入一次即可，批注不会丢。")
 
 def _require_paras(pid: str) -> None:
     """扫描件没有文字层：让它过一个"请求模型、等半天、返回胡话"的流程是最坏的选择，
@@ -813,8 +829,7 @@ def paper_pdf(pid: str, variant: str = "original"):
             return FileResponse(mono, media_type="application/pdf")
         raise HTTPException(404, "译文版尚未生成")
     if not os.path.exists(p["path"]):
-        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。"
-                                 "把它拖回来重新导入一次即可，批注不会丢。")
+        raise HTTPException(404, PDF_GONE)
     return FileResponse(p["path"], media_type="application/pdf")
 
 _lines_probe_done: set = set()   # 行级补解析每篇每进程只试一次：对不上的篇反复整本重解析纯属浪费
@@ -935,6 +950,9 @@ def _run_analysis(pid: str, paras: list):
 def analyze(pid: str):
     p = _paper_or_404(pid)
     _require_paras(pid)
+    if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
+        # 眉批也在收网析读：两边都会清五问/导师缓存，先结束的一方会删掉刚花钱生成的结果
+        raise HTTPException(400, "AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束")
     if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
         return {"status": p["analysis_status"]}
     if p["analysis_status"] in ("running", "queued"):
@@ -1469,9 +1487,16 @@ def _mock_six(key: str) -> dict:
 
 @app.get("/api/papers/{pid}/six-answers")
 def six_answers(pid: str):
-    """只读缓存：打开一篇论文时问一次，没生成过的题返回 null。"""
+    """只读缓存：打开一篇论文时问一次，没生成过的题返回 null。
+    lens/next 带 v=2 版本号（单键端点同样校验）——旧口径缓存在这里一并作废。"""
     _paper_or_404(pid)
-    return db.answers_all(pid)
+    out = {}
+    for key, val in (db.answers_all(pid) or {}).items():
+        if key in ("lens", "next") and isinstance(val, dict) and not val.get("v"):
+            out[key] = None
+        else:
+            out[key] = val
+    return out
 
 @app.get("/api/papers/{pid}/six-answers/{key}")
 def six_answer(pid: str, key: str):
@@ -1937,7 +1962,7 @@ def figures(pid: str):
         if key in _fig_cache:
             return {"figures": _fig_cache[key]}
     if not os.path.exists(p["path"]):
-        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
+        raise HTTPException(404, PDF_GONE)
     ev = threading.Event()
     _fig_inflight[key] = ev
     try:
@@ -1958,7 +1983,7 @@ def paper_toc(pid: str):
     读取本身很便宜，不值得缓存；没有书签就返回空表，前端给一句空态。"""
     p = _paper_or_404(pid)
     if not os.path.exists(p["path"]):
-        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
+        raise HTTPException(404, PDF_GONE)
     import pymupdf
     try:
         doc = pymupdf.open(p["path"])
@@ -1976,7 +2001,7 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
     import pymupdf
     p = _paper_or_404(pid)
     if not os.path.exists(p["path"]):
-        raise HTTPException(404, "这篇论文的 PDF 不在原来的位置了（可能被移动或删除）")
+        raise HTTPException(404, PDF_GONE)
     doc = pymupdf.open(p["path"])
     try:
         if page < 0 or page >= len(doc):
@@ -2155,10 +2180,13 @@ def ask(pid: str, body: dict):
     _require_paras(pid)
     conv_id = body.get("conv_id")
     if conv_id:
-        c = db.conv_get(int(conv_id))
+        try:
+            conv_id = int(conv_id)
+        except (TypeError, ValueError):
+            raise HTTPException(404, "会话不存在")
+        c = db.conv_get(conv_id)
         if not c or c["paper_id"] != pid:
             raise HTTPException(404, "会话不存在")
-        conv_id = int(conv_id)
     else:
         conv_id = db.conv_list(pid)[0]["id"]
     ref_pids = []
@@ -2296,8 +2324,8 @@ def paper_collections_set(pid: str, body: dict):
 # ---------------- 翻译 ----------------
 
 def _mock_translate(text: str):
-    """演示模式的假译文也假装在打字：同一条前端代码路径。"""
-    t = "〔演示译文〕" + text[:120]
+    """演示模式的假译文也假装在打字：同一条前端代码路径。前缀随界面语言。"""
+    t = _demo_txt("〔演示译文〕", "[demo translation] ") + text[:120]
     for i in range(0, len(t), 3):
         yield t[i:i + 3]
         time.sleep(0.02)

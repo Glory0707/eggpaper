@@ -101,12 +101,15 @@ async function test() {
 const checking = ref(false)
 async function checkNow() {
   checking.value = true
-  await api.saveSettings({ update: { feed_url: f.feed, auto_check: f.auto_check } })
-  store.settings = await api.settings()
-  const r = await checkUpdate(true, false)
-  checking.value = false
-  if (r?.has_update) { emit('close'); return }         // 有新版：把弹窗让给更新卡片
-  toast(r?.ok ? t('已经是最新的（{v}）', { v: r.current }) : t('没读到更新源：{m}', { m: r?.reason || t('地址为空') }))
+  try {
+    await api.saveSettings({ update: { feed_url: f.feed, auto_check: f.auto_check } })
+    store.settings = await api.settings()
+    const r = await checkUpdate(true, false)
+    if (r?.has_update) { emit('close'); return }         // 有新版：把弹窗让给更新卡片
+    toast(r?.ok ? t('已经是最新的（{v}）', { v: r.current }) : t('没读到更新源：{m}', { m: r?.reason || t('地址为空') }))
+  } finally {
+    checking.value = false                               // 失败也不能把按钮永远停在「检查中…」
+  }
 }
 
 /* 在独立窗口打开：没有地址栏/标签页的一个窗口，任务栏里就是 eggpaper 自己。 */
@@ -206,7 +209,7 @@ function save() {
 <template>
     <div class="modal-mask" ref="maskEl">
     <Transition name="pop" appear>
-    <div class="modal" v-drag>
+    <div class="modal settings" v-drag>
       <div class="modal-head" data-drag>
         <h3>{{ t('设置') }}</h3>
         <span class="head-ver">{{ store.update.current }}</span>

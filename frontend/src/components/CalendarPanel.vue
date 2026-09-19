@@ -51,11 +51,13 @@ const statText = computed(() => {
 const selEntry = computed(() => days.value[sel.value] || null)
 
 async function load() {
+  const want = `${y.value}-${pad(m.value)}`   // 快速翻月时响应会乱序：回来的不是当前月就丢掉
   busy.value = true
   try {
-    const r = await api.calendar(`${y.value}-${pad(m.value)}`)
+    const r = await api.calendar(want)
+    if (`${y.value}-${pad(m.value)}` !== want) return
     days.value = r.days || {}
-  } catch { days.value = {} }
+  } catch { if (`${y.value}-${pad(m.value)}` === want) days.value = {} }
   busy.value = false
 }
 

@@ -927,7 +927,7 @@ function jumpQuote(n) {
   const it = pageItem(n.page)
   if (!it) return
   const y = boxes.length ? boxes[0].y / scale.value : (n.rect?.y0 ?? paraByIdx.value[n.para_idx]?.bbox.y0 ?? 0)
-  store.jump = { page: n.page, y0: y, y1: y + 1, rects: boxes, at: Date.now() }
+  store.jump = { pid: props.pid, page: n.page, y0: y, y1: y + 1, rects: boxes, at: Date.now() }
 }
 
 function jumpBack() {
