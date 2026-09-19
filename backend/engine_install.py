@@ -15,7 +15,6 @@
 import os
 import shutil
 import threading
-import time
 import zipfile
 
 import httpx

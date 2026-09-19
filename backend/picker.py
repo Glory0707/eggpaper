@@ -4,6 +4,7 @@
 所以弹原生对话框是可行的——浏览器网页本身拿不到真实文件路径，这一步
 只能由本机进程代劳。取消返回空串。
 """
+import os
 import ctypes
 from ctypes import wintypes
 

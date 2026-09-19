@@ -19,7 +19,6 @@
 所以"下载新包 → 静默装掉 → 重启"之后，文库、批注、问答、配置原样都在。
 """
 import hashlib
-import json
 import os
 import subprocess
 import sys

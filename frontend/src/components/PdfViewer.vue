@@ -111,9 +111,6 @@ const gutterW = computed(() => (notesShown.value.length ? GUTTER_FULL : 0))
 const gutterPad = computed(() => (gutterW.value ? 12 : 0))
 const flatItems = computed(() => sheets.value.flatMap(s => s.items))
 
-function roleOf(p) {
-  return annos.value[String(p.idx)]?.role || null
-}
 const pingId = ref(null)                  // 刚从纸上点回来的那条批注（亮一下）
 
 /* ---------------- 文档装载与 sheets 构建 ---------------- */

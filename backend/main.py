@@ -109,8 +109,6 @@ def _backfill_pdf_hashes():
     启动后单独一条低优先级线程：一篇算完歇 2 秒，几百 MB 的库几分钟补完，
     不跟导入/析读抢 IO。算过的论文不会再来第二遍（判据就是指纹为空）。
     """
-    import hashlib
-
     def work():
         for pid, path in db.papers_missing_hash():
             h = _pdf_hash_file(path or "")
@@ -1154,7 +1152,7 @@ def _run_marginalia(pid: str):
 
 @app.post("/api/papers/{pid}/marginalia")
 def marginalia_start(pid: str):
-    p = _paper_or_404(pid)
+    _paper_or_404(pid)
     _cancel_clear(pid)              # 上次取消留下的旗子别误杀这次
     with _live_lock:
         if _job_live("marginalia", pid):
@@ -1212,7 +1210,7 @@ def translate_cancel(pid: str):
 @app.post("/api/papers/{pid}/pin")
 def pin_lookup(pid: str, body: dict):
     """把查译/段译/框选答疑/自己写的批注钉到页边（用户资产，持久化）。"""
-    p = _paper_or_404(pid)
+    _paper_or_404(pid)
     quote = (body.get("quote") or "").strip()
     note = (body.get("note") or "").strip()
     if not quote or not note:
@@ -1465,7 +1463,7 @@ def six_answers(pid: str):
 
 @app.get("/api/papers/{pid}/six-answers/{key}")
 def six_answer(pid: str, key: str):
-    p = _paper_or_404(pid)
+    _paper_or_404(pid)
     if key not in SIX_KEYS:
         raise HTTPException(404, "没有这个问题")
     with _gen_lock("six:" + pid + ":" + key):
@@ -1562,7 +1560,6 @@ def export_md(pid: str):
     def L(key):
         return T[key][1] if en else T[key][0]
 
-    paras = {x["idx"]: x for x in db.get_paragraphs(pid)}
     lines = [f"# {p['title'] or p['filename']}", ""]
     if p["summary"]:
         s = json.loads(p["summary"])
@@ -2311,7 +2308,7 @@ def translate_selection(pid: str, body: dict):
 
 @app.post("/api/papers/{pid}/translate-para")
 def translate_para(pid: str, body: dict):
-    p = _paper_or_404(pid)
+    _paper_or_404(pid)
     paras = {p_["idx"]: p_ for p_ in db.get_paragraphs(pid)}
     try:
         idx = int(body.get("idx"))

@@ -156,7 +156,7 @@ def engine_probe(path: str) -> tuple:
         r = subprocess.run([path, "--version"], capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=120,
                            creationflags=flags, startupinfo=si)
-    except Exception as e:
+    except Exception:
         return False, "起不来"
     out = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
     low = out.lower()
