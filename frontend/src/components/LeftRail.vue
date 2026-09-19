@@ -147,13 +147,19 @@ async function del(pid, name) {
     await api.deletePaper(pid)
   } catch (e) { toast(t('删除失败：{m}', { m: e.message })); return }
   localStorage.removeItem('eggpaper:pos:' + pid)     // 阅读位置也别留在浏览器里
+  store.openIds = store.openIds.filter(x => x !== pid)   // 同屏窗格里也摘掉这一篇
   if (store.currentId === pid) {
-    store.currentId = null
-    store.paper = null
-    store.paras = []
-    store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-    store.marginalia = { status: 'none', notes: [] }
-    store.summary = null
+    const next = store.openIds[0]
+    if (next) {
+      await store.activatePaper(next, false)             // 同屏还有别的篇：切过去
+    } else {
+      store.currentId = null
+      store.paper = null
+      store.paras = []
+      store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
+      store.marginalia = { status: 'none', notes: [] }
+      store.summary = null
+    }
   }
   await refreshPapers()
   await refreshCollections()

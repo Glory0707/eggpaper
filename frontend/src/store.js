@@ -186,54 +186,78 @@ export async function openPaper(pid) {
 
 /* 多文献同屏：一屏最多四篇（2/3 篇横排、4 篇四宫格），openIds 驱动布局。
    currentId = **活动窗格**那篇——右栏、顶栏、快捷键、析读翻译全跟着它走；
-   点哪个窗格谁就是活动篇。variant 是全局的（所有窗格一起切原文/译文）。 */
+   点哪个窗格谁就是活动篇。variant 是全局的（所有窗格一起切原文/译文）。
+   paneBusy：加/关/切是同一份全局数据的串行事务，并发调用只让最先到的做。 */
+let paneBusy = false
+
 export async function addPane(pid) {
-  if (store.openIds.includes(pid)) { await activatePaper(pid, false); return { dup: true } }
+  if (paneBusy) return { busy: true }
+  if (store.openIds.includes(pid)) {
+    if (store.currentId === pid) return {}          // 已是活动篇：什么都不用做
+    paneBusy = true
+    try { await activatePaper(pid, false) } finally { paneBusy = false }
+    return { dup: true }
+  }
   if (store.openIds.length >= 4) return { full: true }
   if (!store.openIds.length || !store.currentId) { await openPaper(pid); return {} }
-  store.openIds.push(pid)
-  await activatePaper(pid, false)
+  paneBusy = true
+  try {
+    store.openIds.push(pid)
+    await activatePaper(pid, false)
+  } finally { paneBusy = false }
   return {}
 }
 
 export async function closePane(i) {
-  const pid = store.openIds[i]
-  store.openIds.splice(i, 1)
-  if (store.currentId === pid) {
-    const next = store.openIds[0]
-    if (next) await activatePaper(next, false)
-    else goHome()
-  }
+  if (paneBusy) return
+  if (i < 0 || i >= store.openIds.length) return    // 旧渲染帧的索引：防御
+  paneBusy = true
+  try {
+    const pid = store.openIds[i]
+    const wasActive = store.currentId === pid
+    const next = store.openIds.filter((_, k) => k !== i)[0]
+    if (wasActive && next) store.currentId = next   // 先切活动，避免中间帧渲染被关的那篇
+    store.openIds.splice(i, 1)
+    if (wasActive) {
+      if (next) await activatePaper(next, false)
+      else goHome()
+    }
+  } finally { paneBusy = false }
 }
 
 export async function activatePaper(pid, applyVariant = true) {
+  const mine = ++store.epoch
   lsSet('lastPaper', pid)
   store.currentId = pid
-  store.epoch++
   const pos = lsGet(`pos:${pid}`, {})
   if (applyVariant) {
     if (pos.variant) store.viewer.variant = pos.variant
     if (pos.spread) store.viewer.spread = pos.spread
     if (ui.lang === 'en') store.viewer.variant = 'original'   // 英文模式没有译文/双语
   }
-  store.paper = await api.paper(pid)
-  if (applyVariant && store.viewer.variant !== 'original' && store.paper.translate_status !== 'done') {
-    store.viewer.variant = 'original'
-  }
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
   store.marginalia = { status: 'none', notes: [], progress: null, pid }
   store.readingPara = null
-  store.paras = await api.paragraphs(pid)
   store.summary = null
   store.summaryErr = ''
-  if (applyVariant) store.viewer.restorePos = pos.scroll || 0
-  refreshAnalysis()
-  refreshMarginalia()
-  const mine = store.epoch
-  api.summary(pid).then(s => { if (store.epoch === mine) store.summary = s })
-    .catch(e => { if (store.epoch === mine) store.summaryErr = e.message })
-  api.touchPaper(pid).then(() => refreshPapers()).catch(() => {})
+  try {
+    const [paper, paras] = await Promise.all([api.paper(pid), api.paragraphs(pid)])
+    if (store.epoch !== mine) return       // 已被更新的激活顶掉：这份是过站的，丢
+    store.paper = paper
+    store.paras = paras
+    if (applyVariant && store.viewer.variant !== 'original' && paper.translate_status !== 'done') {
+      store.viewer.variant = 'original'
+    }
+    if (applyVariant) store.viewer.restorePos = pos.scroll || 0
+    refreshAnalysis()
+    refreshMarginalia()
+    api.summary(pid).then(s => { if (store.epoch === mine) store.summary = s })
+      .catch(e => { if (store.epoch === mine) store.summaryErr = e.message })
+    api.touchPaper(pid).then(() => refreshPapers()).catch(() => {})
+  } catch (e) {
+    if (store.epoch === mine) store.analysis = { status: 'error', error: e.message, claims: [], annotations: {}, evidence_qs: {} }
+  }
 }
 
 store.activatePaper = activatePaper

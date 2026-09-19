@@ -472,7 +472,7 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .paper-item:hover .p-del { display: block; }
 .paper-item .p-del:hover { color: var(--vermilion); transform: none; box-shadow: none; }
 .paper-item .p-split {
-  position: absolute; right: 22px; top: 8px;
+  position: absolute; right: 5px; top: 26px;
   border: none; background: none; color: var(--ink-3);
   font-size: var(--fs-md); padding: 0 3px; display: none;
 }
