@@ -57,6 +57,7 @@ export const store = reactive({
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   reflowTick: 0,          // 栏宽拖完递增一次：论文据此重新定标（拖的过程中不重排）
   toast: '',
+  toastN: 0,             // 连发时递增：模板 :key 让 pop 动画每次重放
   epoch: 0,              // 换一篇 +1：按篇的异步请求回来时对不上就丢掉（见 openPaper）
   viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
@@ -73,6 +74,7 @@ window.addEventListener('resize', () => { store.vw = window.innerWidth })
 
 export function toast(msg, ms = 2600) {
   store.toast = t(msg)
+  store.toastN++
   clearTimeout(toast._t)
   toast._t = setTimeout(() => (store.toast = ''), ms)
 }

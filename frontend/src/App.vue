@@ -706,7 +706,14 @@ function onKey(e) {
   const t = e.target
   if (dlg.open) { if (e.key === 'Escape') { e.preventDefault(); dlgCancel() } return }
   if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) return
-  if (showSettings.value) return
+  if (showSettings.value) {
+    if (e.key === 'Escape') { e.preventDefault(); showSettings.value = false }
+    return
+  }
+  if (store.update.show) {
+    if (e.key === 'Escape' && !store.update.installing) { e.preventDefault(); store.update = { ...store.update, show: false } }
+    return
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
   if (e.key === 'Escape') {
@@ -830,6 +837,7 @@ function onKey(e) {
       </div>
 
             <main class="panes" v-if="store.openIds.length > 1" :class="'cols' + store.openIds.length">
+        <TransitionGroup name="panein">
         <section v-for="(pid, i) in store.openIds" :key="pid" class="pane"
                  :class="{ active: pid === store.currentId }"
                  @pointerdown="pid !== store.currentId && store.activatePaper(pid, false)">
@@ -841,6 +849,7 @@ function onKey(e) {
             <PdfViewer :pid="pid" :key="pid" />
           </div>
         </section>
+        </TransitionGroup>
       </main>
             <main class="desk" v-else>
                 <div class="empty" v-if="!store.paper">
@@ -907,7 +916,7 @@ function onKey(e) {
     </Transition>
 
     <Transition name="pop">
-      <div class="toast" v-if="store.toast">{{ store.toast }}</div>
+      <div class="toast" v-if="store.toast" :key="store.toastN">{{ store.toast }}</div>
     </Transition>
         <Transition name="greet">
           <div class="greet-box" v-if="greetShow">

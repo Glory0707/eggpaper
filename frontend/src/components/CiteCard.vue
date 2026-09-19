@@ -3,6 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { api, store, toast } from '../store'
 import { copyText } from '../clip'
 import { t } from '../i18n'
+import { modalFocus } from '../modalFocus'
+
+const maskEl = ref(null)
+modalFocus(maskEl, computed(() => store.cite.open && !!store.paper))
 
 const data = ref(null)      // {meta, groups}
 const busy = ref(false)
@@ -63,7 +67,7 @@ async function copy(row) {
 
 <template>
   <Transition name="fade">
-    <div class="modal-mask" v-if="store.cite.open && store.paper" @click.self="store.cite.open = false">
+    <div class="modal-mask" v-if="store.cite.open && store.paper" @click.self="store.cite.open = false" ref="maskEl">
       <div class="modal cite">
         <div class="modal-head">
           <h3>{{ t('引用这篇') }}</h3>

@@ -68,12 +68,31 @@ CREATE TABLE IF NOT EXISTS reading_log(
 );
 """
 
+_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_qa_msg_conv ON qa_messages(conv_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_qa_msg_paper ON qa_messages(paper_id)",
+    "CREATE INDEX IF NOT EXISTS idx_marg_paper ON marginalia(paper_id)",
+    "CREATE INDEX IF NOT EXISTS idx_gloss_paper ON glossary(paper_id)",
+    "CREATE INDEX IF NOT EXISTS idx_conv_paper ON conversations(paper_id)",
+    "CREATE INDEX IF NOT EXISTS idx_papers_hash ON papers(pdf_hash)",
+)
+
 def _get() -> sqlite3.Connection:
     global _conn
     if _conn is None:
         _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
+        for stmt in _INDEXES:
+            try:
+                _conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass
+        try:      # WAL：读写不再互斥全库 fsync；synchronous=NORMAL 够本地应用
+            _conn.execute("PRAGMA journal_mode=WAL")
+            _conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.OperationalError:
+            pass
         _migrate(_conn)
         _conn.commit()
     return _conn
@@ -118,6 +137,14 @@ def q(sql: str, params=(), commit: bool = False):
         if commit:
             _get().commit()
         return rows
+
+def q_insert(sql: str, params=()) -> int:
+    """INSERT 并取自增 id——两步必须同锁：分开写会拿到别人那行的 rowid。"""
+    with _lock:
+        cur = _get().execute(sql, params)
+        rowid = cur.lastrowid
+        _get().commit()
+        return rowid
 
 def new_id() -> str:
     return uuid.uuid4().hex[:10]
@@ -171,8 +198,8 @@ def papers_missing_hash():
 def purge_paper(pid: str):
     """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
     漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列。"""
-    for t in ("paragraphs", "annotations", "claims", "marginalia",
-              "qa_messages", "conversations", "paper_collections", "answers"):
+    for t in ("paragraphs", "annotations", "claims", "marginalia", "glossary",
+              "qa_messages", "conversations", "paper_collections", "answers", "reading_log"):
         q(f"DELETE FROM {t} WHERE paper_id=?", (pid,), commit=True)
     q("DELETE FROM papers WHERE id=?", (pid,), commit=True)
 
@@ -211,9 +238,8 @@ def collections_list():
         "FROM collections c ORDER BY c.name COLLATE NOCASE")]
 
 def collection_add(name: str) -> int:
-    q("INSERT INTO collections(name, created_at) VALUES(?,?)",
-      (name[:60], time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
-    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+    return q_insert("INSERT INTO collections(name, created_at) VALUES(?,?)",
+                    (name[:60], time.strftime("%Y-%m-%d %H:%M:%S")))
 
 def collection_rename(cid: int, name: str):
     q("UPDATE collections SET name=? WHERE id=?", (name[:60], cid), commit=True)
@@ -348,10 +374,9 @@ def glossary_list(pid: str):
 
 def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: str = "",
                  source: str = "manual") -> int:
-    q("INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
-      " VALUES(?,?,?,?,?,?,?)",
-      (pid, term_en, term_zh, domain, note, source, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
-    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+    return q_insert("INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (pid, term_en, term_zh, domain, note, source, time.strftime("%Y-%m-%d %H:%M:%S")))
 
 def glossary_delete(gid: int):
     q("DELETE FROM glossary WHERE id=?", (gid,), commit=True)
@@ -405,7 +430,7 @@ def glossary_hit(pid: str, text: str):
 def glossary_hits_all(pids: list, text: str):
     """跨篇版 glossary_hit：几篇的词一起查，命中时带上所属篇 id——
     跨文献提问的术语句（"这个缩写在 A 里指什么、在 B 里又指什么"）靠它区分来源。"""
-    pids = [int(x) for x in pids if x]
+    pids = [x for x in pids if x]          # id 是 uuid 短哈希（含字母），不能 int() 强转
     if not pids or not (text or "").strip():
         return []
     qmarks = ",".join("?" * len(pids))
@@ -424,9 +449,8 @@ def _now() -> str:
 
 def conv_create(pid: str, title: str = "新对话") -> int:
     now = _now()
-    q("INSERT INTO conversations(paper_id, title, created_at, updated_at) VALUES(?,?,?,?)",
-      (pid, title[:60], now, now), commit=True)
-    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+    return q_insert("INSERT INTO conversations(paper_id, title, created_at, updated_at) VALUES(?,?,?,?)",
+                    (pid, title[:60], now, now))
 
 def conv_list(pid: str):
     """一篇论文的会话列表。第一次问之前也会有一个默认会话，免得"没有会话"成为
@@ -483,11 +507,11 @@ def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: i
     用户流式提问到一半把会话删了就会踩到。"""
     if conv_id and not q("SELECT id FROM conversations WHERE id=?", (conv_id,)):
         return 0
-    q("INSERT INTO qa_messages(paper_id, role, content, citations, conv_id, created_at) VALUES(?,?,?,?,?,?)",
-      (pid, role, content, json.dumps(citations or []), conv_id, _now()), commit=True)
+    mid = q_insert("INSERT INTO qa_messages(paper_id, role, content, citations, conv_id, created_at) VALUES(?,?,?,?,?,?)",
+                   (pid, role, content, json.dumps(citations or []), conv_id, _now()))
     if conv_id:
         conv_touch(conv_id)
-    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+    return mid
 
 def qa_last_user_id(pid: str, conv_id: int):
     rows = q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id=? AND role='user' ORDER BY id DESC LIMIT 1",
@@ -497,7 +521,7 @@ def qa_last_user_id(pid: str, conv_id: int):
 def qa_history(pid: str, conv_id: int = None, limit: int = 200):
     if conv_id:
         rows = q("SELECT role, content, citations, id, conv_id FROM qa_messages "
-                 "WHERE paper_id=? AND conv_id=? ORDER BY id", (pid, conv_id))
+                 "WHERE paper_id=? AND conv_id=? ORDER BY id LIMIT ?", (pid, conv_id, limit * 4))
     else:
         rows = q("SELECT role, content, citations, id, conv_id FROM (SELECT * FROM qa_messages "
                  "WHERE paper_id=? ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (pid, limit))
@@ -564,11 +588,9 @@ def marginalia_set_rect(mid: int, rect: dict):
 
 def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, kind: str = "lookup",
                    rect: dict = None, label: str = "", band: str = "") -> int:
-    q("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect, label, band) "
-      "VALUES(?,?,?,?,?,?,?,?,?)",
-      (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None, label, band),
-      commit=True)
-    return q("SELECT last_insert_rowid() AS i")[0]["i"]
+    return q_insert("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect, label, band) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None, label, band))
 
 def marginalia_delete(mid: int):
     q("DELETE FROM marginalia WHERE id=?", (mid,), commit=True)

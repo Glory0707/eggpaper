@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper } from '../store'
 import { confirmBox } from '../dialog'
 import { t } from '../i18n'
@@ -67,6 +67,35 @@ const newName = ref('')
 const editId = ref(null)
 const editName = ref('')
 const menuFor = ref(null)        // 打开"归入分类"面板的那篇
+const menuXY = ref({ x: 0, y: 0, up: false })
+function openMenu(p, ev) {
+  if (menuFor.value === p.id) { menuFor.value = null; return }
+  const r = ev.currentTarget.getBoundingClientRect()
+  const h = Math.min(64 + colls.value.length * 26, 320)
+  const up = r.bottom + h > window.innerHeight - 8 && r.top - h > 8
+  menuXY.value = {
+    x: Math.min(r.left, window.innerWidth - 232),
+    y: up ? r.top - h - 4 : r.bottom + 4,
+    up,
+  }
+  menuFor.value = p.id
+}
+/* 菜单挂在 body 上（防列表裁剪），点外面/按 Esc 收起 */
+watch(menuFor, (v, was) => {
+  if (v && !was) {
+    setTimeout(() => document.addEventListener('click', closeMenu, { capture: true }), 0)
+    document.addEventListener('keydown', escMenu, { capture: true })
+  } else if (!v) {
+    document.removeEventListener('click', closeMenu, { capture: true })
+    document.removeEventListener('keydown', escMenu, { capture: true })
+  }
+})
+function closeMenu() { menuFor.value = null }
+function escMenu(e) { if (e.key === 'Escape') closeMenu() }
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeMenu, { capture: true })
+  document.removeEventListener('keydown', escMenu, { capture: true })
+})
 
 async function createColl() {
   const n = newName.value.trim()
@@ -211,28 +240,33 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
     </div>
 
     <div class="paper-list">
+      <TransitionGroup name="plist">
       <div v-for="p in shown" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId }"
            draggable="true" @dragstart="dragPid = p.id" @dragend="dragPid = null" @click="touch(p)">
         <button class="p-split" :title="t('加入同屏阅读（最多 4 篇）')" @click.stop="emit('split', p.id)">⧉</button>
         <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
         <button class="p-tag" :title="t('归入分类')"
-                @click.stop="menuFor = menuFor === p.id ? null : p.id">＋</button>
+                @click.stop="openMenu(p, $event)">＋</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
         <div class="p-author" v-if="p.authors">{{ p.authors }}</div>
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
         <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
         <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败，可重试') }}</div>
 
-                <div class="coll-menu" v-if="menuFor === p.id" @click.stop>
+      </div>
+      </TransitionGroup>
+      <Teleport to="body">
+        <div class="coll-menu" v-if="menuFor" @click.stop
+             :style="{ left: menuXY.x + 'px', top: menuXY.y + 'px' }">
           <div class="cm-head">{{ t('归入分类') }}</div>
           <label v-for="c in colls" :key="c.id" class="cm-row">
-            <input type="checkbox" :checked="collOf(p.id).includes(c.id)" @change="toggleIn(p.id, c.id)" />
+            <input type="checkbox" :checked="collOf(menuFor).includes(c.id)" @change="toggleIn(menuFor, c.id)" />
             <span>{{ c.name }}</span>
           </label>
           <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
           <button class="cm-done" @click="menuFor = null">{{ t('完成') }}</button>
         </div>
-      </div>
+      </Teleport>
       <div v-if="!shown.length" class="p-empty">
         <template v-if="!store.papers.length">{{ t('文库是空的') }}</template>
         <template v-else-if="q.trim()">{{ t('没有匹配「{q}」的文献。', { q: q.trim() }) }}</template>

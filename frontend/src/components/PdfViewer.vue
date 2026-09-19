@@ -58,6 +58,8 @@ const searchHits = ref([])       // [{page, gi, y, rects}]
 const searchAt = ref(-1)
 const searchBusy = ref(false)
 const midX = ref(0)              // 书桌中线：缩放条/提示贴它，而不是视口中线
+const deskW = ref(0)             // 书桌宽度：浮条 max-width 钳在窗格里（多窗格窄格不横穿邻格）
+const floatMax = computed(() => (deskW.value ? Math.max(220, deskW.value - 12) + 'px' : null))
 const deskRightX = ref(0)        // 书桌右缘：阅读进度细线贴它
 const sheets = ref([])
 const noteHeights = ref({})      // 旁批实测高度，摊平用
@@ -358,6 +360,7 @@ function updateMid() {
   if (!el) return
   const r = el.getBoundingClientRect()
   midX.value = Math.round(r.left + r.width / 2)
+  deskW.value = Math.round(r.width)
   deskRightX.value = Math.round(r.right - 3)
 }
 
@@ -1378,7 +1381,7 @@ watch(store.marginalia, m => {
         <div class="read-prog" v-if="ready" :style="{ left: deskRightX + 'px' }"><i :style="{ height: progPct * 100 + '%' }" /></div>
 
         <Transition name="fade">
-    <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px' }"
+    <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px', maxWidth: floatMax }"
          v-drag="{ key: 'zoombar' }" data-drag>
       <button :title="t('上一页（PageUp）')" @click="stepPage(-1)">‹</button>
       <span class="zb-page">
@@ -1400,7 +1403,7 @@ watch(store.marginalia, m => {
     </Transition>
 
         <Transition name="pop">
-    <div v-if="ready && searchOpen" class="desk-float find-bar" :style="{ left: midX + 'px' }"
+    <div v-if="ready && searchOpen" class="desk-float find-bar" :style="{ left: midX + 'px', maxWidth: floatMax }"
          v-drag="{ key: 'findbar' }" data-drag>
       <input ref="searchInputEl" v-model="searchQ" class="fb-input" :placeholder="t('在论文里找…')"
              @keydown.enter="searchStep(1)" @keydown.escape="closeSearch" />
@@ -1414,7 +1417,7 @@ watch(store.marginalia, m => {
     </Transition>
 
         <Transition name="pop">
-    <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px' }">
+    <div v-if="ready && store.viewer.frame" class="frame-hint desk-float" :style="{ left: midX + 'px', maxWidth: floatMax }">
       <button @click="store.viewer.frame = false">{{ t('退出框选') }}</button>
     </div>
     </Transition>
@@ -1483,7 +1486,7 @@ watch(store.marginalia, m => {
     </Transition>
 
     <Transition name="pop">
-      <button class="back-chip desk-float" v-if="backChip" :style="{ left: midX + 'px' }" @click="jumpBack">
+      <button class="back-chip desk-float" v-if="backChip" :style="{ left: midX + 'px', maxWidth: floatMax }" @click="jumpBack">
         {{ t('返回原位 · Alt+←') }}
       </button>
     </Transition>

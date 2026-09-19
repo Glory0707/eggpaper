@@ -3,8 +3,11 @@ import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
 import { t, ui, setLang, setDark, isEn } from '../i18n'
 import { vDrag } from '../drag'
+import { modalFocus } from '../modalFocus'
 
 const emit = defineEmits(['close', 'save', 'quit'])
+const maskEl = ref(null)
+modalFocus(maskEl)
 
 /* store.settings 可能是 null（启动时 /api/settings 还没回来或失败），而弹窗随时会被点开：
    兜一个默认值，让弹窗永远打得开——读不到就显示成空。 */
@@ -201,7 +204,7 @@ function save() {
 </script>
 
 <template>
-    <div class="modal-mask">
+    <div class="modal-mask" ref="maskEl">
     <Transition name="pop" appear>
     <div class="modal" v-drag>
       <div class="modal-head" data-drag>

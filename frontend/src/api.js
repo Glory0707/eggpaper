@@ -161,9 +161,9 @@ export const ROLE_COLOR = {
   background: '#c9c4ba', boilerplate: '#c9c4ba',                       // 浅灰：铺垫与标准流程
 }
 export const ROLE_TEXT_COLOR = {
-  claim: '#123a47', evidence: '#1d1b17', gap: '#1d1b17',
-  control: '#55524a', extension: '#55524a', limitation: '#55524a',
-  background: '#6f6b62', boilerplate: '#6f6b62',
+  claim: 'var(--accent-deep)', evidence: 'var(--ink)', gap: 'var(--ink)',
+  control: 'var(--ink-2)', extension: 'var(--ink-2)', limitation: 'var(--ink-2)',
+  background: 'var(--ink-3)', boilerplate: 'var(--ink-3)',
 }
 
 const KIND_COLOR = {
@@ -174,16 +174,16 @@ const KIND_COLOR = {
   note: '#57534a',                                        // 你自己写的批注
 }
 const KIND_TEXT_COLOR = {
-  insight: '#123a47', warning: '#9d3a25', hype: '#9d3a25', ai: '#9d3a25', conflict: '#9d3a25',
-  padding: '#6f6b62', redundant: '#6f6b62', stiff: '#6f6b62', hedge: '#6f6b62',
-  lookup: '#3f3230', region: '#3f3230', note: '#3f3230',
+  insight: 'var(--accent-deep)', warning: 'var(--vermilion-deep)', hype: 'var(--vermilion-deep)', ai: 'var(--vermilion-deep)', conflict: 'var(--vermilion-deep)',
+  padding: 'var(--ink-3)', redundant: 'var(--ink-3)', stiff: 'var(--ink-3)', hedge: 'var(--ink-3)',
+  lookup: 'var(--ink-2)', region: 'var(--ink-2)', note: 'var(--ink-2)',
 }
 
 /* 眉批的档位：三档，就三档。
    九种常用款各自落在一档里；模型自造的类型（kind='custom'）必须自己声明档位，
    颜色按档位走——页边只有三种笔触，读者也只需要分清三种。 */
 const BAND_COLOR = { good: '#1d4e5f', warn: '#b8462e', noise: '#8e8a80', mine: '#57534a' }
-const BAND_TEXT = { good: '#123a47', warn: '#9d3a25', noise: '#6f6b62', mine: '#3f3230' }
+const BAND_TEXT = { good: 'var(--accent-deep)', warn: 'var(--vermilion-deep)', noise: 'var(--ink-3)', mine: 'var(--ink-2)' }
 const BAND_OF_KIND = {
   insight: 'good',
   warning: 'warn', hype: 'warn', ai: 'warn', conflict: 'warn',

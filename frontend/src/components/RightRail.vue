@@ -746,9 +746,11 @@ watch(() => store.currentId, () => {
       </div>
       </Transition>
 
+      <Transition name="fade">
                   <div class="ask-layer" v-show="tab === 'ask'">
         <AskPanel :quick="quickList" />
       </div>
+      </Transition>
     </div>
 
         <Transition name="fade">

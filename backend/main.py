@@ -7,6 +7,7 @@ import re
 import shutil
 import threading
 import time
+import traceback
 from urllib.parse import urlparse
 
 import uvicorn
@@ -718,9 +719,19 @@ def _rm(path: str):
         except OSError:
             pass
 
+_deleted_pids: set = set()      # 已删篇：析读/眉批线程写库前查这里，避免给死篇插回孤儿行
+_deleted_lock = threading.Lock()
+
+def _pid_gone(pid: str) -> bool:
+    with _deleted_lock:
+        return pid in _deleted_pids
+
 @app.delete("/api/papers/{pid}")
 def delete_paper(pid: str):
     p = _paper_or_404(pid)
+    with _deleted_lock:
+        _deleted_pids.add(pid)
+    _lines_probe_done.discard(pid)
     db.purge_paper(pid)
     if translate_full.cancel(pid):
         _applog(f"删论文 {pid}：同时终止了还在跑的整本翻译")
@@ -730,6 +741,12 @@ def delete_paper(pid: str):
     return {"ok": True}
 
 _variant_locks: dict = {}
+_gen_locks: dict = {}
+
+def _gen_lock(key: str) -> threading.Lock:
+    """同步生成端点的按篇锁：同一篇的摘要/建议/五问/方法卡/引用连点只跑一次，
+    第二个请求等在锁上，拿到锁后命中缓存直接返回——不再双倍烧钱。"""
+    return _gen_locks.setdefault(key, threading.Lock())
 _variant_guard = threading.Lock()
 
 def _variant_lock(key: str) -> threading.Lock:
@@ -771,10 +788,13 @@ def paper_pdf(pid: str, variant: str = "original"):
                                  "把它拖回来重新导入一次即可，批注不会丢。")
     return FileResponse(p["path"], media_type="application/pdf")
 
+_lines_probe_done: set = set()   # 行级补解析每篇每进程只试一次：对不上的篇反复整本重解析纯属浪费
+
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
-    if db.paragraphs_need_lines(pid):
+    if db.paragraphs_need_lines(pid) and pid not in _lines_probe_done:
+        _lines_probe_done.add(pid)
         p = db.get_paper(pid)
         path = p.get("path") or os.path.join(paper_dir(pid), "paper.pdf")
         try:
@@ -835,11 +855,16 @@ def _run_analysis(pid: str, paras: list):
                     else:
                         _applog(f"析读 {pid}: 一眼卡这次是空的（速览页会再试一次）")
                 elif k == "suggest":
+                    if _pid_gone(pid):
+                        return
                     if isinstance(got, dict) and got.get("questions"):
                         db.update_paper(pid, suggest=json.dumps(got, ensure_ascii=False))
                     else:
                         _applog(f"析读 {pid}: 推荐问题这次是空的（提问页会再试一次）")
                 elif got.get("text") or got.get("items"):
+                    if _pid_gone(pid):
+                        _applog(f"析读 {pid}: 论文已删除，丢弃五问·{k}")
+                        return
                     db.answer_put(pid, k, got)
                 else:
                     _applog(f"析读 {pid}: 五问·{k} 这次是空的")
@@ -966,9 +991,11 @@ def _analysis_loop():
                 _analysis_worker[0] = None
                 return
             pid, paras = _analysis_q.get_nowait()
+        if _pid_gone(pid):
+            continue
         with _q_lock:
             _analysis_pending.discard(pid)
-        _live_jobs.add(("analysis", pid))
+            _live_jobs.add(("analysis", pid))
         db.update_paper(pid, analysis_status="running", analysis_error=None)
         try:
             _run_analysis(pid, paras)
@@ -1061,11 +1088,20 @@ def marginalia_get(pid: str):
     if p["marginalia_status"] == "running" and not _job_live("marginalia", pid):
         db.update_paper(pid, marginalia_status="none")
         p = _paper_or_404(pid)
-    if p["marginalia_status"] == "done" and any(not n["rect"] for n in db.get_marginalia(pid)):
-        _resolve_rects(pid)
-    return {"status": p["marginalia_status"], "error": p.get("marginalia_error"),
+    status = p["marginalia_status"]
+    if status == "running":                      # 跑的时候一条都没落库，别每秒白取全量
+        return {"status": status, "error": None,
+                "progress": _margin_progress.get(pid), "notes": None}
+    if status == "done":
+        notes = db.get_marginalia(pid)
+        if any(not n["rect"] for n in notes):
+            _resolve_rects(pid)
+            notes = db.get_marginalia(pid)
+    else:
+        notes = db.get_marginalia(pid)
+    return {"status": status, "error": p.get("marginalia_error"),
             "progress": _margin_progress.get(pid),
-            "notes": [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None) for n in db.get_marginalia(pid)]}
+            "notes": [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None) for n in notes]}
 
 @app.post("/api/papers/{pid}/pin")
 def pin_lookup(pid: str, body: dict):
@@ -1115,14 +1151,19 @@ def summary(pid: str):
     _require_paras(pid)
     if p["summary"]:
         return JSONResponse(json.loads(p["summary"]))
-    if _demo_mode():
-        data = {"one_line": "〔演示模式〕这是一篇测试论文的一眼卡摘要。", "contributions": "演示贡献", "methods": "演示方法",
-                "findings": "演示发现", "keywords": ["演示"]}
-    else:
-        hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in db.get_paragraphs(pid))[:60000])
-        data = llm.summarize(p["title"], db.get_paragraphs(pid), hits)
-        _require_shape(data, ("one_line", "findings", "keywords"), "一眼卡")
-    db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
+    with _gen_lock("summary:" + pid):
+        p = db.get_paper(pid)                      # 锁内重读：等锁期间可能已被首个请求写回
+        if p["summary"]:
+            return JSONResponse(json.loads(p["summary"]))
+        if _demo_mode():
+            data = {"one_line": "〔演示模式〕这是一篇测试论文的一眼卡摘要。", "contributions": "演示贡献", "methods": "演示方法",
+                    "findings": "演示发现", "keywords": ["演示"]}
+        else:
+            paras = db.get_paragraphs(pid)
+            hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
+            data = llm.summarize(p["title"], paras, hits)
+            _require_shape(data, ("one_line", "findings", "keywords"), "一眼卡")
+        db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
     return data
 
 @app.get("/api/papers/{pid}/suggest")
@@ -1133,13 +1174,19 @@ def suggest(pid: str):
         return JSONResponse(json.loads(p["suggest"]))
     if p["analysis_status"] != "done":
         return {"questions": []}
-    if _demo_mode():
-        data = {"questions": ["〔演示〕核心证据的强度如何？", "〔演示〕方法上有什么可挑剔的？"]}
-    else:
-        _, claims, annos = db.get_analysis(pid)
-        data = llm.suggest_questions(p["title"], claims, annos)
-        _require_shape(data, ("questions",), "提问建议")
-    db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
+    with _gen_lock("suggest:" + pid):
+        p = db.get_paper(pid)
+        if p["suggest"]:
+            return JSONResponse(json.loads(p["suggest"]))
+        if p["analysis_status"] != "done":
+            return {"questions": []}
+        if _demo_mode():
+            data = {"questions": ["〔演示〕核心证据的强度如何？", "〔演示〕方法上有什么可挑剔的？"]}
+        else:
+            _, claims, annos = db.get_analysis(pid)
+            data = llm.suggest_questions(p["title"], claims, annos)
+            _require_shape(data, ("questions",), "提问建议")
+        db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
     return data
 
 def _require_shape(data, keys: tuple, what: str):
@@ -1226,6 +1273,8 @@ def _demo_terms(title, paras) -> dict:
 
 def _save_terms(pid: str, got) -> int:
     """术语与缩写一次落库——它们是同一次调用的产物，分两处写迟早会只写一半。"""
+    if _pid_gone(pid):
+        return 0
     got = got if isinstance(got, dict) else {}
     terms = got.get("terms") or []
     if terms:
@@ -1270,16 +1319,17 @@ def six_answer(pid: str, key: str):
     p = _paper_or_404(pid)
     if key not in SIX_KEYS:
         raise HTTPException(404, "没有这个问题")
-    cached = db.answer_get(pid, key)
-    if cached and key in ("lens", "next") and not cached.get("v"):
-        cached = None
-    if cached:
-        return cached
-    _require_paras(pid)
-    data = _mock_six(key) if _demo_mode() else _gen_six(p, key)
-    if not (data.get("text") or data.get("items")):
-        raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
-    db.answer_put(pid, key, data)
+    with _gen_lock("six:" + pid + ":" + key):
+        cached = db.answer_get(pid, key)
+        if cached and key in ("lens", "next") and not cached.get("v"):
+            cached = None
+        if cached:
+            return cached
+        _require_paras(pid)
+        data = _mock_six(key) if _demo_mode() else _gen_six(db.get_paper(pid), key)
+        if not (data.get("text") or data.get("items")):
+            raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
+        db.answer_put(pid, key, data)
     return data
 
 @app.get("/api/papers/{pid}/method-card")
@@ -1290,16 +1340,22 @@ def method_card(pid: str, cached: bool = False):
         return JSONResponse(json.loads(p["method_card"]))
     if cached:
         return {}
-    if _demo_mode():
-        data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
-                "steps": ["步骤一", "步骤二"], "notes": ""}
-    elif p.get("paper_type") == "review":
-        data = llm.survey_card(p["title"], db.get_paragraphs(pid))
-        _require_shape(data, ("goal", "steps"), "谱系卡")
-    else:
-        data = llm.method_card(p["title"], db.get_paragraphs(pid))
-        _require_shape(data, ("goal", "steps"), "方法卡")
-    db.update_paper(pid, method_card=json.dumps(data, ensure_ascii=False))
+    with _gen_lock("mcard:" + pid):
+        p = db.get_paper(pid)
+        if p["method_card"]:
+            return JSONResponse(json.loads(p["method_card"]))
+        if cached:
+            return {}
+        if _demo_mode():
+            data = {"goal": "〔演示〕可复现 protocol", "system": "演示体系", "conditions": "演示条件",
+                    "steps": ["步骤一", "步骤二"], "notes": ""}
+        elif p.get("paper_type") == "review":
+            data = llm.survey_card(p["title"], db.get_paragraphs(pid))
+            _require_shape(data, ("goal", "steps"), "谱系卡")
+        else:
+            data = llm.method_card(p["title"], db.get_paragraphs(pid))
+            _require_shape(data, ("goal", "steps"), "方法卡")
+        db.update_paper(pid, method_card=json.dumps(data, ensure_ascii=False))
     return data
 
 @app.get("/api/papers/{pid}/citation")
@@ -1322,6 +1378,11 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
                 "journal_abbr": "J. Demo Chem.", "year": "2024", "volume": "12",
                 "issue": "3", "pages": "345-352", "doi": "10.0000/demo.2024.12345"}
     else:
+      with _gen_lock("cite:" + pid):
+        p = db.get_paper(pid)
+        if p["citation"] and not refresh:
+            meta = json.loads(p["citation"])
+            return {"meta": meta, "groups": citation.groups(meta)}
         src = pdfparse.citation_source(p["path"])
         raw = llm.extract_citation(p["title"], src)
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
@@ -1816,16 +1877,8 @@ def _recon_pick(question: str, papers: list):
         for i, p in enumerate(papers))
     try:
         out = llm.chat([{"role": "system", "content": RECON_SYSTEM},
-                        {"role": "user", "content": "文献清单：\n{lines}\n\n问题：{question}"}],
+                        {"role": "user", "content": f"文献清单：\n{lines}\n\n问题：{question}"}],
                        max_tokens=150, temperature=0)
-        nums = [int(n) for n in re.findall(r"\d+", out)]
-        picked = []
-        for n in nums:
-            if 0 <= n < len(papers) and papers[n]["id"] not in picked:
-                picked.append(papers[n]["id"])
-        return picked[:4]
-    except Exception:
-        return [p["id"] for p in papers[:3]]
         nums = [int(n) for n in re.findall(r"\d+", out)]
         picked = []
         for n in nums:
@@ -1967,6 +2020,11 @@ def qa_regenerate(pid: str, body: dict):
 
 @app.delete("/api/conversations/{cid}/messages/{mid}")
 def qa_delete_one(cid: int, mid: int):
+    row = db.q("SELECT conv_id FROM qa_messages WHERE id=?", (mid,))
+    if not row:
+        raise HTTPException(404, "这条消息不存在（可能已被删过）")
+    if row[0]["conv_id"] != cid:
+        raise HTTPException(404, "这条消息不属于这个会话")
     db.qa_delete(mid)
     return {"ok": True}
 

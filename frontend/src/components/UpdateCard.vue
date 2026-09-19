@@ -2,9 +2,12 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { api, store, toast } from '../store'
 import { t } from '../i18n'
+import { modalFocus } from '../modalFocus'
 
 const d = computed(() => store.update)
 const poll = ref(null)
+const maskEl = ref(null)
+modalFocus(maskEl, computed(() => !!d.value.show))
 
 function close() {
   stopPoll()
@@ -47,7 +50,7 @@ const mb = n => (n / 1048576).toFixed(1)
 
 <template>
   <Transition name="pop" appear>
-  <div class="modal-mask" v-if="d.show" @click.self="close">
+  <div class="modal-mask" v-if="d.show" @click.self="close" ref="maskEl">
     <div class="modal upd">
       <div class="modal-head">
         <h3>{{ t('有新版本 {v}', { v: d.latest }) }}</h3>

@@ -22,7 +22,7 @@ ROLE_ZH = {
 # ---------------- 基础调用 ----------------
 
 def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
-         no_think: bool = False) -> str:
+         no_think: bool = False, timeout: int = 600) -> str:
     """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。"""
     cfg = config.load()
     if cfg["mock"] or not cfg["provider"]["api_key"]:
@@ -40,7 +40,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
                 f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
                 json=body,
-                timeout=600,
+                timeout=timeout,
             )
             if r.status_code >= 500:
                 last_err = RuntimeError(f"模型服务开小差了（{r.status_code}），已自动重试过一次")
@@ -98,17 +98,72 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
             if piece:
                 yield piece
 
+def _json_patch(raw: str) -> str:
+    """一次扫表的廉价修复：字符串内的裸换行转义、掉右括号补齐、尾逗号去掉。"""
+    out, stack, in_str, esc = [], [], False, False
+    for ch in raw:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == '\\':
+                esc = True
+            elif ch == '"':
+                in_str = False
+            elif ch == '\n' or ch == '\r':
+                out.append('\\n')       # 字符串内的裸换行转义掉
+                continue
+            out.append(ch)
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in '{[':
+            stack.append(ch)
+        elif ch in '}]':
+            if stack:
+                stack.pop()
+        out.append(ch)
+    fixed = "".join(out)
+    if in_str:
+        fixed += '"'
+    fixed = re.sub(r",\s*([}\]])", r"\1", fixed)          # 尾逗号
+    fixed = fixed.rstrip().rstrip(",")
+    for op in reversed(stack):                              # 截断的输出补右括号
+        fixed += "}" if op == "{" else "]"
+    return fixed
+
 def parse_json(text: str) -> dict:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     i, j = text.find("{"), text.rfind("}")
-    if i < 0 or j < 0:
+    if i < 0:
         raise ValueError("模型这次没有按约定的 JSON 格式回，重试一次通常就好")
-    raw = text[i:j + 1]
+    raw = text[i:j + 1] if j > i else text[i:]   # 截断的输出可能整个右括号都没了，交给 _json_patch 补
+    no_curly = raw.replace("“", '"').replace("”", '"')
+    attempts = [raw, no_curly, _json_patch(no_curly),
+                _json_patch(no_curly).replace("'", '"')]    # 单引号 JSON 兜底
+    last = None
+    for a in attempts:
+        try:
+            return json.loads(a)
+        except (json.JSONDecodeError, ValueError) as e:
+            last = e
+    raise last
+
+_JSON_RETRY_NOTE = ("你上一条输出不是合法 JSON。重新输出，只给 JSON 本身：不要代码块、不要解释、"
+                    "不要在字符串里夹裸换行；键和值都用双引号。")
+
+def chat_json(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
+              no_think: bool = False, timeout: int = 600) -> dict:
+    """要 JSON 的调用统一走这里：坏 JSON 就地带错误说明重发一次，别让整条管线一击即溃。"""
+    raw = chat(messages, max_tokens=max_tokens, temperature=temperature,
+               no_think=no_think, timeout=timeout)
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        fixed = re.sub(r",\s*([}\]])", r"\1", raw).replace("“", '"').replace("”", '"')
-        return json.loads(fixed)
+        return parse_json(raw)
+    except Exception:
+        raw2 = chat(messages + [{"role": "assistant", "content": raw[:2000]},
+                                {"role": "user", "content": _JSON_RETRY_NOTE}],
+                    max_tokens=max_tokens, temperature=temperature,
+                    no_think=no_think, timeout=timeout)
+        return parse_json(raw2)
 
 def _lang_tail() -> str:
     """界面语言是英文时，要求所有面向用户的产出都用英文写。
@@ -318,7 +373,7 @@ REVIEW_SKELETON_APPENDIX = """
 def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)[:90000]   # 长综述防爆上下文；超限从尾部截（参考文献在最后）
     user = f"论文标题：{title or '（未识别）'}\n\n{body}"
     system = SKELETON_SYSTEM + (REVIEW_SKELETON_APPENDIX if kind == "review" else "") + _lang_tail()
     msgs = [
@@ -407,7 +462,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
     """
     claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
     gap = next((v["purpose"] for k, v in sorted(annos.items(), key=lambda x: int(x[0])) if v["role"] == "gap"), "")
-    out = chat([
+    data = chat_json([
         {"role": "system", "content":
             "你在帮一位研究生读懂这篇论文。基于论文的主张与研究缺口，出 4 个他最想问出口的问题。"
             "好的问题具体到这篇的内容：怎么做的、数字在什么条件下得的、这个结论能不能用到别的体系、"
@@ -418,7 +473,6 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
             "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
     ], max_tokens=4000, temperature=0.5)
-    data = parse_json(out)
     qs = [_clip_q(str(q)) for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
     return {"questions": qs[:4]}
 
@@ -444,7 +498,7 @@ def _gloss_block(hits) -> str:
 
 def summarize(title: str, paras: list, hits=None) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:800]}" for p in paras if not p.get("in_refs"))[:60000]
-    out = chat([
+    return chat_json([
         {"role": "system", "content": _lang_tail() + _gloss_block(hits) +
             "你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
             '{"one_line":"<一句话说清这篇论文做了什么、核心结果是什么，≤60字>",'
@@ -455,7 +509,6 @@ def summarize(title: str, paras: list, hits=None) -> dict:
             "不要 markdown 代码块，不要解释。"},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=4000, temperature=0.3)
-    return parse_json(out)
 
 # ---------------- 问答 ----------------
 
@@ -496,8 +549,11 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
     return msgs
 
 def cites_of(text: str) -> list:
-    """从回答里抓 [¶5] 这类依据段号——引用角标可点击跳原文，靠的就是它。"""
-    return sorted({int(n) for n in re.findall(r"¶\s*(\d+)", text or "")})
+    """从回答里抓 [¶5] 这类依据段号——引用角标可点击跳原文，靠的就是它。
+    跨篇回答里的《某论文》¶3 是那篇的段号，跳到本篇会跳错地方，剔除。"""
+    t = text or ""
+    cleaned = re.sub(r"《[^》]*》\s*¶\s*\d+", "", t)
+    return sorted({int(n) for n in re.findall(r"¶\s*(\d+)", cleaned)})
 
 # ---------- 长对话的上下文压缩 ----------
 DIALOG_SUMMARY_SYSTEM = """你在为一次论文研读对话做上下文压缩。把给出的较早对话压成一份摘要，只输出摘要正文。
@@ -782,7 +838,7 @@ def mock_analyze(paras: list) -> dict:
 
 def method_card(title: str, paras: list) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
-    out = chat([
+    return chat_json([
         {"role": "system", "content":
             "你是实验室方法专家。把论文的方法部分整理成可复现的 protocol 卡，只输出 JSON："
             '{"goal":"<这套方法要达成什么，≤40字>",'
@@ -795,14 +851,13 @@ def method_card(title: str, paras: list) -> dict:
             "不要 markdown 代码块，不要解释。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
-    return parse_json(out)
 
 def survey_card(title: str, paras: list) -> dict:
     """谱系卡：综述版的方法卡。字段与 method_card 同一套 key（前端同一块渲染），
     语义换成导览——普适于任何领域，**不预设数据集/基准**：它梳理了什么就写什么，
     没有的东西（没有数据集、没有参数）就整段留空，绝不硬凑。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
-    out = chat([
+    return chat_json([
         {"role": "system", "content":
             "你在为一篇综述做一张『谱系卡』——读者 30 秒看懂这篇综述把领域名梳理成了什么样子。"
             "只输出 JSON："
@@ -817,7 +872,6 @@ def survey_card(title: str, paras: list) -> dict:
             "不要 markdown 代码块，不要解释。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
     ], max_tokens=6000, temperature=0.3)
-    return parse_json(out)
 
 # ---------------- 引用信息 ----------------
 
@@ -843,18 +897,17 @@ CITATION_SYSTEM = """研究者要引用这篇论文，请你从首页上把"怎�
 
 def extract_citation(title: str, src: str) -> dict:
     """从首页原文里抄出参考文献字段。排版不归它管（见 citation.py）。"""
-    out = chat([
+    return chat_json([
         {"role": "system", "content": CITATION_SYSTEM},
         {"role": "user", "content": f"[论文标题（版面分析抽的，可能不全）]\n{title or '（无）'}\n\n{src}"},
-    ], max_tokens=2000, temperature=0, no_think=True)
-    return parse_json(out)
+    ], max_tokens=2000, temperature=0, no_think=True, timeout=90)
 
 # ---------------- 导师三问 ----------------
 
 def advisor_questions(title: str, claims: list, warnings: list) -> dict:
     claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
     warn_txt = "\n".join(f"- {w}" for w in warnings) or "（无）"
-    out = chat([
+    data = chat_json([
         {"role": "system", "content":
             "你是苛刻但建设性的导师。学生要拿这篇论文去组会汇报/答辩。"
             "下面这些『作者已承认的薄弱点』当作已知前提——它们本身不必再复述一遍，"
@@ -865,7 +918,6 @@ def advisor_questions(title: str, claims: list, warnings: list) -> dict:
             '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n已承认的薄弱点（已知前提）：\n{warn_txt}"},
     ], max_tokens=6000, temperature=0.5)
-    data = parse_json(out)
     qs = []
     for q in data.get("questions", []):
         if isinstance(q, dict) and q.get("q"):
@@ -882,19 +934,31 @@ def vision_ask(image_dataurl: str, question: str) -> str:
                 else "〔演示模式〕视觉问答需要配置视觉模型。")
     if not vm:
         raise RuntimeError("未配置视觉模型（设置 → 视觉模型）")
-    r = httpx.post(
-        f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
-        json={"model": vm, "max_tokens": 6000, "temperature": 0.3,
-              "messages": ([{"role": "system", "content": _lang_tail()}] if _lang_tail() else []) +
-              [{"role": "user", "content": [
-                  {"type": "image_url", "image_url": {"url": image_dataurl}},
-                  {"type": "text", "text": question},
-              ]}]},
-        timeout=600,
-    )
-    r.raise_for_status()
-    return (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
+    sys = ("回答针对这张图的问题：只依据图里可见的信息和它在论文中的常规含义，"
+           "图里没有的就明说『图中未显示』，不要脑补；两三句说完，先给结论。") + _lang_tail()
+    msgs = [{"role": "system", "content": sys},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": image_dataurl}},
+                {"type": "text", "text": question},
+            ]}]
+    last = None
+    for _ in range(2):                       # 视觉调用要整页渲染作垫，失败就地补一次
+        try:
+            r = httpx.post(
+                f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
+                json={"model": vm, "max_tokens": 6000, "temperature": 0.3,
+                      "messages": msgs},
+                timeout=180,
+            )
+            r.raise_for_status()
+            out = (r.json()["choices"][0]["message"] or {}).get("content", "") or ""
+            if out.strip():
+                return out
+            last = RuntimeError("视觉模型返回了空内容，已重试过一次")
+        except (httpx.TransportError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            last = e
+    raise last
 
 # ---------------- 五问里需要现场生成的那几问 ----------------
 
@@ -920,7 +984,7 @@ def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> di
     """①「要解决什么、为什么」：原来的①②两问（要解决什么 / 为什么要解决）各吃一遍
     缺口段+背景段+主张，出来的常是同一件事的两种说法——合并成一问，两三句话说清
     "要解决什么"和"为什么非解决不可"（多重要、为什么到现在还没解决）。"""
-    out = chat([
+    data = chat_json([
         {"role": "system", "content":
             "你在帮一位研究生说清一篇论文'要解决什么、为什么值得解决'。看下面给出的缺口段、"
             "背景段与主张，用你自己的话说清两件事：这篇要解决什么（谁在什么条件下还没做到什么，"
@@ -934,14 +998,14 @@ def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> di
             f"[背景]\n{_paras_block(backgrounds, 400)}\n\n"
             "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
     ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(parse_json(out).get("text") or "").strip()[:500]
+    text = str(data.get("text") or "").strip()[:500]
     return {"text": text, "cites": cites_of(text)}
 
 def answer_how_review(title: str, claims: list, paras: list) -> dict:
     """综述版③「它把文献怎么组织的？」：研究型的③靠主张-证据链拼，综述没有实验证据层，
     那条路是空壳。这里由模型直接说清它的组织方式——按什么分类、沿什么脉络、各条线的关系。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:700]}" for p in paras if not p.get("in_refs"))[:50000]
-    out = chat([
+    data = chat_json([
         {"role": "system", "content":
             "这是一篇综述，你在帮一位研究生说清它『把文献怎么组织的』。看给出的正文与它的组织主张，"
             "用两三句话说清：它按什么线索/维度分类，分成哪几块，各块之间什么关系（并列/递进/交叉），"
@@ -952,7 +1016,7 @@ def answer_how_review(title: str, claims: list, paras: list) -> dict:
             f"论文标题：{title or ''}\n\n"
             "[它的组织主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文]\n{body}"},
     ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(parse_json(out).get("text") or "").strip()[:500]
+    text = str(data.get("text") or "").strip()[:500]
     return {"text": text, "cites": cites_of(text)}
 
 def answer_next(title: str, limits: list, exts: list, claims: list, warns: list) -> dict:
@@ -967,7 +1031,7 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
                "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims))
     if warns:
         payload += "\n\n[可疑之处]\n" + "\n".join(f"- {w}" for w in warns)
-    out = chat([
+    data = chat_json([
         {"role": "system", "content":
             "你是带学生读论文的师兄。给出 2~3 条'接下来可以做什么'，两条腿都要有："
             "①从论文自己承认的局限、它做的延伸或被标出的可疑之处长出来的方向；"
@@ -981,7 +1045,7 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
             '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content": payload},
     ], max_tokens=4000, temperature=0.45, no_think=True)
-    out = _items(parse_json(out).get("items"))
+    out = _items(data.get("items"))
     out["v"] = 2
     return out
 
@@ -993,7 +1057,7 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
     （哪怕隔得比较远）；说的是"他读到这篇什么感受、有什么想法/意见/联想"，要具体，
     不是"跨学科很重要"这种废话。v=2：上一版写成一整段，用户要的还是条目。"""
     body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
-    out = chat([
+    data = chat_json([
         {"role": "system", "content":
             "你在帮一位研究生听一听'别的学科的人读这篇论文是什么反应'。给出 3 条视角，"
             "**每条一个学科**：既要包含这篇涉及的学科（比如做实验的、做理论的、做表征的），"
@@ -1010,6 +1074,6 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
             "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) +
             f"\n\n[正文节选]\n{body}"},
     ], max_tokens=4000, temperature=0.6, no_think=True)
-    items = _items(parse_json(out).get("items"))
+    items = _items(data.get("items"))
     items["v"] = 2
     return items
