@@ -117,16 +117,24 @@ function makePet() {
 }
 const ghosts = ref([])           // 飞行途中的纸片（两只蛋共用一条渲染通道）
 let ghostId = 0
-/* 彩蛋：戳满 24 下（1/24 的破绽的倒数），三条线亮出彩色，本机记住。
+/* 彩蛋：戳满随机 5–12 下，三条线亮出彩色；彩色时再点一下就回去，回去后重新抽签。
    不提示不庆祝，滚一圈就是全部动静；悬浮蛋上的「彩蛋」是唯一的暗示。 */
 const rainbow = ref(lsGet('pet-rainbow', false))
 let pokeTallyN = 0
+let pokeGoal = 5 + Math.floor(Math.random() * 8)
 function pokeTally(pet) {
-  if (rainbow.value) return
+  if (rainbow.value) {
+    lsSet('pet-rainbow', false)
+    rainbow.value = false
+    pokeTallyN = 0
+    pokeGoal = 5 + Math.floor(Math.random() * 8)
+    return
+  }
   pokeTallyN++
-  if (pokeTallyN < 24) return
+  if (pokeTallyN < pokeGoal) return
   lsSet('pet-rainbow', true)
   rainbow.value = true
+  pokeTallyN = 0
   pet.rollOnce()
 }
 const topPet = makePet()         // 顶栏那枚；析读完成/整本译完的动作滚跳也归它
