@@ -1,6 +1,6 @@
 # 踩坑与经验教训（lesson）
 
-> 从 icon.md 与 plan.md（均已删）蒸馏出的持久知识：标准工作流、红线、付出过时间的坑、用户定的口径。只记"下次还会遇到"的；版本流水账不记，能力清单以 [README](../README.md) 为准。
+> 持久知识：标准工作流、红线、付出过时间的坑、用户定的口径。只记"下次还会遇到"的；版本流水账不记，能力清单以 [README](../README.md) 为准。
 
 ## 一、构建 · 发布 · 重装验证
 
@@ -11,9 +11,9 @@
 
 ## 二、测试
 
-- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8472）。测试 python 用 hermes venv（httpx/playwright/fitz/rapidocr 齐）。
-- 打包版黄金验证：`EGGPAPER_DATA` 指临时目录后直接跑 `D:\eggpaper\eggpaper.exe`。打包版不认 PORT 环境变量（固定起在 8431），但数据目录重定向生效——正好验"别人装完第一次打开"的完整链路。
-- 端口格局：8430=打包实例（用户真库）兼源码默认端口（别同时开）；8431=打包版 PORTS[0]。
+- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8482）。测试 python 用 hermes venv（httpx/playwright/fitz/rapidocr 齐）。
+- 打包版黄金验证：`EGGPAPER_DATA` 指临时目录后直接跑 `D:\eggpaper\eggpaper.exe`。打包版不认 PORT 环境变量（起在 PORTS[0]=8430），但数据目录重定向生效——正好验"别人装完第一次打开"的完整链路。
+- 端口格局：8430=打包实例（用户真库）兼源码默认端口（别同时开）；8431/8432 是 desktop.py PORTS 的后备。
 - 断言经验：异步的轮询着等；别抓第一条 toast（可能是上一个动作发的）；文件选择框用 `expect_file_chooser`；用 python 直接 POST 造的数据 UI 不认（store 不知道），走 UI 动作或显式刷新；判据写"到达终态"，别写"必须看到进度条"（本地下载半秒完，进度条一闪而过）。
 
 ## 三、红线
@@ -66,5 +66,7 @@
 - pywebview+pythonnet 在打包环境 import 即卡死（握着 GIL，兜底计时都跑不到）：独立窗口保持 Edge/Chrome 应用模式，别再试原生窗口（window.py 注释有记录）。
 - PyInstaller 用 onedir 不用 onefile：onefile 每次启动解压几十 MB，且"正在跑的程序锁着自己的 exe"，安装器替换不了它，升级必然失败。
 - Inno 向导脚本里不能手写默认安装路径（吃掉 `/DIR=` 还覆盖记住的上次位置 → 装出第二份并存，正在跑的那份永远升不上去）；向导只留一个语言，中文用 `[Messages]` 直接覆盖。
-- 打包版与源码版数据目录**故意分开**（源码折腾坏不影响用户那份）；升级只换程序，数据在 `%LOCALAPPDATA%\eggpaper\data`，卸载不删。
+- 打包版与源码版数据目录**故意分开**（源码折腾坏不影响用户那份）；升级只换程序，数据默认在安装目录旁 `data\`（老安装仍在 `%LOCALAPPDATA%\eggpaper\data`，原地继续），卸载不删。
 - 同一处文案记得"页面标题"和"窗口标题"两头都看（Edge 应用模式的窗口标题跟页面走）。
+- 热路径优化先建**对拍基准**再动手：md.js 流式增量解析写了前缀缓存，500 组随机追加/截断对拍抓出 68 处不等价，整体回退——rAF 合帧已覆盖实际需求。
+- 批量改文案/词典的脚本要按原始行尾读写（`newline=""`）：i18n.js 在磁盘上是 CRLF，`line+"\n"` 替换永远静默失配。

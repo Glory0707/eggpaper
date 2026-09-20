@@ -57,7 +57,7 @@
 
 ### 键盘流
 
-`j/k` 段间步进 · `PageUp/PageDown` 翻页 · `Ctrl+F` 论文内查找 · `t` 译当前段并钉页边 · `s` 译划选 · `r` 框选问 AI · `1/2/3` 三模式 · `/` 提问 · `a` 析读 · `m` AI 眉批 · `x` 折叠右栏 · `g l` 文库 · `Alt+←` 返回原位 · `Esc` 收起所有浮层/退出框选 · `?` 快捷键卡
+`j/k` 段间步进 · `PageUp/PageDown` 翻页 · `Ctrl+F` 论文内查找 · `t` 译当前段并钉页边 · `s` 译划选 · `r` 框选问 AI · `c` 截图 · `1/2/3` 三模式 · `/` 提问 · `a` 析读 · `m` AI 眉批 · `x` 折叠右栏 · `g l` 文库 · `Alt+←` 返回原位 · `Esc` 收起所有浮层/退出框选 · `?` 快捷键卡
 
 ## 截图
 
@@ -133,8 +133,9 @@ python tools/serve_update.py
 ```
 
 产物在 `release/`：`eggpaper-<版本>-setup.exe` + `latest.json`（版本、大小、sha256、说明）。
-用户在「设置 → 更新源」填 `http://<你的IP>:8440`，之后每次打开软件会在 6 秒后安静地
-问一次 `latest.json`：有新版就弹提示，点「下载并安装」→ 下载完校验 sha256 →
+更新源内置为 Gitee 仓库的 raw 地址（`backend/config.py` 的 DEFAULTS，自建源改
+`config.yaml` 的 `update.feed_url`），每次打开软件会在 6 秒后安静地问一次
+`latest.json`：有新版就弹提示，点「下载并安装」→ 下载完校验 sha256 →
 「立即重启并安装」会在后台静默装掉并重启软件。
 
 安装包本身：
@@ -157,7 +158,7 @@ python tools/serve_update.py
 - **独立窗口**：`eggpaper.exe --window`，或设置里点「在独立窗口打开」。没有地址栏、
   没有标签页，任务栏里就是 eggpaper 自己。实现是 **Edge/Chrome 的应用模式**——
   Windows 上 WebView2 的运行时提供者本来就是 Edge，同一个引擎，不必往安装包里塞
-  WebView2 那几十兆；装了 `pywebview` 的话会自动优先用它。
+  WebView2 那几十兆。
 - **图标**：16/24/32/48/64/128/256 七档分别绘制并嵌进 exe（`tools/make_icon.py`）。
 
 两个先天的限制说清楚：
@@ -169,10 +170,11 @@ python tools/serve_update.py
   断点续传、sha256 校验，右下角一张小卡显示进度，装好自动接着翻译；
   设置 → 翻译引擎里也有手动安装（含从本地 zip 装，给完全离线的机器）。
 
-**打包版的数据目录和源码运行是两处**：安装版默认读 `%LOCALAPPDATA%\eggpaper\data`，
-源码运行读 `backend/data`；设置里可把数据目录迁到任意位置（如 D 盘），重启后自动搬迁。
-数据目录里每篇文献一个文件夹：`papers/<论文id>/` 下是原件 paper.pdf、译文 mono.pdf、
-双语缓存 dual.pdf 和页级中间产物 .pages/（删论文 = 删文件夹）；库索引在 `eggpaper.db`。
+**打包版的数据目录和源码运行是两处**：全新安装默认在安装目录旁的 `data\`（目录不可写
+才回退 `%LOCALAPPDATA%\eggpaper\data`），老安装的 C 盘数据原地继续——升级零搬家；
+源码运行读 `backend/data`。设置里可把数据目录迁到任意位置（弹系统目录框，重启后自动搬迁）。
+数据目录里每篇文献一个文件夹：`papers/<论文id> <标题短名>/` 下是原件 paper.pdf、
+译文 mono.pdf、双语缓存 dual.pdf（删论文 = 删文件夹）；库索引在 `eggpaper.db`。
 
 ## 运行
 

@@ -66,7 +66,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 SetupAppTitle=安装程序
 SetupWindowTitle=安装 eggpaper %1
 WelcomeLabel1=欢迎安装 eggpaper
-WelcomeLabel2=这将把 [name/ver] 装到你的电脑上。%n%n数据（配置、文库、批注）存放在 %n%LOCALAPPDATA%\eggpaper\data，升级与卸载都不会动它。%n%n继续前建议先关掉其它正在运行的程序。
+WelcomeLabel2=这将把 [name/ver] 装到你的电脑上。%n%n数据（配置、文库、批注）默认存放在安装目录旁的 data 文件夹，升级与卸载都不会动它。%n%n继续前建议先关掉其它正在运行的程序。
 ; —— 选目录页（安装路径就在这一页改）——
 WizardSelectDir=选择安装位置
 SelectDirDesc=eggpaper 装到哪？
@@ -93,7 +93,7 @@ ClickFinish=点「完成」关闭安装程序。
 UninstallAppFullTitle=卸载 eggpaper
 ConfirmUninstall=确定要卸载 %1 吗？%n%n用户数据（配置、文库、批注）不会被删除。
 UninstallStatusLabel=正在卸载 %1，请稍候……
-UninstalledAll=%1 已从电脑上移除。你的数据还在 %LOCALAPPDATA%\eggpaper\data。
+UninstalledAll=%1 已从电脑上移除。你的数据还在数据目录里（默认是安装目录旁的 data）。
 UninstalledMost=卸载完成。%n%n有些文件没能删除，可以手动删掉。
 ; —— 按钮 ——
 ButtonBack=< 上一步(&B)
