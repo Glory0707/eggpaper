@@ -22,32 +22,36 @@ const f = reactive({
   mock: !!S.mock,
   service: (S.pdf2zh || {}).service || 'bing',
   engine_path: (S.pdf2zh || {}).path || '',
-  feed: (S.update || {}).feed_url || '',
+  deepl_key: (S.pdf2zh || {}).deepl_key || '',
   auto_check: (S.update || {}).auto_check !== false,
   shot_save: S.shot_save !== false,
   layers: { ...store.viewer.layers },
   data_dir: (S.data_dir || '').replace(/\$/, ''),
-  data_new: '',
+  deepl_key: (S.pdf2zh || {}).deepl_key || '',
 })
 const savingData = ref(false)
 const picking = ref(false)
-async function browseData() {
+/* 迁移 = 弹 Windows 自带目录选择框，选中即迁——不填路径、不加浏览按钮。 */
+async function moveData() {
   picking.value = true
+  let target = ''
   try {
     const r = await api.dataPick()
-    if (r.path) f.data_new = r.path
-  } catch { /* 取消或失败：留在原样 */ }
+    target = (r.path || '').trim()
+  } catch { picking.value = false; return }
   picking.value = false
-}
-async function moveData() {
-  const target = f.data_new.trim()
-  if (!target) { toast(t('先填新目录')); return }
+  if (!target) return                            // 用户取消了选择框
+  if (target.replace(/[\\/]+$/, '') === f.data_dir.replace(/[\\/]+$/, '')) return
+  const yes = await confirmBox({
+    title: t('迁移数据目录'), ok: t('迁移'), danger: false,
+    body: t('把文库、批注、配置整体迁到：{p}。重启后生效。', { p: target }),
+  })
+  if (!yes) return
   savingData.value = true
   try {
     await api.setDataLocation(target)
     toast(t('已迁移：重启 eggpaper 后生效'))
     f.data_dir = target
-    f.data_new = ''
   } catch (e) { toast(e.message) }
   savingData.value = false
 }
@@ -98,12 +102,12 @@ async function test() {
   testing.value = false
 }
 
-/* 检查更新：先把更新源存下来再查（和"测试连接"一个道理，测的必须是刚填的东西） */
+/* 检查更新：先把自动检查的开关存下来再查（测的必须是刚改过的设置） */
 const checking = ref(false)
 async function checkNow() {
   checking.value = true
   try {
-    await api.saveSettings({ update: { feed_url: f.feed, auto_check: f.auto_check } })
+    await api.saveSettings({ update: { auto_check: f.auto_check } })
     store.settings = await api.settings()
     const r = await checkUpdate(true, false)
     if (r?.has_update) { emit('close'); return }         // 有新版：把弹窗让给更新卡片
@@ -189,8 +193,9 @@ function save() {
   Object.assign(store.viewer.layers, f.layers)
   emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key,
                              vision_model: f.vision ? f.model : '' },
-                 mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim() },
-                 update: { feed_url: f.feed, auto_check: f.auto_check },
+                 mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim(),
+                                         deepl_key: f.deepl_key.trim() },
+                 update: { auto_check: f.auto_check },
                  shot_save: f.shot_save })
 }
 </script>
@@ -230,7 +235,7 @@ function save() {
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('图层') }}</span>
         <label class="ck"><input type="checkbox" v-model="f.layers.marginalia" />{{ t('AI 眉批') }}</label>
-        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.mine" />{{ t('我的钉卡') }}</label>
+        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.mine" />{{ t('我的眉批') }}</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.mock" />{{ t('演示模式') }}</label>
       </div>
       <div class="f-row">
@@ -265,10 +270,14 @@ function save() {
           <option value="openai">{{ t('openai（用上面的模型与端点）') }}</option>
           <option v-if="f.service === 'deepseek'" value="deepseek">{{ t('deepseek（已不推荐，请换一个）') }}</option>
           <option value="google">google</option>
-          <option value="deepl">{{ t('deepl（另需 DEEPL_AUTH_KEY）') }}</option>
+          <option value="deepl">deepl</option>
         </select>
       </div>
-      <div class="f-line" v-if="!isEn()">
+      <div class="f-row" v-if="!isEn() && f.service === 'deepl'">
+        <label class="mono-label">{{ t('DeepL Key') }}</label>
+        <input type="text" v-model="f.deepl_key" :placeholder="t('DeepL 的 AUTH_KEY（deepl.com/developers）')" />
+      </div>
+      <div class="f-line" v-if="!isEn() && !(eng.checked && eng.ok)">
         <span class="mono-label" style="margin:0">{{ t('翻译引擎') }}</span>
         <span class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
           <template v-if="engInst.state === 'downloading'">{{ t('下载中 {p}%', { p: engInst.pct }) }} · {{ engInst.src }}</template>
@@ -284,13 +293,10 @@ function save() {
       <div class="f-row">
         <label class="mono-label">{{ t('数据目录') }}
           <button class="eng-check" style="margin-left:8px" @click="api.revealUpdate(f.data_dir)">{{ t('打开') }}</button>
+          <button class="eng-check" style="margin-left:4px" @click="moveData" :disabled="picking || savingData">
+            {{ savingData ? t('迁移中…') : t('迁移') }}</button>
         </label>
         <div class="eng-state">{{ f.data_dir }}</div>
-        <div class="model-row" style="margin-top:6px">
-          <input type="text" v-model="f.data_new" :placeholder="t('填新目录，保存后数据自动迁过去')" />
-          <button class="eng-file" @click="browseData" :disabled="picking">{{ t('浏览…') }}</button>
-          <button class="eng-file" @click="moveData" :disabled="savingData">{{ savingData ? t('迁移中…') : t('迁移') }}</button>
-        </div>
       </div>
       <div class="f-row" v-if="!isEn() && !eng.ok && engInst.state !== 'downloading' && engInst.state !== 'unpacking'">
         <div class="model-row">
@@ -299,10 +305,6 @@ function save() {
           <button class="eng-file" @click="zipInput?.click()">{{ t('选 zip 安装') }}</button>
         </div>
         <input ref="zipInput" type="file" accept=".zip" hidden @change="installFromFile" />
-      </div>
-      <div class="f-row">
-        <label class="mono-label">{{ t('更新源') }}</label>
-        <input type="text" v-model="f.feed" :placeholder="t('留空 = 用内置的 Gitee 更新源')" />
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('更新') }}</span>

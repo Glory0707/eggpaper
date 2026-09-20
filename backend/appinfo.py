@@ -13,10 +13,12 @@
 2. 安装目录旁的 `data\\`（便携模式：里面有 eggpaper.db 才认，防呆）；
 3. 指针文件 `%LOCALAPPDATA%\\eggpaper\\data.location` 里写的路径（设置里改目录后
    生成；重启时 `migrate_if_needed()` 把旧数据整体搬过去）；
-4. 默认 `%LOCALAPPDATA%\\eggpaper\\data`。
+4. 老安装的 `%LOCALAPPDATA%\\eggpaper\\data`（里面有库就继续用——升级用户数据原地不动）；
+5. **第一次安装的默认**：安装目录旁的 `data\\`（数据跟程序走，不进 C 盘）；
+   安装目录不可写（Program Files 类）才回退到 4 的 C 盘位置。
 
 数据永远不在程序目录的 _internal 里，也不会被升级或卸载碰到：升级只清 _internal，
-卸载只删安装器装进去的文件。
+卸载只删安装器装进去的文件（运行时生成的 data\\ 会留下）。
 """
 import os
 import sys
@@ -77,8 +79,21 @@ def write_pointer(path: str):
 def _has_db(d: str) -> bool:
     return os.path.isfile(os.path.join(d, "eggpaper.db"))
 
+def _writable_dir(d: str) -> bool:
+    """目录可写吗：真建一个探针文件试（Program Files 这类位置 mkdir 不报错、写才炸）。"""
+    try:
+        os.makedirs(d, exist_ok=True)
+        probe = os.path.join(d, ".write-probe")
+        with open(probe, "w") as f:
+            f.write("")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
 def data_dir() -> str:
-    """用户数据目录。EGGPAPER_DATA 优先（测试用），其次便携，其次指针，最后默认。"""
+    """用户数据目录：EGGPAPER_DATA → 便携（已有库）→ 指针 → 老安装的 C 盘位置
+    → 第一次安装默认安装目录旁 data\\（不可写才回 C 盘）。"""
     env = os.environ.get("EGGPAPER_DATA")
     if env:
         return env
@@ -88,7 +103,12 @@ def data_dir() -> str:
     ptr = read_pointer()
     if ptr and os.path.isdir(ptr):
         return ptr
-    return default_data_dir()
+    legacy = default_data_dir()
+    if _has_db(legacy):
+        return legacy
+    if is_frozen() and _writable_dir(port):
+        return port
+    return legacy
 
 def migrate_if_needed():
     """按指针把旧数据搬去新位置。必须在任何模块打开数据库**之前**调用。

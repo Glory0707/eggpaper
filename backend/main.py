@@ -2688,6 +2688,12 @@ def _pdf2zh_env(service: str, cfg: dict):
     key = (prov.get("api_key") or "").strip()
     base = (prov.get("base_url") or "").strip()
     model = (prov.get("model") or "").strip()
+    if service == "deepl":
+        # DeepL 用自己的 key（设置里「DeepL Key」那栏），跟模型 API 的 key 是两回事
+        dk = ((cfg.get("pdf2zh") or {}).get("deepl_key") or "").strip()
+        if not dk:
+            return {}, ""
+        return {"DEEPL_AUTH_KEY": dk}, ""
     if not key:
         return {}, ""
     if service == "openai":

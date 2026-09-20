@@ -22,6 +22,7 @@ DEFAULTS = {
         "service": "bing",
         "options": "",
         "path": "",
+        "deepl_key": "",
     },
     "update": {
         "feed_url": "https://gitee.com/zhouao1207/eggpaper/raw/master/update",
