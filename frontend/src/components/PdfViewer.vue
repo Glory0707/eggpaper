@@ -10,6 +10,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpPara, askNotePrefill, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
+import { confirmBox } from '../dialog'
 import { lsGet, lsSet } from '../ls'
 import { copyWithToast } from '../clip'
 
@@ -128,7 +129,7 @@ async function getDoc(kind) {
   }
   const doc = await task.promise
   docCache.set(key, { doc, at: Date.now() })
-  while (docCache.size > 6) {              // LRU：最多留 6 份解析好的文档
+  while (docCache.size > 10) {              // LRU：多窗格 × dual 变体轻松要 8 份，6 会互相挤掉
     let oldest = null, ot = Infinity
     for (const [k, e] of docCache) if (e.at < ot) { ot = e.at; oldest = k }
     const e = docCache.get(oldest)
@@ -207,9 +208,20 @@ async function load({ keepPlace = false } = {}) {
     loading = false
     return
   }
+  let settled = false
+  const settle = () => {
+    if (settled) return
+    settled = true
+    stopCreep()
+    loadPct.value = 1
+    ready.value = true
+    if (anchor) applyAnchor(anchor)
+    else if (savedScroll != null) { scroller().scrollTop = savedScroll }
+    updateProg()
+  }
   try {
     await measure()
-    await renderAll()
+    await renderAll({ early: settle })
   } catch (e) {
     console.error('[eggpaper] 渲染失败：', e)
     toast(t('这份文档渲染失败了：{m}', { m: String(e.message || e).slice(0, 120) }), 6000)
@@ -219,14 +231,9 @@ async function load({ keepPlace = false } = {}) {
     loading = false
     return
   }
-  stopCreep()
-  loadPct.value = 1
-  ready.value = true
+  settle()                 // 只有一两页的薄文档，early 的打点可能赶不上，这里兜住
   await nextTick()
   await measureNotes()
-  if (anchor) applyAnchor(anchor)
-  else if (savedScroll != null) { scroller().scrollTop = savedScroll }
-  updateProg()
   if (veryFirst) setTimeout(onScroll, 800)
   if (pendingFind) {                      // 「文中」等在切回原文之后的那一次搜索
     const q = pendingFind
@@ -381,13 +388,33 @@ function reflow() {
   }, 200)
 }
 
-async function renderAll() {
+async function renderAll({ early = null } = {}) {
   const seq = ++passToken
   rendering.value = true
   await nextTick()
-  for (let i = 0; i < flatItems.value.length; i++) {
+  // 渲染顺序 = 离视口中心由近到远：缩放/换排版时眼前几页先回来，首开时锚点页先回来，
+  // 远页后台补（顶上那条细进度条跑到头为止）。整本从第 1 页串行画起的话，
+  // 翻到 200 页的人要干等 199 页画完才见着字。
+  const items = flatItems.value.slice()
+  const sc = scroller()
+  let centerGi = 0
+  if (sc && items.length) {
+    const mid = sc.scrollTop + sc.clientHeight / 2
+    for (const it of items) {
+      const el = pageEls.value[it.gi]
+      if (el && el.offsetTop <= mid) centerGi = it.gi
+      else break
+    }
+  }
+  items.sort((a, b) => Math.abs(a.gi - centerGi) - Math.abs(b.gi - centerGi))
+  let kicked = false
+  for (let i = 0; i < items.length; i++) {
     if (seq !== passToken) return
-    await renderItem(flatItems.value[i])
+    await renderItem(items[i])
+    if (!kicked && early && (i >= 2 || i === items.length - 1)) {
+      kicked = true
+      early()                      // 视口那几页落地就掀壳（首开）/落位（换排版），不等整本
+    }
   }
   if (seq === passToken) {
     rendering.value = false
@@ -461,7 +488,9 @@ async function measureNotes() {
   computeQuoteMarks()
   const next = { ...noteHeights.value }
   let changed = false
-  for (const el of document.querySelectorAll('.mg-note[data-nid]')) {
+  // 只量自己窗格的批注：多窗格下 document 全局查会把别家窗格的同 id 卡也量一遍，
+  // 白量还互相触发响应式更新
+  for (const el of (deskEl.value?.querySelectorAll('.mg-note[data-nid]') || [])) {
     const h = el.offsetHeight
     const id = el.dataset.nid
     if (!h) continue                       // 还没上桌，别拿 0 去摊平
@@ -736,7 +765,9 @@ async function doTranslateSel() {
 async function pinSel() {
   if (!sel.zh || sel.busy) await doTranslateSel()   // 流式版：busy 时也会把流等完
   if (!sel.zh) return
-  await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
+  try {
+    await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
+  } catch (e) { toast(t('钉到页边没成功：{m}', { m: e.message })); return }
   await refreshM()
   closeSel()
   toast(t('已钉在页边'))
@@ -769,8 +800,10 @@ function openMine() {
 async function saveMine() {
   const t = mine.text.trim()
   if (!t) return
-  await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: t, para_idx: sel.paraIdx,
-                                   page: sel.page, kind: 'note' })
+  try {
+    await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: t, para_idx: sel.paraIdx,
+                               page: sel.page, kind: 'note' })
+  } catch (e) { toast(t('没写上：{m}', { m: e.message })); return }
   mine.open = false; mine.text = ''
   await refreshM()
   closeSel()
@@ -783,8 +816,16 @@ async function refreshM() {
   if (props.pid === store.currentId) Object.assign(store.marginalia, m, { pid: props.pid })
 }
 
-async function unpin(mid) {
-  await api.unpin(props.pid, mid)
+async function unpin(n) {
+  // 自己写的话删了就没了，问一声；查译/框选这类 AI 卡可以随手删（重划一次就有）
+  if (n.kind === 'note') {
+    const yes = await confirmBox({ title: t('删这条批注？'), ok: t('删除'), danger: true,
+                                   body: (n.note || '').slice(0, 80) })
+    if (!yes) return
+  }
+  try {
+    await api.unpin(props.pid, n.id)
+  } catch (e) { toast(t('没删成：{m}', { m: e.message })); return }
   await refreshM()
 }
 
@@ -1151,6 +1192,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopShot()   // 截图/框选模式中窗格被关掉：window 上的 capture 监听必须跟着摘，否则常驻泄漏
   if (store.viewerApi === viewerApiObj) store.viewerApi = null   // 活动窗格卸载了，快捷键别再打进来
   selStream?.abort()
   clearTimeout(spyT); clearTimeout(saveT); clearTimeout(scheduleRender._t)
@@ -1295,9 +1337,9 @@ watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: tru
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
 watch(paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
-watch(() => store.viewer.layers, () => reflow(), { deep: true })
+watch(() => store.viewer.layers, () => measureNotes(), { deep: true })    // 图层开关只动页边卡，画布不用重画
 watch(() => store.reflowTick, () => reflow())
-watch(() => store.viewer.noteBands, () => reflow(), { deep: true })
+watch(() => store.viewer.noteBands, () => measureNotes(), { deep: true })  // 档位筛选同理：只重排批注，不重画纸面
 watch(mnotes, (n, o) => {
   spanCache.clear()
   if (n.length && (!o || n.length > o.length)) {
@@ -1378,7 +1420,7 @@ watch(store.marginalia, m => {
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? t('收起') : t('展开') }}</span>
                                 <button v-if="!pending" class="mg-ask" @click.stop="askNotePrefill(n, { openRail: true })">{{ t('问 ↗') }}</button>
-                <button v-if="!pending" class="mg-del" @click.stop="unpin(n.id)">×</button>
+                <button v-if="!pending" class="mg-del" @click.stop="unpin(n)">×</button>
               </div>
               <div class="mg-body">{{ prettyChem(n.note) }}</div>
                             <div class="mg-quote-row">
@@ -1448,6 +1490,7 @@ watch(store.marginalia, m => {
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
         {{ t('已选 {n} 字符', { n: sel.text.length }) }}<span v-if="sel.paraIdx >= 0" class="mono-num"> · ¶{{ sel.paraIdx }}</span>
       </div>
+      <button class="ghost sp-x" :title="t('关闭（Esc）')" @click="closeSel()">×</button>
       <div v-if="sel.busy && !sel.zh" style="font-size:var(--fs-sm);color:var(--ink-3)">{{ t('翻译中…') }}</div>
       <div v-if="sel.err && !sel.zh" style="font-size:var(--fs-sm);color:var(--vermilion)">{{ sel.err }}</div>
       <div class="sp-zh" v-if="sel.zh">{{ sel.zh }}<span v-if="sel.busy" class="qa-caret"></span></div>
@@ -1475,7 +1518,6 @@ watch(store.marginalia, m => {
           </template>
           <button style="padding:4px 10px" @click="openMine">{{ t('写批注') }}</button>
           <button style="padding:4px 10px" @click="askAboutSel">{{ t('提问') }}</button>
-          <button class="ghost" style="padding:4px 8px" @click="closeSel()">×</button>
         </template>
       </div>
     </div>

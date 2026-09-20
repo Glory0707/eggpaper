@@ -1130,6 +1130,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   padding: 10px 12px;
 }
 .sel-pop .sp-actions { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+/* 关闭钮钉在气泡右上角：混在动作行末尾时是个孤零零的 ×，行还常折行，看着像断手 */
+.sel-pop .sp-x { position: absolute; top: 4px; right: 6px; padding: 0 5px; border: none; background: none; color: var(--ink-3); font-size: var(--fs-md); line-height: 1.3; }
+.sel-pop .sp-x:hover { color: var(--ink); background: none; box-shadow: none; transform: none; }
 .sel-pop .sp-zh { font-size: var(--fs-md); line-height: 1.65; white-space: pre-wrap; }
 
 .sel-pop .sp-mine { margin-top: 8px; }
@@ -1314,10 +1317,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   bottom: 18px; display: flex; flex-wrap: wrap; gap: 3px; align-items: stretch;
   background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 3px; box-shadow: var(--shadow-page);
-  opacity: 0.72; transition: opacity var(--t-base) var(--ease-smooth);
+  /* 静息"安静"靠毛玻璃，不靠整条 opacity——opacity 会连实底一起透，
+     正文文字从按钮缝里钻出来，控件和文字互相打架（截图审查实锤） */
+  background: color-mix(in srgb, var(--card) 86%, transparent);
+  backdrop-filter: blur(12px);
 }
-
-.zoom-bar:hover, .zoom-bar.dragging { opacity: 1; }
+.zoom-bar:hover, .zoom-bar.dragging { background: var(--card); }
 .zoom-bar button { padding: 3px 9px; border-color: transparent; background: transparent; font-size: var(--fs-sm); color: var(--ink-2); }
 .zoom-bar button:hover { background: var(--accent-soft); transform: none; box-shadow: none; }
 .zoom-bar button.on { background: var(--ink); color: var(--card); }
@@ -1550,6 +1555,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   position: fixed; z-index: 460; width: 220px;
   background: var(--card-2); border: 1px solid var(--hairline); border-radius: 4px;
   box-shadow: var(--shadow-pop); padding: 8px 10px;
+  /* 分类多了不能向下撑出屏幕：LeftRail 的定位估算按 ≤320px 高算翻转，
+     这里不给上限，估算就全错——限高滚动，估算才成立 */
+  max-height: 320px; overflow-y: auto;
 }
 .coll-menu .cm-head { font-size: var(--fs-xs); color: var(--ink-3); margin-bottom: 5px; }
 .coll-menu .cm-row {

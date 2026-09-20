@@ -191,10 +191,11 @@ function petClick() {
   if (suppressClick) { suppressClick = false; return }   // 抓起又放下的那一下不是戳
   topPet.poke()
 }
+function petReclamp() { if (petPos.value) petPos.value = clampPos(petPos.value.x, petPos.value.y) }
 onMounted(() => {
   const saved = lsGet('pet-pos', null)
   if (saved && typeof saved.x === 'number') petPos.value = clampPos(saved.x, saved.y)
-  window.addEventListener('resize', () => { if (petPos.value) petPos.value = clampPos(petPos.value.x, petPos.value.y) })
+  window.addEventListener('resize', petReclamp)
 })
 /* 彩蛋：戳满随机 5–12 下，三条线亮出彩色；彩色时再点一下就回去，回去后重新抽签。
    不提示不庆祝，滚一圈就是全部动静；悬浮蛋上的「彩蛋」是唯一的暗示。 */
@@ -357,6 +358,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('dragend', endDrag)
   window.removeEventListener('blur', endDrag)
+  window.removeEventListener('resize', petReclamp)
   window.removeEventListener('pointermove', wakeEgg)
   window.removeEventListener('pointerdown', wakeEgg)
   window.removeEventListener('keydown', wakeEgg)
@@ -717,7 +719,12 @@ async function onImport(list) {
 }
 
 async function saveSettings(body) {
-  store.settings = await api.saveSettings(body)
+  try {
+    store.settings = await api.saveSettings(body)
+  } catch (e) {
+    toast(e.message)      // 没存上：弹窗留着别关，别让用户以为存好了
+    return
+  }
   showSettings.value = false
   if (store.currentId) refreshAnalysis()
 }
@@ -790,6 +797,7 @@ function onKey(e) {
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); store.viewerApi?.openSearch(); return }
   if (e.altKey && e.key === 'ArrowLeft') { store.viewerApi?.jumpBack(); e.preventDefault(); return }
+  if (e.ctrlKey || e.metaKey || e.altKey) return   // 其余组合键还给浏览器：Ctrl+C 复制不该顺手开截图
   if (e.key === 'Escape') {
     gPending.value = false         // 弦按到一半被 Esc 打断：整条作废
     store.viewer.libOpen = false

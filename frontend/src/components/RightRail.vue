@@ -246,12 +246,16 @@ async function maybeGenTerms(mine = paperEpoch()) {
 }
 async function addTerm() {
   if (!termForm.value.term_en.trim() || !termForm.value.term_zh.trim()) return
-  await api.glossaryAdd(store.currentId, { ...termForm.value, source: 'manual' })
+  try {
+    await api.glossaryAdd(store.currentId, { ...termForm.value, source: 'manual' })
+  } catch (e) { toast(e.message); return }
   termForm.value = { term_en: '', term_zh: '' }
   loadTerms()
 }
 async function delTerm(id) {
-  await api.glossaryDelete(id)
+  try {
+    await api.glossaryDelete(id)
+  } catch (e) { toast(e.message); return }
   loadTerms()
 }
 function onPrefill() {
@@ -340,7 +344,9 @@ const abbrList = computed(() => {
   } catch { return [] }
 })
 async function saveAbbr(a) {
-  await api.glossaryAdd(store.currentId, { term_en: a.en, term_zh: a.zh, source: 'abbr' })
+  try {
+    await api.glossaryAdd(store.currentId, { term_en: a.en, term_zh: a.zh, source: 'abbr' })
+  } catch (e) { toast(e.message); return }
   loadTerms()                     // 列表里少一条、下面的术语表多一条，动作可见
 }
 function eqq(idx) {
@@ -419,7 +425,11 @@ function onFigKey(e) {
   if (figIdx.value < 0) return
   if (e.key === 'ArrowLeft') { figStep(-1); e.preventDefault() }
   else if (e.key === 'ArrowRight') { figStep(1); e.preventDefault() }
-  else if (e.key === 'Escape') figIdx.value = -1
+  else if (e.key === 'Escape') {
+    // 灯箱开着时 Esc 只归灯箱：再让 App 的全局 Esc 跑一遍，抽屉/划词浮层会被误伤收掉
+    e.stopImmediatePropagation()
+    figIdx.value = -1
+  }
 }
 async function loadFigures() {
   if (!store.currentId || figures.value.length) return
@@ -780,15 +790,17 @@ watch(() => store.currentId, () => {
         </div>
         <input type="text" v-model="termFilter" :placeholder="t('筛选…')" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>{{ t('导出 CSV') }}</a></div>
-        <div v-for="term in termsFiltered" :key="term.id" class="term-row">
-          <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>
-          <span class="t-arrow">→</span>
-          <span class="t-zh">{{ term.term_zh }}</span>
-                    <button v-if="inPaper(term)" class="t-go" :title="t('在论文中查找该词')"
-                  @click="findTerm(term.term_en)">↗</button>
-          <span v-else class="t-no" :title="t('这篇论文的正文里没有这个词')">—</span>
-          <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
-        </div>
+        <TransitionGroup name="plist" tag="div">
+          <div v-for="term in termsFiltered" :key="term.id" class="term-row">
+            <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>
+            <span class="t-arrow">→</span>
+            <span class="t-zh">{{ term.term_zh }}</span>
+            <button v-if="inPaper(term)" class="t-go" :title="t('在论文中查找该词')"
+                    @click="findTerm(term.term_en)">↗</button>
+            <span v-else class="t-no" :title="t('这篇论文的正文里没有这个词')">—</span>
+            <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
+          </div>
+        </TransitionGroup>
       </template>
       </div>
       </Transition>

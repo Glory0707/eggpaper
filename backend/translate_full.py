@@ -508,7 +508,9 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "") -> dict:
     """按页流水线翻译全文：进度=完成页数，坏页回退原文，一页卡不住整份文档。"""
     j = job(pid)
-    if j["status"] == "running":
+    if j["status"] in ("running", "queued"):
+        # queued 也算在跑：start 同步置 queued、线程稍后才起来——这个窗口里第二次点击
+        # 会再起一条流水线，两个 pdf2zh 写同一个 out_dir
         return j
 
     def run():

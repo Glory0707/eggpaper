@@ -92,9 +92,11 @@ async function menuDone() {
   } catch (e) { await collFail(e) }
 }
 /* 菜单挂在 body 上（防列表裁剪），点外面/按 Esc 收起 */
+let menuArmT = null
 watch(menuFor, (v, was) => {
   if (v && !was) {
-    setTimeout(() => document.addEventListener('click', closeMenu, { capture: true }), 0)
+    clearTimeout(menuArmT)
+    menuArmT = setTimeout(() => document.addEventListener('click', closeMenu, { capture: true }), 0)
     document.addEventListener('keydown', escMenu, { capture: true })
   } else if (!v) {
     document.removeEventListener('click', closeMenu, { capture: true })
@@ -110,6 +112,7 @@ function closeMenu(e) {
 }
 function escMenu(e) { if (e.key === 'Escape') closeMenu() }
 onBeforeUnmount(() => {
+  clearTimeout(menuArmT)   // 组件先卸、定时器后补挂监听 = 永久泄漏，一并掐掉
   document.removeEventListener('click', closeMenu, { capture: true })
   document.removeEventListener('keydown', escMenu, { capture: true })
 })
@@ -401,6 +404,7 @@ function onCmpGoto(c) {
       </div>
     </div>
 
+    <Transition name="pop">
     <div class="sel-bar" v-if="selMode">
       <span class="s-n" :class="{ zero: !selN }">{{ t('已选 {n}', { n: selN }) }}</span>
       <button class="s-done" @click="toggleSelMode">{{ t('完成') }}</button>
@@ -420,6 +424,7 @@ function onCmpGoto(c) {
         <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
       </div>
     </div>
+    </Transition>
     <div class="drop-hint" :class="{ over, hot: zotArmed }" v-show="!selMode"
          :title="t('拖入 PDF 或点击导入 · 长按可从 Zotero 导入')"
          @mousedown="hintDown" @mouseup="hintUp" @mouseleave="hintUp" @click="hintClick"

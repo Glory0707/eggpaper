@@ -12,7 +12,9 @@ DEFAULTS = {
     "provider": {
         "base_url": "https://api.deepseek.com/v1",
         "api_key": "",
-        "model": "deepseek-chat",
+        # deepseek-chat / deepseek-reasoner 已于 2026-07-24 停用（官方 updates 页），
+        # 现役模型名是 deepseek-flash / deepseek-v4-pro
+        "model": "deepseek-flash",
         "vision_model": "",
     },
     "ui_lang": "zh",

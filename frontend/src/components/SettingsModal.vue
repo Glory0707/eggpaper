@@ -1,8 +1,9 @@
 <script setup>
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
-import { engInst, startEngineInstall, onEngineReady } from '../engine'
+import { engInst, startEngineInstall, onEngineReady, watchEngine } from '../engine'
 import { t, ui, setLang, setDark, isEn } from '../i18n'
+import { confirmBox } from '../dialog'
 import { vDrag } from '../drag'
 import { modalFocus } from '../modalFocus'
 
@@ -27,7 +28,6 @@ const f = reactive({
   shot_save: S.shot_save !== false,
   layers: { ...store.viewer.layers },
   data_dir: (S.data_dir || '').replace(/\$/, ''),
-  deepl_key: (S.pdf2zh || {}).deepl_key || '',
 })
 const savingData = ref(false)
 const picking = ref(false)
@@ -163,18 +163,18 @@ onEngineReady(() => {
   }
 })
 
-/* 从本地 zip 装：网络到不了 GitHub 时的正路（下好一份跟安装包一起发）。 */
+/* 从本地 zip 装：网络到不了 GitHub 时的正路（下好一份跟安装包一起发）。
+   进度与收尾统一交给 engine.js 的唯一轮询——上面引擎行渲染的 engInst 就是它。 */
 const zipInput = ref(null)
 async function installFromFile(ev) {
   const file = ev.target.files?.[0]
   ev.target.value = ''
   if (!file) return
-  Object.assign(inst, { state: 'uploading', pct: 0, got: 0, total: file.size, error: '' })
   try {
     await api.pdf2zhInstallFromFile(file)
-    if (!instTimer) instTimer = setInterval(pollInstall, 1000)
+    watchEngine()
   } catch (e) {
-    Object.assign(inst, { state: 'error', error: e.message })
+    toast(e.message)
   }
 }
 
@@ -187,7 +187,6 @@ onMounted(async () => {
     if (s.state === 'done' && !eng.ok) checkEngine()
   } catch { /* 无所谓 */ }
 })
-onUnmounted(() => clearInterval(instTimer))
 
 function save() {
   Object.assign(store.viewer.layers, f.layers)

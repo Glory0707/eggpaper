@@ -32,7 +32,10 @@ watch(() => props.open, async v => {
   }
   loading.value = false
 })
-function close() { emit('update:open', false) }
+function close() {
+  if (busy.value) return   // 导入进行中关掉窗，后台循环还在跑、界面却零痕迹——busy 时不给关
+  emit('update:open', false)
+}
 
 const shown = computed(() => {
   const kw = q.value.trim().toLowerCase()

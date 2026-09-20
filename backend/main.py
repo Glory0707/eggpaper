@@ -710,7 +710,8 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
         authors = pdfparse.extract_authors(path)
         paras = pdfparse.extract_paragraphs(path)
         import pymupdf
-        n_pages = len(pymupdf.open(path))
+        with pymupdf.open(path) as d:      # 用完就关：裸开会让 Windows 短暂锁着文件
+            n_pages = len(d)
     except Exception as e:
         try:
             os.remove(path)
@@ -778,7 +779,8 @@ async def upload(file: UploadFile = File(...)):
 
     def _import():
         with _import_lock:
-            dup = db.find_duplicate(name, len(raw), _pdf_hash_bytes(raw))
+            pdf_hash = _pdf_hash_bytes(raw)      # 几百 MB 的整文件哈希，一遍就够
+            dup = db.find_duplicate(name, len(raw), pdf_hash)
             if dup:
                 paras = db.get_paragraphs(dup)
                 return {"paper": db.get_paper(dup), "n_paragraphs": len(paras),
@@ -792,7 +794,7 @@ async def upload(file: UploadFile = File(...)):
             path = os.path.join(pid_dir, "paper.pdf")     # 库内自存一份：删原件、挪原件都不影响
             with open(path, "wb") as f:
                 f.write(raw)
-            return _ingest(pid, name, path, _pdf_hash_bytes(raw))
+            return _ingest(pid, name, path, pdf_hash)
 
     return await run_in_threadpool(_import)
 
@@ -841,6 +843,7 @@ _pending_open = {"pid": None}
 def open_request():
     pid = _pending_open["pid"]
     _pending_open["pid"] = None
+    return {"pid": pid, "quitting": _QUITTING["user"]}
 
 @app.get("/api/zotero/items")
 def zotero_items():
@@ -857,7 +860,6 @@ def paper_meta(pid: str, body: dict):
     b = body or {}
     db.set_paper_meta(pid, str(b.get("title") or ""), str(b.get("authors") or ""), str(b.get("year") or ""))
     return {"paper": db.get_paper(pid)}
-    return {"pid": pid, "quitting": _QUITTING["user"]}
 
 def _paper_or_404(pid: str) -> dict:
     p = db.get_paper(pid)
@@ -880,7 +882,7 @@ PDF_GONE = ("这篇论文的 PDF 不在原来的位置了（可能被移动或�
 def _require_paras(pid: str) -> None:
     """扫描件没有文字层：让它过一个"请求模型、等半天、返回胡话"的流程是最坏的选择，
     直接说清楚做不到什么、还能做什么。"""
-    if not db.get_paragraphs(pid):
+    if not db.has_paragraphs(pid):
         raise HTTPException(400, NO_TEXT)
 
 
@@ -902,8 +904,7 @@ def _paper_needing_paras(pid: str) -> dict:
 def get_paper(pid: str):
     """打开/换篇每次都拉：各生成卡的大 JSON 留在各自端点里，别跟着这一趟白跑。"""
     p = _paper_or_404(pid)
-    paras = db.get_paragraphs(pid)
-    p["n_paragraphs"] = len(paras)
+    p["n_paragraphs"] = db.count_paragraphs(pid)
     for k in ("summary", "suggest", "advisor", "method_card", "citation",
               "evidence_qs", "path", "mono_path", "dual_path", "pdf_hash"):
         p.pop(k, None)
@@ -2665,14 +2666,13 @@ def translate_selection(pid: str, body: dict):
 @app.post("/api/papers/{pid}/translate-para")
 def translate_para(pid: str, body: dict):
     _paper_or_404(pid)
-    paras = {p_["idx"]: p_ for p_ in db.get_paragraphs(pid)}
     idx = _int_arg(body.get("idx"), 400, "缺 idx（要译哪一段）")
-    if idx not in paras:
+    para = db.get_paragraph(pid, idx)
+    if not para:
         raise HTTPException(404, "段落不存在")
-    _require_paras(pid)
-    para = paras[idx]
     hits = db.glossary_hit(pid, para["text"])
-    ctx = paras.get(idx - 1, {}).get("text", "")
+    ctx_row = db.get_paragraph(pid, idx - 1)
+    ctx = (ctx_row or {}).get("text", "")
     return StreamingResponse(_translate_sse(pid, para["text"], ctx, hits), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

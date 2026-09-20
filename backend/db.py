@@ -84,7 +84,8 @@ def _get() -> sqlite3.Connection:
         _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
-        for stmt in _INDEXES:
+        _migrate(_conn)   # 必须先补列再建索引：idx_qa_msg_conv/idx_papers_hash 的列来自迁移，
+        for stmt in _INDEXES:   # 顺序反了会 OperationalError 被吞，索引从此再也建不上
             try:
                 _conn.execute(stmt)
             except sqlite3.OperationalError:
@@ -94,7 +95,6 @@ def _get() -> sqlite3.Connection:
             _conn.execute("PRAGMA synchronous=NORMAL")
         except sqlite3.OperationalError:
             pass
-        _migrate(_conn)
         _conn.commit()
     return _conn
 
@@ -331,6 +331,24 @@ def get_paragraphs(pid: str, with_lines: bool = True):
     return [dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
                  lines=(json.loads(r["lines"]) if (with_lines and r["lines"]) else [])) for r in rows]
 
+def has_paragraphs(pid: str) -> bool:
+    """只判"有没有文字层"时用这个：整载全部段落（含 bbox/lines 两坨 JSON）只为一判空，太重。"""
+    return q("SELECT EXISTS(SELECT 1 FROM paragraphs WHERE paper_id=?) AS e", (pid,))[0]["e"] == 1
+
+def count_paragraphs(pid: str) -> int:
+    """只要段数（页眉的 读至 ¶n/m）时用这个，别为计数整载。"""
+    return q("SELECT COUNT(*) AS c FROM paragraphs WHERE paper_id=?", (pid,))[0]["c"]
+
+def get_paragraph(pid: str, idx: int):
+    """单段读取（段落查译只碰一段）：全量拉一遍再挑一段是热路径上的浪费。"""
+    rows = q("SELECT idx, page, bbox, text, in_refs, lines FROM paragraphs WHERE paper_id=? AND idx=?",
+             (pid, idx))
+    if not rows:
+        return None
+    r = rows[0]
+    return dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
+                lines=(json.loads(r["lines"]) if r["lines"] else []))
+
 def paragraphs_need_lines(pid: str) -> bool:
     """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。"""
     rows = q("SELECT lines FROM paragraphs WHERE paper_id=?", (pid,))
@@ -430,6 +448,15 @@ def glossary_list(pid: str):
 
 def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: str = "",
                  source: str = "manual") -> int:
+    # 手工添加也去重：同一个英文词条补一次中文译法=改这条，而不是插出两行
+    with _lock:
+        row = _get().execute(
+            "SELECT id FROM glossary WHERE paper_id=? AND term_en=?", (pid, term_en)).fetchone()
+        if row:
+            _get().execute("UPDATE glossary SET term_zh=?, note=CASE WHEN ?!='' THEN ? ELSE note END"
+                           " WHERE id=?", (term_zh, note, note, row["id"]))
+            _get().commit()
+            return row["id"]
     return q_insert("INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
                     " VALUES(?,?,?,?,?,?,?)",
                     (pid, term_en, term_zh, domain, note, source, time.strftime("%Y-%m-%d %H:%M:%S")))
@@ -513,7 +540,11 @@ def conv_list(pid: str):
     它们一条消息都没有、还都叫"新对话"，挂着纯是噪音。
     """
     if not q("SELECT id FROM conversations WHERE paper_id=?", (pid,)):
-        conv_create(pid, "新对话")
+        # INSERT-if-absent 一条语句完成：两个窗口同时首拉也不会建出两条「新对话」
+        now = _now()
+        q("INSERT INTO conversations(paper_id, title, created_at, updated_at) "
+          "SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM conversations WHERE paper_id=?)",
+          (pid, "新对话", now, now, pid), commit=True)
     _adopt_orphan_qa(pid)
     return [dict(r) for r in q(
         "SELECT c.id, c.title, c.updated_at, c.summary, c.summary_upto, "

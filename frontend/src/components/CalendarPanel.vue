@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { api, store, openPaper } from '../store'
+import { api, store, openPaper, toast } from '../store'
 import { t, ui } from '../i18n'
 
 const open = computed(() => store.viewer.calOpen)
@@ -67,7 +67,9 @@ function togglePick() {
 }
 async function planIt(p) {
   if (p.plan_day === sel.value) return
-  await api.plan(p.id, sel.value)
+  try {
+    await api.plan(p.id, sel.value)
+  } catch (e) { toast(e.message); return }
   p.plan_day = sel.value
   const e = (days.value[sel.value] = days.value[sel.value] || {})
   e.plans = [...(e.plans || []), { id: p.id, title: (p.title || p.filename || '').trim() }]
@@ -75,7 +77,9 @@ async function planIt(p) {
   pq.value = ''
 }
 async function unplan(pid) {
-  await api.plan(pid, '')
+  try {
+    await api.plan(pid, '')
+  } catch (e) { toast(e.message); return }
   const e = days.value[sel.value]
   if (e) e.plans = (e.plans || []).filter(x => x.id !== pid)
   const p = store.papers.find(x => x.id === pid)

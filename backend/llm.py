@@ -14,6 +14,15 @@ import config
 _http = httpx.Client(timeout=httpx.Timeout(600, connect=20),
                      limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
 
+def _cut_tail(text: str, limit: int) -> str:
+    """长文防爆上下文的截断：字符刀会把最后一整段腰斩，模型拿着半截 ¶ 还一本正经引用。
+    超限时回退到最后一个段落边界；实在找不到边界（一大坨无换行）才硬切。"""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    i = cut.rfind("\n\n")
+    return cut[:i] if i > limit // 2 else cut
+
 def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
          no_think: bool = False, timeout: int = 600) -> str:
     """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。"""
@@ -23,7 +32,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
     budget = max_tokens
     out = ""
     last_err = None
-    for _ in range(2):
+    for _ in range(3):
         body = {"model": cfg["provider"]["model"], "messages": messages,
                 "max_tokens": budget, "temperature": temperature}
         if no_think:
@@ -38,12 +47,22 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             if r.status_code >= 500:
                 last_err = RuntimeError(f"模型服务开小差了（{r.status_code}），已自动重试过一次")
                 continue
+            if r.status_code == 400 and budget > 2048 and \
+                    "max_tokens" in (r.text or ""):
+                # 有的供应商输出上限低于我们给的 16k，400 里点名 max_tokens——
+                # 折半重试，别让整篇析读/眉批一击即灭
+                budget = max(2048, budget // 2)
+                last_err = RuntimeError("模型端点不吃这个输出长度，已自动折半重试")
+                continue
             r.raise_for_status()
         except (httpx.TransportError, httpx.TimeoutException) as e:
             last_err = e
             continue
         # 200 也可能是网关的错误 JSON / 空 choices：按缺内容走重试与兜底，别拿 KeyError 砸用户
-        choices = r.json().get("choices") or [{}]
+        try:
+            choices = r.json().get("choices") or [{}]
+        except ValueError:
+            choices = [{}]     # 网关 200 但回了非 JSON：当缺内容重试，不把 JSONDecodeError 撒出去
         out = ((choices[0].get("message") or {}).get("content", "")) or ""
         if out.strip():
             return out
@@ -208,7 +227,7 @@ def extract_terms(title: str, paras: list) -> dict:
     body = "\n\n".join(parts)
     msgs = [
         {"role": "system", "content": TERMS_SYSTEM + _lang_tail()},
-        {"role": "user", "content": "论文标题：" + (title or "") + "\n\n" + body[:48000]},
+        {"role": "user", "content": "论文标题：" + (title or "") + "\n\n" + _cut_tail(body, 48000)},
     ]
     # 坏 JSON 交给 chat_json 带纠错说明重发——原来的自建循环是原样重发 48k 全文，
     # 三次全挂就白烧三遍整本上下文；chat_json 的重试成功率更高且次数有顶。
@@ -379,8 +398,8 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。
     fig_caps：图表注列表（[编号, 图注全文] 对，编号与图表列表的下标一致）——
     给了就顺手把图注翻成中文，析读一次全带出来，灯箱打开即得、不再现翻。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)[:90000]   # 长综述防爆上下文；超限从尾部截（参考文献在最后）
-    user = f"论文标题：{title or '（未识别）'}\n\n{body}"
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)
+    user = f"论文标题：{title or '（未识别）'}\n\n{_cut_tail(body, 90000)}"   # 长综述防爆上下文；超限回退段边界（参考文献在最后）
     if fig_caps:
         listing = "\n".join(f"[{i}] {cap}" for i, cap in fig_caps)
         user += (f"\n\n【图表注】这篇论文有 {len(fig_caps)} 张带图注的图表（方括号是编号）：\n" + listing +
@@ -516,7 +535,7 @@ def _gloss_block(hits) -> str:
     return "术语表（以下术语必须使用锁定译法）：\n" + "\n".join(f"- {h['en']} → {h['zh']}" for h in hits) + "\n\n"
 
 def summarize(title: str, paras: list, hits=None) -> dict:
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:800]}" for p in paras if not p.get("in_refs"))[:60000]
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:800]}" for p in paras if not p.get("in_refs"))
     return chat_json([
         {"role": "system", "content": _lang_tail() + _gloss_block(hits) +
             "你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
@@ -526,7 +545,7 @@ def summarize(title: str, paras: list, hits=None) -> dict:
             '"findings":"<发现：最硬的数据结论，带关键数字；写得下就写，别硬压——按重要性排，读者先看到最要紧的那个>",'
             '"keywords":["<3~5个关键词>"]}'
             "不要 markdown 代码块，不要解释。"},
-        {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
+        {"role": "user", "content": f"论文标题：{title or ''}\n\n{_cut_tail(body, 60000)}"},
     ], max_tokens=4000, temperature=0.3)
 
 # ---------------- 问答 ----------------
@@ -543,7 +562,8 @@ QA_SYSTEM = """你是论文精读助手，陪研究者读这篇论文，也顺�
 
 def ask_messages(title: str, paras: list, history: list, question: str, hits=None, summary: str = "", others: list = None) -> list:
     """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))[:50000 if others else 80000]
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))
+    body = _cut_tail(body, 50000 if others else 80000)
     if others:
         per = max(12000, 60000 // len(others))
         blocks = []
@@ -750,12 +770,9 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
                 + (REVIEW_MARGINALIA_APPENDIX if kind == "review" else "") + _lang_tail()},
             {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
         ]
-        out = ""
-        for attempt in range(2):
-            out = chat(msgs, max_tokens=16000, temperature=0.3)
-            if out.strip():
-                break
-        data = parse_json(out)
+        # 要 JSON 的统一走 chat_json：坏 JSON 带纠错说明重发，成功率高于原样重滚；
+        # 块级失败由 wave 的二遍补跑兜底，这里抛出去是对的
+        data = chat_json(msgs, max_tokens=16000, temperature=0.3)
         return data.get("notes", []) if isinstance(data, dict) else []
 
     total = len(chunks)
