@@ -383,7 +383,25 @@ const figuresLoading = ref(false)
 const figIdx = ref(-1)
 const lightbox = computed(() => (figIdx.value >= 0 ? figures.value[figIdx.value] || null : null))
 const lbLoaded = ref(false)
-watch(() => figIdx.value, () => { lbLoaded.value = false })
+/* 图注中文：灯箱打开时懒翻译一次（后端落库），本会话内按 idx 记住 */
+const capZh = ref({})
+const capPending = ref(false)
+const capText = computed(() => lightbox.value ? (capZh.value[figIdx.value] || lightbox.value.caption || '') : '')
+watch(() => figIdx.value, i => {
+  lbLoaded.value = false
+  if (i >= 0) fetchCap(i)
+})
+watch(() => store.currentId, () => { capZh.value = {} })
+async function fetchCap(i) {
+  const lb = figures.value[i]
+  if (!lb || !lb.caption || capZh.value[i] !== undefined || isEn()) return
+  capPending.value = true
+  try {
+    const r = await api.figCaption(store.currentId, i)
+    if (r.zh && r.zh !== lb.caption) capZh.value = { ...capZh.value, [i]: r.zh }
+  } catch { /* 没模型/失败就留在原文 */ }
+  capPending.value = false
+}
 function figStep(d) {
   if (figures.value.length < 2) return
   figIdx.value = (figIdx.value + d + figures.value.length) % figures.value.length
@@ -537,12 +555,12 @@ watch(() => store.currentId, () => {
              <div class="six-fold-in">
             <div class="six-a">
                             <template v-if="s.k === 'q1'">
-                <MdLite v-if="six.motive?.text" class="six-txt" :text="six.motive.text" @cite="jumpPara" />
+                <MdLite v-if="six.motive?.text" class="six-txt" :text="six.motive.text" @cite="c => jumpPara(c.n)" />
                 <div v-else class="six-note">{{ sixBusy.motive ? '…' : t('未生成') }}</div>
               </template>
 
                             <template v-else-if="s.k === 'q2' && isReview">
-                <MdLite v-if="six.how?.text" class="six-txt" :text="six.how.text" @cite="jumpPara" />
+                <MdLite v-if="six.how?.text" class="six-txt" :text="six.how.text" @cite="c => jumpPara(c.n)" />
                 <div v-else class="six-note">{{ sixBusy.how ? '…' : t('未生成') }}</div>
                 <div class="six-foot">
                   <button @click="openMethod">{{ t('谱系卡 ↗') }}</button>
@@ -594,7 +612,7 @@ watch(() => store.currentId, () => {
                             <template v-else-if="s.k === 'q4'">
                 <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
-                  <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
+                  <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
                 <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
@@ -603,7 +621,7 @@ watch(() => store.currentId, () => {
                             <template v-else-if="s.k === 'q5'">
                 <div class="six-item" v-for="(it, i) in (six.lens?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
-                  <MdLite class="six-txt" :text="it.text" @cite="jumpPara" />
+                  <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
                 <div v-if="!six.lens?.items?.length" class="six-note">{{ sixBusy.lens ? '…' : t('未生成') }}</div>
@@ -776,6 +794,7 @@ watch(() => store.currentId, () => {
 
         <Transition name="fade">
     <div class="lightbox" v-if="lightbox" @click="figIdx = -1">
+      <button class="lb-x" :title="t('关闭')" @click="figIdx = -1">✕</button>
       <div class="lb-stage" @click.stop>
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('上一张（←）')" @click="figStep(-1)">‹</button>
         <span class="lb-imgwrap" :class="{ loading: !lbLoaded }">
@@ -784,14 +803,17 @@ watch(() => store.currentId, () => {
         </span>
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('下一张（→）')" @click="figStep(1)">›</button>
       </div>
-            <div class="lb-cap" v-if="lightbox.caption" @click.stop>{{ lightbox.caption }}</div>
+            <div class="lb-cap" v-if="lightbox.caption" @click.stop :title="lightbox.caption">
+        <span>{{ capText }}</span>
+        <span class="lb-cap-orig" v-if="capText !== lightbox.caption">{{ lightbox.caption }}</span>
+        <span class="lb-cap-wait" v-else-if="capPending">{{ t('正在翻译图注…') }}</span>
+      </div>
       <div class="lb-actions" @click.stop>
         <span class="mono-label">{{ t(lightbox.kind === 'table' ? '表' : '图') }} · {{ figIdx + 1 }} / {{ figures.length }} · {{ t('第 {p} 页', { p: lightbox.page + 1 }) }}</span>
         <button @click="figJump(lightbox)">{{ t('在原文查看') }}</button>
         <button @click="askFigure(lightbox)">{{ t(lightbox.kind === 'table' ? '问这张表' : '问这张图') }}</button>
-        <button @click="copyFig"> {{ t('复制图片') }}</button>
-        <button @click="downloadFig">{{ t('下载图片') }}</button>
-        <button @click="figIdx = -1">{{ t('关闭') }}</button>
+        <button @click="copyFig"> {{ t('复制') }}</button>
+        <button @click="downloadFig">{{ t('下载') }}</button>
       </div>
     </div>
     </Transition>

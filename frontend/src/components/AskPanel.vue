@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, store, toast, jumpPara } from '../store'
+import { api, askStream, store, toast, jumpPara, openPaper } from '../store'
 import { confirmBox, inputBox } from '../dialog'
 import { copyWithToast } from '../clip'
 import { t } from '../i18n'
@@ -9,6 +9,26 @@ import MdLite from './MdLite.vue'
 const props = defineProps({ quick: { type: Array, default: () => [] } })
 
 const pid = computed(() => store.currentId)
+
+/* 回答里的 ¶n 是本篇的直接跳；《别篇》¶n（模型按《标题》¶n 的口径写跨篇引用）
+   先按标题在库里认出那篇——模型可能截断长标题，用双向包含兜住——
+   认得出就打开它再跳段（位置记忆管回来），认不出就诚实降级成纯文本，不给一个点了没反应的按钮。 */
+function matchPaper(title) {
+  const t = String(title || '').trim().toLowerCase()
+  if (!t) return null
+  const ps = store.papers || []
+  const ti = p => (p.title || '').trim().toLowerCase()
+  return ps.find(p => ti(p) === t)
+      || ps.find(p => { const x = ti(p); return x && (x.includes(t) || t.includes(x)) })
+}
+const citeOk = r => !r.ref || !!matchPaper(r.ref)
+async function onCite(r) {
+  if (!r || !r.ref) return jumpPara(r && r.n)
+  const p = matchPaper(r.ref)
+  if (!p) return
+  if (p.id !== store.currentId) await openPaper(p.id)
+  jumpPara(r.n)
+}
 
 const convs = ref([])
 const convId = ref(null)
@@ -371,7 +391,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         <div class="q-role">{{ m.role === 'user' ? t('你') : 'EGGPAPER' }}</div>
         <template v-if="m.role === 'assistant'">
                     <div v-if="m.streaming && !m.content" class="q-body md qa-wait">{{ t('正在想…') }}</div>
-          <MdLite v-else class="q-body md" :text="m.content || ' '" @cite="jumpPara" />
+          <MdLite v-else class="q-body md" :text="m.content || ' '" :cite-ok="citeOk" @cite="onCite" />
         </template>
         <div class="q-body" v-else>{{ m.content }}</div>
         <span v-if="m.streaming" class="qa-caret"></span>

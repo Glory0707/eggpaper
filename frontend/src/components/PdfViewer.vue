@@ -233,6 +233,10 @@ async function load({ keepPlace = false } = {}) {
     pendingFind = null
     nextTick(() => { searchQ.value = q; searchOpen.value = true })
   }
+  if (pendingJump) {                      // 渲染没赶上的那次跳转（跨篇《标题》¶n 常见）
+    if (store.jump === pendingJump && Date.now() - pendingJump.at < 8000) applyJump()
+    pendingJump = null
+  }
   loading = false
 }
 
@@ -882,16 +886,32 @@ function translateSelectionKey() {
 
 const backStack = []
 
+let pendingJump = null            // 跳转来时这篇还没渲染好（甚至还没挂载）：先记下，渲染收尾再补跳
+function retryJump() {
+  clearTimeout(retryJump._t)
+  retryJump._t = setTimeout(() => {
+    if (!pendingJump) return
+    if (store.jump !== pendingJump || Date.now() - pendingJump.at > 8000) { pendingJump = null; return }
+    applyJump()                    // 还没渲染完就再存再排；渲染好了就地跳
+  }, 400)
+}
+{ /* 《别篇》¶n 点过来：跳转常发生在本组件挂载之前，watch 根本没赶上，挂载时先认领 */
+  const j = store.jump
+  if (j && (!j.pid || j.pid === props.pid) && Date.now() - j.at < 8000) { pendingJump = j; retryJump() }
+}
+
 async function applyJump() {
   const j = store.jump
-  if (!j || !deskEl.value) return
+  if (!j) return
   if (j.pid && j.pid !== props.pid) return
-  backStack.push(scroller().scrollTop)
-  if (backStack.length > 30) backStack.shift()
+  if (!deskEl.value) { pendingJump = j; retryJump(); return }   // 纸面还没长出来：稍后补跳
   await nextTick()
   const it = pageItem(j.page)
   const el = it && pageEls.value[it.gi]
-  if (!el) return
+  if (!el) { pendingJump = j; retryJump(); return }   // 整篇还在出图：稍后补跳（同查找的 pendingFind）
+  pendingJump = null
+  backStack.push(scroller().scrollTop)
+  if (backStack.length > 30) backStack.shift()
   scrollToY(el.offsetTop + j.y0 * scale.value - scroller().clientHeight * 0.28)
   flash.value = null
   if (j.rects?.length) {

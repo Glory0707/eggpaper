@@ -67,14 +67,21 @@ function tableBlock(lines, i) {
   return { seg: { table: true, head, rows, blank: false }, next: j - 1 }
 }
 
-/* ---------- 行内 run：加粗 / 行内代码 / ¶n 引用 ---------- */
+/* ---------- 行内 run：加粗 / 行内代码 / ¶n 引用（跨篇引用《标题》¶n 带上篇名） ---------- */
+
+const CROSS = /^《([^》]*)》\s*(¶\s*\d+)$/
 
 function runsOf(t) {
   const runs = []
-  for (const seg of String(t).split(/(\*\*[^*]+\*\*|`[^`]+`|¶\s*\d+)/)) {
+  for (const seg of String(t).split(/(\*\*[^*]+\*\*|`[^`]+`|《[^》]*》\s*¶\s*\d+|¶\s*\d+)/)) {
     if (!seg) continue
     if (BOLD.test(seg) && seg.startsWith('**')) runs.push({ text: seg.slice(2, -2), bold: true })
     else if (CODE.test(seg) && seg.startsWith('`')) runs.push({ text: seg.slice(1, -1), code: true })
+    else if (CROSS.test(seg)) {
+      const m = seg.match(CROSS)
+      runs.push({ text: `《${m[1]}》` })
+      runs.push({ text: m[2], cite: parseInt(m[2].replace(/\D/g, ''), 10), ref: m[1] })
+    }
     else if (CITE.test(seg) && /^¶\s*\d+$/.test(seg)) runs.push({ text: seg, cite: parseInt(seg.replace(/\D/g, ''), 10) })
     else runs.push({ text: seg })
   }

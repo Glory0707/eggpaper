@@ -120,6 +120,7 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE marginalia ADD COLUMN band TEXT",
         "ALTER TABLE papers ADD COLUMN paper_type TEXT DEFAULT ''",
         "ALTER TABLE papers ADD COLUMN pdf_hash TEXT DEFAULT ''",
+        "ALTER TABLE papers ADD COLUMN fig_caps TEXT DEFAULT ''",
     ):
         try:
             c.execute(stmt)
@@ -359,6 +360,18 @@ def clear_ai_results() -> int:
         c.execute("DELETE FROM answers")
         c.commit()
     return n
+
+def fig_caps(pid: str) -> dict:
+    """灯箱图注的中文翻译缓存（"页:x0:y0" → 译文）。图不算析读产物，换模式不清。"""
+    rows = q("SELECT fig_caps FROM papers WHERE id=?", (pid,))
+    raw = rows[0]["fig_caps"] if rows else None
+    try:
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+def set_fig_caps(pid: str, caps: dict):
+    q("UPDATE papers SET fig_caps=? WHERE id=?", (json.dumps(caps, ensure_ascii=False), pid), commit=True)
 
 def fail_analysis(pid: str, error: str):
     """析读失败：**只记状态与原因，不动已经存在的 claims/annotations**。

@@ -1212,9 +1212,16 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   font-style: normal;
 }
 .lightbox {
-  position: fixed; inset: 0; z-index: 520; background: rgba(38, 32, 21, 0.72);
+  position: fixed; inset: 0; z-index: 520; background: rgba(5, 5, 6, 0.78);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
 }
+/* 右上角小叉：遮罩本身就是"点外面关"，但屏幕上得有一个看得见的关法 */
+.lb-x {
+  position: absolute; top: 18px; right: 22px; width: 34px; height: 34px;
+  font-size: 15px; line-height: 1; color: #fff;
+  background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.24); border-radius: 999px;
+}
+.lb-x:hover { background: rgba(255, 255, 255, 0.26); box-shadow: none; transform: none; }
 .lb-stage { display: flex; align-items: center; gap: 10px; }
 .lb-imgwrap { position: relative; display: flex; }
 .lb-imgwrap.loading img { opacity: 0; }
@@ -1225,6 +1232,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 
 .lb-cap { max-width: 76vw; text-align: center; font-size: calc(12.5px * var(--fs-scale)); line-height: 1.5; color: rgba(255, 255, 255, 0.88); }
+.lb-cap-orig, .lb-cap-wait { display: block; margin-top: 4px; font-size: calc(11px * var(--fs-scale)); color: rgba(255, 255, 255, 0.52); }
 .lb-nav {
   width: 34px; height: 74px; flex-shrink: 0;
   font-size: 26px; line-height: 1; color: #fff;
@@ -1652,16 +1660,17 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .cite-item.lib .t { font-weight: 600; }
 
 html.dark {
-  --paper: #171512;
-  --paper-deep: #121009;
-  --card: #1d1a15;
-  --card-2: #252119;
-  --veil: rgba(23, 21, 18, 0.88);
-  --ink: #e9e5da;
-  --ink-2: #b8b3a6;
-  --ink-3: #96917f;
-  --hairline: rgba(233, 229, 218, 0.17);
-  --hairline-soft: rgba(233, 229, 218, 0.09);
+  /* 中性黑：跟系统黑夜模式一个口径——底是黑、字是白，不再带暖棕（纸面永远白，见 .page 覆盖） */
+  --paper: #111112;
+  --paper-deep: #0a0a0b;
+  --card: #171719;
+  --card-2: #1f1f22;
+  --veil: rgba(10, 10, 11, 0.88);
+  --ink: #ececee;
+  --ink-2: #b8b8bd;
+  --ink-3: #8f8f96;
+  --hairline: rgba(236, 236, 238, 0.16);
+  --hairline-soft: rgba(236, 236, 238, 0.08);
 
   --accent: #74b4c7;
   --accent-deep: #9ad0e0;
@@ -1673,10 +1682,10 @@ html.dark {
 
   --accent-btn: #2b6b82;
 
-  --ink-rgb: 233, 229, 218;
-  --wash-rgb: 8, 6, 4;
-  --btn-hover: #2a251c;
-  --btn-active: #332d22;
+  --ink-rgb: 236, 236, 238;
+  --wash-rgb: 0, 0, 0;
+  --btn-hover: #202024;
+  --btn-active: #28282d;
   --paper-hover: rgba(255, 255, 255, 0.055);
   --ok: #7ccd96;
 

@@ -1949,20 +1949,19 @@ def _figure_regions(path):
 _fig_cache = {}
 _fig_inflight = {}
 
-@app.get("/api/papers/{pid}/figures")
-def figures(pid: str):
-    p = _paper_or_404(pid)
+def _figures_for(p: dict) -> list:
+    """这篇论文的图表区域列表（内存缓存按"路径+mtime"记账，画一次到处用）。"""
     try:
         key = (p["path"], os.path.getmtime(p["path"]))
     except OSError:
         key = (p["path"], 0)
     if key in _fig_cache:
-        return {"figures": _fig_cache[key]}
+        return _fig_cache[key]
     ev = _fig_inflight.get(key)
     if ev:
         ev.wait(120)
         if key in _fig_cache:
-            return {"figures": _fig_cache[key]}
+            return _fig_cache[key]
     if not os.path.exists(p["path"]):
         raise HTTPException(404, PDF_GONE)
     ev = threading.Event()
@@ -1978,7 +1977,40 @@ def figures(pid: str):
     _fig_cache[key] = out
     while len(_fig_cache) > 8:
         _fig_cache.pop(next(iter(_fig_cache)))
-    return {"figures": out}
+    return out
+
+@app.get("/api/papers/{pid}/figures")
+def figures(pid: str):
+    return {"figures": _figures_for(_paper_or_404(pid))}
+
+def _mostly_cjk(t: str) -> bool:
+    """图注本身已是中文（中文文献）就别再"翻译"一遍。"""
+    letters = [c for c in t if c.isalpha()]
+    return not letters or sum(1 for c in letters if "\u4e00" <= c <= "\u9fff") > len(letters) * 0.3
+
+@app.get("/api/papers/{pid}/fig_caption")
+def fig_caption(pid: str, idx: int = 0):
+    """灯箱图注的中文版：懒翻译一次落库（db.fig_caps），之后进页面读缓存不花钱。
+    英文界面不打这层（原文就是用户要的语言）；英文界面没有模型时回原文。"""
+    p = _paper_or_404(pid)
+    figs = _figures_for(p)
+    if idx < 0 or idx >= len(figs):
+        raise HTTPException(404, "没有这张图")
+    cap = (figs[idx].get("caption") or "").strip()
+    if (not cap or _mostly_cjk(cap) or _demo_mode()
+            or (config.load().get("ui_lang") or "zh") != "zh"):
+        return {"zh": cap, "original": cap}
+    key = f'{figs[idx]["page"]}:{figs[idx]["x0"]}:{figs[idx]["y0"]}'
+    caps = db.fig_caps(pid)
+    if key in caps:
+        return {"zh": caps[key], "original": cap}
+    hits = db.glossary_hit(pid, cap)
+    msgs = llm.translate_messages(cap, "", hits)
+    zh = llm.chat(msgs, max_tokens=1000, temperature=0.2).strip()
+    if zh:
+        caps[key] = zh
+        db.set_fig_caps(pid, caps)
+    return {"zh": zh or cap, "original": cap}
 @app.get("/api/papers/{pid}/toc")
 def paper_toc(pid: str):
     """PDF 自带的书签目录（get_toc：[层级, 标题, 页码]，页码 1 起）。

@@ -160,16 +160,18 @@ def chat_json(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
                     no_think=no_think, timeout=timeout)
         return parse_json(raw2)
 
+def _is_en() -> bool:
+    try:
+        return (config.load().get("ui_lang") or "zh") == "en"
+    except Exception:
+        return False
+
 def _lang_tail() -> str:
     """界面语言是英文时，要求所有面向用户的产出都用英文写。
     只拼在 system 提示词尾部；论文原文的引用仍按原文（引文必须忠于纸面）。
     翻译与引用抄写这两类提示词**不拼**：翻译就是要译，引用是照抄不译。"""
-    try:
-        if (config.load().get("ui_lang") or "zh") == "en":
-            return "\n\nWrite ALL user-visible text you produce in English. Keep quoted sentences from the paper in their original language."
-    except Exception:
-        pass
-    return ""
+    return ("\n\nWrite ALL user-visible text you produce in English. "
+            "Keep quoted sentences from the paper in their original language.") if _is_en() else ""
 
 TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者读这篇时会卡住、需要中英对照的那些说法。
 
@@ -356,12 +358,28 @@ REVIEW_SKELETON_APPENDIX = """
   anchors 填真实支撑该组织主张的段落；它给出的对比表格、数据汇总、典型案例算 evidence；
 - purposes 用读者视角："给出方法族的分类地图""对比三条技术路线的优劣""点出开放问题"。"""
 
+def _skeleton_system(kind: str) -> str:
+    """骨架提示词。英文界面时把 JSON 样例里写死"中文"的三处换成英文口径——
+    它们（主张概括/段 purpose/证据问题）都是要亮给用户看的，不能被样例拽回中文。"""
+    s = SKELETON_SYSTEM + (REVIEW_SKELETON_APPENDIX if kind == "review" else "")
+    if _is_en():
+        s = (s.replace("主张的中文概括，≤30字", "one-line summary of the claim, ≤30 words")
+              .replace("作者写这段的目的，≤22字，说人话", "why the author wrote this paragraph, ≤22 words, plain language")
+              .replace('purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照样品的必要性""交代测试条件，可跳过"',
+                       'purposes in a researcher\'s plain voice, e.g. "preempt a reviewer objection", '
+                       '"motivate the control sample", "test conditions; skippable"')
+              .replace('purposes 用读者视角："给出方法族的分类地图""对比三条技术路线的优劣""点出开放问题"',
+                       'purposes from the reader\'s viewpoint: "a taxonomy map of the methods", '
+                       '"compare the main lines of work", "open problems"')
+              .replace("该实验/数据直接回答的问题，≤22字", "the question this experiment/data directly answers, ≤22 words"))
+    return s + _lang_tail()
+
 def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)[:90000]   # 长综述防爆上下文；超限从尾部截（参考文献在最后）
     user = f"论文标题：{title or '（未识别）'}\n\n{body}"
-    system = SKELETON_SYSTEM + (REVIEW_SKELETON_APPENDIX if kind == "review" else "") + _lang_tail()
+    system = _skeleton_system(kind)
     msgs = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

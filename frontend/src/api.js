@@ -42,6 +42,7 @@ export const api = {
   sixAnswer: (pid, key) => req('GET', `/api/papers/${pid}/six-answers/${key}`),
   advisor: (pid, cached = false) => req('GET', `/api/papers/${pid}/advisor${cached ? '?cached=1' : ''}`),
   figures: (pid) => req('GET', `/api/papers/${pid}/figures`),
+  figCaption: (pid, idx) => req('GET', `/api/papers/${pid}/fig_caption?idx=${idx}`),
   calendar: (month) => req('GET', `/api/calendar?month=${month}`),
   toc: (pid) => req('GET', `/api/papers/${pid}/toc`),
   askVisual: (body) => req('POST', '/api/ask-visual', body),
