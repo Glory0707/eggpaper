@@ -337,7 +337,7 @@ const EN = {
   '对比表已复制成 Markdown，可直接粘贴': 'Table copied as Markdown — paste it anywhere',
   '研究问题': 'Problem',
   '方法': 'Method',
-  '实验体系': 'Experimental system',
+  '研究体系': 'Research system',
   '数据': 'Data',
   '关键结果': 'Key results',
   '局限': 'Limitations',

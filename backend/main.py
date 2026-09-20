@@ -1532,17 +1532,16 @@ def _mock_six(key: str) -> dict:
                                   "own classification, compares them block by block, and closes with open "
                                   "questions [¶5]."), "cites": [5]}
     if key == "motive":
-        return {"text": _demo_txt("〔演示模式〕现有做法依赖随机、不可控的缺陷位点，做出来的活性没法设计 [¶3]；"
+        return {"text": _demo_txt("〔演示模式〕现有做法依赖随机、不可控的关键步骤，产出的质量波动大、没法按需设计 [¶3]；"
                                   "这件事卡住了下游一整类应用，而这到今天没有好解法 [¶2]——"
-                                  "所以这篇要用本征有序的结构位点来实现可控的高活性。",
-                                  "[demo mode] Current practice relies on random, uncontrollable defect sites, "
-                                  "so the activity cannot be designed [¶3]; this blocks a whole class of "
-                                  "downstream applications and still lacks a good solution [¶2] — hence this "
-                                  "work uses intrinsically ordered structural sites for controllable, high "
-                                  "activity."), "cites": [2, 3]}
+                                  "所以这篇要用一套可设计的规则化结构来实现稳定的高质量输出。",
+                                  "[demo mode] Current practice relies on random, uncontrollable steps, so the "
+                                  "output quality fluctuates and cannot be designed [¶3]; this blocks a whole "
+                                  "class of downstream applications and still lacks a good solution [¶2] — hence "
+                                  "this work uses a designable, regular structure for stable, high-quality output."), "cites": [2, 3]}
     if key == "lens":
         return {"v": 2, "items": [
-            {"lead": _demo_txt("做表征的", "Characterization"),
+            {"lead": _demo_txt("做实验的", "Experimentalist"),
              "text": _demo_txt("〔演示模式〕会盯着原位数据太少这件事——漂亮的机理说法要配原位证据才站得住。",
                                "[demo mode] Would zero in on how thin the in-situ data is — a pretty "
                                "mechanism story needs in-situ evidence to stand."),
@@ -1563,15 +1562,15 @@ def _mock_six(key: str) -> dict:
         ]}
     return {"items": [
         {"lead": _demo_txt("论文已说明", "Admitted"),
-         "text": _demo_txt("〔演示模式〕换一组对照样品把这条路径单离出来 [¶12]。",
-                           "[demo mode] Isolate this pathway with a different set of control samples [¶12]."),
-         "ask": _demo_txt("怎么设计对照才能单离这条路径？", "What controls would isolate this pathway?"),
+         "text": _demo_txt("〔演示模式〕换一组对照/基线把这条结论单离出来 [¶12]。",
+                           "[demo mode] Isolate this conclusion with a different set of controls or baselines [¶12]."),
+         "ask": _demo_txt("怎么设计对照/基线才能单离这条结论？", "What controls or baselines would isolate this conclusion?"),
          "cites": [12]},
         {"lead": _demo_txt("新方向", "New direction"),
-         "text": _demo_txt("〔演示模式〕把这套判据搬去另一族氧化物，够撑一篇新论文：体系换了、结论还没人验证过 [¶18]。",
-                           "[demo mode] Carry these criteria to another oxide family — enough for a new paper: "
-                           "new system, conclusions nobody has tested yet [¶18]."),
-         "ask": _demo_txt("换到另一族氧化物要先验证什么？", "What must be validated first in the new family?"),
+         "text": _demo_txt("〔演示模式〕把这套判据搬去另一类体系或数据集，够撑一篇新论文：对象换了、结论还没人验证过 [¶18]。",
+                           "[demo mode] Carry these criteria to another class of systems or datasets — enough for "
+                           "a new paper: new subject, conclusions nobody has tested yet [¶18]."),
+         "ask": _demo_txt("搬到另一类体系要先验证什么？", "What must be validated first in the new setting?"),
          "cites": [18]},
     ]}
 
@@ -1667,8 +1666,8 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
     if _demo_mode():
         meta = {"authors": [{"family": "Zhang", "given": "Wei"}, {"family": "Li", "given": "Na"}],
                 "title": _demo_txt("〔演示〕一篇论文的标题", "[demo] A paper title"),
-                "journal": "Journal of Demo Chemistry",
-                "journal_abbr": "J. Demo Chem.", "year": "2024", "volume": "12",
+                "journal": "Journal of Demo Studies",
+                "journal_abbr": "J. Demo Stud.", "year": "2024", "volume": "12",
                 "issue": "3", "pages": "345-352", "doi": "10.0000/demo.2024.12345"}
     else:
       with _key_lock("cite:" + pid):

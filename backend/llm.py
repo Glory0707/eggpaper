@@ -177,14 +177,14 @@ TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者�
 
 只收**这篇论文特有的**东西：
 - 它自造或改名的方法 / 框架 / 模型名（例如 "transport figure of merit"）
-- 它研究的材料、结构、器件、体系（例如 "rare-earth sesquioxide"）
+- 它研究的对象与体系（材料、结构、样本、语料、场景，例如 "rare-earth sesquioxide"）
 - 它赖以成立的关键量、指标、判据（例如 "thermophotonic efficiency"）
 - 它反复使用的领域专名（例如 "stokes shift"，中文"斯托克斯位移"）
 
 **不要收**：通用学术词（method / result / figure / paper / study / data / analysis）、
 只在参考文献里出现的词、任何一篇论文都会有的词。
 
-kind 用三个短词之一：method（方法/框架）、material（材料/结构）、metric（量/指标/判据）。
+kind 用三个短词之一：method（方法/框架）、material（材料/体系/对象）、metric（量/指标/判据）。
 
 另外单独给一份**这篇论文自己的缩写表** abbrs：正文里定义了、后面反复用的那些缩写，
 键是缩写字面（照原文，如 "CNT"、"oPad"），值是它展开的英文全称 + 中文（≤40 字）。
@@ -304,10 +304,10 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 - background  背景铺垫：领域常识/前人工作综述，不读不影响理解主线
 - gap         缺口转折：作者真正的出发点，指出未解决的问题或矛盾
 - claim       核心主张：论文要证明的命题（we propose/demonstrate/report）
-- evidence    关键证据：支撑主张的核心实验、主结果、主数据
-- control     对照参比：仅为严谨而设的对照/参比/空白样，不是卖点
-- boilerplate 标准流程：表征条件、仪器参数、标准步骤等样板描述
-- extension   优化拓展：锦上添花的参数优化、应用演示、循环稳定性等
+- evidence    关键证据：支撑主张的核心实验/分析、主结果、主数据
+- control     对照参比：仅为严谨而设的对照/参比/基线，不是卖点
+- boilerplate 标准流程：实验/调查条件、工具与仪器参数、标准步骤等样板描述
+- extension   优化拓展：锦上添花的参数优化、应用演示、稳健性/耐久性验证等
 - limitation  让步局限：作者主动承认的弱点、边界条件、未来工作
 
 只输出 JSON，不要 markdown 代码块，不要任何解释：
@@ -318,7 +318,7 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 要求：
 1. claims 取 2~5 条，按论文叙事顺序；anchors 只能填 evidence 或 control 角色、且真实支撑该主张的段落编号
 2. 每一个给出的段落都必须有 role 和 purpose，role 不得虚构枚举之外的值
-3. purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照样品的必要性""交代测试条件，可跳过"
+3. purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照组/基线的必要性""交代实验条件，可跳过"
 4. 不要虚构不存在的段落编号；参考文献部分（若有）一律标 boilerplate
 4b. 图注（以 FIG./Figure/Table/Scheme 开头的段落）是**结果的一部分**，按它描述的内容给
     evidence 或 extension，绝不要标 boilerplate——读者正要看图注
@@ -365,9 +365,9 @@ def _skeleton_system(kind: str) -> str:
     if _is_en():
         s = (s.replace("主张的中文概括，≤30字", "one-line summary of the claim, ≤30 words")
               .replace("作者写这段的目的，≤22字，说人话", "why the author wrote this paragraph, ≤22 words, plain language")
-              .replace('purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照样品的必要性""交代测试条件，可跳过"',
+              .replace('purposes 用研究者口吻说人话，例如："堵审稿人的嘴""引出对照组/基线的必要性""交代实验条件，可跳过"',
                        'purposes in a researcher\'s plain voice, e.g. "preempt a reviewer objection", '
-                       '"motivate the control sample", "test conditions; skippable"')
+                       '"motivate the control/baseline", "experiment conditions; skippable"')
               .replace('purposes 用读者视角："给出方法族的分类地图""对比三条技术路线的优劣""点出开放问题"',
                        'purposes from the reader\'s viewpoint: "a taxonomy map of the methods", '
                        '"compare the main lines of work", "open problems"')
@@ -386,7 +386,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
         user += (f"\n\n【图表注】这篇论文有 {len(fig_caps)} 张带图注的图表（方括号是编号）：\n" + listing +
                  "\n\n输出 JSON 里增加一个键 \"fig_caps\"：把每条图注**完整**翻译成中文——"
                  "子图 (a)(b) 的说明逐条译出，不省略、不截断、不保留英文原句"
-                 "（方法名/材料名/统计量缩写可照抄）。键就是方括号里的编号。")
+                 "（方法名/专名/统计量缩写可照抄）。键就是方括号里的编号。")
     system = _skeleton_system(kind)
     msgs = [
         {"role": "system", "content": system},
@@ -522,7 +522,7 @@ def summarize(title: str, paras: list, hits=None) -> dict:
             "你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
             '{"one_line":"<一句话说清这篇论文做了什么、核心结果是什么，≤60字>",'
             '"contributions":"<贡献：解决了什么问题、为什么重要，≤80字>",'
-            '"methods":"<方法：关键思路/材料体系/表征手段，≤80字>",'
+            '"methods":"<方法：关键思路/研究对象/实施手段，≤80字>",'
             '"findings":"<发现：最硬的数据结论，带关键数字；写得下就写，别硬压——按重要性排，读者先看到最要紧的那个>",'
             '"keywords":["<3~5个关键词>"]}'
             "不要 markdown 代码块，不要解释。"},
@@ -610,12 +610,12 @@ def translate_messages(text: str, context: str = "", hits: list = None) -> list:
     if hits:
         gloss = "术语表（必须使用以下译法）：\n" + "\n".join(f"- {h['en']} → {h['zh']}" for h in hits) + "\n\n"
     user = (f"{gloss}将下面的学术英文翻译成中文。要求：专业、准确、说人话；"
-            "化学式、数字、单位、变量、引用标记保留原样；人名不译；只输出译文。\n")
+            "化学式、公式、代码、数字、单位、变量、引用标记保留原样；人名不译；只输出译文。\n")
     if context:
         user += f"[上下文：{context[:600]}]\n\n"
     user += f"[待翻译]\n{text[:4000]}"
     return [
-        {"role": "system", "content": "你是资深学术翻译，擅长化学/材料/工程领域论文的中英互译。"},
+        {"role": "system", "content": "你是资深学术翻译，擅长自然科学、工程技术、医学、人文社科等各领域论文的中英互译。"},
         {"role": "user", "content": user},
     ]
 
@@ -874,13 +874,14 @@ def mock_analyze(paras: list) -> dict:
             claim_idx.append(p["idx"])
         elif re.search(r"\bfig(ure)?\.? ?\d|table \d", t) and re.search(r"\d+(\.\d+)?\s*%|increase|decrease|enhance|achieve|reach", t):
             r = "evidence"
-        elif re.search(r"control|blank|reference sample|pristine|compared with|compared to", t):
+        elif re.search(r"control|blank|baseline|reference sample|pristine|compared with|compared to", t):
             r = "control"
-        elif re.search(r"xrd|sem|tem|xps|ftir|characteriz|instrument|calibrat|purchased|measured|condition", t):
+        elif re.search(r"xrd|sem|tem|xps|ftir|characteriz|instrument|calibrat|purchased|measured|condition"
+                       r"|dataset|survey|questionnaire|corpus|software|preprocess", t):
             r = "boilerplate"
         elif re.search(r"limitation|caveat|future work|further stud|drawback", t):
             r = "limitation"
-        elif re.search(r"moreover|furthermore|in addition|furthermore|optimiz|cycle stab", t):
+        elif re.search(r"moreover|furthermore|in addition|furthermore|optimiz|cycle stab|robustness|ablation", t):
             r = "extension"
         else:
             r = "background"
@@ -899,9 +900,9 @@ def method_card(title: str, paras: list) -> dict:
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
     return chat_json([
         {"role": "system", "content":
-            "你是实验室方法专家。把论文的方法部分整理成可复现的 protocol 卡，只输出 JSON："
+            "你是研究方法专家。把论文的方法部分整理成可复现的 protocol 卡，只输出 JSON："
             '{"goal":"<这套方法要达成什么，≤40字>",'
-            '"system":"<材料体系/研究对象，≤60字>",'
+            '"system":"<研究对象/体系，≤60字>",'
             '"conditions":"<关键条件与参数：仪器、软件、参数值，≤120字>",'
             '"steps":["<步骤1，≤40字，句尾用 [¶n] 标出这一步写在哪段>", "<步骤2>", "..."],'
             '"notes":"<复现时要注意的坑，≤60字>"}'
@@ -1110,7 +1111,7 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
             "①从论文自己承认的局限、它做的延伸或被标出的可疑之处长出来的方向；"
             "②至少一条是你**自己的思考**：顺着这篇的结论还能做什么新研究——可以是一篇新论文的体量"
             "（新问题、新体系、新方法都行），说清新在哪、为什么值得做、大概要动哪些工。"
-            "要具体、可执行、有指向（该做哪个材料、该补哪组对照、该换哪种方法）；"
+            "要具体、可执行、有指向（该换哪个对象/数据、该补哪组对照或基线、该换哪种方法）；"
             "'进一步研究''拓宽应用'这类话不算方向。已经在别处说过的判断不必再交代。"
             "每条配一句能直接拿去问模型的追问；lead 里点明这条是「论文已说明」的还是「新方向」。"
             "注意：[主张] 那一份只是帮你理解的背景，正文里**绝不**引用它——依据一律写正文段落号 "

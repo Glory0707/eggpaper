@@ -17,7 +17,7 @@ const closeEl = ref(null)
 const DIMS_ALL = [
   { k: 'problem', label: '研究问题' },
   { k: 'method', label: '方法' },
-  { k: 'system', label: '实验体系' },
+  { k: 'system', label: '研究体系' },
   { k: 'datasets', label: '数据' },
   { k: 'results', label: '关键结果' },
   { k: 'limits', label: '局限' },
