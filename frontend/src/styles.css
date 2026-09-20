@@ -1539,9 +1539,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .coll-add:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
 
 .paper-item .p-tag {
-  position: absolute; left: 6px; top: 50%; transform: translateY(-50%); z-index: 2;
+  position: absolute; left: 1px; top: 50%; transform: translateY(-50%); z-index: 2;
   font-size: var(--fs-sm); line-height: 1;
-  padding: 2px 6px; border-radius: 3px;
+  padding: 2px 5px; border-radius: 3px;
   border: 1px solid transparent; background: transparent; color: var(--ink-3);
 }
 .paper-item .p-tag:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent-line); }
