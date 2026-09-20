@@ -41,10 +41,11 @@ def capture_window() -> bytes:
     u = ctypes.windll.user32
 
     hits = []                     # (hwnd, iconic)：Z 序记录所有候选
+    visible = []                  # 顺带记录可见窗口标题：找不到时报错能直接对答案
     CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def cb(hwnd, _):
-        if len(hits) >= 2 or not u.IsWindowVisible(hwnd):
+        if len(visible) >= 14 or not u.IsWindowVisible(hwnd):
             return True
         n = u.GetWindowTextLengthW(hwnd)
         if not n:
@@ -52,13 +53,16 @@ def capture_window() -> bytes:
         b = ctypes.create_unicode_buffer(n + 1)
         u.GetWindowTextW(hwnd, b, n + 1)
         t = b.value.strip()
-        if t == "eggpaper" or t.startswith("eggpaper -"):
+        if t and len(visible) < 14:
+            visible.append(t)
+        if "eggpaper" in t.lower() and len(hits) < 3:
             hits.append((hwnd, bool(u.IsIconic(hwnd))))
         return True
 
     u.EnumWindows(CB(cb), 0)
     if not hits:
-        raise ValueError("没找到 eggpaper 的窗口——窗口最小化了吗？")
+        hint = " / ".join(visible[:6]) or "(桌面没有任何可见窗口)"
+        raise ValueError(f"没找到 eggpaper 的窗口——窗口还在吗？当前可见的窗口有：{hint}")
     hwnd, iconic = next(((h, i) for h, i in hits if not i), hits[0])
     if iconic:                    # 最小化的窗口在屏幕上没有像素可抓：先还原到前台
         u.ShowWindow(hwnd, 9)     # SW_RESTORE

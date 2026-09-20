@@ -1305,7 +1305,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .zoom-bar .zb-page em { font-family: var(--mono); font-size: var(--fs-xs); font-style: normal; color: var(--ink-3); }
 
 .find-bar {
-  bottom: 108px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  bottom: 62px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 4px; box-shadow: var(--shadow-pop);
 }
