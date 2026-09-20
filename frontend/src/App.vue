@@ -579,10 +579,10 @@ async function doMarginalia() {
 /* 长任务的「停止」：后端是协作式取消，析读在阶段边界收手（已生成的部分保留），
    全文翻译直接掐 pdf2zh 进程（已译好的页留着，下次接着译）。 */
 async function stopAnalyze() {
-  try { await api.analysisCancel(store.currentId); toast(t('已请求停止，收个尾就停')) } catch { /* 不打扰 */ }
+  try { await api.analysisCancel(store.currentId); toast(t('正在停止…')) } catch { /* 不打扰 */ }
 }
 async function stopTranslate() {
-  try { await api.translateCancel(store.currentId); toast(t('已停止全文翻译')); await refreshPapers() } catch { /* 同上 */ }
+  try { await api.translateCancel(store.currentId); toast(t('已停止')); await refreshPapers() } catch { /* 同上 */ }
 }
 
 /* 眉批是**唯一**会持续几十秒到几分钟的任务。全局那条 3 秒轮询在它跑完那一刻最多还要
@@ -607,7 +607,7 @@ async function doTranslateFull() {
     const r = await api.translateFull(store.currentId, again)
     tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0 }
     await refreshPapers()
-    toast(r.note || (again ? t('已开始重新全文翻译') : t('全文翻译已开始')))
+    toast(r.note || t('全文翻译已开始'))
   } catch (e) {
     // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
@@ -624,7 +624,7 @@ async function doTranslateFull() {
  * （没记 engResumeId）只收 toast，不冷不丁替用户开翻译反而吓人。 */
 let engResumeId = ''
 onEngineReady(() => {
-  toast(t('翻译引擎装好了，继续全文翻译'))
+  toast(t('引擎装好了，继续翻译'))
   if (engResumeId && store.currentId === engResumeId) doTranslateFull()
   engResumeId = ''
 })
@@ -693,7 +693,7 @@ async function onImport(list) {
     try {
       const r = await api.upload(f)
       ok.push(r)
-      if (r.duplicate) toast(t('库里已有这篇——直接打开原来那份'))
+      if (r.duplicate) toast(t('库里已有这篇，直接打开'))
       const c = store.lib.coll
       if (typeof c === 'number') {
         try { await api.paperColls(r.paper.id, [c]); await refreshCollections() } catch { /* 归类失败不影响导入 */ }
@@ -712,7 +712,7 @@ async function onImport(list) {
   if (many && ok.length > 1) {
     toast(t('已导入 {n} 篇，其余在后台排队通读', { n: ok.length }))
   } else if (first.no_text) {
-    toast(t('扫描件：正在后台识别文字，识别完自动析读'))
+    toast(t('扫描件：后台识别中，完事自动析读'))
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
     toast(t('只认出 {n} 段，析读会比较粗', { n: first.n_paragraphs }))
   }
@@ -883,17 +883,17 @@ function onKey(e) {
           {{ tranLabel }}
         </button>
         <button v-if="tranSt === 'running'" class="ghost" @click="stopTranslate"
-                :title="t('停掉 pdf2zh；已译好的页会留着，下次接着译')">{{ t('停止') }}</button>
+                :title="t('已译好的页会保留')">{{ t('停止') }}</button>
         <button class="primary" @click="doAnalyze" :disabled="anaBusy">
           {{ store.analysis.status === 'queued' ? t('排队中…') : (store.analysis.status === 'running' ? t('通读中…')
              : (store.analysis.status === 'done' ? t('重新析读') : t('析读'))) }}
         </button>
         <button v-if="anaBusy" class="ghost" @click="stopAnalyze"
-                :title="t('析读在阶段边界收手，已生成的部分保留')">{{ t('停止') }}</button>
+                :title="t('已生成的部分会保留')">{{ t('停止') }}</button>
       </div>
       <div class="actions">
         <button class="demo-badge" v-if="demoOn" @click="showSettings = true"
-                :title="t('没配模型，现在全是演示数据——点这里去设置')">{{ t('演示模式') }}</button>
+                :title="t('演示数据——点这里去设置')">{{ t('演示模式') }}</button>
         <button class="ghost" @click="showSettings = true" :title="t('设置')">⚙</button>
       </div>
             <div class="tran-line" v-if="tranSt === 'running' && !isEn()">
@@ -955,11 +955,11 @@ function onKey(e) {
           <div class="stamp" role="button" tabindex="0" @click="pickFiles"
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
           <div class="desk-hint" role="button" tabindex="0" @click="pickFiles"
-               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('拖入PDF或点击论文启动选择文件') }}</div>
+               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('拖入 PDF，或点击选择文件') }}</div>
           <div class="desk-hint demo-hint" v-if="demoOn" role="button" tabindex="0"
                @click="showSettings = true" @keydown.enter.prevent="showSettings = true"
                @keydown.space.prevent="showSettings = true">
-            {{ t('没配模型，进去都是演示数据——先到设置里配好') }}
+            {{ t('演示数据——先到设置里配好模型') }}
           </div>
         </div>
         <PdfViewer v-else :pid="store.currentId" :key="store.currentId" />

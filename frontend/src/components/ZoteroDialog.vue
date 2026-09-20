@@ -73,7 +73,7 @@ async function doImport() {
     toast(t('已从 Zotero 导入 {n} 篇，后台通读中', { n: ok }))
     emit('imported')
   } else {
-    toast(t('没有新导入——选中的都已经在库里了'))
+    toast(t('选中的都已在库里'))
   }
   refreshCollections()
 }

@@ -779,7 +779,7 @@ async function copySel() {
 function sendToGlossary() {
   store.glossaryPrefill = { term_en: sel.text.slice(0, 80), term_zh: (sel.zh || '').replace('〔演示译文〕', '').slice(0, 24) }
   closeSel()
-  toast(t('已带到术语表，请确认中文译法'))
+  toast(t('已收进术语表'))
   window.dispatchEvent(new CustomEvent('eggpaper:terms-prefill'))
 }
 
@@ -1110,7 +1110,7 @@ function findInPaper(q) {
   if (!q) return
   if (store.viewer.variant !== 'original') {
     store.viewer.variant = 'original'
-    toast(t('已切回原文再找'))
+    toast(t('已切回原文'))
     pendingFind = q          // 换模式要重新出图、重建文字层：等 load() 收尾再搜
     return
   }
@@ -1234,7 +1234,7 @@ watch([() => vis.visible, () => vis.answer, () => vis.busy, () => vis.err],
 
 function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
-  if (it.origPage < 0) { toast(t('译文页不能框选，切回「原文」再圈')); return }
+  if (it.origPage < 0) { toast(t('切回「原文」再框选')); return }
   e.preventDefault()
   const el = pageEls.value[it.gi]
   const base = el.getBoundingClientRect()
@@ -1461,7 +1461,7 @@ watch(store.marginalia, m => {
       <button :title="t('放大')" @click="stepZoom(1)">＋</button>
       <span class="zb-sep"></span>
       <button :title="t('查找（Ctrl+F）')" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">{{ t('查找') }}</button>
-      <button :title="t('截图（复制到剪贴板）')" :class="{ on: shotMode }" :disabled="shotBusy" @click="startShot">{{ t('截图') }}</button>
+      <button :title="t('截图')" :class="{ on: shotMode }" :disabled="shotBusy" @click="startShot">{{ t('截图') }}</button>
     </div>
     </Transition>
 

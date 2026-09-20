@@ -66,7 +66,7 @@ const mb = n => (n / 1048576).toFixed(1)
       </div>
 
       <div class="upd-notes" v-if="d.notes">{{ d.notes }}</div>
-      <div class="upd-notes muted" v-else>{{ t('这一版没有写更新说明。') }}</div>
+      <div class="upd-notes muted" v-else>{{ t('这一版没有更新说明') }}</div>
 
             <div class="upd-prog" v-if="state === 'downloading'">
         <div class="upd-bar"><i :style="{ width: pct + '%' }" /></div>
@@ -77,9 +77,9 @@ const mb = n => (n / 1048576).toFixed(1)
       </div>
       <div class="upd-note err" v-if="state === 'error'">{{ t(d.prog.error) }}</div>
       <div class="upd-note ok" v-if="state === 'ready' && !d.installing">
-        {{ t('装好之后软件会自动重启；文库、批注、问答都不会动（它们不在安装目录里）。') }}
+        {{ t('装好后自动重启，数据不动') }}
       </div>
-      <div class="upd-note" v-if="d.installing">{{ t('安装器已经拉起，这个窗口可以关了。') }}</div>
+      <div class="upd-note" v-if="d.installing">{{ t('安装器已拉起，可以关了') }}</div>
 
       <div class="f-actions">
         <button v-if="!d.required" @click="close">{{ t('稍后') }}</button>
@@ -87,7 +87,7 @@ const mb = n => (n / 1048576).toFixed(1)
           {{ state === 'error' ? t('重新下载') : (d.packaged ? t('下载并安装') : t('下载安装包')) }}
         </button>
         <button v-if="state === 'ready' && d.packaged" class="primary" @click="install">{{ t('立即重启并安装') }}</button>
-        <button v-if="state === 'ready' && !d.packaged" @click="openFolder">{{ t('打开安装包所在文件夹') }}</button>
+        <button v-if="state === 'ready' && !d.packaged" @click="openFolder">{{ t('打开所在文件夹') }}</button>
       </div>
     </div>
   </div>

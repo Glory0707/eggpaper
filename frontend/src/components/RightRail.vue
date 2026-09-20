@@ -544,12 +544,12 @@ watch(() => store.currentId, () => {
         </div>
                 <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? t('还没析读：析读后才有这五个答案。') : t('扫描件：能读、能框选问 AI，五问答不了。') }}
+            {{ store.paras.length ? t('析读后出五问') : t('扫描件：能读能框选，五问答不了') }}
           </div>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">{{ t('扫描件：能读、能框选问 AI，五问答不了。') }}<span v-if="figures.length">{{ t(' 速览页有 {n} 张图表。', { n: figures.length }) }}</span></div>
+          <div class="r-note">{{ t('扫描件：能读能框选，五问答不了') }}<span v-if="figures.length">{{ t(' 速览页有 {n} 张图表。', { n: figures.length }) }}</span></div>
         </template>
 
         <template v-else>
@@ -616,7 +616,7 @@ watch(() => store.currentId, () => {
                   </span>
                 </div>
                 <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
-                  {{ t('作者没明说局限，眉批也没标出可疑之处。') }}
+                  {{ t('没找到明确的局限') }}
                 </div>
               </template>
 
@@ -690,7 +690,7 @@ watch(() => store.currentId, () => {
         </div>
         <div class="card-eye" v-else>
           <div class="ce-one">{{ prettyChem(store.summary.one_line) }}</div>
-          <div class="ce-row go" @click="gotoSix('q2')" :title="t('去「问题」页第 2 问：主张与证据链')">
+          <div class="ce-row go" @click="gotoSix('q2')" :title="t('去问题页 · 发现')">
             <span class="ce-k">{{ t('发现') }}</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>
@@ -789,9 +789,9 @@ watch(() => store.currentId, () => {
             <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>
             <span class="t-arrow">→</span>
             <span class="t-zh">{{ term.term_zh }}</span>
-            <button v-if="inPaper(term)" class="t-go" :title="t('在论文中查找该词')"
+            <button v-if="inPaper(term)" class="t-go" :title="t('在文中查找')"
                     @click="findTerm(term.term_en)">↗</button>
-            <span v-else class="t-no" :title="t('这篇论文的正文里没有这个词')">—</span>
+            <span v-else class="t-no" :title="t('本文正文没有这个词')">—</span>
             <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
           </div>
         </TransitionGroup>

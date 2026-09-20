@@ -886,9 +886,8 @@ def library_version():
     n, mx = db.q("SELECT COUNT(*), IFNULL(MAX(created_at),'') FROM papers")[0]
     return {"v": f"{n}:{mx}"}
 
-NO_TEXT = "这份 PDF 没有可提取的文字层（多半是扫描件），析读和提问都无从下手；原文照样能读，图表也能框选问 AI"
-PDF_GONE = ("这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。"
-            "把它拖回来重新导入一次即可，批注不会丢。")
+NO_TEXT = "这份 PDF 没有文字层（多半是扫描件）：析读和提问用不了，原文照样能读"
+PDF_GONE = "PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。"
 
 def _require_paras(pid: str) -> None:
     """扫描件没有文字层：让它过一个"请求模型、等半天、返回胡话"的流程是最坏的选择，

@@ -153,7 +153,7 @@ async function delColl(c) {
 async function collFail(e) {
   if (String(e.message || '').includes('不存在')) {
     await refreshPapers()
-    toast(t('这篇已经不在库里了（可能在别的窗口被删），文库已刷新'))
+    toast(t('这篇已被删除，文库已刷新'))
   } else toast(e.message)
 }
 const dragPid = ref(null)
@@ -334,7 +334,7 @@ function onCmpGoto(c) {
         <option value="read">{{ t('最近阅读') }}</option>
         <option value="title">{{ t('标题') }}</option>
       </select>
-      <button class="lib-multi" :class="{ on: selMode }" :title="t('多选：批量同屏 / 对比 / 分类 / 删除')"
+      <button class="lib-multi" :class="{ on: selMode }" :title="t('多选')"
               @click="toggleSelMode">{{ t('多选') }}</button>
     </div>
 
@@ -390,7 +390,7 @@ function onCmpGoto(c) {
             <input type="checkbox" :checked="menuPicked.has(c.id)" @change="flipPick(c.id)" />
             <span>{{ c.name }}</span>
           </label>
-          <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
+          <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类') }}</div>
           <button class="cm-done" @click="menuDone">{{ t('完成') }}</button>
         </div>
         </Transition>
@@ -398,9 +398,9 @@ function onCmpGoto(c) {
       <div v-if="!shown.length" class="p-empty">
         <template v-if="!store.papers.length">{{ t('文库是空的') }}</template>
         <template v-else-if="q.trim()">{{ t('没有匹配「{q}」的文献。', { q: q.trim() }) }}</template>
-        <template v-else-if="typeof SEL === 'number'">{{ t('这个分类还没有文献。') }}</template>
+        <template v-else-if="typeof SEL === 'number'">{{ t('这个分类还没有文献') }}</template>
         <template v-else-if="SEL === 'none'">{{ t('每一篇都归类了。') }}</template>
-        <template v-else>{{ t('没有符合条件的文献。') }}</template>
+        <template v-else>{{ t('没有符合条件的结果') }}</template>
       </div>
     </div>
 
@@ -409,10 +409,10 @@ function onCmpGoto(c) {
       <span class="s-n" :class="{ zero: !selN }">{{ t('已选 {n}', { n: selN }) }}</span>
       <button class="s-done" @click="toggleSelMode">{{ t('完成') }}</button>
       <span class="s-actions">
-        <button :disabled="!canSplit" :title="canSplit ? t('这几篇一起同屏阅读') : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
-        <button :disabled="!canCompare" :title="canCompare ? t('把这几篇的要点抽成一张对比表') : t('对比要选 2~5 篇')" @click="doCompare">{{ t('数据对比') }}</button>
-        <button :disabled="!selN" :title="t('给选中的篇统一归入一个分类')" @click="selMenu = !selMenu">{{ t('分类') }}</button>
-        <button :disabled="!selN" class="s-danger" :title="t('删除选中的篇')" @click="doDelete">{{ t('删除') }}</button>
+        <button :disabled="!canSplit" :title="canSplit ? '' : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
+        <button :disabled="!canCompare" :title="canCompare ? '' : t('对比要选 2~5 篇')" @click="doCompare">{{ t('数据对比') }}</button>
+        <button :disabled="!selN" :title="''" @click="selMenu = !selMenu">{{ t('分类') }}</button>
+        <button :disabled="!selN" class="s-danger" :title="''" @click="doDelete">{{ t('删除') }}</button>
       </span>
       <div class="coll-menu sel-coll" v-if="selMenu" @click.stop>
         <div class="cm-head">{{ t('归入分类 · {n} 篇', { n: selN }) }}</div>
@@ -421,12 +421,12 @@ function onCmpGoto(c) {
           <svg v-if="selCollState(c.id) === 'all'" viewBox="0 0 12 12" width="11" height="11" :title="t('这批已全部在这个分类')"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <button class="cm-row cm-act cm-uncat" @click="selToUncategorized">{{ t('未分类') }}</button>
-        <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
+        <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类') }}</div>
       </div>
     </div>
     </Transition>
     <div class="drop-hint" :class="{ over, hot: zotArmed }" v-show="!selMode"
-         :title="t('拖入 PDF 或点击导入 · 长按可从 Zotero 导入')"
+         :title="t('拖入 PDF 或点击导入 · 长按 Zotero 导入')"
          @mousedown="hintDown" @mouseup="hintUp" @mouseleave="hintUp" @click="hintClick"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
       {{ t('拖入 PDF 或点击导入') }}

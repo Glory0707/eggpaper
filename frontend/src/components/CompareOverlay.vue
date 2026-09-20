@@ -82,7 +82,7 @@ async function copyMd() {
   }
   try {
     await navigator.clipboard.writeText(lines.join('\n'))
-    toast(t('对比表已复制成 Markdown，可直接粘贴'))
+    toast(t('已复制 Markdown'))
   } catch (e) { toast(e.message) }
 }
 </script>
@@ -122,7 +122,7 @@ async function copyMd() {
         <!-- ② 抽取中 -->
         <div v-else-if="step === 'run'" class="cmp-wait">
           <span>{{ t('正在逐篇抽取要点') }}</span><span class="r-dots">…</span><br />
-          <span class="cmp-wait-sub">{{ t('每篇一次模型调用，几篇同时进行，通常十几秒') }}</span>
+          <span class="cmp-wait-sub">{{ t('通常十几秒') }}</span>
         </div>
         <div v-else-if="step === 'fail'" class="cmp-wait">{{ failed }}</div>
 
