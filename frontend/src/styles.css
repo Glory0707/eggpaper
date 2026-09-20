@@ -1693,7 +1693,7 @@ html.dark .fig-thumb,
 html.dark .lightbox img,
 html.dark .vis-img { background: #fff; }
 
-.cal-panel { width: var(--lib-w); max-height: calc(100vh - 132px); overflow-y: auto; }
+.cal-panel { width: var(--lib-w); overflow-y: auto; }   /* 日历/目录：与文库同高占满左缘（内容少时下方留白），内容超长内部滚 */
 
 .cal-panel .cal-nav, .cal-panel .cal-stat, .cal-panel .cal-grid,
 .cal-panel .cal-day, .cal-panel .cal-empty { margin-left: 16px; margin-right: 16px; }
