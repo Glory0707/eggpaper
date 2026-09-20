@@ -272,17 +272,27 @@ store.closePane = closePane
 export async function refreshAnalysis() {
   if (!store.currentId) return
   const mine = store.epoch
-  const a = await api.analysis(store.currentId)
+  let a
+  try {
+    a = await api.analysis(store.currentId)
+  } catch {
+    return        // 那一篇已经不在了（批量删除的竞态）：静下来，别冒 404 的 toast
+  }
   if (store.epoch !== mine) return             // 回来时已经换篇：这是上一篇的骨架，丢掉
   Object.assign(store.analysis, a)
-  store.paper = await api.paper(store.currentId)   // 同步 abbrs 等字段
+  try { store.paper = await api.paper(store.currentId) } catch { return }   // 同步 abbrs 等字段
   refreshPapers()
 }
 
 export async function refreshMarginalia() {
   if (!store.currentId) return
   const mine = store.epoch
-  const m = await api.marginalia(store.currentId)
+  let m
+  try {
+    m = await api.marginalia(store.currentId)
+  } catch {
+    return        // 同上：篇没了就不刷
+  }
   if (store.epoch !== mine) return             // 同上：别把上一篇的批注装到这篇上
   Object.assign(store.marginalia, m, { pid: store.currentId })
 }

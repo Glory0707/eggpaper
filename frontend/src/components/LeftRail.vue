@@ -1,13 +1,18 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper, goHome } from '../store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, jumpPara, goHome } from '../store'
 import { confirmBox } from '../dialog'
 import { t } from '../i18n'
 import { useEdgeResize } from '../edgeResize'
+import ZoteroDialog from './ZoteroDialog.vue'
+import CompareOverlay from './CompareOverlay.vue'
 
-const emit = defineEmits(['import', 'close', 'split'])
+const emit = defineEmits(['import', 'close', 'splitMany'])
 const fileInput = ref(null)
 const over = ref(false)
+const zotOpen = ref(false)
+const cmpOpen = ref(false)
+const cmpIds = ref([])
 
 /* ---------- 分栏宽度：和右栏同一个手势（edgeResize.js） ---------- */
 const LIB_MIN = 236, LIB_MAX = 560, LIB_DEF = 300
@@ -158,29 +163,130 @@ function onDrop(e) {
   over.value = false
   emit('import', Array.from(e.dataTransfer?.files || []))
 }
+async function _removePids(pids) {
+  for (const pid of pids) {
+    try {
+      await api.deletePaper(pid)
+    } catch (e) { toast(t('删除失败：{m}', { m: e.message })); continue }
+    localStorage.removeItem('eggpaper:pos:' + pid)     // 阅读位置也别留在浏览器里
+    store.openIds = store.openIds.filter(x => x !== pid)   // 同屏窗格里也摘掉这一篇
+    if (store.currentId === pid) {
+      const next = store.openIds[0]
+      if (next) {
+        await store.activatePaper(next, false)             // 同屏还有别的篇：切过去
+      } else {
+        goHome()          // 清场走 store 的正主：epoch/summaryErr/lastPaper 一个不漏
+      }
+    }
+  }
+  await refreshPapers()
+  await refreshCollections()
+}
 async function del(pid, name) {
   const yes = await confirmBox({
     title: t('删除文献'), ok: t('删除'), danger: true,
     body: t('《{name}》以及它的批注、析读、问答会一起从本机删掉。', { name: name.slice(0, 40) }),
   })
   if (!yes) return
-  try {
-    await api.deletePaper(pid)
-  } catch (e) { toast(t('删除失败：{m}', { m: e.message })); return }
-  localStorage.removeItem('eggpaper:pos:' + pid)     // 阅读位置也别留在浏览器里
-  store.openIds = store.openIds.filter(x => x !== pid)   // 同屏窗格里也摘掉这一篇
-  if (store.currentId === pid) {
-    const next = store.openIds[0]
-    if (next) {
-      await store.activatePaper(next, false)             // 同屏还有别的篇：切过去
-    } else {
-      goHome()          // 清场走 store 的正主：epoch/summaryErr/lastPaper 一个不漏
-    }
-  }
-  await refreshPapers()
-  await refreshCollections()
+  await _removePids([pid])
 }
 function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
+
+/* ---------- 多选：勾几篇，批量做事（同屏/对比/分类/删除） ---------- */
+const selMode = ref(false)
+const selSet = ref(new Set())
+const selN = computed(() => selSet.value.size)
+const canSplit = computed(() => selN.value >= 2 && selN.value <= 4)
+const canCompare = computed(() => selN.value >= 2 && selN.value <= 5)
+const selMenu = ref(false)
+function toggleSelMode() {
+  selMode.value = !selMode.value
+  selSet.value = new Set()
+  selMenu.value = false
+}
+function toggleSel(pid) {
+  const s = new Set(selSet.value)
+  s.has(pid) ? s.delete(pid) : s.add(pid)
+  selSet.value = s
+}
+/* Esc 先退选择模式，再轮到别的 Esc 语义 */
+function escSel(e) {
+  if (e.key !== 'Escape') return
+  e.preventDefault(); e.stopPropagation()
+  if (selMenu.value) { selMenu.value = false; return }
+  toggleSelMode()
+}
+watch(selMode, v => {
+  if (v) document.addEventListener('keydown', escSel, true)
+  else document.removeEventListener('keydown', escSel, true)
+})
+onBeforeUnmount(() => document.removeEventListener('keydown', escSel, true))
+
+function doSplit() {
+  if (!canSplit.value) return
+  emit('splitMany', [...selSet.value])
+  toggleSelMode()
+}
+function doCompare() {
+  if (!canCompare.value) return
+  cmpIds.value = [...selSet.value]
+  cmpOpen.value = true          // 覆盖层关掉后回选择模式，勾选还在，方便接着调
+}
+async function doDelete() {
+  if (!selN.value) return
+  const yes = await confirmBox({
+    title: t('删除文献'), ok: t('删除'), danger: true,
+    body: t('这 {n} 篇以及它们的批注、析读、问答会一起从本机删掉。', { n: selN.value }),
+  })
+  if (!yes) return
+  const pids = [...selSet.value]
+  toggleSelMode()
+  await _removePids(pids)
+}
+/* 批量归类：三态勾——全在=勾、全不在=空、部分=半；点一下按"任一没归"全归、否则全移出 */
+function selCollState(cid) {
+  const hits = [...selSet.value].filter(pid => collOf(pid).includes(cid)).length
+  return hits === 0 ? 'none' : hits === selN.value ? 'all' : 'some'
+}
+async function selToggleColl(cid) {
+  const on = selCollState(cid) !== 'all'
+  for (const pid of selSet.value) {
+    const cur = collOf(pid)
+    const has = cur.includes(cid)
+    if (on === has) continue
+    try { await api.paperColls(pid, on ? [...cur, cid] : cur.filter(x => x !== cid)) } catch { /* 一篇失败不拖垮整批 */ }
+  }
+  await refreshCollections()
+  selMenu.value = false
+  toast(on ? t('已把 {n} 篇归入该分类', { n: selN.value }) : t('已把 {n} 篇移出该分类', { n: selN.value }))
+}
+
+/* ---------- 长按拖放区 = 从 Zotero 导入（点击仍是选文件） ---------- */
+const zotArmed = ref(false)
+let pressTimer = null
+function hintDown(e) {
+  if (e.button !== 0) return
+  zotArmed.value = false
+  pressTimer = setTimeout(() => {
+    pressTimer = null
+    zotArmed.value = true      // 长按已成：随后那次 click（松开鼠标）不再开文件框
+    zotOpen.value = true
+  }, 600)
+}
+function hintUp() {
+  if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
+}
+function hintClick() {
+  if (zotArmed.value) { zotArmed.value = false; return }
+  fileInput.click()
+}
+function onZotImported() {
+  refreshPapers()
+  refreshCollections()
+}
+function onCmpGoto(c) {
+  openPaper(c.pid).then(() => jumpPara(c.n))
+}
 </script>
 
 <template>
@@ -200,6 +306,17 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
         <option value="read">{{ t('最近阅读') }}</option>
         <option value="title">{{ t('标题') }}</option>
       </select>
+      <button class="lib-multi" :class="{ on: selMode }" :title="t('多选：批量同屏 / 对比 / 分类 / 删除')"
+              @click="toggleSelMode">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+          <rect x="1" y="2" width="3.2" height="3.2" rx="0.9" fill="currentColor"/>
+          <rect x="6.2" y="2.7" width="8.8" height="1.8" rx="0.9" fill="currentColor"/>
+          <rect x="1" y="6.4" width="3.2" height="3.2" rx="0.9" fill="currentColor"/>
+          <rect x="6.2" y="7.1" width="8.8" height="1.8" rx="0.9" fill="currentColor"/>
+          <rect x="1" y="10.8" width="3.2" height="3.2" rx="0.9" fill="currentColor"/>
+          <rect x="6.2" y="11.5" width="8.8" height="1.8" rx="0.9" fill="currentColor"/>
+        </svg>
+      </button>
     </div>
 
         <div class="coll-list">
@@ -228,14 +345,17 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 
     <div class="paper-list">
       <TransitionGroup name="plist">
-      <div v-for="p in shown" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId }"
-           draggable="true" @dragstart="dragPid = p.id" @dragend="dragPid = null" @click="touch(p)">
-        <button class="p-split" :title="t('加入同屏阅读（最多 4 篇）')" @click.stop="emit('split', p.id)">⧉</button>
+      <div v-for="p in shown" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId, sel: selSet.has(p.id) }"
+           :draggable="!selMode" @dragstart="dragPid = p.id" @dragend="dragPid = null"
+           @click="selMode ? toggleSel(p.id) : touch(p)">
+        <i class="p-check" v-if="selMode" :class="{ on: selSet.has(p.id) }" :title="t('勾选这篇')">
+          <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </i>
         <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
-        <button class="p-tag" :title="t('归入分类')"
+        <button class="p-tag" v-if="!selMode" :title="t('归入分类')"
                 @click.stop="openMenu(p, $event)">＋</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
-        <div class="p-author" v-if="p.authors">{{ p.authors }}</div>
+        <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
         <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
         <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败，可重试') }}</div>
@@ -265,10 +385,34 @@ function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
       </div>
     </div>
 
-    <div class="drop-hint" :class="{ over }" @click="fileInput.click()"
+    <div class="sel-bar" v-if="selMode">
+      <span class="s-n" :class="{ zero: !selN }">{{ t('已选 {n}', { n: selN }) }}</span>
+      <button class="s-done" @click="toggleSelMode">{{ t('完成') }}</button>
+      <span class="s-actions">
+        <button :disabled="!canSplit" :title="canSplit ? t('这几篇一起同屏阅读') : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
+        <button :disabled="!canCompare" :title="canCompare ? t('把这几篇的要点抽成一张对比表') : t('对比要选 2~5 篇')" @click="doCompare">{{ t('数据对比') }}</button>
+        <button :disabled="!selN" :title="t('给选中的篇统一加/去分类')" @click="selMenu = !selMenu">{{ t('分类') }}</button>
+        <button :disabled="!selN" class="s-danger" :title="t('删除选中的篇')" @click="doDelete">{{ t('删除') }}</button>
+      </span>
+      <div class="coll-menu sel-coll" v-if="selMenu" @click.stop>
+        <div class="cm-head">{{ t('归入分类 · {n} 篇', { n: selN }) }}</div>
+        <label v-for="c in colls" :key="c.id" class="cm-row">
+          <input type="checkbox" :checked="selCollState(c.id) === 'all'"
+                 :indeterminate.prop="selCollState(c.id) === 'some'" @change="selToggleColl(c.id)" />
+          <span>{{ c.name }}</span>
+        </label>
+        <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
+        <button class="cm-done" @click="selMenu = false">{{ t('完成') }}</button>
+      </div>
+    </div>
+    <div class="drop-hint" :class="{ over, hot: zotArmed }" v-show="!selMode"
+         :title="t('拖入 PDF 或点击导入 · 长按可从 Zotero 导入')"
+         @mousedown="hintDown" @mouseup="hintUp" @mouseleave="hintUp" @click="hintClick"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
       {{ t('拖入 PDF 或点击导入') }}
     </div>
     <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFile" />
+    <ZoteroDialog v-model:open="zotOpen" @imported="onZotImported" />
+    <CompareOverlay :open="cmpOpen" :ids="cmpIds" @close="cmpOpen = false" @goto="onCmpGoto" />
   </div>
 </template>

@@ -113,6 +113,7 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE qa_messages ADD COLUMN conv_id INTEGER",
         "ALTER TABLE papers ADD COLUMN last_read_at TEXT",
         "ALTER TABLE papers ADD COLUMN authors TEXT",
+        "ALTER TABLE papers ADD COLUMN year TEXT",
         "ALTER TABLE conversations ADD COLUMN summary TEXT",
         "ALTER TABLE conversations ADD COLUMN summary_upto INTEGER DEFAULT 0",
         "ALTER TABLE papers ADD COLUMN citation TEXT",
@@ -159,8 +160,14 @@ def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int, a
 
 def list_papers():
     return [dict(r) for r in q(
-        "SELECT id, filename, title, authors, n_pages, created_at, last_read_at, analysis_status, "
+        "SELECT id, filename, title, authors, year, n_pages, created_at, last_read_at, analysis_status, "
         "marginalia_status, translate_status FROM papers ORDER BY created_at DESC")]
+
+def set_paper_meta(pid: str, title: str = "", authors: str = "", year: str = ""):
+    """Zotero 导入后回填可信元数据：只覆盖给了值的字段，解析出来的不许被空值抹掉。"""
+    fields = {k: v for k, v in (("title", title), ("authors", authors), ("year", year)) if v}
+    if fields:
+        update_paper(pid, **fields)
 
 def get_paper(pid: str):
     rows = q("SELECT * FROM papers WHERE id=?", (pid,))

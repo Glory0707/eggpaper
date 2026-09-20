@@ -715,9 +715,13 @@ function titleOf(pid) {
   const p = store.papers.find(x => x.id === pid)
   return p ? (p.title || p.filename) : t('正在打开…')
 }
-async function onSplit(pid) {
-  const r = await store.addPane(pid)
-  if (r?.full) toast(t('同屏最多 4 篇'))
+async function onSplitMany(ids) {
+  /* 多选出来的同屏组是一次多选的整体结果：先清场再逐篇进窗格，不再是追加语义 */
+  store.openIds = []
+  for (const pid of ids) {
+    const r = await store.addPane(pid)
+    if (r?.full) { toast(t('同屏最多 4 篇')); break }
+  }
 }
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0 })
@@ -944,7 +948,7 @@ function onKey(e) {
            @click="store.viewer.libOpen = store.viewer.calOpen = store.viewer.tocOpen = false"></div>
     </Transition>
     <Transition name="slide-l">
-      <LibPanel v-if="store.viewer.libOpen" @import="onImport" @split="onSplit" @close="store.viewer.libOpen = false" />
+      <LibPanel v-if="store.viewer.libOpen" @import="onImport" @split-many="onSplitMany" @close="store.viewer.libOpen = false" />
     </Transition>
     <Transition name="slide-l">
       <CalendarPanel v-if="store.viewer.calOpen" />

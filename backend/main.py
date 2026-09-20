@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 import appinfo
 import citation
+import compare
 
 appinfo.migrate_if_needed()
 
@@ -32,6 +33,7 @@ import pdfparse
 import picker
 import translate_full
 import update
+import zotero
 
 app = FastAPI(title="eggpaper", version="0.1.0")
 app.add_middleware(CORSMiddleware,
@@ -659,6 +661,22 @@ _pending_open = {"pid": None}
 def open_request():
     pid = _pending_open["pid"]
     _pending_open["pid"] = None
+
+@app.get("/api/zotero/items")
+def zotero_items():
+    """Zotero 桌面版的本地库清单（只读）。连接失败给到界面的是人话，不是堆栈。"""
+    try:
+        return {"items": zotero.list_items()}
+    except zotero.ZoteroUnavailable as e:
+        raise HTTPException(503, str(e))
+
+@app.post("/api/papers/{pid}/meta")
+def paper_meta(pid: str, body: dict):
+    """回填可信元数据（Zotero 导入后）：只覆盖给了值的字段。"""
+    _paper_or_404(pid)
+    b = body or {}
+    db.set_paper_meta(pid, str(b.get("title") or ""), str(b.get("authors") or ""), str(b.get("year") or ""))
+    return {"paper": db.get_paper(pid)}
     return {"pid": pid, "quitting": _QUITTING["user"]}
 
 def _paper_or_404(pid: str) -> dict:
@@ -1541,6 +1559,32 @@ def six_answer(pid: str, key: str):
             raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
         db.answer_put(pid, key, data)
     return data
+
+@app.post("/api/compare")
+def compare_papers(body: dict):
+    """数据对比表：勾选的几篇各抽一次、按同一 schema 拼成一张表（格子带 ¶ 锚点）。"""
+    ids = [str(x) for x in ((body or {}).get("ids") or [])][:5]
+    if len(ids) < 2:
+        raise HTTPException(400, "至少选两篇才能对比")
+    papers = []
+    for pid in ids:
+        p = db.get_paper(pid)
+        if not p:
+            raise HTTPException(404, "有篇论文不存在，刷新文库后再试")
+        if not db.get_paragraphs(pid, with_lines=False):
+            raise HTTPException(400, "选中的篇里有扫描件（没有文字层），它进不了对比")
+        papers.append(p)
+
+    def material_of(xpid):
+        _status, claims, annos = db.get_analysis(xpid)
+        return db.get_paragraphs(xpid, with_lines=False), claims, annos
+
+    demo = _demo_mode()
+    cells = compare.extract_all(papers, material_of, demo=demo)
+    return {"papers": [{k: p.get(k) for k in ("id", "title", "filename", "authors", "year")}
+                       for p in papers],
+            "cells": cells, "dims": [{"k": k, "label": label} for k, label, _h in compare.DIMS],
+            "demo": demo}
 
 @app.get("/api/papers/{pid}/method-card")
 def method_card(pid: str, cached: bool = False):

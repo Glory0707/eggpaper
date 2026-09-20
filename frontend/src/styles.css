@@ -474,15 +474,40 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .paper-item:hover .p-del { opacity: 1; visibility: visible; }
 .paper-item .p-del:hover { color: var(--vermilion); transform: none; box-shadow: none; }
-.paper-item .p-split {
-  position: absolute; right: 5px; top: 26px;
-  border: none; background: none; color: var(--ink-3);
-  font-size: var(--fs-md); padding: 0 3px;
-  opacity: 0; visibility: hidden;
-  transition: opacity var(--t-fast) var(--ease-smooth), visibility var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth);
+/* 多选：勾选框（文库行、Zotero 导入列表共用） */
+.p-check {
+  width: 15px; height: 15px; border-radius: 3px; flex-shrink: 0;
+  border: 1.5px solid rgba(var(--ink-rgb), 0.32); background: var(--card);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: transparent; transition: all var(--t-fast) var(--ease-smooth);
 }
-.paper-item:hover .p-split { opacity: 1; visibility: visible; }
-.paper-item .p-split:hover { color: var(--accent); transform: none; box-shadow: none; }
+.p-check.on { background: var(--accent-deep); border-color: var(--accent-deep); color: #fff; }
+.p-check.dis { opacity: 0.35; }
+.paper-item .p-check { position: absolute; left: 7px; top: 12px; z-index: 2; }
+.paper-item.sel { background: var(--accent-soft); border-color: var(--accent-line); }
+.lib-multi {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 26px; border-radius: 4px; cursor: pointer;
+  border: 1px solid transparent; background: none; color: var(--ink-3);
+  transition: all var(--t-fast) var(--ease-smooth);
+}
+.lib-multi:hover, .lib-multi.on { background: var(--accent-soft); color: var(--accent-deep); }
+.lib-multi.on { border-color: var(--accent-line); }
+/* 选择模式的吸底动作条：替换拖放区的位置，动作将来加就往 s-actions 里添一颗。
+   窄栏放不下四个动作一行，排两行：上行计数+完成、下行动作均分铺满 */
+.sel-bar {
+  position: relative; margin: 8px; padding: 7px 10px 8px; flex-shrink: 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  background: var(--card-2); border: 1px solid var(--accent-line); border-radius: 4px;
+}
+.sel-bar .s-n { font-size: var(--fs-xs); color: var(--ink-2); white-space: nowrap; }
+.sel-bar .s-n.zero { color: var(--ink-3); }
+.sel-bar .s-done { font-size: var(--fs-xs); padding: 3px 10px; margin-left: auto; }
+.sel-bar .s-actions { display: flex; gap: 4px; flex: 1 1 100%; }
+.sel-bar .s-actions button { font-size: var(--fs-xs); padding: 3px 8px; flex: 1; white-space: nowrap; }
+.sel-bar .s-actions button:disabled { opacity: 0.4; cursor: default; }
+.sel-bar .s-actions .s-danger:hover { color: var(--vermilion); border-color: var(--vermilion); }
+.coll-menu.sel-coll { position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 20; }
 /* 文库列表：搜索/筛选/归类时整体平滑重排，新条目轻浮入场 */
 .plist-move { transition: transform var(--t-base) var(--ease-smooth); }
 .plist-enter-active { transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out); }
@@ -1825,3 +1850,74 @@ html.dark .vis-img { background: #fff; }
   position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);
   width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
 }
+
+/* ---------- 从 Zotero 导入（文库拖放区长按唤起） ---------- */
+.zot-modal { width: min(620px, 92vw); display: flex; flex-direction: column; }
+.zot-tools { display: flex; gap: 8px; align-items: center; padding-bottom: 10px; }
+.zot-tools .lib-search { flex: 1; min-width: 0; }
+.zot-count { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
+.zot-list {
+  max-height: 52vh; overflow-y: auto; overflow-x: hidden;
+  border: 1px solid var(--hairline); border-radius: 4px; padding: 4px;
+}
+.zot-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 3px;
+  cursor: pointer; transition: background var(--t-fast) var(--ease-smooth);
+}
+.zot-row:hover { background: var(--paper-hover); }
+.zot-row.on { background: var(--accent-soft); }
+.zot-row.off { cursor: default; opacity: 0.55; }
+.z-title {
+  flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.zot-row.on .z-title { color: var(--ink); }
+.z-meta { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
+.z-nopdf {
+  font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap;
+  border: 1px solid var(--hairline); border-radius: 3px; padding: 0 5px;
+}
+.zot-empty { padding: 24px; text-align: center; color: var(--ink-3); font-size: var(--fs-sm); }
+
+/* ---------- 数据对比表（全屏覆盖层） ---------- */
+.cmp-mask {
+  position: fixed; inset: 0; z-index: 520; background: rgba(5, 5, 6, 0.66);
+  display: flex; align-items: center; justify-content: center; padding: 4vh 3vw;
+}
+.cmp-panel {
+  background: var(--card); border: 1px solid var(--hairline); border-radius: 8px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.28);
+  width: min(1080px, 94vw); max-height: 88vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.cmp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 14px 11px 16px; border-bottom: 1px solid var(--hairline); flex-shrink: 0;
+}
+.demo-flag {
+  font-style: normal; font-size: 10px; margin-left: 7px; padding: 0 4px; border-radius: 3px;
+  border: 1px solid var(--accent-line); color: var(--accent-deep);
+}
+.cmp-actions { display: flex; gap: 8px; align-items: center; }
+.cmp-x {
+  width: 30px; height: 30px; border-radius: 50%; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cmp-scroll { overflow: auto; padding: 0 16px 16px; }
+.cmp-table { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
+.cmp-table th, .cmp-table td { border: 1px solid var(--hairline); padding: 8px 10px; text-align: left; vertical-align: top; }
+.cmp-table thead th { background: var(--paper-deep); position: sticky; top: 0; z-index: 1; }
+.cmp-title { display: block; font-weight: 650; color: var(--ink); max-width: 210px; }
+.cmp-byline { display: block; font-size: var(--fs-xs); color: var(--ink-3); font-weight: 400; margin-top: 2px; }
+.cmp-table td.dim {
+  width: 78px; white-space: nowrap; font-size: var(--fs-xs);
+  color: var(--ink-3); background: var(--paper-deep);
+}
+.cmp-text { display: block; line-height: 1.65; color: var(--ink-2); min-width: 170px; user-select: text; cursor: auto; }
+.cmp-ref {
+  margin-top: 5px; font-size: var(--fs-xs); padding: 0 5px; border-radius: 3px;
+  color: var(--accent-deep); background: var(--accent-soft); border-color: transparent;
+}
+.cmp-ref:hover { border-color: var(--accent-line); transform: none; box-shadow: none; }
+.cmp-wait { padding: 52px 20px; text-align: center; color: var(--ink-3); font-size: var(--fs-sm); line-height: 2.1; }
+.cmp-wait-sub { font-size: var(--fs-xs); }
