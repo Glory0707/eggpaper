@@ -126,7 +126,7 @@ async function openShots() {
 
 function openGuide() { window.open('/guide', '_blank') }
 
-/* 整本翻译引擎（pdf2zh）：不在安装包里（AGPL 引擎另装）。
+/* 全文翻译引擎（pdf2zh）：不在安装包里（AGPL 引擎另装）。
    状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。 */
 const eng = reactive({ busy: false, ok: false, path: '', why: '', checked: false })
 const inst = reactive({ state: 'idle', pct: 0, got: 0, total: 0, error: '' })
@@ -268,7 +268,7 @@ function save() {
         </div>
       </div>
       <div class="f-row" v-if="!isEn()">
-        <label class="mono-label">{{ t('整本翻译服务') }}</label>
+        <label class="mono-label">{{ t('全文翻译服务') }}</label>
         <select v-model="f.service">
           <option value="bing">{{ t('bing（免费）') }}</option>
           <option value="openai">{{ t('openai（用上面的模型与端点）') }}</option>

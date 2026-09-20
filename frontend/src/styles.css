@@ -1560,7 +1560,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .six.open .six-q { color: var(--ink); font-weight: 650; }
 .six-q .qt { flex: 1; min-width: 0; }
 
-.six-q b { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 400; color: var(--ink-3); }
 .six-a { padding: 6px 0 13px 24px; }
 
 .six-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 210ms var(--ease-out); }

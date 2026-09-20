@@ -247,7 +247,7 @@ def _adopt_orphan_translation():
 
     pdf2zh 是我们起的**独立进程**：eggpaper 关掉/装新版本时它不会被一起带走，
     会接着把 mono.pdf 写完。但那条 running 状态被上面的清理归零了，
-    用户回来看到的还是「整本翻译」——白译一场，还得再等两分钟。启动时看一眼文件在不在，
+    用户回来看到的还是「全文翻译」——白译一场，还得再等两分钟。启动时看一眼文件在不在，
     在就直接认领成 done。只认「看起来完整」的文件（有 %%EOF 收尾），
     免得把写到一半就被杀掉的那份当成成品。
     """
@@ -319,10 +319,10 @@ def put_settings(body: dict):
 
 @app.get("/api/pdf2zh/engine")
 def pdf2zh_engine(path: str = ""):
-    """整本翻译引擎在哪、能不能跑。设置面板用它显示状态。
+    """全文翻译引擎在哪、能不能跑。设置面板用它显示状态。
 
     「给别人装」的场景全靠这一条：那台电脑上 pdf2zh 装没装、装在 PATH 之外、
-    还是装残了（.exe 在但包里没了）——从前只能靠"点一下整本翻译看它报什么"，
+    还是装残了（.exe 在但包里没了）——从前只能靠"点一下全文翻译看它报什么"，
     而报出来的是"bing 连不上"，指错方向。
     """
     cfg = config.load()
@@ -352,7 +352,7 @@ def set_data_location(body: dict):
     if low.startswith(os.path.join(appinfo.exe_dir(), "_internal").lower() + os.sep):
         raise HTTPException(400, "不能放在程序目录里")
     if any(running["status"] == "running" for running in translate_full.JOBS.values()):
-        raise HTTPException(400, "整本翻译正在进行，结束后再迁")
+        raise HTTPException(400, "全文翻译正在进行，结束后再迁")
     probe = os.path.join(target, ".probe")
     try:
         os.makedirs(target, exist_ok=True)
@@ -794,7 +794,7 @@ def delete_paper(pid: str):
     _lines_probe_done.discard(pid)
     db.purge_paper(pid)
     if translate_full.cancel(pid):
-        _applog(f"删论文 {pid}：同时终止了还在跑的整本翻译")
+        _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
     shutil.rmtree(paper_dir(pid), ignore_errors=True)
     _rm(p["path"])
     _rm(p["dual_path"]); _rm(p.get("mono_path"))
@@ -1255,12 +1255,12 @@ def marginalia_cancel(pid: str):
 
 @app.post("/api/papers/{pid}/translate-full/cancel")
 def translate_cancel(pid: str):
-    """停整本翻译：掐掉 pdf2zh 进程；已译好的页留在 .pages/ 里，下次接着译。"""
+    """停全文翻译：掐掉 pdf2zh 进程；已译好的页留在 .pages/ 里，下次接着译。"""
     p = _paper_or_404(pid)
     stopped = translate_full.cancel(pid)
     if stopped or p["translate_status"] == "running":
         db.update_paper(pid, translate_status="none", translate_error="")
-        _applog(f"整本翻译 {pid}: 已取消")
+        _applog(f"全文翻译 {pid}: 已取消")
     return {"ok": True, "stopped": bool(stopped)}
 
 @app.post("/api/papers/{pid}/pin")
@@ -1498,7 +1498,7 @@ def _mock_six(key: str) -> dict:
              "cites": []},
         ]}
     return {"items": [
-        {"lead": _demo_txt("它承认的", "Admitted"),
+        {"lead": _demo_txt("论文已说明", "Admitted"),
          "text": _demo_txt("〔演示模式〕换一组对照样品把这条路径单离出来 [¶12]。",
                            "[demo mode] Isolate this pathway with a different set of control samples [¶12]."),
          "ask": _demo_txt("怎么设计对照才能单离这条路径？", "What controls would isolate this pathway?"),
@@ -1514,11 +1514,11 @@ def _mock_six(key: str) -> dict:
 @app.get("/api/papers/{pid}/six-answers")
 def six_answers(pid: str):
     """只读缓存：打开一篇论文时问一次，没生成过的题返回 null。
-    lens/next 带 v=2 版本号（单键端点同样校验）——旧口径缓存在这里一并作废。"""
+    lens/next 带 v 版本号（单键端点同样校验）——v<3 的旧口径缓存在这里一并作废。"""
     _paper_or_404(pid)
     out = {}
     for key, val in (db.answers_all(pid) or {}).items():
-        if key in ("lens", "next") and isinstance(val, dict) and not val.get("v"):
+        if key in ("lens", "next") and isinstance(val, dict) and (val.get("v") or 0) < 3:
             out[key] = None
         else:
             out[key] = val
@@ -1531,7 +1531,7 @@ def six_answer(pid: str, key: str):
         raise HTTPException(404, "没有这个问题")
     with _key_lock("six:" + pid + ":" + key):
         cached = db.answer_get(pid, key)
-        if cached and key in ("lens", "next") and not cached.get("v"):
+        if cached and key in ("lens", "next") and (cached.get("v") or 0) < 3:
             cached = None
         if cached:
             return cached
@@ -2416,7 +2416,7 @@ def translate_para(pid: str, body: dict):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 def _pdf2zh_env(service: str, cfg: dict):
-    """整本翻译要的 key 从哪来：**用用户在「设置」里已经填的那一套**，不让他填第二遍。
+    """全文翻译要的 key 从哪来：**用用户在「设置」里已经填的那一套**，不让他填第二遍。
 
     只经环境变量交给子进程（pdf2zh 读 OPENAI_*/DEEPSEEK_* 这些）。
     注意 pdf2zh 自己会把拿到的值落到 `~/.config/PDFMathTranslate/config.json`
@@ -2454,7 +2454,7 @@ def translate_full_start(pid: str, force: bool = False):
         if got:
             db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
                             translate_status="done", translate_error="")
-            _applog(f"整本翻译 {pid}: 发现上次已经译好的成品，直接认领")
+            _applog(f"全文翻译 {pid}: 发现上次已经译好的成品，直接认领")
             return {"status": "done", "service": "", "note": "上次已经译好了，直接用了那份成品"}
     used, note = translate_full.choose_service(svc, host)
     if used is None:
@@ -2476,12 +2476,12 @@ def translate_full_status(pid: str):
     j = translate_full.job(pid)
     if j["status"] == "none" and p["translate_status"] not in ("running", "done", "error"):
         # pdf2zh 是独立进程：它可能在本进程启动**之后**才把成品写完，没人认领界面上
-        # 就永远显示「整本翻译」。这里顺手认领一次（两次 stat + 尾部读，够便宜）。
+        # 就永远显示「全文翻译」。这里顺手认领一次（两次 stat + 尾部读，够便宜）。
         got = translate_full.adopt_existing(paper_dir(pid))
         if got:
             db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
                             translate_status="done", translate_error="")
-            _applog(f"整本翻译 {pid}: 运行中发现已写完的成品，直接认领")
+            _applog(f"全文翻译 {pid}: 运行中发现已写完的成品，直接认领")
             p = _paper_or_404(pid)
     if j["status"] == "done":
         if (j["mono"] or "") != (p["mono_path"] or ""):

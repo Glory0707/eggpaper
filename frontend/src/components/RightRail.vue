@@ -549,8 +549,6 @@ watch(() => store.currentId, () => {
           <section class="six" v-for="s in SIX" :key="s.k" :class="{ open: openSix[s.k] }">
             <button class="six-q" @click="toggleSix(s.k)">
               <i :class="{ on: sixHas[s.k] }">{{ s.n }}</i><span class="qt">{{ t(s.k === 'q3' && isReview ? '它把文献怎么组织的？' : s.q) }}</span>
-              <b v-if="s.k === 'q3' && !isReview && store.analysis.claims.length">{{ store.analysis.claims.length }}</b>
-              <b v-else-if="s.k === 'q4' && limitParas.length + warnNotes.length">{{ limitParas.length + warnNotes.length }}</b>
             </button>
 
                         <div class="six-fold" :class="{ open: openSix[s.k] }">

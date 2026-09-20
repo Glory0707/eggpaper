@@ -215,11 +215,22 @@ def purge_paper(pid: str):
 
 # ---------- 现场生成问题的答案缓存 ----------
 
+def _plain_cites(v):
+    """历史答案里的 [¶1] 这类方括号引用统一裸成 ¶1——引用就是可点的段落号，
+    不该带一身括号。提示词已改，这里兜住升级前生成的旧缓存。"""
+    if isinstance(v, str):
+        return re.sub(r"\[+(¶[^[\]]*)\]+", r"\1", v)
+    if isinstance(v, list):
+        return [_plain_cites(x) for x in v]
+    if isinstance(v, dict):
+        return {k: (_plain_cites(x) if k in ("text", "items") else x) for k, x in v.items()}
+    return v
+
 def answers_all(pid: str) -> dict:
     out = {}
     for r in q("SELECT key, json FROM answers WHERE paper_id=?", (pid,)):
         try:
-            out[r["key"]] = json.loads(r["json"])
+            out[r["key"]] = _plain_cites(json.loads(r["json"]))
         except ValueError:
             pass
     return out
@@ -229,7 +240,7 @@ def answer_get(pid: str, key: str):
     if not rows:
         return None
     try:
-        return json.loads(rows[0]["json"])
+        return _plain_cites(json.loads(rows[0]["json"]))
     except ValueError:
         return None
 

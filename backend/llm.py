@@ -1062,8 +1062,8 @@ def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> di
             "背景段与主张，用你自己的话说清两件事：这篇要解决什么（谁在什么条件下还没做到什么，"
             "因此这篇论文要回答什么）；为什么非解决不可（对领域意味着什么、为什么到现在还没解决"
             "或有争议）。要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；一共两三句；"
-            "句尾用 [¶n] 标出你是从哪几段看出来的。"
-            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。' + _lang_tail()},
+            "句尾用 ¶n 标出你是从哪几段看出来的（直接写 ¶n，不要加方括号）。"
+            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n\n"
             f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
@@ -1082,8 +1082,8 @@ def answer_how_review(title: str, claims: list, paras: list) -> dict:
             "这是一篇综述，你在帮一位研究生说清它『把文献怎么组织的』。看给出的正文与它的组织主张，"
             "用两三句话说清：它按什么线索/维度分类，分成哪几块，各块之间什么关系（并列/递进/交叉），"
             "最后落到哪些开放问题。要求：说它自己的组织方式，不要复述被综述的内容；"
-            "能标依据的句子都标段号（如 [¶12]）。"
-            '只输出 JSON：{"text":"<两三句话，含 [¶n] 标注>"}，不要代码块，不要解释。' + _lang_tail()},
+            "能标依据的句子都标段号（如 ¶12，直接写不要加方括号）。"
+            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n\n"
             "[它的组织主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文]\n{body}"},
@@ -1095,8 +1095,9 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
     """还能做什么：两条腿都要有——论文自己承认的局限/延伸里长出来的方向，以及你顺着这篇
     想出来的新研究（可以是一篇新论文的体量：新问题、新体系、新方法）。
 
-    v=2：口径换过（旧版只从论文自身往前推，没有"你的新方向"）。带着版本戳，
-    服务端见到旧版缓存就当没有、重新生成——老论文打开时自动换到新口径。"""
+    v=3：引用口径换过——依据只写正文段落号 ¶n（不带方括号、不引用主张编号），
+    lead 用「论文已说明 / 新方向」。带着版本戳，服务端见到 v<3 的缓存就当没有、
+    重新生成——老论文打开时自动换到新口径。"""
     payload = (f"论文标题：{title or ''}\n\n"
                f"[作者承认的局限]\n{_paras_block(limits)}\n\n"
                f"[作者做的延伸]\n{_paras_block(exts, 400)}\n\n"
@@ -1111,14 +1112,16 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
             "（新问题、新体系、新方法都行），说清新在哪、为什么值得做、大概要动哪些工。"
             "要具体、可执行、有指向（该做哪个材料、该补哪组对照、该换哪种方法）；"
             "'进一步研究''拓宽应用'这类话不算方向。已经在别处说过的判断不必再交代。"
-            "每条配一句能直接拿去问模型的追问；lead 里点明这条是「它承认的」还是「你的新方向」。"
-            '只输出 JSON：{"items":[{"lead":"<方向名，≤10字，注明是它承认的还是你的新方向>",'
-            '"text":"<做什么、为什么，句尾带依据段号 [¶n]，有依据就标>",'
+            "每条配一句能直接拿去问模型的追问；lead 里点明这条是「论文已说明」的还是「新方向」。"
+            "注意：[主张] 那一份只是帮你理解的背景，正文里**绝不**引用它——依据一律写正文段落号 "
+            "¶n，直接写不要加方括号，也不要出现「主张」字样或主张编号。"
+            '只输出 JSON：{"items":[{"lead":"<方向名，≤10字，注明是论文已说明还是新方向>",'
+            '"text":"<做什么、为什么，句尾带依据段落号 ¶n，有依据就标>",'
             '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content": payload},
     ], max_tokens=4000, temperature=0.45, no_think=True)
     out = _items(data.get("items"))
-    out["v"] = 2
+    out["v"] = 3
     return out
 
 def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
@@ -1126,8 +1129,8 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
     的具体想法。
 
     口径（用户定的）：既要有这篇涉及的学科，也要有它**没涉及、但沾边或有关联**的学科
-    （哪怕隔得比较远）；说的是"他读到这篇什么感受、有什么想法/意见/联想"，要具体，
-    不是"跨学科很重要"这种废话。v=2：上一版写成一整段，用户要的还是条目。"""
+    （哪怕隔得比较远）；说的是"他读到这篇什么感受、有什么想法/意见"，要具体，
+    不是"跨学科很重要"这种废话。v=3：引用改为裸段落号 ¶n（不带方括号）。"""
     body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
     data = chat_json([
         {"role": "system", "content":
@@ -1139,13 +1142,13 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
             "不要泛泛地说'跨学科很重要'，也不必复述论文内容。"
             "每条配一句他会问的问题。"
             '只输出 JSON：{"items":[{"lead":"<学科名，≤8字>",'
-            '"text":"<他读到这篇的想法/意见，一两句，可标依据段号 [¶n]>",'
-            '"ask":"<他会提出的那个问题，≤40字>"}]}，不要代码块。' + _lang_tail()},
+            '"text":"<他读到这篇的想法/意见，一两句，可标依据段号 ¶n（不带方括号）>",'
+            '"ask":"他会提出的那个问题，≤40字"}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
             "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) +
             f"\n\n[正文节选]\n{body}"},
     ], max_tokens=4000, temperature=0.6, no_think=True)
     items = _items(data.get("items"))
-    items["v"] = 2
+    items["v"] = 3
     return items

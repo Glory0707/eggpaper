@@ -214,7 +214,7 @@ function pokeTally(pet) {
   pokeTallyN = 0
   pet.rollOnce()
 }
-const topPet = makePet()         // 顶栏那枚；析读完成/整本译完的动作滚跳也归它
+const topPet = makePet()         // 顶栏那枚；析读完成/全文译完的动作滚跳也归它
 const deskPet = makePet()        // 书桌空态那枚大的
 
 /* 陪伴节拍：没人戳的时候它自己也活着——约半小时随机做一个小动作（每 10 分钟看一眼时机，
@@ -252,9 +252,9 @@ function spinStyle(p) {
   return p.spinning ? { transform: `rotate(${p.spinDeg}deg) scale(${p.spinFree ? 1 : 0.94})` } : null
 }
 
-/* 干活与庆祝：整本翻译跑着、或析读在通读时，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）——
+/* 干活与庆祝：全文翻译跑着、或析读在通读时，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）——
    你在等析读，它也在一起读。这一篇译完跳两下（cheerEgg，pollTranslate 的完成拍调用）——
-   整本书翻完比析读完更有分量，跳两下；析读完成仍是滚一圈。轮询只看当前论文，人不在场就不庆祝。 */
+   全文翻完比析读完更有分量，跳两下；析读完成仍是滚一圈。轮询只看当前论文，人不在场就不庆祝。 */
 const eggBusy = computed(() =>
   (tranSt.value === 'running' || ['running', 'queued'].includes(store.analysis.status)) && !sleepEgg.value)
 const eggCheer = ref(false)
@@ -572,12 +572,12 @@ async function doMarginalia() {
 }
 
 /* 长任务的「停止」：后端是协作式取消，析读在阶段边界收手（已生成的部分保留），
-   整本翻译直接掐 pdf2zh 进程（已译好的页留着，下次接着译）。 */
+   全文翻译直接掐 pdf2zh 进程（已译好的页留着，下次接着译）。 */
 async function stopAnalyze() {
   try { await api.analysisCancel(store.currentId); toast(t('已请求停止，收个尾就停')) } catch { /* 不打扰 */ }
 }
 async function stopTranslate() {
-  try { await api.translateCancel(store.currentId); toast(t('已停止整本翻译')); await refreshPapers() } catch { /* 同上 */ }
+  try { await api.translateCancel(store.currentId); toast(t('已停止全文翻译')); await refreshPapers() } catch { /* 同上 */ }
 }
 
 /* 眉批是**唯一**会持续几十秒到几分钟的任务。全局那条 3 秒轮询在它跑完那一刻最多还要
@@ -602,11 +602,11 @@ async function doTranslateFull() {
     const r = await api.translateFull(store.currentId, again)
     tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0 }
     await refreshPapers()
-    toast(r.note || (again ? t('已开始重新整本翻译') : t('整本翻译已开始')))
+    toast(r.note || (again ? t('已开始重新全文翻译') : t('全文翻译已开始')))
   } catch (e) { toast(t('启动失败：{m}', { m: e.message })) }
 }
 
-/* 整本翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
+/* 全文翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
    完成这一拍也在这里接——完成通知与「译文/双语」的解锁都看它。 */
 async function pollTranslate() {
   if (!store.currentId) return
@@ -615,16 +615,16 @@ async function pollTranslate() {
   if (j.status === 'done') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
-    cheerEgg()                            // 整本书翻完了：跳两下（析读完成才是滚一圈）
-    toast(t('整本翻译完成'))   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
+    cheerEgg()                            // 全文翻完了：跳两下（析读完成才是滚一圈）
+    toast(t('全文翻译完成'))   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
   } else if (j.status === 'error') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()
-    toast(t('整本翻译失败：{m}', { m: (j.error || '').slice(0, 100) }), 6000)
+    toast(t('全文翻译失败：{m}', { m: (j.error || '').slice(0, 100) }), 6000)
   }
 }
 
-/* 后台篇的整本翻译：人已经转到别的论文上，那条 3 秒轮询只看当前篇——译完悄无声息，
+/* 后台篇的全文翻译：人已经转到别的论文上，那条 3 秒轮询只看当前篇——译完悄无声息，
    用户只能反复切回去看。这里替"还在跑"的每篇问一次状态（顺带让后端把孤儿译文认领了），
    完成时补一条通知；庆祝动画仍然只留给在场的这篇。 */
 const _bgTran = new Set()
@@ -737,8 +737,8 @@ const tranElapsed = computed(() => {
   return sec >= 90 ? t('{m} 分 {s} 秒', { m: Math.floor(sec / 60), s: sec % 60 }) : t('{s} 秒', { s: sec })
 })
 const tranLabel = computed(() => {
-  if (tranSt.value === 'done') return t('重新整本翻译')
-  if (tranSt.value !== 'running') return t('整本翻译')
+  if (tranSt.value === 'done') return t('重新全文翻译')
+  if (tranSt.value !== 'running') return t('全文翻译')
   const n = tranProg.value.total ? ` ${tranProg.value.done}/${tranProg.value.total}` : '…'
   return t('翻译中') + n
 })

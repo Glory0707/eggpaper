@@ -198,7 +198,7 @@ async function load({ keepPlace = false } = {}) {
     if (store.viewer.variant !== 'original') {
       const was = store.viewer.variant
       store.viewer.variant = 'original'      // 赋值会触发 watch → 重新 load
-      toast(t((was === 'mono' ? '译文版' : '双语版') + '打不开，已切回原文；想再看可重新「整本翻译」'), 5000)
+      toast(t((was === 'mono' ? '译文版' : '双语版') + '打不开，已切回原文；想再看可重新「全文翻译」'), 5000)
       loading = false
       return
     }

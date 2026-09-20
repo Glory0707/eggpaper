@@ -1,10 +1,10 @@
-"""pdf2zh 整本翻译封装：subprocess 隔离，绝不让 AGPL 代码进入本项目。
+"""pdf2zh 全文翻译封装：subprocess 隔离，绝不让 AGPL 代码进入本项目。
 
 这个文件里的每一条"绕路"都是实测踩出来的，别照直觉改回去：
 
 1. **必须带 CREATE_NO_WINDOW**。`pdf2zh.exe` 是控制台程序，而 eggpaper 打包版
    （console=False）自己没有控制台。Windows 的规矩是：没有控制台的进程去起一个
-   控制台子进程，就给它**新开一个黑窗**。于是用户点一下「整本翻译」，屏幕正中间
+   控制台子进程，就给它**新开一个黑窗**。于是用户点一下「全文翻译」，屏幕正中间
    蹦出一个终端——那个终端不是我们的日志窗口，是 pdf2zh 自己的控制台。
 
 2. **默认服务不能想当然**。pdf2zh 的 `google` 用的是 translate.google.com，在多数
@@ -94,7 +94,7 @@ def choose_service(service: str, host: str = ""):
         if alt == service or not probe(SERVICE_HOST.get(alt, ""))[0]:
             continue
         return alt, f"{service} 在你的网络下不通（{why}），已自动改用 {alt}"
-    return None, (f"{why}。「设置 → 整本翻译服务」换一个能用的（国内推荐 bing），"
+    return None, (f"{why}。「设置 → 全文翻译服务」换一个能用的（国内推荐 bing），"
                   f"或者先连上外网再试。")
 
 # ---------------- 引擎：在哪、能不能跑 ----------------
@@ -296,7 +296,7 @@ def adopt_existing(out_dir: str):
     """盘上已经有"看起来完整"的成品就认领，返回 {"dual","mono"}（缺的一方是空串）或 None。
 
     为什么要有：pdf2zh 是独立进程，eggpaper 关掉/装新版本时它还在跑，写完之后没人认领——
-    启动时那次扫描早过了。用户看到界面上还是「整本翻译」，点一次就重译一遍（还覆盖成品）。
+    启动时那次扫描早过了。用户看到界面上还是「全文翻译」，点一次就重译一遍（还覆盖成品）。
     判定"完整"看 %%EOF 收尾，免得把写到一半就被杀掉的半截文件当成成品。
     盘上**只落译文版（mono）**省盘，双语版按需派生。
     """
@@ -312,7 +312,7 @@ def job(pid: str) -> dict:
     return JOBS.setdefault(pid, {"status": "none", "error": "", "dual": "", "mono": "",
                                  "service": "", "note": "", "pages": [0, 0], "started": 0.0})
 
-# ---------------- 整本翻译：按页流水线 ----------------
+# ---------------- 全文翻译：按页流水线 ----------------
 
 PAGE_WORKERS_FREE = 3
 PAGE_WORKERS_LLM = 2
@@ -376,7 +376,7 @@ def derive_mono(dual_path: str, mono_path: str) -> str:
     return mono_path
 
 def sweep_page_dirs(papers_root: str, max_age: float = 48 * 3600):
-    """回收陈旧的 .pages/ 页级目录（页级产物各自内嵌整本字体，一份好几 MB）。
+    """回收陈旧的 .pages/ 页级目录（页级产物各自内嵌全文档的字体，一份好几 MB）。
 
     翻译没跑完时成功的页**故意留着**（重跑直接复用，不再重译一遍），但用户也可能
     再也不回来——那就按年龄回收。启动时对整库调一次。
@@ -504,7 +504,7 @@ def _pdf_complete(path: str) -> bool:
 
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "") -> dict:
-    """按页流水线翻译整本：进度=完成页数，坏页回退原文，一页卡不住整本。"""
+    """按页流水线翻译全文：进度=完成页数，坏页回退原文，一页卡不住整份文档。"""
     j = job(pid)
     if j["status"] == "running":
         return j
@@ -526,9 +526,9 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         if not ok:
             msg = f"缺 pdf2zh 引擎（{why}）。到「设置 → 翻译引擎」安装，或填写路径。"
             j.update(status="error", error=msg)
-            say(f"整本翻译失败 {pid}：pdf2zh 引擎不可用（{why}）")
+            say(f"全文翻译失败 {pid}：pdf2zh 引擎不可用（{why}）")
             return
-        say(f"整本翻译 {pid}: 用引擎 {exe}（{why}）")
+        say(f"全文翻译 {pid}: 用引擎 {exe}（{why}）")
         try:
             import pymupdf
             os.makedirs(out_dir, exist_ok=True)
@@ -562,7 +562,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         results[pno] = got
                         break
             if results:
-                _say(f"整本翻译 {pid}: 复用上次已译好的 {len(results)}/{n} 页，只译剩下的")
+                _say(f"全文翻译 {pid}: 复用上次已译好的 {len(results)}/{n} 页，只译剩下的")
             if envs:
                 cfg_copy = pinned_config(page_root, pid)
             j["pages"] = [len(results), n]
@@ -574,7 +574,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 try:
                     _worker(batch)
                 except Exception as e:
-                    _say(f"整本翻译 {pid}: 第 {batch[0] + 1} 页起的一批异常（{type(e).__name__}），保留原文")
+                    _say(f"全文翻译 {pid}: 第 {batch[0] + 1} 页起的一批异常（{type(e).__name__}），保留原文")
 
             def _worker(batch: list):
                 """batch：连续的 0 基页号。整批两次都没成时拆成单页各再试一遍——
@@ -595,10 +595,10 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         return
                     if got:
                         if t > 0:
-                            _say(f"整本翻译 {pid}: 第 {label} 页第二次尝试成功")
+                            _say(f"全文翻译 {pid}: 第 {label} 页第二次尝试成功")
                         break
                 if got:
-                    # pdf2zh 对 --pages 的产物有两种形态：整本（只有选中的页被译了）或只含选中页。
+                    # pdf2zh 对 --pages 的产物有两种形态：全文（只有选中的页被译了）或只含选中页。
                     # 记下每页在产物里的真实位置，组装时按它取，别猜。
                     try:
                         with pymupdf.open(got["mono"]) as m:
@@ -608,7 +608,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     with lock:
                         for p in batch:
                             if ml == n:
-                                at = p                       # 整本产物：0 基页号即位置
+                                at = p                       # 全文产物：0 基页号即位置
                             elif ml == len(batch):
                                 at = p - (a - 1)             # 只含区间：按批内顺序排
                             else:
@@ -617,11 +617,11 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         j["pages"] = [len(results), n]
                     return
                 if len(batch) > 1:
-                    _say(f"整本翻译 {pid}: 第 {label} 页整批两次都没成，拆成单页再各试一遍")
+                    _say(f"全文翻译 {pid}: 第 {label} 页整批两次都没成，拆成单页再各试一遍")
                     for p in batch:
                         _worker([p])
                     return
-                _say(f"整本翻译 {pid}: 第 {a} 页两次都没译成，这一页保留原文"
+                _say(f"全文翻译 {pid}: 第 {a} 页两次都没译成，这一页保留原文"
                      f"（{' / '.join(tail[-2:])}）")
 
             from concurrent.futures import ThreadPoolExecutor
@@ -632,7 +632,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
 
             if auth_error:
                 j.update(status="error", error=auth_error[0])
-                say(f"整本翻译失败 {pid}：{auth_error[0]}")
+                say(f"全文翻译失败 {pid}：{auth_error[0]}")
                 return
             if j.pop("_abort", None):
                 j.update(status="none", error="")      # 用户主动取消，不算一次失败
@@ -662,8 +662,8 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 if n and not results:
                     j.update(status="error",
                              error=f"所有页面都没译成（{service} 连不上或被限流）。"
-                                   "换一个翻译服务（设置 → 整本翻译）再试。")
-                    say(f"整本翻译失败 {pid}：全部页面失败")
+                                   "换一个翻译服务（设置 → 全文翻译）再试。")
+                    say(f"全文翻译失败 {pid}：全部页面失败")
                     return
                 mono.save(mono_path, garbage=4, deflate=True)
                 try:
@@ -677,11 +677,11 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                                         if failed else "")
             j.update(status="done", dual="", mono=mono_path,
                      error="", pages=[n, n], note=done_note)
-            _say(f"整本翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
+            _say(f"全文翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
                  f" · {len(results)}/{n} 页" + (f" · 失败页 {failed}" if failed else ""))
         except Exception as e:
             j.update(status="error", error=f"{type(e).__name__}: {str(e)[-400:]}")
-            say(f"整本翻译失败 {pid}：{type(e).__name__}: {str(e)[-300]}")
+            say(f"全文翻译失败 {pid}：{type(e).__name__}: {str(e)[-300]}")
         finally:
             _RUNNING.pop(pid, None)
             if j["status"] == "done" or not results:
