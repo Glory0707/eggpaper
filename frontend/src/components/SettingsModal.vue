@@ -206,8 +206,10 @@ function save() {
         <button class="modal-x" :title="t('关闭')" @click="emit('close')">×</button>
       </div>
       <div class="f-row">
-        <label class="mono-label">BASE URL</label>
-        <input type="text" v-model="f.base_url" placeholder="https://api.deepseek.com/v1" />
+        <label class="mono-label">BASE URL
+          <button class="lnk" style="margin-left:6px" @click="openGuide">{{ t('教程') }}</button>
+        </label>
+        <input type="text" v-model="f.base_url" placeholder="https://api.deepseek.com" />
       </div>
       <div class="f-row">
         <label class="mono-label">API KEY</label>
@@ -216,7 +218,7 @@ function save() {
       <div class="f-row">
         <label class="mono-label">{{ t('模型') }}</label>
         <div class="model-row">
-          <input type="text" v-model="f.model" placeholder="deepseek-chat / glm-4.7 / ..." />
+          <input type="text" v-model="f.model" placeholder="deepseek-flash / glm-4.7-flash / ..." />
           <label class="viz-ck"><input type="checkbox" v-model="f.vision" />{{ t('视觉') }}</label>
         </div>
         <div class="viz-sub">

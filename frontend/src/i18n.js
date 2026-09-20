@@ -436,6 +436,7 @@ const EN = {
   '待读': 'To read',
   '待读 {n} 篇': '{n} to read',
   '找一篇…': 'Find a paper…',
+  '教程': 'Guide',
   '论文不存在': 'Paper not found',
   'eggpaper 只认 PDF': 'eggpaper only accepts PDFs',
   '不是 PDF 文件': 'Not a PDF file',
