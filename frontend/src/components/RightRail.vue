@@ -389,6 +389,13 @@ const capPending = ref(false)
 const capText = computed(() => lightbox.value ? (capZh.value[figIdx.value] || lightbox.value.caption || '') : '')
 /* 长图注不值得挂成图下一根居中的文字墙：超过一段话的量就切成「左图右注」两栏 */
 const capLong = computed(() => capText.value.length > 200)
+/* 点遮罩关灯箱——但划选图注文字时 mouseup 落在遮罩上也会冒出 click，
+   有选区就当没点：图注要能选中复制，不能一拖就整扇关掉 */
+function overlayClick() {
+  const s = window.getSelection()
+  if (s && !s.isCollapsed) return
+  figIdx.value = -1
+}
 watch(() => figIdx.value, i => {
   lbLoaded.value = false
   if (i >= 0) fetchCap(i)
@@ -793,7 +800,7 @@ watch(() => store.currentId, () => {
     </div>
 
         <Transition name="fade">
-    <div class="lightbox" :class="{ side: capLong }" v-if="lightbox" @click="figIdx = -1">
+    <div class="lightbox" :class="{ side: capLong }" v-if="lightbox" @click="overlayClick">
       <button class="lb-x" :title="t('关闭')" @click="figIdx = -1">
         <svg viewBox="0 0 10 10" width="11" height="11" aria-hidden="true">
           <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" />

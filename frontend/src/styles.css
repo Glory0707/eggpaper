@@ -1234,13 +1234,13 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   min-width: 240px; min-height: 120px;
 }
 
-/* 图注只给中文全文本（原文在纸上，点「在原文查看」回去核对）；超长图注内部滚，不裁一个字 */
-.lb-cap { max-width: 76vw; max-height: 30vh; overflow-y: auto; text-align: center; font-size: calc(12.5px * var(--fs-scale)); line-height: 1.5; color: rgba(255, 255, 255, 0.88); }
+/* 图注只给中文全文本（原文在纸上，点「在原文查看」回去核对）；超长图注内部滚，不裁一个字。
+   图注是正文不是摆设：显式放开选中与文字光标，划选复制不加阻止 */
+.lb-cap { max-width: 76vw; max-height: 30vh; overflow-y: auto; text-align: center; font-size: calc(12.5px * var(--fs-scale)); line-height: 1.5; color: rgba(255, 255, 255, 0.88); user-select: text; cursor: auto; }
 .lb-cap-wait { display: block; margin-top: 4px; font-size: calc(11px * var(--fs-scale)); color: rgba(255, 255, 255, 0.52); }
 
 /* 长图注：左图右注。千字图注挂在图下是一根居中的文字墙，翻起来费劲；
-   两栏各自处于最舒服的形状：图在左格垂直居中，右栏上图注下按钮——
-   图注面板与图片同顶同底（1fr 拉满、内部滚），按钮行钉在面板正下方 */
+   图在左格垂直居中，右栏图注框随内容自适应、竖向居中，按钮行横贯底部 */
 .lightbox.side { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 460px);
                  grid-template-rows: minmax(0, 1fr) auto; align-items: stretch;
                  column-gap: 22px; row-gap: 12px;
@@ -1248,8 +1248,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .lightbox.side .lb-stage { grid-area: 1 / 1 / 2 / 2; align-items: center; justify-content: center; min-width: 0; }
 .lightbox.side .lb-stage img { max-width: 100%; max-height: calc(100vh - 112px); width: auto; height: auto; }
 .lightbox.side .lb-cap {
-  grid-area: 1 / 2 / 2 / 3; align-self: stretch;
-  max-width: none; max-height: none; text-align: left; font-size: calc(13px * var(--fs-scale)); line-height: 1.7;
+  grid-area: 1 / 2 / 2 / 3; align-self: center;   /* 框随内容自适应、在右栏竖向居中 */
+  max-width: none; max-height: 82vh; text-align: left; font-size: calc(13px * var(--fs-scale)); line-height: 1.7;
   padding: 16px 18px; box-sizing: border-box;
   background: rgba(17, 17, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px;
 }
