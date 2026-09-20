@@ -60,6 +60,7 @@ const newName = ref('')
 const editId = ref(null)
 const editName = ref('')
 const menuFor = ref(null)        // 打开"归入分类"面板的那篇
+const menuPicked = ref(new Set())  // 勾选暂存：点分类只改这里，点「完成」才一次性提交
 const menuXY = ref({ x: 0, y: 0, up: false })
 function openMenu(p, ev) {
   if (menuFor.value === p.id) { menuFor.value = null; return }
@@ -72,6 +73,23 @@ function openMenu(p, ev) {
     up,
   }
   menuFor.value = p.id
+  menuPicked.value = new Set(collOf(p.id))
+}
+function flipPick(cid) {
+  menuPicked.value.has(cid) ? menuPicked.value.delete(cid) : menuPicked.value.add(cid)
+}
+async function menuDone() {
+  const pid = menuFor.value
+  menuFor.value = null
+  if (!pid) return
+  const want = [...menuPicked.value]
+  const cur = collOf(pid)
+  if (want.length === cur.length && want.every(c => cur.includes(c))) return   // 没改就不发请求
+  try {
+    await api.paperColls(pid, want)
+    await refreshCollections()
+    toast(t('分类已更新'))
+  } catch (e) { await collFail(e) }
 }
 /* 菜单挂在 body 上（防列表裁剪），点外面/按 Esc 收起 */
 watch(menuFor, (v, was) => {
@@ -86,7 +104,7 @@ watch(menuFor, (v, was) => {
 function closeMenu(e) {
   // ＋ 按钮的点击交给 openMenu 自己的开/关切换（capture 监听先于 @click 触发）；
   // 菜单内部同理——这里在 capture 阶段，.stop 拦不住它，点菜单里先置空 menuFor
-  // 会让随后的 toggleIn 拿到 null，发出 /papers/null/collections（「论文不存在」的真凶）。
+  // 会让随后的 menuDone 拿到 null，发出 /papers/null/collections（「论文不存在」的真凶）。
   if (e?.target?.closest?.('.p-tag, .coll-menu')) return
   menuFor.value = null
 }
@@ -134,19 +152,6 @@ async function collFail(e) {
     await refreshPapers()
     toast(t('这篇已经不在库里了（可能在别的窗口被删），文库已刷新'))
   } else toast(e.message)
-}
-async function toggleIn(pid, cid) {
-  if (pid == null) return        // 双保险：菜单关闭竞态里 pid 可能已被置空，别让 null 出网
-  const cur = collOf(pid)
-  const c = colls.value.find(x => x.id === cid)
-  const on = cur.includes(cid)
-  const next = on ? cur.filter(x => x !== cid) : [...cur, cid]
-  try {
-    await api.paperColls(pid, next)
-    await refreshCollections()
-    if (c) toast(on ? t('已移出「{name}」', { name: c.name }) : t('已归入「{name}」', { name: c.name }))
-    // 菜单留着不关：一篇常要同时勾几个分类，「完成」/点外面/Esc 才收
-  } catch (e) { await collFail(e) }
 }
 const dragPid = ref(null)
 async function dropOn(cid) {
@@ -379,11 +384,11 @@ function onCmpGoto(c) {
              :style="{ left: menuXY.x + 'px', top: menuXY.y + 'px' }">
           <div class="cm-head">{{ t('归入分类') }}</div>
           <label v-for="c in colls" :key="c.id" class="cm-row">
-            <input type="checkbox" :checked="collOf(menuFor).includes(c.id)" @change="toggleIn(menuFor, c.id)" />
+            <input type="checkbox" :checked="menuPicked.has(c.id)" @change="flipPick(c.id)" />
             <span>{{ c.name }}</span>
           </label>
           <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
-          <button class="cm-done" @click="menuFor = null">{{ t('完成') }}</button>
+          <button class="cm-done" @click="menuDone">{{ t('完成') }}</button>
         </div>
         </Transition>
       </Teleport>

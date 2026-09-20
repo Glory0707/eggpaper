@@ -438,6 +438,7 @@ const EN = {
   '找一篇…': 'Find a paper…',
   '教程': 'Guide',
   '这篇已经不在库里了（可能在别的窗口被删），文库已刷新': 'This paper is gone from the library (deleted in another window?) — list refreshed',
+  '分类已更新': 'Categories updated',
   '论文不存在': 'Paper not found',
   'eggpaper 只认 PDF': 'eggpaper only accepts PDFs',
   '不是 PDF 文件': 'Not a PDF file',
