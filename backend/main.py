@@ -96,11 +96,49 @@ async def _bad_params(request, exc):
 PAPERS_DIR = os.path.join(config.DATA_DIR, "papers")
 _import_lock = threading.Lock()     # 查重到建库必须一气呵成：并发导入同一份文件会各得一篇
 
+_dir_cache = {}                     # pid -> papers/ 下的目录名（可读名迁移后与解析结果）
+_dir_lock = threading.Lock()
+
+def _slug(s: str) -> str:
+    """文件/文件夹名里的安全短名：连字还原（PDF 提取常带 ﬁﬂ，资源管理器里是怪字）、
+    去 Windows 非法字符与控制符，压空白，截 48 字。"""
+    s = (s or "").translate({0xFB00: "ff", 0xFB01: "fi", 0xFB02: "fl", 0xFB03: "ffi", 0xFB04: "ffl"})
+    s = re.sub(r'[\\/:*?"<>|\r\n\t]', " ", s)
+    return re.sub(r"\s+", " ", s).strip(" .-")[:48].strip()
+
+def _dir_name(pid: str, display: str) -> str:
+    """论文文件夹名：`<id> <短名>`——资源管理器里一眼对上号；没有短名就裸 id。"""
+    s = _slug(display)
+    return f"{pid} {s}" if s else pid
+
 def paper_dir(pid: str) -> str:
     """一篇论文的全部盘上数据都收在它自己的文件夹里：
-    paper.pdf（原件）+ mono.pdf（译文版）+ dual.pdf（双语缓存）+ .pages/（页级中间产物）。
-    删论文 = 删文件夹，用户在资源管理器里也一眼能对上号。"""
-    return os.path.join(PAPERS_DIR, pid)
+    paper.pdf（库内副本）+ mono.pdf（译文版）+ dual.pdf（双语缓存）+ .pages/（页级中间产物）。
+    目录名两代并存：老库裸 `<id>/`，新库 `<id> <标题短名>/`——都认，删论文 = 删文件夹。
+    解析结果进 _dir_cache，别在热路径上反复 listdir。"""
+    with _dir_lock:
+        name = _dir_cache.get(pid)
+    if name:
+        d = os.path.join(PAPERS_DIR, name)
+        if os.path.isdir(d):
+            return d
+        with _dir_lock:
+            _dir_cache.pop(pid, None)
+    d = os.path.join(PAPERS_DIR, pid)
+    if os.path.isdir(d):
+        with _dir_lock:
+            _dir_cache[pid] = pid
+        return d
+    try:
+        prefix = pid + " "
+        for n in os.listdir(PAPERS_DIR):
+            if n.startswith(prefix):
+                with _dir_lock:
+                    _dir_cache[pid] = n
+                return os.path.join(PAPERS_DIR, n)
+    except OSError:
+        pass
+    return d
 
 def _backfill_pdf_hashes():
     """给旧库论文慢慢补内容指纹（导入判重的第二把钥匙）。
@@ -183,11 +221,98 @@ def _migrate_paper_layout():
     if moved:
         _applog(f"数据目录迁移：{moved} 个文件归位到 papers/<论文 id>/ 每篇一个文件夹")
 
+def _rename_paper_dirs():
+    """给老文件夹补可读短名（`<id>/` → `<id> <标题短名>/`），同步改写库里的路径字段。
+
+    **只在启动时做**：跑任务期间挪目录，读写路径就赌输了；启动时没有任何任务在跑。
+    """
+    n = 0
+    for row in db.list_papers():
+        pid = row["id"]
+        slug = _slug(row["title"] or "")
+        if not slug:
+            continue
+        cur = paper_dir(pid)
+        if not os.path.isdir(cur):
+            continue
+        want_name = f"{pid} {slug}"
+        if os.path.basename(os.path.normpath(cur)) == want_name:
+            continue
+        want = os.path.join(PAPERS_DIR, want_name)
+        if os.path.exists(want):
+            continue
+        try:
+            os.rename(cur, want)
+        except OSError:
+            continue
+        with _dir_lock:
+            _dir_cache[pid] = want_name
+        p = db.get_paper(pid) or {}
+        ups = {}
+        for key, fn in (("path", "paper.pdf"), ("mono_path", "mono.pdf"), ("dual_path", "dual.pdf")):
+            v = p.get(key) or ""
+            if v and os.path.normcase(os.path.dirname(os.path.abspath(v))) == os.path.normcase(os.path.abspath(cur)):
+                ups[key] = os.path.join(want, fn)
+        if ups:
+            db.update_paper(pid, **ups)
+        n += 1
+    if n:
+        _applog(f"论文文件夹补可读名：{n} 个")
+
+def _repair_paper_paths():
+    """path 字段与库内副本互相修（启动时跑一遍）：
+
+    - path 断了（原件被移动/删除、目录被改名）而库内副本还在 → 字段改回库内副本；
+    - 库内副本缺了而 path 还在 → 拷一份进库（"eggpaper 目录下自动存一版"）。
+    对应"用户动了原 PDF / 清过数据目录"的场景——能救的启动时都救回来。"""
+    fixed = copied = 0
+    for row in db.list_papers():
+        pid = row["id"]
+        p = db.get_paper(pid) or {}
+        lib = os.path.join(paper_dir(pid), "paper.pdf")
+        src = p.get("path") or ""
+        if os.path.isfile(lib):
+            if (not src or not os.path.isfile(src)) and \
+                    os.path.normcase(os.path.abspath(src or lib)) != os.path.normcase(os.path.abspath(lib)):
+                db.update_paper(pid, path=lib)
+                fixed += 1
+            continue
+        if src and os.path.isfile(src) and \
+                os.path.normcase(os.path.dirname(os.path.abspath(src))) != os.path.normcase(os.path.abspath(paper_dir(pid))):
+            try:
+                os.makedirs(paper_dir(pid), exist_ok=True)
+                shutil.copy2(src, lib)
+                copied += 1
+            except OSError:
+                pass
+    if fixed or copied:
+        _applog(f"自愈：{fixed} 篇的来源路径改回库内副本，{copied} 篇补了库内副本")
+
+def _paper_src(pid: str, p: dict) -> str:
+    """这篇论文的原 PDF 在哪：先认 path 字段，断了退库内副本（顺手把字段修回来）。
+
+    历史遗留行的 path 可能指着早已移动/删除的外部原件——eggpaper 反正存了自己的副本，
+    不该因为外部文件动了就判死。"""
+    src = p.get("path") or ""
+    if src and os.path.exists(src):
+        return src
+    alt = os.path.join(paper_dir(pid), "paper.pdf")
+    if os.path.exists(alt):
+        try:
+            if src:
+                db.update_paper(pid, path=alt)
+        except Exception:
+            pass
+        return alt
+    return src or alt
+
 @app.on_event("startup")
 def _startup():
     config.ensure_dirs()
     os.makedirs(PAPERS_DIR, exist_ok=True)
     _migrate_paper_layout()
+    _rename_paper_dirs()
+    _repair_paper_paths()
     try:
         for pid in os.listdir(PAPERS_DIR):
             translate_full.sweep_configs(os.path.join(PAPERS_DIR, pid, ".pages"))
@@ -212,15 +337,22 @@ def _sweep_orphan_papers():
     什么时候会有：导入写了一半进程被杀（PDF 落了盘、库记录没写上），
     或者旧平铺布局迁移前留下的残骸。不清的话它们会一直占着几十 MB，
     而且"删过了"的东西还在盘上。
+    目录认两代名：裸 `<id>/` 和可读名 `<id> <短名>/`——判 owner 取空格前的
+    那段 id；**这步绝不能比 rename pass 先跑**，否则刚改完名的目录会被当孤儿删光。
     """
     try:
         dirs = os.listdir(PAPERS_DIR)
     except OSError:
         return
     known = {row["id"] for row in db.list_papers()}
+
+    def owned(name: str) -> bool:
+        i = name.find(" ")
+        return (name if i < 0 else name[:i]) in known
+
     n = 0
     for d in dirs:
-        if d in known:
+        if owned(d):
             continue
         shutil.rmtree(os.path.join(PAPERS_DIR, d), ignore_errors=True)
         n += 1
@@ -653,8 +785,11 @@ async def upload(file: UploadFile = File(...)):
                         "n_captions": sum(1 for pp in paras if pp.get("caption")),
                         "no_text": not paras, "duplicate": True}
             pid = db.new_id()
-            os.makedirs(paper_dir(pid), exist_ok=True)
-            path = os.path.join(paper_dir(pid), "paper.pdf")
+            pid_dir = os.path.join(PAPERS_DIR, _dir_name(pid, os.path.splitext(name)[0]))
+            os.makedirs(pid_dir, exist_ok=True)
+            with _dir_lock:
+                _dir_cache[pid] = os.path.basename(pid_dir)
+            path = os.path.join(pid_dir, "paper.pdf")     # 库内自存一份：删原件、挪原件都不影响
             with open(path, "wb") as f:
                 f.write(raw)
             return _ingest(pid, name, path, _pdf_hash_bytes(raw))
@@ -675,8 +810,11 @@ def import_path(body: dict):
         raise HTTPException(400, "eggpaper 只认 PDF")
     name, size = os.path.basename(src), os.path.getsize(src)
     pid = db.new_id()
-    os.makedirs(paper_dir(pid), exist_ok=True)
-    dest = os.path.join(paper_dir(pid), "paper.pdf")
+    pid_dir = os.path.join(PAPERS_DIR, _dir_name(pid, os.path.splitext(name)[0]))
+    os.makedirs(pid_dir, exist_ok=True)
+    with _dir_lock:
+        _dir_cache[pid] = os.path.basename(pid_dir)
+    dest = os.path.join(pid_dir, "paper.pdf")
     with _import_lock:
         try:
             pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
@@ -686,9 +824,11 @@ def import_path(body: dict):
         if dup:
             _rm(dest)
             try:
-                os.rmdir(paper_dir(pid))    # 刚建的空文件夹顺手收掉
+                os.rmdir(pid_dir)    # 刚建的空文件夹顺手收掉
             except OSError:
                 pass
+            with _dir_lock:
+                _dir_cache.pop(pid, None)
             _pending_open["pid"] = dup
             return {"paper": db.get_paper(dup), "duplicate": True}
         out = _ingest(pid, name, dest, pdf_hash)
@@ -869,6 +1009,8 @@ def delete_paper(pid: str):
     if translate_full.cancel(pid):
         _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
     shutil.rmtree(paper_dir(pid), ignore_errors=True)
+    with _dir_lock:
+        _dir_cache.pop(pid, None)
     _rm(p["path"])
     _rm(p["dual_path"]); _rm(p.get("mono_path"))
     return {"ok": True}
@@ -888,7 +1030,7 @@ def paper_pdf(pid: str, variant: str = "original"):
         if dual and os.path.exists(dual):
             return FileResponse(dual, media_type="application/pdf")
         mono = p.get("mono_path") or os.path.join(paper_dir(pid), "mono.pdf")
-        src = p.get("path") or ""
+        src = _paper_src(pid, p)
         if (mono and os.path.exists(mono) and src and os.path.exists(src)):
             try:
                 with _key_lock("variant:" + pid + ":dual"):
@@ -914,9 +1056,10 @@ def paper_pdf(pid: str, variant: str = "original"):
                 db.update_paper(pid, mono_path=mono)
             return FileResponse(mono, media_type="application/pdf")
         raise HTTPException(404, "译文版尚未生成")
-    if not os.path.exists(p["path"]):
+    src = _paper_src(pid, p)
+    if not src or not os.path.exists(src):
         raise HTTPException(404, PDF_GONE)
-    return FileResponse(p["path"], media_type="application/pdf")
+    return FileResponse(src, media_type="application/pdf")
 
 _lines_probe_done: set = set()   # 行级补解析每篇每进程只试一次：对不上的篇反复整本重解析纯属浪费
 

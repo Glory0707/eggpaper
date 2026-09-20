@@ -168,6 +168,7 @@ async function _removePids(pids) {
     try {
       await api.deletePaper(pid)
     } catch (e) { toast(t('删除失败：{m}', { m: e.message })); continue }
+    selSet.value.delete(pid)     // 勾选里摘掉：残留死 id 会让下一次批量操作 404「论文不存在」
     localStorage.removeItem('eggpaper:pos:' + pid)     // 阅读位置也别留在浏览器里
     store.openIds = store.openIds.filter(x => x !== pid)   // 同屏窗格里也摘掉这一篇
     if (store.currentId === pid) {
@@ -353,7 +354,7 @@ function onCmpGoto(c) {
         </i>
         <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
         <button class="p-tag" v-if="!selMode" :title="t('归入分类')"
-                @click.stop="openMenu(p, $event)">＋</button>
+                @click.stop="openMenu(p, $event)">+</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
         <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
