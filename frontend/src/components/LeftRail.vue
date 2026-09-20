@@ -126,6 +126,13 @@ async function delColl(c) {
 }
 
 /* ---------- 归入分类：勾选 + 拖拽两条路 ---------- */
+/* 归类失败若是"论文不存在"：列表八成是陈旧的（别的窗口删过）——刷新掉，别让用户对着死行反复撞墙 */
+async function collFail(e) {
+  if (String(e.message || '').includes('不存在')) {
+    await refreshPapers()
+    toast(t('这篇已经不在库里了（可能在别的窗口被删），文库已刷新'))
+  } else toast(e.message)
+}
 async function toggleIn(pid, cid) {
   const cur = collOf(pid)
   const c = colls.value.find(x => x.id === cid)
@@ -136,7 +143,7 @@ async function toggleIn(pid, cid) {
     await refreshCollections()
     if (c) toast(on ? t('已移出「{name}」', { name: c.name }) : t('已归入「{name}」', { name: c.name }))
     menuFor.value = null
-  } catch (e) { toast(e.message) }
+  } catch (e) { await collFail(e) }
 }
 const dragPid = ref(null)
 async function dropOn(cid) {
@@ -150,7 +157,7 @@ async function dropOn(cid) {
     await api.paperColls(pid, [...cur, cid])
     await refreshCollections()
     if (c) toast(t('已归入「{name}」', { name: c.name }))
-  } catch (e) { toast(e.message) }
+  } catch (e) { await collFail(e) }
   menuFor.value = null
 }
 
@@ -254,7 +261,7 @@ async function selAddColl(cid) {
   for (const pid of selSet.value) {
     const cur = collOf(pid)
     if (cur.includes(cid)) continue
-    try { await api.paperColls(pid, [...cur, cid]) } catch { /* 一篇失败不拖垮整批 */ }
+    try { await api.paperColls(pid, [...cur, cid]) } catch { selSet.value.delete(pid) }   // 一篇失败不拖垮整批；失败的多半已被删，勾选里摘掉
   }
   await refreshCollections()
   selMenu.value = false
@@ -264,7 +271,7 @@ async function selAddColl(cid) {
 async function selToUncategorized() {
   for (const pid of selSet.value) {
     if (!collOf(pid).length) continue
-    try { await api.paperColls(pid, []) } catch { /* 一篇失败不拖垮整批 */ }
+    try { await api.paperColls(pid, []) } catch { selSet.value.delete(pid) }
   }
   await refreshCollections()
   selMenu.value = false

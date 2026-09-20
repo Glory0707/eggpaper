@@ -49,6 +49,7 @@ export const api = {
   figCaption: (pid, idx) => req('GET', `/api/papers/${pid}/fig_caption?idx=${idx}`),
   calendar: (month) => req('GET', `/api/calendar?month=${month}`),
   plan: (pid, day) => req('POST', `/api/papers/${pid}/plan`, { day }),
+  libraryVersion: () => req('GET', '/api/library/version'),
   toc: (pid) => req('GET', `/api/papers/${pid}/toc`),
   askVisual: (body) => req('POST', '/api/ask-visual', body),
   figureUrl: (pid, f, dpi = 130) =>

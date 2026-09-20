@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion } from './store'
+import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion, startLibraryWatch } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
@@ -321,6 +321,7 @@ onMounted(async () => {
     toast(t('出错了：{m}', { m: msg.slice(0, 120) }), 5000)
   })
   pollTimer = setInterval(poll, 3000)
+  startLibraryWatch()         // 文库对账：别的窗口导入/删了，这个页面的列表 5 秒内跟上
   idleTimerId = setInterval(idleTick, 600000)   // 陪伴节拍：平均半小时左右一个小动作
   greetBootT = setTimeout(maybeGreet, 2500)     // 开场问候：界面站稳后轻轻说一句
   sleepGreet()               // 深夜开着 eggpaper：蛋先睡下，问候随后

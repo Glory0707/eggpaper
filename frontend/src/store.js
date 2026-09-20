@@ -142,6 +142,20 @@ export async function refreshPapers() {
   store.papers = await api.papers()
 }
 
+/* 文库版本号对账：每 5 秒问一次后端"篇数/最新导入变没变"，变了就静默刷新列表。
+   没有它，开久了的窗口拿着陈旧列表去拖拽归类，就会撞「论文不存在」——
+   那篇多半在别的窗口被删了，这个页面永远不知道。 */
+let _libV = ''
+export function startLibraryWatch() {
+  setInterval(async () => {
+    try {
+      const { v } = await api.libraryVersion()
+      if (v && _libV && v !== _libV) await refreshPapers()
+      _libV = v
+    } catch { /* 服务退了：下一拍再说 */ }
+  }, 5000)
+}
+
 /* idx → 段落 的表。三个组件（纸面 / 右栏 / 提问）都要按 ¶n 找段落，
    原来各建一份——同一份数据在一篇论文里被 entries 三遍。收成一处，换篇只算一次。 */
 export const paraByIdx = computed(() => Object.fromEntries(store.paras.map(p => [p.idx, p])))

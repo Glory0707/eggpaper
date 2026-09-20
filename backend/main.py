@@ -862,8 +862,16 @@ def paper_meta(pid: str, body: dict):
 def _paper_or_404(pid: str) -> dict:
     p = db.get_paper(pid)
     if not p:
+        _applog(f"404 论文不存在：pid={pid}（多半是别的窗口删过、页面列表还没跟新）")
         raise HTTPException(404, "论文不存在")
     return p
+
+@app.get("/api/library/version")
+def library_version():
+    """文库版本号：篇数 + 最新导入时间。开着的页面每几秒对一次账，
+    别的窗口导入/删除了，这边列表自动跟新——不再拿着陈旧列表去撞「论文不存在」。"""
+    n, mx = db.q("SELECT COUNT(*), IFNULL(MAX(created_at),'') FROM papers")[0]
+    return {"v": f"{n}:{mx}"}
 
 NO_TEXT = "这份 PDF 没有可提取的文字层（多半是扫描件），析读和提问都无从下手；原文照样能读，图表也能框选问 AI"
 PDF_GONE = ("这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。"
