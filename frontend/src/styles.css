@@ -523,17 +523,18 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 }
 .drop-hint:hover, .drop-hint.over { border-color: var(--accent-deep); background: var(--accent-soft); color: var(--accent-deep); }
 
-/* 时段问候：取景框纸卡，淡入浮起、角标展开、下沉淡出；纯展示不挡操作 */
+/* 时段问候：取景框纸卡，淡入浮起、角标展开、下沉淡出；纯展示不挡操作。
+   框随文字收紧（padding 小、圆角小），留白克制 */
 .greet-box { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); z-index: 700;
-  pointer-events: none; background: var(--card); border-radius: 10px; padding: 18px 30px;
+  pointer-events: none; background: var(--card); border-radius: 8px; padding: 9px 18px;
   box-shadow: 0 8px 30px rgba(var(--wash-rgb), .10); }
-.greet-box .gt { font-size: calc(17px * var(--fs-scale)); color: var(--ink); letter-spacing: .03em; font-weight: 500; white-space: nowrap; }
-.greet-box i { position: absolute; width: 13px; height: 13px; border: 0 solid var(--accent);
+.greet-box .gt { font-size: calc(16px * var(--fs-scale)); color: var(--ink); letter-spacing: .03em; font-weight: 500; white-space: nowrap; }
+.greet-box i { position: absolute; width: 11px; height: 11px; border: 0 solid var(--accent);
   animation: greetCorner .45s var(--ease-out) .12s both; }
-.greet-box .gtl { top: -1px; left: -1px; border-top-width: 1.5px; border-left-width: 1.5px; border-top-left-radius: 10px; }
-.greet-box .gtr { top: -1px; right: -1px; border-top-width: 1.5px; border-right-width: 1.5px; border-top-right-radius: 10px; }
-.greet-box .gbl { bottom: -1px; left: -1px; border-bottom-width: 1.5px; border-left-width: 1.5px; border-bottom-left-radius: 10px; }
-.greet-box .gbr { bottom: -1px; right: -1px; border-bottom-width: 1.5px; border-right-width: 1.5px; border-bottom-right-radius: 10px; }
+.greet-box .gtl { top: -1px; left: -1px; border-top-width: 1.5px; border-left-width: 1.5px; border-top-left-radius: 8px; }
+.greet-box .gtr { top: -1px; right: -1px; border-top-width: 1.5px; border-right-width: 1.5px; border-top-right-radius: 8px; }
+.greet-box .gbl { bottom: -1px; left: -1px; border-bottom-width: 1.5px; border-left-width: 1.5px; border-bottom-left-radius: 8px; }
+.greet-box .gbr { bottom: -1px; right: -1px; border-bottom-width: 1.5px; border-right-width: 1.5px; border-bottom-right-radius: 8px; }
 @keyframes greetCorner { from { opacity: 0; transform: scale(1.5); } to { opacity: 1; transform: none; } }
 .greet-enter-active { transition: opacity .45s var(--ease-out), transform .45s var(--ease-spring); }
 .greet-enter-from { opacity: 0; transform: translateX(-50%) translateY(12px); }
