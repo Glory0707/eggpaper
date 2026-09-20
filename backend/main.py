@@ -965,8 +965,11 @@ def plan_paper(pid: str, body: dict = None):
     没有完成态、没有提醒——打开那篇的瞬间 touch 就把计划消了。"""
     _paper_or_404(pid)
     day = str(((body or {}).get("day") or "")).strip()
-    if day and not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
-        raise HTTPException(400, "day 要是 YYYY-MM-DD 或空串")
+    if day:
+        try:
+            time.strptime(day, "%Y-%m-%d")     # 正则之外的兜底：2026-02-30 这类不存在的日期
+        except ValueError:
+            raise HTTPException(400, "day 要是真实存在的 YYYY-MM-DD 或空串")
     db.set_plan(pid, day)
     return {"ok": True}
 
@@ -2602,14 +2605,14 @@ def collections():
 
 @app.post("/api/collections")
 def collection_new(body: dict):
-    name = (body.get("name") or "").strip()
+    name = (body.get("name") or "").strip()[:60]
     if not name:
         raise HTTPException(400, "分类要有名字")
     return {"id": db.collection_add(name)}
 
 @app.patch("/api/collections/{cid}")
 def collection_patch(cid: int, body: dict):
-    name = (body.get("name") or "").strip()
+    name = (body.get("name") or "").strip()[:60]
     if not name:
         raise HTTPException(400, "分类要有名字")
     db.collection_rename(cid, name)
@@ -2798,12 +2801,15 @@ def glossary_list(pid: str):
 @app.post("/api/papers/{pid}/glossary")
 def glossary_add(pid: str, body: dict):
     _paper_or_404(pid)
-    en = (body.get("term_en") or "").strip()
-    zh = (body.get("term_zh") or "").strip()
+    # 控制字符剥掉（复制粘贴会带 \x00/\x1f，SQLite 存得下、界面显示不出来），
+    # 长度钳到术语的合理上限——这是词表不是文本库
+    clean = lambda s: "".join(ch for ch in s if ord(ch) >= 32).strip()
+    en = clean((body.get("term_en") or ""))[:120]
+    zh = clean((body.get("term_zh") or ""))[:120]
     if not en or not zh:
         raise HTTPException(400, "中英文都要填")
-    gid = db.glossary_add(pid, en, zh, body.get("domain", ""), body.get("note", ""),
-                          body.get("source", "manual"))
+    gid = db.glossary_add(pid, en, zh, body.get("domain", "")[:60],
+                          body.get("note", "")[:200], body.get("source", "manual"))
     return {"id": gid}
 
 @app.post("/api/papers/{pid}/glossary/generate")

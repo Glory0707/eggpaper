@@ -170,8 +170,10 @@ def set_plan(pid: str, day: str):
     q("UPDATE papers SET plan_day=? WHERE id=?", (day or "", pid), commit=True)
 
 def set_paper_meta(pid: str, title: str = "", authors: str = "", year: str = ""):
-    """Zotero 导入后回填可信元数据：只覆盖给了值的字段，解析出来的不许被空值抹掉。"""
-    fields = {k: v for k, v in (("title", title), ("authors", authors), ("year", year)) if v}
+    """Zotero 导入后回填可信元数据：只覆盖给了值的字段，解析出来的不许被空值抹掉。
+    长度钳在展示合理范围（标题进提示词/UI，别让一万字的怪输入撑爆版面）。"""
+    fields = {k: v for k, v in (("title", str(title)[:500]), ("authors", str(authors)[:300]),
+                                ("year", str(year)[:16])) if v}
     if fields:
         update_paper(pid, **fields)
 
