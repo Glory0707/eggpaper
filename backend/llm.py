@@ -736,7 +736,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
     3 并发要排两波、端到端 53 秒；6 并发一波就完、~36 秒。单块的耗时由模型决定
     （实测 DeepSeek 带思考 ~36 秒/块，其中七成 token 花在思考上），**墙钟时间 = 波数 × 单块时间**，
     所以能压的只有波数。再往上加并发收益就有限了（还容易被服务端限流），
-    真正要更快只能减块数或减单块输出量，那是产品取舍，见 docs/plan.md M4.12。
+    真正要更快只能减块数或减单块输出量，那是产品取舍（实测数字就写在上面的常量旁）。
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     page_of = {p["idx"]: p["page"] for p in paras}

@@ -15,7 +15,7 @@ import EggMark from './components/EggMark.vue'
 import { festivalSkin } from './festival'
 import { t, isEn, setLang } from './i18n'
 
-/* 节日换装：按日期给蛋换皮肤（egg-preview.html 定稿）；localStorage 的 eggpaper:skin 可手动预览任意一套 */
+/* 节日换装：按日期给蛋换皮肤；localStorage 的 eggpaper:skin 可手动预览任意一套 */
 const eggSkin = festivalSkin()
 
 const showSettings = ref(false)
