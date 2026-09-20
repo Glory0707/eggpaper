@@ -259,6 +259,16 @@ async function selAddColl(cid) {
   selMenu.value = false
   toast(t('已把 {n} 篇归入该分类', { n: selN.value }))
 }
+/* 「未分类」= 从所有分类里移出（它本来就是"不属于任何分类"的别名） */
+async function selToUncategorized() {
+  for (const pid of selSet.value) {
+    if (!collOf(pid).length) continue
+    try { await api.paperColls(pid, []) } catch { /* 一篇失败不拖垮整批 */ }
+  }
+  await refreshCollections()
+  selMenu.value = false
+  toast(t('已把 {n} 篇移出所有分类', { n: selN.value }))
+}
 
 /* ---------- 长按拖放区 = 从 Zotero 导入（点击仍是选文件） ---------- */
 const zotArmed = ref(false)
@@ -306,17 +316,7 @@ function onCmpGoto(c) {
         <option value="title">{{ t('标题') }}</option>
       </select>
       <button class="lib-multi" :class="{ on: selMode }" :title="t('多选：批量同屏 / 对比 / 分类 / 删除')"
-              @click="toggleSelMode">
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none">
-          <rect x="1.6" y="1.6" width="5.2" height="5.2" rx="1.5" stroke="currentColor" stroke-width="1.7"/>
-          <path d="M3.1 4.1l1.2 1.2 2-2.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <rect x="1.6" y="7.4" width="5.2" height="5.2" rx="1.5" stroke="currentColor" stroke-width="1.7"/>
-          <rect x="1.6" y="13.2" width="5.2" height="5.2" rx="1.5" stroke="currentColor" stroke-width="1.7"/>
-          <path d="M10.5 4.2h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <path d="M10.5 10h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <path d="M10.5 15.8h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-      </button>
+              @click="toggleSelMode">{{ t('多选') }}</button>
     </div>
 
         <div class="coll-list">
@@ -400,6 +400,7 @@ function onCmpGoto(c) {
           <span class="cm-name">{{ c.name }}</span>
           <svg v-if="selCollState(c.id) === 'all'" viewBox="0 0 12 12" width="11" height="11" :title="t('这批已全部在这个分类')"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
+        <button class="cm-row cm-act cm-uncat" @click="selToUncategorized">{{ t('未分类') }}</button>
         <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
       </div>
     </div>

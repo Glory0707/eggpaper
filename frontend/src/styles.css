@@ -486,9 +486,9 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .paper-item .p-check { position: absolute; left: 7px; top: 12px; z-index: 2; }
 .paper-item.sel { background: var(--accent-soft); border-color: var(--accent-line); }
 .lib-multi {
-  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 28px; border-radius: 4px; cursor: pointer;
-  border: 1px solid transparent; background: none; color: var(--ink-3);
+  flex: 0 0 auto; cursor: pointer; padding: 4px 10px; border-radius: 4px;
+  border: 1px solid transparent; background: none; color: var(--ink-2);
+  font-size: var(--fs-sm); white-space: nowrap;
   transition: all var(--t-fast) var(--ease-smooth);
 }
 .lib-multi:hover, .lib-multi.on { background: var(--accent-soft); color: var(--accent-deep); }
@@ -1948,3 +1948,11 @@ html.dark .vis-img { background: #fff; }
 .coll-menu .cm-row.cm-act:hover { background: var(--accent-soft); color: var(--accent-deep); }
 .coll-menu .cm-row .cm-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .coll-menu .cm-row.cm-act svg { color: var(--accent-deep); flex-shrink: 0; }
+
+/* 批量归类菜单里的「未分类」：与具体分类隔一条线，语义是移出所有分类 */
+.coll-menu .cm-row.cm-uncat {
+  margin-top: 5px; padding-top: 7px; border-top: 1px solid var(--hairline);
+  width: 100%; border-left: none; border-right: none; border-bottom: none;
+  background: none; text-align: left; color: var(--ink-3);
+}
+.coll-menu .cm-row.cm-uncat:hover { color: var(--vermilion); background: none; }

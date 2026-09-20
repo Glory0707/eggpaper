@@ -291,7 +291,9 @@ const EN = {
   '还没有分类，先在上面新建一个': 'No collections yet — create one above',
   '完成': 'Done',
   /* 多选（文库）：勾几篇，批量同屏/对比/归类/删除 */
+  '多选': 'Multi-select',
   '多选：批量同屏 / 对比 / 分类 / 删除': 'Multi-select: split / compare / file / delete in bulk',
+  '已把 {n} 篇移出所有分类': 'Removed {n} papers from all collections',
   '勾选这篇': 'Toggle selection',
   '已选 {n}': '{n} selected',
   '同屏阅读': 'Split view',
@@ -325,7 +327,7 @@ const EN = {
   '数据对比 · {n} 篇': 'Comparison · {n} papers',
   '演示': 'Demo',
   '复制 Markdown': 'Copy Markdown',
-  '勾选要对比的维度，再开始抽取——每篇一次模型调用，减维度省时间。': 'Pick the dimensions to compare, then extract — one model call per paper, fewer dimensions cost less.',
+  '勾选要对比的维度': 'Pick the dimensions to compare',
   '开始对比（{n} 个维度）': 'Compare ({n} dimensions)',
   '换维度': 'Change dimensions',
   '正在逐篇抽取要点': 'Extracting key points from each paper',
