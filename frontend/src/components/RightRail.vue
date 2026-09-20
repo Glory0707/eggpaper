@@ -701,8 +701,9 @@ watch(() => store.currentId, () => {
           </div>
           <div class="fig-strip" v-if="figures.length">
             <span v-for="(f, i) in figures" :key="i" class="fig-cell"
-                  :title="f.caption || `${t(f.kind === 'table' ? '表' : '图')} · ${t('第 {p} 页', { p: f.page + 1 })}`" @click="figIdx = i">
-              <img class="fig-thumb" :src="api.figureUrl(store.currentId, f)" loading="lazy" decoding="async" alt="" />
+                  :title="f.caption || `${t(f.kind === 'table' ? '表' : '图')} · ${t('第 {p} 页', { p: f.page + 1 })}`">
+              <img class="fig-thumb" :src="api.figureUrl(store.currentId, f)" loading="lazy" decoding="async" alt=""
+                   @click="figIdx = i" />
               <i class="fig-kind">{{ f.kind === 'table' ? t('表') : t('图') }}</i>
               <span class="fig-cap" v-if="f.caption">{{ f.caption }}</span>
             </span>
