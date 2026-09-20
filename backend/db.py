@@ -122,6 +122,7 @@ def _migrate(c: sqlite3.Connection):
         "ALTER TABLE papers ADD COLUMN paper_type TEXT DEFAULT ''",
         "ALTER TABLE papers ADD COLUMN pdf_hash TEXT DEFAULT ''",
         "ALTER TABLE papers ADD COLUMN fig_caps TEXT DEFAULT ''",
+        "ALTER TABLE papers ADD COLUMN plan_day TEXT DEFAULT ''",
     ):
         try:
             c.execute(stmt)
@@ -161,7 +162,12 @@ def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int, a
 def list_papers():
     return [dict(r) for r in q(
         "SELECT id, filename, title, authors, year, n_pages, created_at, last_read_at, analysis_status, "
-        "marginalia_status, translate_status FROM papers ORDER BY created_at DESC")]
+        "marginalia_status, translate_status, plan_day FROM papers ORDER BY created_at DESC")]
+
+
+def set_plan(pid: str, day: str):
+    """待读计划：一篇只占一天（重排就覆盖，取消置空）。打开那篇时由 touch 清掉。"""
+    q("UPDATE papers SET plan_day=? WHERE id=?", (day or "", pid), commit=True)
 
 def set_paper_meta(pid: str, title: str = "", authors: str = "", year: str = ""):
     """Zotero 导入后回填可信元数据：只覆盖给了值的字段，解析出来的不许被空值抹掉。"""

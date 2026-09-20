@@ -1838,6 +1838,32 @@ html.dark .vis-img { background: #fff; }
 }
 .cal-paper:hover { background: var(--btn-hover); box-shadow: none; transform: none; }
 .cal-empty { margin-top: 12px; border-top: 1px solid var(--hairline-soft); padding-top: 10px; font-size: var(--fs-sm); color: var(--ink-3); }
+.cal-cell .d.plan { background: transparent; border: 1px solid var(--accent); box-sizing: border-box; }
+.cal-plan-row { display: flex; align-items: center; gap: 2px; }
+.cal-plan-row .cal-paper { flex: 1; min-width: 0; }
+.cal-plan-row .cal-x {
+  flex: none; border: none; background: none; color: var(--ink-3); cursor: pointer;
+  font-size: var(--fs-md); line-height: 1; padding: 4px 6px; border-radius: 3px;
+}
+.cal-plan-row .cal-x:hover { color: var(--vermilion); background: var(--btn-hover); }
+.cal-add {
+  width: 100%; margin-top: 6px; padding: 3px 0; cursor: pointer;
+  border: 1px dashed var(--hairline); border-radius: 4px; background: none;
+  color: var(--ink-3); font-size: var(--fs-md); line-height: 1.4;
+}
+.cal-add:hover, .cal-add.on { color: var(--accent-deep); border-color: var(--accent-line); background: var(--accent-soft); }
+.cal-picker { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+.cal-picker input {
+  width: 100%; padding: 5px 8px; margin-bottom: 3px;
+  font-size: var(--fs-sm); color: var(--ink); background: var(--card-2);
+  border: 1px solid var(--hairline); border-radius: 3px; outline: none;
+}
+.cal-picker input:focus { border-color: var(--accent-line); }
+.cal-paper.pick { display: flex; justify-content: space-between; gap: 8px; }
+.cal-paper.pick .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-paper.pick .ok { color: var(--accent); flex: none; }
+.cal-paper.pick:disabled { color: var(--ink-3); cursor: default; }
+.cal-paper.pick:disabled:hover { background: transparent; }
 
 .toc-list { margin-top: 4px; overflow-y: auto; }
 .toc-row {

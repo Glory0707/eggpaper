@@ -791,15 +791,29 @@ def _ensure_paper_type(pid: str) -> str:
 
 @app.post("/api/papers/{pid}/touch")
 def touch_paper(pid: str):
-    """记一笔"最近读过"，文库按最近阅读排序时用；论文日历按天再记一笔。"""
+    """记一笔"最近读过"，文库按最近阅读排序时用；论文日历按天再记一笔。
+    顺手把「待读」消掉——都打开读了，计划就算完成，日历上的点自己消失。"""
     _paper_or_404(pid)
     db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
     db.log_read(pid, time.strftime("%Y-%m-%d"))
+    db.set_plan(pid, "")
+    return {"ok": True}
+
+
+@app.post("/api/papers/{pid}/plan")
+def plan_paper(pid: str, body: dict = None):
+    """把一篇排到某天读（日历上的空心点）。day 传空串=取消；重排直接给新日期。
+    没有完成态、没有提醒——打开那篇的瞬间 touch 就把计划消了。"""
+    _paper_or_404(pid)
+    day = str(((body or {}).get("day") or "")).strip()
+    if day and not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+        raise HTTPException(400, "day 要是 YYYY-MM-DD 或空串")
+    db.set_plan(pid, day)
     return {"ok": True}
 
 @app.get("/api/calendar")
 def calendar_view(month: str = ""):
-    """论文日历：某个月里"哪天读了什么、哪天入了什么"。
+    """论文日历：某个月里"哪天读了什么、哪天入了什么、哪天排了待读"。
 
     读过 = 阅读日志（touch 按天记）∪ 每篇 last_read_at 的日期——日志上线之前的
     旧记录没有逐天历史，用最后读过的那天做只读推导，不造假回填一整段历史。
@@ -808,7 +822,7 @@ def calendar_view(month: str = ""):
         month = time.strftime("%Y-%m")
     papers = db.list_papers()
     by_id = {p["id"]: p for p in papers}
-    reads, added = {}, {}
+    reads, added, plans = {}, {}, {}
 
     def put(bucket, day, pid):
         if day and day.startswith(month) and pid in by_id:
@@ -819,11 +833,12 @@ def calendar_view(month: str = ""):
     for p in papers:
         put(reads, (p["last_read_at"] or "")[:10], p["id"])
         put(added, (p["created_at"] or "")[:10], p["id"])
+        put(plans, (p["plan_day"] or "")[:10], p["id"])     # 待读：排到哪天算哪天（含未来）
 
     days = {}
-    for day in set(reads) | set(added):
+    for day in set(reads) | set(added) | set(plans):
         entry = {}
-        for key, bucket in (("reads", reads), ("added", added)):
+        for key, bucket in (("reads", reads), ("added", added), ("plans", plans)):
             entry[key] = [{"id": pid,
                            "title": (by_id[pid]["title"] or by_id[pid]["filename"] or "").strip()}
                           for pid in sorted(bucket.get(day, set()))]
