@@ -356,7 +356,9 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
   <div class="ask-panel">
         <div class="cv-bar">
       <select class="cv-pick" :value="convId ?? ''"
-              @change="e => (convId = Number(e.target.value))">
+              @change="e => (convId = Number(e.target.value) || null)">
+        <!-- || null：空会话的占位 option 值是 ''，Number('') 是 0——falsy 但不是
+             null，send 会拿 0 当 conv_id 发出去，后端建出一条没主的会话 -->
         <option v-for="c in shownConvs" :key="c.id" :value="c.id">{{ c.title }}</option>
         <option v-if="!shownConvs.length" :value="''">{{ t('新对话') }}</option>
       </select>

@@ -21,7 +21,7 @@ favicon 那一侧我们仍按每档 DPI 的精确尺寸给足原图（见 `tools
 `_give_window_icon()`：窗口拉起后，从进程外用 `WM_SETICON` 把按窗口 DPI 现画的精确像素位图
 （`mark.draw` + `CreateIconIndirect`，不再经 LoadImage 选档）注入进去——Windows 11 任务栏
 读的是 `ICON_SMALL2`，给它满物理尺寸（150% 下 48）即 1:1。favicon 加载后会把图标重设回去，
-所以后台线程反复压约 30 秒。
+所以后台线程反复压约 20 秒，歇 10 秒再补一拍（合计约 30 秒跨度的压制）。
 """
 import os
 import subprocess

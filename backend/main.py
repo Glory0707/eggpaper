@@ -42,6 +42,7 @@ app.add_middleware(CORSMiddleware,
                    allow_methods=["*"], allow_headers=["*"])
 
 READY = threading.Event()
+DEFAULT_PORT = 8430          # 与 desktop.py 的 PORTS[0] 一致：改默认端口时两处一起动
 
 def _demo_mode(cfg: dict = None) -> bool:
     """现在这几件事走不走演示数据。**只留这一个判断口。**
@@ -306,6 +307,14 @@ def _paper_src(pid: str, p: dict) -> str:
         return alt
     return src or alt
 
+def _paper_src_or_404(pid: str, p: dict) -> str:
+    """要真读 PDF 的端点用这扇闸：原件和库内副本都不在，回一句 PDF_GONE 而不是
+    让 pymupdf 在打开时翻成 500。"""
+    src = _paper_src(pid, p)
+    if not src or not os.path.exists(src):
+        raise HTTPException(404, PDF_GONE)
+    return src
+
 @app.on_event("startup")
 def _startup():
     config.ensure_dirs()
@@ -390,7 +399,7 @@ def _adopt_orphan_translation():
         p = db.get_paper(row["id"]) or {}
         if p.get("translate_status") == "done" and (p.get("mono_path") or p.get("dual_path")):
             continue
-        got = translate_full.adopt_existing(paper_dir(p["id"]))
+        got = _claim_existing_translation(p["id"])
         if not got:
             continue
         db.update_paper(p["id"], dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
@@ -549,7 +558,7 @@ def version_info():
 
 @app.get("/api/update/check")
 def update_check(force: bool = False):
-    """查更新源。auto=0 时只读缓存不联网（打开软件时的那次安静探测走这条）。
+    """查更新源。force=false 时只读缓存不联网（打开软件时的那次安静探测走这条）。
     更新源留空 = 用内置的 Gitee 源（用户零配置）；想彻底关掉检查用「自动检查」开关。"""
     cfg = config.load().get("update", {})
     feed = cfg.get("feed_url") or config.DEFAULTS["update"]["feed_url"]
@@ -597,7 +606,7 @@ def _my_port() -> int:
             return p
     except Exception:
         pass
-    return 8430
+    return DEFAULT_PORT
 
 @app.post("/api/window")
 def open_native_window():
@@ -726,7 +735,7 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     db.replace_paragraphs(pid, paras)
     _ensure_paper_type(pid)
     row = db.get_paper(pid)
-    db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+    db.update_paper(pid, last_read_at=db._now())
     if paras:
         _enqueue_analysis(pid, paras)
     elif ocr.available():
@@ -945,7 +954,7 @@ def touch_paper(pid: str):
     """记一笔"最近读过"，文库按最近阅读排序时用；论文日历按天再记一笔。
     顺手把「待读」消掉——都打开读了，计划就算完成，日历上的点自己消失。"""
     _paper_or_404(pid)
-    db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+    db.update_paper(pid, last_read_at=db._now())
     db.log_read(pid, time.strftime("%Y-%m-%d"))
     db.set_plan(pid, "")
     return {"ok": True}
@@ -1080,7 +1089,7 @@ def paragraphs(pid: str):
     if db.paragraphs_need_lines(pid) and pid not in _lines_probe_done:
         _lines_probe_done.add(pid)
         p = db.get_paper(pid)
-        path = p.get("path") or os.path.join(paper_dir(pid), "paper.pdf")
+        path = _paper_src(pid, p)
         try:
             if os.path.exists(path):
                 fresh = pdfparse.extract_paragraphs(path)
@@ -1096,17 +1105,24 @@ def paragraphs(pid: str):
 
 # ---------------- 骨架分析 ----------------
 
+def _analysis_cancelled(pid: str, where: str) -> bool:
+    """析读的取消闸：请求了取消就清标记、状态归零、写一笔日志。
+    返回 True 时调用方直接 return——已生成的部分按各阶段自己的口径保留。"""
+    if not _cancel_requested("analysis", pid):
+        return False
+    _cancel_clear("analysis", pid)
+    db.update_paper(pid, analysis_status="none", analysis_error=None)
+    _applog(f"析读 {pid}: {where}")
+    return True
+
 def _run_analysis(pid: str, paras: list):
     ex = None
     try:
-        title = db.get_paper(pid)["title"]
+        title = (db.get_paper(pid) or {}).get("title") or ""
         use = [p for p in paras if not p.get("in_refs")]
         kind = _ensure_paper_type(pid)
         demo = _demo_mode()
-        if _cancel_requested("analysis", pid):
-            _cancel_clear("analysis", pid)
-            db.update_paper(pid, analysis_status="none", analysis_error=None)
-            _applog(f"析读 {pid}: 已取消（开始前）")
+        if _analysis_cancelled(pid, "已取消（开始前）"):
             return
         ex = ThreadPoolExecutor(max_workers=5)
         tfut = ex.submit(_demo_terms if demo else llm.extract_terms, title, paras)
@@ -1117,7 +1133,7 @@ def _run_analysis(pid: str, paras: list):
             cap_pairs = []
             try:
                 pdir = db.get_paper(pid)
-                cap_pairs = [(i, f["caption"]) for i, f in enumerate(_figures_for(pdir)) if f.get("caption")]
+                cap_pairs = [(i, f["caption"]) for i, f in enumerate(_figures_for(pid, pdir)) if f.get("caption")]
             except Exception as e:
                 _applog(f"析读 {pid}: 图表提取失败，这次不带图注翻译（{str(e)[:80]}）")
             data = llm.analyze_skeleton(title, use, kind=kind,
@@ -1136,10 +1152,7 @@ def _run_analysis(pid: str, paras: list):
             # 只在真的拿到了译文时才覆盖：懒翻译存下的旧值不被一次没带图注的析读清掉
             upd["fig_caps"] = json.dumps(data["fig_caps"], ensure_ascii=False)
         db.update_paper(pid, **upd)
-        if _cancel_requested("analysis", pid):
-            _cancel_clear("analysis", pid)
-            db.update_paper(pid, analysis_status="none", analysis_error=None)
-            _applog(f"析读 {pid}: 已取消（骨架完成后，骨架保留）")
+        if _analysis_cancelled(pid, "已取消（骨架完成后，骨架保留）"):
             return
         p2 = db.get_paper(pid)
         todo = ["motive", "next", "lens"]
@@ -1184,10 +1197,7 @@ def _run_analysis(pid: str, paras: list):
             d = _analysis_progress.get(pid)
             if d:
                 d["done"] = min(d.get("total") or 0, d.get("done", 0) + 1)
-        if _cancel_requested("analysis", pid):
-            _cancel_clear("analysis", pid)
-            db.update_paper(pid, analysis_status="none", analysis_error=None)
-            _applog(f"析读 {pid}: 已取消，已完成的部分保留")
+        if _analysis_cancelled(pid, "已取消，已完成的部分保留"):
             return
     except Exception as e:
         hint = _human_msg(e)
@@ -1211,7 +1221,7 @@ def analyze(pid: str):
             if _analysis_inflight(pid):
                 return {"status": p["analysis_status"] or "queued"}
             db.update_paper(pid, analysis_status="queued", analysis_error=None)
-            threading.Thread(target=_ocr_then_analyze, args=(pid, p["path"]), daemon=True).start()
+            threading.Thread(target=_ocr_then_analyze, args=(pid, _paper_src(pid, p)), daemon=True).start()
         return {"status": "queued"}
     # 查互斥与占位排队必须同锁：拆开就有 TOCTOU——两边都过了检查再各自启动，照样互相清缓存
     with _key_lock("job:" + pid):
@@ -1263,8 +1273,10 @@ def _resolve_rects(pid: str):
     if not p:
         return
     # PDF 不在（被移动/网盘没同步）时就此打住：GET /marginalia 不能为它 500，
-    # 析读线程更不能在批注已经完整落库之后在这翻成"失败"。
-    if not (p.get("path") and os.path.exists(p["path"])):
+    # 析读线程更不能在批注已经完整落库之后在这翻成"失败"。路径按 _paper_src
+    # 的自愈口径解析——外部原件没了但库内副本还在，照样能补坐标。
+    src = _paper_src(pid, p)
+    if not os.path.exists(src):
         return
     doc = None
     try:
@@ -1273,7 +1285,7 @@ def _resolve_rects(pid: str):
                 continue
             _rect_tried.add(n["id"])
             if doc is None:
-                doc = pymupdf.open(p["path"])
+                doc = pymupdf.open(src)
             rects = []
             for cut in (0, 60, 36, 20):
                 probe = n["quote"] if cut == 0 else n["quote"][:cut].strip()
@@ -1400,7 +1412,7 @@ def _run_marginalia(pid: str):
         _margin_progress[pid] = p
 
     try:
-        title = db.get_paper(pid)["title"]
+        title = (db.get_paper(pid) or {}).get("title") or ""
         paras = db.get_paragraphs(pid)
         use = [p for p in paras if not p.get("in_refs")]
         kind = _ensure_paper_type(pid)
@@ -1848,7 +1860,7 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         if p["citation"] and not refresh:
             meta = json.loads(p["citation"])
             return {"meta": meta, "groups": citation.groups(meta)}
-        src = pdfparse.citation_source(p["path"])
+        src = pdfparse.citation_source(_paper_src_or_404(pid, p))
         raw = llm.extract_citation(p["title"], src)
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
     if not (meta.get("title") or meta.get("authors")):
@@ -2225,12 +2237,13 @@ def _figure_regions(path):
 _fig_cache = {}
 _fig_inflight = {}
 
-def _figures_for(p: dict) -> list:
+def _figures_for(pid: str, p: dict) -> list:
     """这篇论文的图表区域列表（内存缓存按"路径+mtime"记账，画一次到处用）。"""
+    src = _paper_src_or_404(pid, p)
     try:
-        key = (p["path"], os.path.getmtime(p["path"]))
+        key = (src, os.path.getmtime(src))
     except OSError:
-        key = (p["path"], 0)
+        key = (src, 0)
     if key in _fig_cache:
         return _fig_cache[key]
     ev = _fig_inflight.get(key)
@@ -2238,13 +2251,11 @@ def _figures_for(p: dict) -> list:
         ev.wait(120)
         if key in _fig_cache:
             return _fig_cache[key]
-    if not os.path.exists(p["path"]):
-        raise HTTPException(404, PDF_GONE)
     ev = threading.Event()
     _fig_inflight[key] = ev
     try:
         try:
-            out = _figure_regions(p["path"])
+            out = _figure_regions(src)
         except Exception as e:
             raise HTTPException(400, f"这份 PDF 解析图表时失败了：{str(e)[:120]}")
     finally:
@@ -2257,7 +2268,7 @@ def _figures_for(p: dict) -> list:
 
 @app.get("/api/papers/{pid}/figures")
 def figures(pid: str):
-    return {"figures": _figures_for(_paper_or_404(pid))}
+    return {"figures": _figures_for(pid, _paper_or_404(pid))}
 
 def _mostly_cjk(t: str) -> bool:
     """图注本身已是中文（中文文献）就别再"翻译"一遍。"""
@@ -2269,7 +2280,7 @@ def fig_caption(pid: str, idx: int = 0):
     """灯箱图注的中文版：懒翻译一次落库（db.fig_caps），之后进页面读缓存不花钱。
     英文界面不打这层（原文就是用户要的语言）；英文界面没有模型时回原文。"""
     p = _paper_or_404(pid)
-    figs = _figures_for(p)
+    figs = _figures_for(pid, p)
     if idx < 0 or idx >= len(figs):
         raise HTTPException(404, "没有这张图")
     cap = (figs[idx].get("caption") or "").strip()
@@ -2294,11 +2305,10 @@ def paper_toc(pid: str):
     """PDF 自带的书签目录（get_toc：[层级, 标题, 页码]，页码 1 起）。
     读取本身很便宜，不值得缓存；没有书签就返回空表，前端给一句空态。"""
     p = _paper_or_404(pid)
-    if not os.path.exists(p["path"]):
-        raise HTTPException(404, PDF_GONE)
+    src = _paper_src_or_404(pid, p)
     import pymupdf
     try:
-        doc = pymupdf.open(p["path"])
+        doc = pymupdf.open(src)
     except Exception as e:
         raise HTTPException(400, f"这份 PDF 打不开：{str(e)[:120]}")
     try:
@@ -2312,9 +2322,8 @@ def paper_toc(pid: str):
 def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, dpi: int = 130):
     import pymupdf
     p = _paper_or_404(pid)
-    if not os.path.exists(p["path"]):
-        raise HTTPException(404, PDF_GONE)
-    doc = pymupdf.open(p["path"])
+    src = _paper_src_or_404(pid, p)
+    doc = pymupdf.open(src)
     try:
         if page < 0 or page >= len(doc):
             raise HTTPException(404, f"页码越界：这篇只有 {len(doc)} 页")
@@ -2352,7 +2361,7 @@ def _autotitle(pid: str, conv_id: int, question: str, is_first: bool):
     if not is_first:
         return
     c = db.conv_get(conv_id)
-    if c and c["title"] in ("", "新对话"):
+    if c and c["title"] in ("", db.NEW_CONV):
         t = question.strip().replace("\n", " ")[:18]
         db.conv_rename(conv_id, t + ("…" if len(question.strip()) > 18 else ""))
 
@@ -2452,7 +2461,8 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             others = []
             cand = [x for x in (ref_pids or []) if x != pid]
             if len(cand) > 3:
-                cand = _recon_pick(question, [db.get_paper(x) for x in cand]) or cand[:3]
+                # 引用可能带着已删除的 pid：get_paper 回 None，先滤掉再侦察
+                cand = _recon_pick(question, [p for p in map(db.get_paper, cand) if p]) or cand[:3]
             for x in cand[:3]:
                 o = db.get_paper(x)
                 if o:
@@ -2515,13 +2525,13 @@ def conversations(pid: str):
 @app.post("/api/papers/{pid}/conversations")
 def conversation_new(pid: str, body: dict = None):
     _paper_or_404(pid)
-    return {"id": db.conv_create(pid, (body or {}).get("title") or "新对话")}
+    return {"id": db.conv_create(pid, (body or {}).get("title") or db.NEW_CONV)}
 
 @app.patch("/api/conversations/{cid}")
 def conversation_patch(cid: int, body: dict):
     if not db.conv_get(cid):
         raise HTTPException(404, "会话不存在")
-    db.conv_rename(cid, (body.get("title") or "新对话").strip() or "新对话")
+    db.conv_rename(cid, (body.get("title") or db.NEW_CONV).strip() or db.NEW_CONV)
     return {"ok": True}
 
 @app.delete("/api/conversations/{cid}")
@@ -2712,6 +2722,16 @@ def _pdf2zh_env(service: str, cfg: dict):
         return envs, "api.deepseek.com"
     return {}, ""
 
+def _claim_existing_translation(pid: str) -> dict:
+    """认领已经写完的成品译文：pdf2zh 是独立进程，可能在本进程启动**之后**才把
+    成品写完，没人认领界面上就永远停在「全文翻译」。有成品就登记 dual/mono、
+    状态打成 done，返回成品 dict；没有返回空。两次 stat + 尾部读，够便宜。"""
+    got = translate_full.adopt_existing(paper_dir(pid))
+    if got:
+        db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
+                        translate_status="done", translate_error="")
+    return got or {}
+
 @app.post("/api/papers/{pid}/translate-full")
 def translate_full_start(pid: str, force: bool = False):
     p = _paper_or_404(pid)
@@ -2719,10 +2739,7 @@ def translate_full_start(pid: str, force: bool = False):
     svc = (cfg["pdf2zh"].get("service") or "bing").strip()
     envs, host = _pdf2zh_env(svc, cfg)
     if not force:
-        got = translate_full.adopt_existing(paper_dir(pid))
-        if got:
-            db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
-                            translate_status="done", translate_error="")
+        if _claim_existing_translation(pid):
             _applog(f"全文翻译 {pid}: 发现上次已经译好的成品，直接认领")
             return {"status": "done", "service": "", "note": "上次已经译好了，直接用了那份成品"}
     used, note = translate_full.choose_service(svc, host)
@@ -2746,7 +2763,7 @@ def translate_full_start(pid: str, force: bool = False):
             raise HTTPException(400, f"缺全文翻译引擎（{why}）。自动下载没成功（{st.get('error') or '原因未知'}），"
                                      "可再点一次「全文翻译」重试，或到「设置 → 翻译引擎」手动装。")
         raise HTTPException(400, f"全文翻译引擎起不来（{why}）。到「设置 → 翻译引擎」重新检测，或重装引擎。")
-    translate_full.start(pid, p["path"], paper_dir(pid), used,
+    translate_full.start(pid, _paper_src_or_404(pid, p), paper_dir(pid), used,
                          cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                          note=note, engine=engine)
     db.update_paper(pid, translate_status="running", translate_error="")
@@ -2757,12 +2774,8 @@ def translate_full_status(pid: str):
     p = _paper_or_404(pid)
     j = translate_full.job(pid)
     if j["status"] == "none" and p["translate_status"] not in ("running", "done", "error"):
-        # pdf2zh 是独立进程：它可能在本进程启动**之后**才把成品写完，没人认领界面上
-        # 就永远显示「全文翻译」。这里顺手认领一次（两次 stat + 尾部读，够便宜）。
-        got = translate_full.adopt_existing(paper_dir(pid))
-        if got:
-            db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
-                            translate_status="done", translate_error="")
+        # 这里顺手认领一次：没人认领界面上就永远显示「全文翻译」
+        if _claim_existing_translation(pid):
             _applog(f"全文翻译 {pid}: 运行中发现已写完的成品，直接认领")
             p = _paper_or_404(pid)
     if j["status"] == "done":
@@ -2853,7 +2866,7 @@ if os.path.isdir(DIST):
 def _mark_ready():
     READY.set()
 
-def serve(port: int = 8430, log_level: str = "info"):
+def serve(port: int = DEFAULT_PORT, log_level: str = "info"):
     """起服务。
 
     打包版传 `log_config=None`：uvicorn 默认要装一套**带颜色的控制台日志**，
@@ -2875,5 +2888,5 @@ def serve(port: int = 8430, log_level: str = "info"):
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8430)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     serve(ap.parse_args().port)

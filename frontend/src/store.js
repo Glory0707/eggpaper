@@ -4,10 +4,10 @@ import { t, ui } from './i18n'
 import { lsGet, lsSet } from './ls'
 
 /* 只转出组件真的会 import 的那些。颜色/标签的字典（KIND_*、BAND_*）不再对外——
-   它们只该通过下面这三个解析口被读到，散出去就又会有人绕过口径直接取色。 */
+   它们只该通过下面这四个解析口被读到，散出去就又会有人绕过口径直接取色。 */
 export { api, askStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
          bandOf, kindColor, kindText, kindZH } from './api'
-export { lsGet, lsSet } from './ls'
+export { lsGet, lsSet, lsRemove } from './ls'
 
 
 export const store = reactive({

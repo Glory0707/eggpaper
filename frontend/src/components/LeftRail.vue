@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper, jumpPara, goHome } from '../store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, jumpPara, goHome, lsRemove } from '../store'
 import { confirmBox } from '../dialog'
 import { t } from '../i18n'
 import { useEdgeResize } from '../edgeResize'
@@ -187,7 +187,7 @@ async function _removePids(pids) {
       await api.deletePaper(pid)
     } catch (e) { toast(t('删除失败：{m}', { m: e.message })); continue }
     selSet.value.delete(pid)     // 勾选里摘掉：残留死 id 会让下一次批量操作 404「论文不存在」
-    localStorage.removeItem('eggpaper:pos:' + pid)     // 阅读位置也别留在浏览器里
+    lsRemove('pos:' + pid)     // 阅读位置也别留在浏览器里（键的拼法只认 ls.js 这一处前缀）
     store.openIds = store.openIds.filter(x => x !== pid)   // 同屏窗格里也摘掉这一篇
     if (store.currentId === pid) {
       const next = store.openIds[0]

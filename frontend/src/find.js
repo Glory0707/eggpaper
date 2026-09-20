@@ -7,7 +7,9 @@ const KEEP = /[0-9a-z\u4e00-\u9fff]/
 const LIG = { '\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl',
               '\ufb03': 'ffi', '\ufb04': 'ffl', '\ufb05': 'ft', '\ufb06': 'st' }
 
-function normText(s) {
+/* 导出给术语表的"本文出现过"判定（RightRail）用：引文对齐和术语归一化
+   必须是同一套折叠规则，各写一份迟早改出"术语查不到" */
+export function normText(s) {
   let out = ''
   for (const ch of (s || '').toLowerCase()) {
     const lig = LIG[ch]

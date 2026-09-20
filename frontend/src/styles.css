@@ -1395,10 +1395,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 @media (max-width: 1179px) {
   .rail-wrap {
+    /* 与 .rail-wrap.overlay（多窗格浮层）同一套定位/阴影——窄屏也走浮层化；
+       阴影色改用主题变量，此前写死的暖灰在暗色主题下和另一处不一致 */
     position: fixed; right: 0; top: 56px; bottom: 0; z-index: 210;
 
     width: min(var(--rail-w, 336px), 92vw);
-    box-shadow: -10px 0 30px -14px rgba(29, 27, 23, 0.32);
+    box-shadow: -10px 0 30px -14px rgba(var(--wash-rgb), 0.32);
   }
   .rail-wrap.collapsed { box-shadow: none; }
   .rail-tab { position: fixed; top: 50%; }

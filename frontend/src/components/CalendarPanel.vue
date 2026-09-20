@@ -7,7 +7,6 @@ const open = computed(() => store.viewer.calOpen)
 const y = ref(0), m = ref(0)          // 正在看的年/月
 const sel = ref('')                   // 选中的日子 'YYYY-MM-DD'
 const days = ref({})                  // { 'YYYY-MM-DD': {reads:[], added:[], plans:[]} }
-const busy = ref(false)
 const picking = ref(false)            // 「＋」的就地选论文
 const pq = ref('')
 const pickInput = ref(null)
@@ -88,13 +87,11 @@ async function unplan(pid) {
 
 async function load() {
   const want = `${y.value}-${pad(m.value)}`   // 快速翻月时响应会乱序：回来的不是当前月就丢掉
-  busy.value = true
   try {
     const r = await api.calendar(want)
     if (`${y.value}-${pad(m.value)}` !== want) return
     days.value = r.days || {}
   } catch { if (`${y.value}-${pad(m.value)}` === want) days.value = {} }
-  busy.value = false
 }
 
 function show(yy, mm, select) {

@@ -1,9 +1,9 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, jumpPara, askNotePrefill, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, kindZH, bandOf,
+import { api, store, toast, jumpTo, jumpPara, askNotePrefill, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, bandOf,
          paperEpoch, samePaper, reloadSummary } from '../store'
 import { useEdgeResize } from '../edgeResize'
-import { lineSpanOf, sentenceAround } from '../find'
+import { lineSpanOf, sentenceAround, normText } from '../find'
 import { prettyChem } from '../chem'
 import { t, isEn } from '../i18n'
 import { copyText } from '../clip'
@@ -479,17 +479,11 @@ function downloadFig() {
 /* 术语表是全库共用的，但"跳去原文"这件事**只对本文出现过的词成立**：
    别的论文的术语在这里点 ↗ 必然查不到（用户报的"几乎都查不到原文"就是这个）。
    所以先算一次本文正文（归一化：折连字、只留字母数字与汉字），只给命中的词出箭头，
-   并把它们排在前面——一眼能看出哪些是这篇的词。 */
-const LIGFOLD = { 'ﬀ': 'ff', 'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬃ': 'ffi',
-                  'ﬄ': 'ffl', 'ﬅ': 'ft', 'ﬆ': 'st' }
-function fold(s) {
-  let out = ''
-  for (const ch of (s || '').toLowerCase()) out += LIGFOLD[ch] || ch
-  return out.replace(/[^0-9a-z一-鿿]+/g, '')
-}
-const paperNorm = computed(() => fold(store.paras.map(p => p.text || '').join(' ')))
+   并把它们排在前面——一眼能看出哪些是这篇的词。归一化用 find.js 的 normText
+   （引文对齐用的同一套折叠规则），两处各写一份迟早改出"术语查不到"。 */
+const paperNorm = computed(() => normText(store.paras.map(p => p.text || '').join(' ')))
 function inPaper(t) {
-  const q = fold(t?.term_en)
+  const q = normText(t?.term_en)
   return q.length >= 3 && paperNorm.value.includes(q)
 }
 const termsFiltered = computed(() => {

@@ -1,6 +1,6 @@
 <script>
 /* 解析好的 PDF 文档缓存是**文件级**的：多窗格/重挂载共享同一份解析结果（key = pid:variant），
-   第二次打开秒出。LRU 上限 6 份，超出淘汰最久未用的一份。 */
+   第二次打开秒出。LRU 上限 10 份，超出淘汰最久未用的一份（多窗格 × dual 变体轻松要 8 份）。 */
 const docCache = new Map()
 </script>
 
@@ -9,7 +9,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpPara, askNotePrefill, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
+import { api, store, toast, askNotePrefill, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
 import { confirmBox } from '../dialog'
 import { lsGet, lsSet } from '../ls'
 import { copyWithToast } from '../clip'
@@ -1196,7 +1196,7 @@ onBeforeUnmount(() => {
   if (store.viewerApi === viewerApiObj) store.viewerApi = null   // 活动窗格卸载了，快捷键别再打进来
   selStream?.abort()
   clearTimeout(spyT); clearTimeout(saveT); clearTimeout(scheduleRender._t)
-  clearTimeout(focusNote._t); clearTimeout(applyJump._t)
+  clearTimeout(focusNote._t); clearTimeout(applyJump._t); clearTimeout(retryJump._t)
   ro?.disconnect()
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('mousedown', onDocDown)
@@ -1214,6 +1214,7 @@ const frameRect = ref(null)
 
 function cropItem(it, r) {
   const canvas = canvases.value[it.gi]
+  if (!canvas) return          // 窗格卸载与 mouseup 的竞态：画布已经不在了就没什么可裁
   const dpr = canvas.width / parseFloat(canvas.style.width)
   const sx = r.x0 * dpr, sy = r.y0 * dpr, sw = (r.x1 - r.x0) * dpr, sh = (r.y1 - r.y0) * dpr
   const off = document.createElement('canvas')

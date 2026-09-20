@@ -10,3 +10,7 @@ export function lsGet(k, d) {
 export function lsSet(k, v) {
   localStorage.setItem(LS + k, JSON.stringify(v))
 }
+
+export function lsRemove(k) {
+  localStorage.removeItem(LS + k)
+}

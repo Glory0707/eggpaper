@@ -9,6 +9,7 @@
  */
 import { reactive } from 'vue'
 import { api } from './api'
+import { lsSet } from './ls'
 
 export const engInst = reactive({
   on: false,          // 等待卡要不要显示（error 时也显示，给重试/关闭）
@@ -21,10 +22,8 @@ export const engInst = reactive({
 
 let timer = null
 const doneHooks = []
-const errorHooks = []
 
 export function onEngineReady(fn) { doneHooks.push(fn) }
-export function onEngineError(fn) { errorHooks.push(fn) }
 
 function stopPolling() {
   if (timer) { clearInterval(timer); timer = null }
@@ -43,15 +42,14 @@ async function poll() {
     stopPolling()
     engInst.on = false
     engInst.hidden = false
-    try {   // 刷一遍引擎缓存（localStorage 的 engState），设置页下次打开不用闪"未安装"
+    try {   // 刷一遍引擎缓存（lsGet/lsSet 的 engState，带 eggpaper: 前缀——裸 localStorage 写的键读取方永远看不见）
       const e = await api.pdf2zhEngine(s.path || '')
-      localStorage.setItem('engState', JSON.stringify({ ok: e.ok, path: e.path, why: e.why }))
+      lsSet('engState', { ok: e.ok, path: e.path, why: e.why })
     } catch { /* 探测失败不打扰安装成功的消息 */ }
     doneHooks.forEach(fn => { try { fn() } catch { /* 钩子自己的事 */ } })
   } else if (s.state === 'error') {
     stopPolling()
-    engInst.on = true     // 错误要露出来：重试或关闭，不能无声无息
-    errorHooks.forEach(fn => { try { fn(s.error) } catch { /* 同上 */ } })
+    engInst.on = true     // 错误要露出来：重试或关闭，不能无声无息（engInst.error 已带原因）
   }
 }
 

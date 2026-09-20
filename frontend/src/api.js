@@ -1,5 +1,13 @@
 import { t } from './i18n'
 
+/* 后端错误的人话解析：detail 优先，退回状态码——req / 表单上传 / SSE 三条通道
+   共用这一份，别再各写一份"读 detail 兜状态码"。 */
+async function respError(r, fallback = '') {
+  let msg = fallback || `${r.status} ${r.statusText || ''}`.trim()
+  try { msg = (await r.json()).detail || msg } catch { /* 不是 JSON，就用兜底 */ }
+  return new Error(t(msg))
+}
+
 async function req(method, url, body) {
   const opt = { method, headers: {} }
   if (body instanceof FormData) opt.body = body
@@ -8,11 +16,7 @@ async function req(method, url, body) {
     opt.body = JSON.stringify(body)
   }
   const r = await fetch(url, opt)
-  if (!r.ok) {
-    let msg = `${r.status} ${r.statusText || ''}`.trim()
-    try { msg = (await r.json()).detail || msg } catch { /* 不是 JSON，就用上面的兜底 */ }
-    throw new Error(t(msg))
-  }
+  if (!r.ok) throw await respError(r)
   return r.json()
 }
 
@@ -106,7 +110,7 @@ export const api = {
     fd.append('file', file)
     return fetch('/api/pdf2zh/install-from-file', { method: 'POST', body: fd })
       .then(async r => {
-        if (!r.ok) throw new Error(t((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`))
+        if (!r.ok) throw await respError(r, `HTTP ${r.status}`)
         return r.json()
       })
   },
@@ -122,11 +126,7 @@ function sseStream(url, body, onEvent) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body), signal: ctrl.signal,
     })
-    if (!r.ok || !r.body) {
-      let msg = `${r.status} ${r.statusText || ''}`.trim()
-      try { msg = (await r.json()).detail || msg } catch { /* 非 JSON 就用状态码 */ }
-      throw new Error(t(msg))
-    }
+    if (!r.ok || !r.body) throw await respError(r)
     const reader = r.body.getReader()
     const dec = new TextDecoder()
     let buf = ''

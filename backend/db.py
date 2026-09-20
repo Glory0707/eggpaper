@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS marginalia(
 CREATE TABLE IF NOT EXISTS conversations(
   id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id TEXT, title TEXT, created_at TEXT, updated_at TEXT
 );
--- 五问里需要现场生成的那几问（还有什么没解决 / 还能做什么 / 换个学科怎么看）：
--- 按篇缓存，点过一次就不再花钱
+-- 五问里需要现场生成的那几问（motive 要解决什么、how 怎么解决的、next 还能做什么、
+-- lens 换个学科怎么看；键的口径见 llm.py）：按篇缓存，点过一次就不再花钱
 CREATE TABLE IF NOT EXISTS answers(
   paper_id TEXT, key TEXT, json TEXT, PRIMARY KEY(paper_id, key)
 );
@@ -526,7 +526,9 @@ def glossary_hits_all(pids: list, text: str):
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
-def conv_create(pid: str, title: str = "新对话") -> int:
+NEW_CONV = "新对话"      # 默认会话名：比对（自动改标题的判定）与写入共用这一个口径
+
+def conv_create(pid: str, title: str = NEW_CONV) -> int:
     now = _now()
     return q_insert("INSERT INTO conversations(paper_id, title, created_at, updated_at) VALUES(?,?,?,?)",
                     (pid, title[:60], now, now))
@@ -544,7 +546,7 @@ def conv_list(pid: str):
         now = _now()
         q("INSERT INTO conversations(paper_id, title, created_at, updated_at) "
           "SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM conversations WHERE paper_id=?)",
-          (pid, "新对话", now, now, pid), commit=True)
+          (pid, NEW_CONV, now, now, pid), commit=True)
     _adopt_orphan_qa(pid)
     return [dict(r) for r in q(
         "SELECT c.id, c.title, c.updated_at, c.summary, c.summary_upto, "
