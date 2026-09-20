@@ -886,7 +886,15 @@ def _run_analysis(pid: str, paras: list):
         if demo:
             data = llm.mock_analyze(paras)
         else:
-            data = llm.analyze_skeleton(title, use, kind=kind)
+            # 图表注顺手在析读里翻成中文（键=图表列表下标）：灯箱打开即得，不用每次现翻
+            cap_pairs = []
+            try:
+                pdir = db.get_paper(pid)
+                cap_pairs = [(i, f["caption"]) for i, f in enumerate(_figures_for(pdir)) if f.get("caption")]
+            except Exception as e:
+                _applog(f"析读 {pid}: 图表提取失败，这次不带图注翻译（{str(e)[:80]}）")
+            data = llm.analyze_skeleton(title, use, kind=kind,
+                                        fig_caps=None if (llm._is_en() or not cap_pairs) else cap_pairs)
         for p in paras:
             if p["in_refs"]:
                 data["roles"][str(p["idx"])] = "boilerplate"
@@ -894,9 +902,13 @@ def _run_analysis(pid: str, paras: list):
         db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
                                               for k, v in data["roles"].items()})
         db.answers_clear(pid)
-        db.update_paper(pid, summary=None, suggest=None, advisor=None, method_card=None,
-                        abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
-                        evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
+        upd = dict(summary=None, suggest=None, advisor=None, method_card=None,
+                   abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
+                   evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
+        if data.get("fig_caps"):
+            # 只在真的拿到了译文时才覆盖：懒翻译存下的旧值不被一次没带图注的析读清掉
+            upd["fig_caps"] = json.dumps(data["fig_caps"], ensure_ascii=False)
+        db.update_paper(pid, **upd)
         if _cancel_requested("analysis", pid):
             _cancel_clear("analysis", pid)
             db.update_paper(pid, analysis_status="none", analysis_error=None)
@@ -1860,7 +1872,7 @@ def _figure_regions(path):
                 if cap:
                     cap_txt = re.sub(r"\s+", " ", " ".join(t.strip() for t in texts))
                     caps.append({"rect": brect, "kind": cap[0], "label": cap[1],
-                                 "caption": cap_txt[:260] + ("…" if len(cap_txt) > 260 else "")})
+                                 "caption": cap_txt})   # 全文，不截断——灯箱图注中文版要完整呈现
                     continue
                 wide = _wide_flags(rects, colw_of, lm, rm)   # O(n²) 邻行扫描，只算一遍
                 if sum(wide) * 2 >= len(rects):
@@ -2002,13 +2014,15 @@ def fig_caption(pid: str, idx: int = 0):
         return {"zh": cap, "original": cap}
     key = f'{figs[idx]["page"]}:{figs[idx]["x0"]}:{figs[idx]["y0"]}'
     caps = db.fig_caps(pid)
-    if key in caps:
-        return {"zh": caps[key], "original": cap}
+    hit = caps.get(str(idx)) or caps.get(key)   # 析读时按编号存；旧版懒翻译按坐标存——两把钥匙都认
+    if hit:
+        return {"zh": hit, "original": cap}
     hits = db.glossary_hit(pid, cap)
-    msgs = llm.translate_messages(cap, "", hits)
-    zh = llm.chat(msgs, max_tokens=1000, temperature=0.2).strip()
+    msgs = llm.translate_caption_messages(cap, hits)
+    zh = llm.chat(msgs, max_tokens=6000, temperature=0.2).strip()
     if zh:
         caps[key] = zh
+        caps[str(idx)] = zh
         db.set_fig_caps(pid, caps)
     return {"zh": zh or cap, "original": cap}
 @app.get("/api/papers/{pid}/toc")

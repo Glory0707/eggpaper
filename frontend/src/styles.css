@@ -1215,10 +1215,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   position: fixed; inset: 0; z-index: 520; background: rgba(5, 5, 6, 0.78);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
 }
-/* 右上角小叉：遮罩本身就是"点外面关"，但屏幕上得有一个看得见的关法 */
+/* 右上角小叉：遮罩本身就是"点外面关"，但屏幕上得有一个看得见的关法。
+   叉用 SVG 画——字符 ✕ 受字体基线影响永远差半个像素，几何线条才能真正居中 */
 .lb-x {
   position: absolute; top: 18px; right: 22px; width: 34px; height: 34px;
-  font-size: 15px; line-height: 1; color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  color: #fff;
   background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.24); border-radius: 999px;
 }
 .lb-x:hover { background: rgba(255, 255, 255, 0.26); box-shadow: none; transform: none; }
@@ -1231,8 +1233,31 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   min-width: 240px; min-height: 120px;
 }
 
-.lb-cap { max-width: 76vw; text-align: center; font-size: calc(12.5px * var(--fs-scale)); line-height: 1.5; color: rgba(255, 255, 255, 0.88); }
-.lb-cap-orig, .lb-cap-wait { display: block; margin-top: 4px; font-size: calc(11px * var(--fs-scale)); color: rgba(255, 255, 255, 0.52); }
+/* 图注只给中文全文本（原文在纸上，点「在原文查看」回去核对）；超长图注内部滚，不裁一个字 */
+.lb-cap { max-width: 76vw; max-height: 30vh; overflow-y: auto; text-align: center; font-size: calc(12.5px * var(--fs-scale)); line-height: 1.5; color: rgba(255, 255, 255, 0.88); }
+.lb-cap-wait { display: block; margin-top: 4px; font-size: calc(11px * var(--fs-scale)); color: rgba(255, 255, 255, 0.52); }
+
+/* 长图注：左图右注。千字图注挂在图下是一根居中的文字墙，翻起来费劲；
+   侧栏给固定的可读行宽、左对齐、自己滚——图和注都在各自最舒服的形状里。
+   顶部留出小叉的高度，别让面板顶到它 */
+.lightbox.side { display: grid; grid-template-columns: auto minmax(320px, 30vw); grid-template-rows: auto auto;
+                 align-items: center; justify-items: center; column-gap: 22px; row-gap: 12px;
+                 padding: 58px 24px 20px; box-sizing: border-box; }
+.lightbox.side .lb-stage { grid-area: 1 / 1 / 3 / 2; }
+.lightbox.side img { max-width: 62vw; max-height: 84vh; }
+.lightbox.side .lb-cap {
+  grid-area: 1 / 2 / 2 / 3; justify-self: stretch; align-self: stretch;
+  max-width: none; max-height: 74vh; text-align: left; font-size: calc(13px * var(--fs-scale)); line-height: 1.7;
+  padding: 14px 16px; box-sizing: border-box;
+  background: rgba(17, 17, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px;
+}
+.lightbox.side .lb-actions { grid-area: 2 / 2 / 3 / 3; justify-self: start; }
+@media (max-width: 1100px) {   /* 窄窗放不下两栏：退回图上图下 */
+  .lightbox.side { display: flex; flex-direction: column; }
+  .lightbox.side .lb-stage, .lightbox.side .lb-cap, .lightbox.side .lb-actions { grid-area: auto; }
+  .lightbox.side .lb-cap { max-width: 76vw; max-height: 30vh; text-align: center; align-self: auto; }
+  .lightbox.side img { max-width: 86vw; max-height: 78vh; }
+}
 .lb-nav {
   width: 34px; height: 74px; flex-shrink: 0;
   font-size: 26px; line-height: 1; color: #fff;

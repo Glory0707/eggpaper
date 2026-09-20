@@ -387,6 +387,8 @@ const lbLoaded = ref(false)
 const capZh = ref({})
 const capPending = ref(false)
 const capText = computed(() => lightbox.value ? (capZh.value[figIdx.value] || lightbox.value.caption || '') : '')
+/* 长图注不值得挂成图下一根居中的文字墙：超过一段话的量就切成「左图右注」两栏 */
+const capLong = computed(() => capText.value.length > 200)
 watch(() => figIdx.value, i => {
   lbLoaded.value = false
   if (i >= 0) fetchCap(i)
@@ -793,8 +795,12 @@ watch(() => store.currentId, () => {
     </div>
 
         <Transition name="fade">
-    <div class="lightbox" v-if="lightbox" @click="figIdx = -1">
-      <button class="lb-x" :title="t('关闭')" @click="figIdx = -1">✕</button>
+    <div class="lightbox" :class="{ side: capLong }" v-if="lightbox" @click="figIdx = -1">
+      <button class="lb-x" :title="t('关闭')" @click="figIdx = -1">
+        <svg viewBox="0 0 10 10" width="11" height="11" aria-hidden="true">
+          <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" />
+        </svg>
+      </button>
       <div class="lb-stage" @click.stop>
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('上一张（←）')" @click="figStep(-1)">‹</button>
         <span class="lb-imgwrap" :class="{ loading: !lbLoaded }">
@@ -803,10 +809,9 @@ watch(() => store.currentId, () => {
         </span>
         <button class="lb-nav" :disabled="figures.length < 2" :title="t('下一张（→）')" @click="figStep(1)">›</button>
       </div>
-            <div class="lb-cap" v-if="lightbox.caption" @click.stop :title="lightbox.caption">
+      <div class="lb-cap" v-if="lightbox.caption" @click.stop>
         <span>{{ capText }}</span>
-        <span class="lb-cap-orig" v-if="capText !== lightbox.caption">{{ lightbox.caption }}</span>
-        <span class="lb-cap-wait" v-else-if="capPending">{{ t('正在翻译图注…') }}</span>
+        <span class="lb-cap-wait" v-if="capPending && !capZh[figIdx]">{{ t('正在翻译图注…') }}</span>
       </div>
       <div class="lb-actions" @click.stop>
         <span class="mono-label">{{ t(lightbox.kind === 'table' ? '表' : '图') }} · {{ figIdx + 1 }} / {{ figures.length }} · {{ t('第 {p} 页', { p: lightbox.page + 1 }) }}</span>

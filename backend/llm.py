@@ -374,11 +374,19 @@ def _skeleton_system(kind: str) -> str:
               .replace("该实验/数据直接回答的问题，≤22字", "the question this experiment/data directly answers, ≤22 words"))
     return s + _lang_tail()
 
-def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
+def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: list = None) -> dict:
     """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}
-    kind：research / review（综述走附录提示词，别把它的主体判成背景）。"""
+    kind：research / review（综述走附录提示词，别把它的主体判成背景）。
+    fig_caps：图表注列表（[编号, 图注全文] 对，编号与图表列表的下标一致）——
+    给了就顺手把图注翻成中文，析读一次全带出来，灯箱打开即得、不再现翻。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)[:90000]   # 长综述防爆上下文；超限从尾部截（参考文献在最后）
     user = f"论文标题：{title or '（未识别）'}\n\n{body}"
+    if fig_caps:
+        listing = "\n".join(f"[{i}] {cap}" for i, cap in fig_caps)
+        user += (f"\n\n【图表注】这篇论文有 {len(fig_caps)} 张带图注的图表（方括号是编号）：\n" + listing +
+                 "\n\n输出 JSON 里增加一个键 \"fig_caps\"：把每条图注**完整**翻译成中文——"
+                 "子图 (a)(b) 的说明逐条译出，不省略、不截断、不保留英文原句"
+                 "（方法名/材料名/统计量缩写可照抄）。键就是方括号里的编号。")
     system = _skeleton_system(kind)
     msgs = [
         {"role": "system", "content": system},
@@ -451,10 +459,18 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
             num = _key_num(k)
             if num in valid and isinstance(v, str) and v.strip():
                 eqs[str(num)] = v.strip()[:36]
+    caps_raw = data.get("fig_caps") or {}
+    fig_caps_zh = {}
+    if isinstance(caps_raw, dict) and fig_caps:
+        want = {str(i) for i, _ in fig_caps}
+        for k, v in caps_raw.items():
+            if str(k) in want and isinstance(v, str) and v.strip():
+                fig_caps_zh[str(k)] = v.strip()
 
     if not roles:
         raise ValueError(f"骨架解析失败（roles 为空），原始输出: {out[:160]}")
-    return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs, "evidence_qs": eqs}
+    return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs,
+            "evidence_qs": eqs, "fig_caps": fig_caps_zh}
 
 # ---------------- 论文专属推荐问题 ----------------
 
@@ -602,6 +618,17 @@ def translate_messages(text: str, context: str = "", hits: list = None) -> list:
         {"role": "system", "content": "你是资深学术翻译，擅长化学/材料/工程领域论文的中英互译。"},
         {"role": "user", "content": user},
     ]
+
+def translate_caption_messages(text: str, hits: list = None) -> list:
+    """图注翻译：查译同款风格，但图注是一条完整的说明文——模型见它长就想摘要
+    （实测把千字图注译成 89 字的"…"版），这里把"整条完整"写死在它面前。"""
+    msgs = translate_messages(text, "", hits)
+    msgs[-1]["content"] = msgs[-1]["content"].replace(
+        "[待翻译]",
+        "这是一条图表注，不是普通句子：必须整条完整翻译——(a)(b) 等子图说明逐条译出，"
+        "结尾的缩写对照（如 HPC, hippocampus）按「缩写（中文全称）」逐个保留，一个都不能少；"
+        "不许摘要、不许截断、译文里不许出现省略号。\n[待翻译]")
+    return msgs
 
 def translate_stream(text: str, context: str = "", hits: list = None):
     """逐字翻译。划词等场景等不了 10 秒的整段——首字 1 秒内就该出现。
