@@ -84,8 +84,10 @@ watch(menuFor, (v, was) => {
   }
 })
 function closeMenu(e) {
-  // ＋ 按钮的点击交给 openMenu 自己的开/关切换（capture 监听先于 @click 触发）
-  if (e?.target?.closest?.('.p-tag')) return
+  // ＋ 按钮的点击交给 openMenu 自己的开/关切换（capture 监听先于 @click 触发）；
+  // 菜单内部同理——这里在 capture 阶段，.stop 拦不住它，点菜单里先置空 menuFor
+  // 会让随后的 toggleIn 拿到 null，发出 /papers/null/collections（「论文不存在」的真凶）。
+  if (e?.target?.closest?.('.p-tag, .coll-menu')) return
   menuFor.value = null
 }
 function escMenu(e) { if (e.key === 'Escape') closeMenu() }
@@ -134,6 +136,7 @@ async function collFail(e) {
   } else toast(e.message)
 }
 async function toggleIn(pid, cid) {
+  if (pid == null) return        // 双保险：菜单关闭竞态里 pid 可能已被置空，别让 null 出网
   const cur = collOf(pid)
   const c = colls.value.find(x => x.id === cid)
   const on = cur.includes(cid)
@@ -142,14 +145,14 @@ async function toggleIn(pid, cid) {
     await api.paperColls(pid, next)
     await refreshCollections()
     if (c) toast(on ? t('已移出「{name}」', { name: c.name }) : t('已归入「{name}」', { name: c.name }))
-    menuFor.value = null
+    // 菜单留着不关：一篇常要同时勾几个分类，「完成」/点外面/Esc 才收
   } catch (e) { await collFail(e) }
 }
 const dragPid = ref(null)
 async function dropOn(cid) {
   const pid = dragPid.value
   dragPid.value = null
-  if (!pid) return
+  if (pid == null) return
   const cur = collOf(pid)
   if (cur.includes(cid)) return
   const c = colls.value.find(x => x.id === cid)
