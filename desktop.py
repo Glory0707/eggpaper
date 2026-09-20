@@ -128,8 +128,22 @@ def start_tray(url: str, port: int, log) -> bool:
 
     def on_quit(icon, item):
         log("从托盘退出")
+        # 必须走 /api/quit，不能 icon.stop()+os._exit 硬杀：那样 _QUITTING 不会置位，
+        # 所有开着的网页/独立窗口（3 秒轮询 open-request）等不到 quitting，
+        # 只能对着 ERR_CONNECTION_REFUSED 发呆。让位升级（reason=upgrade）不走这里。
+        graceful = False
+        try:
+            import httpx
+            r = httpx.post(f"http://{HOST}:{port}/api/quit",
+                           json={"reason": "user"}, timeout=5).json()
+            graceful = bool(r.get("ok"))
+        except Exception as e:
+            log(f"请求后端退出失败：{e}")
         icon.stop()
-        os._exit(0)
+        if not graceful:
+            os._exit(0)     # 开发模式 /api/quit 不接管：托盘自己收场
+        # 打包版：/api/quit 已广播 quitting，宽限一拍后才整进程退出——
+        # 这一拍就是留给所有开着的页面自行关闭的，这里千万别抢跑 os._exit
 
     icon = pystray.Icon("eggpaper", tray_image(), "eggpaper", menu=pystray.Menu(
         pystray.MenuItem("打开界面", guard("打开界面", on_open), default=True),

@@ -663,7 +663,9 @@ def quit_app(body: dict = None):
         _QUITTING["user"] = True
     import threading as _th
     def bye():
-        time.sleep(3.2)
+        # 宽限 4.5 秒：页面 3 秒轮询一次 open-request，3.2 只留 0.2 秒余量——
+        # 刚轮询过一圈的页面会赶不上这一拍，托盘退出就留着满屏尸体页
+        time.sleep(4.5)
         os._exit(0)
     _th.Thread(target=bye, daemon=True).start()
     return {"ok": True}
