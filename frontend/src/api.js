@@ -96,6 +96,7 @@ export const api = {
     req('GET', '/api/pdf2zh/engine' + (path ? `?path=${encodeURIComponent(path)}` : '')),
   pdf2zhInstall: (url = '') => req('POST', '/api/pdf2zh/install', { url }),
   pdf2zhInstallStatus: () => req('GET', '/api/pdf2zh/install-status'),
+  pdf2zhInstallCancel: () => req('POST', '/api/pdf2zh/install-cancel'),
   setDataLocation: (path) => req('POST', '/api/data/location', { path }),
   dataPick: () => req('POST', '/api/data/pick', {}),
   pdf2zhInstallFromFile: (file) => {

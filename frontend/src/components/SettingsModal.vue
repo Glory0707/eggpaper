@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
+import { engInst, startEngineInstall, onEngineReady } from '../engine'
 import { t, ui, setLang, setDark, isEn } from '../i18n'
 import { vDrag } from '../drag'
 import { modalFocus } from '../modalFocus'
@@ -126,11 +127,11 @@ async function openShots() {
 
 function openGuide() { window.open('/guide', '_blank') }
 
-/* 全文翻译引擎（pdf2zh）：不在安装包里（AGPL 引擎另装）。
-   状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。 */
+/* 全文翻译引擎（pdf2zh）：不在安装包里（渠道上限 100MB，308MB 的引擎另装）。
+   状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。
+   安装进度看全局的 engInst（engine.js）：不管安装从哪里发起（这里手动、
+   点「全文翻译」时自动），这一行和右下角等待卡看到的是同一份状态。 */
 const eng = reactive({ busy: false, ok: false, path: '', why: '', checked: false })
-const inst = reactive({ state: 'idle', pct: 0, got: 0, total: 0, error: '' })
-let instTimer = null
 
 async function checkEngine() {
   eng.busy = true
@@ -144,31 +145,19 @@ async function checkEngine() {
   eng.busy = false
 }
 
-
-async function pollInstall() {
-  try {
-    const s = await api.pdf2zhInstallStatus()
-    Object.assign(inst, { state: s.state, pct: s.pct, got: s.got, total: s.total, error: s.error })
-    if (s.state === 'done') {
-      clearInterval(instTimer); instTimer = null
-      f.engine_path = s.path || ''       // 装好后把路径填上
-      await checkEngine()
-      toast(t('翻译引擎装好了'))
-    } else if (s.state === 'error') {
-      clearInterval(instTimer); instTimer = null
-    }
-  } catch { /* 下一拍再问 */ }
-}
-
 async function installEngine() {
-  Object.assign(inst, { state: 'downloading', pct: 0, got: 0, total: 0, error: '' })
-  try {
-    await api.pdf2zhInstall()
-    if (!instTimer) instTimer = setInterval(pollInstall, 1000)
-  } catch (e) {
-    Object.assign(inst, { state: 'error', error: e.message })
-  }
+  await startEngineInstall()
 }
+
+/* 安装完成的同步：engine.js 已经把 engState 缓存刷掉了，这里把它接过来，
+   这一行立刻从「下载中 x%」变「可用（…）」——哪怕安装是从别处发起的。 */
+onEngineReady(() => {
+  const st = lsGet('engState', null)
+  if (st) {
+    Object.assign(eng, { ok: st.ok, path: st.path, why: st.why, checked: true })
+    f.engine_path = st.path || f.engine_path
+  }
+})
 
 /* 从本地 zip 装：网络到不了 GitHub 时的正路（下好一份跟安装包一起发）。 */
 const zipInput = ref(null)
@@ -280,9 +269,9 @@ function save() {
       <div class="f-line" v-if="!isEn()">
         <span class="mono-label" style="margin:0">{{ t('翻译引擎') }}</span>
         <span class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
-          <template v-if="inst.state === 'downloading'">{{ t('下载中 {p}%', { p: inst.pct }) }}</template>
-          <template v-else-if="inst.state === 'unpacking' || inst.state === 'uploading'">{{ t('解压中…') }}</template>
-          <template v-else-if="inst.state === 'error'">{{ inst.error }}</template>
+          <template v-if="engInst.state === 'downloading'">{{ t('下载中 {p}%', { p: engInst.pct }) }} · {{ engInst.src }}</template>
+          <template v-else-if="engInst.state === 'unpacking'">{{ t('解压中…') }}</template>
+          <template v-else-if="engInst.state === 'error'">{{ engInst.error }}</template>
           <template v-else-if="!eng.checked">…</template>
           <template v-else-if="eng.ok">{{ t('可用（{v}）', { v: eng.why.replace('pdf2zh', '').trim() }) }}</template>
           <template v-else>{{ t('未安装') }}</template>
@@ -301,7 +290,7 @@ function save() {
           <button class="eng-file" @click="moveData" :disabled="savingData">{{ savingData ? t('迁移中…') : t('迁移') }}</button>
         </div>
       </div>
-      <div class="f-row" v-if="!isEn() && !eng.ok && inst.state !== 'downloading' && inst.state !== 'unpacking' && inst.state !== 'uploading'">
+      <div class="f-row" v-if="!isEn() && !eng.ok && engInst.state !== 'downloading' && engInst.state !== 'unpacking'">
         <div class="model-row">
           <input type="text" v-model="f.engine_path" :placeholder="t('pdf2zh.exe 路径（留空自动找）')" />
           <button class="eng-install" @click="installEngine">{{ t('下载安装 308MB') }}</button>

@@ -111,6 +111,8 @@ def engine_path(explicit: str = "") -> str:
     最后一处（数据目录 engines/）是给"手动放一个进来"留的稳位：那目录升级、卸载都不动。
     """
     import glob
+    if os.environ.get("EGGPAPER_ENGINE_OFF"):
+        return ""      # E2E 专用：假设这台机器没有引擎，验证"缺引擎自动安装"链路
     want = (explicit or "").strip().strip('"')
     if want and os.path.exists(want):
         return want

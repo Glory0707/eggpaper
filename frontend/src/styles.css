@@ -1681,6 +1681,25 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .upd-note.err { color: var(--vermilion); }
 .upd-note.ok { color: var(--accent-deep); }
 
+/* 全文翻译引擎的等待卡：右下角小卡，长任务可停（停止保留断点，收起不拦安装）。 */
+.eng-card {
+  position: fixed; right: 20px; bottom: 26px; z-index: 590;
+  width: 316px; background: var(--card); border: 1px solid var(--hairline);
+  border-radius: 6px; box-shadow: var(--shadow-pop); padding: 12px 14px 10px;
+}
+.eng-card .eng-title { font-size: var(--fs-md); color: var(--ink); }
+.eng-card .eng-track {
+  height: 4px; border-radius: 2px; background: var(--hairline);
+  overflow: hidden; margin: 9px 0 7px;
+}
+.eng-card .eng-track i {
+  display: block; height: 100%; background: var(--accent);
+  transition: width 300ms var(--ease-smooth);
+}
+.eng-card .eng-sub { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
+.eng-card .eng-btns { display: flex; gap: 8px; margin-top: 9px; }
+.eng-card .eng-btns button { padding: 3px 12px; font-size: var(--fs-sm); }
+
 .cite-inline {
   flex: none; align-self: flex-end; margin: 0 0 6px 8px;
   font-size: var(--fs-xs); color: var(--ink-2);

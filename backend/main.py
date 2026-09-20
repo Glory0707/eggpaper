@@ -369,15 +369,19 @@ def set_data_location(body: dict):
 
 @app.post("/api/pdf2zh/install")
 def pdf2zh_install(body: dict = None):
-    """一键把引擎装到用户机器上（从官方源下载，我们不再分发它——AGPL 见 engine_install）。
-
-    body 里可以给 url：国内直连 GitHub 常常慢，用户手上有镜像/局域网地址就填进来。
-    """
+    """一键把引擎装到用户机器上。不给 url 就走内置源表（更新源同源 → 镜像 → 官方直连，
+    自动换源+续传+校验，见 engine_install）；给了 url 就只用这一个（测试/局域网用）。"""
     url = str(((body or {}).get("url") or "")).strip()
     return engine_install.start(url)
 
 @app.get("/api/pdf2zh/install-status")
 def pdf2zh_install_status():
+    return engine_install.status()
+
+@app.post("/api/pdf2zh/install-cancel")
+def pdf2zh_install_cancel():
+    """喊停下载。断点留在 engines/pdf2zh.partial/，下次从断点接着下。"""
+    engine_install.cancel()
     return engine_install.status()
 
 @app.post("/api/pdf2zh/install-from-file")
@@ -2554,7 +2558,20 @@ def translate_full_start(pid: str, force: bool = False):
     exe = translate_full.engine_path(engine)
     ok, why = translate_full.engine_probe_cached(exe)
     if not ok:
-        raise HTTPException(400, f"缺 pdf2zh 引擎（{why}）。到「设置 → 翻译引擎」安装，或填写路径。")
+        # 引擎不在：后台自动下载安装（多源+校验+续传，见 engine_install），
+        # 前端见到"状态变成下载中"就弹等待卡、装完自动把这次全文翻译续上。
+        st = engine_install.status()
+        exe_found = engine_install.find_installed()
+        if not exe_found and st["state"] not in ("downloading", "unpacking"):
+            engine_install.start()
+            raise HTTPException(400, f"缺全文翻译引擎（{why}）。已在后台自动下载安装（约 300MB，几分钟），"
+                                     "装好后会自动开始这篇的全文翻译。")
+        if st["state"] in ("downloading", "unpacking"):
+            raise HTTPException(400, f"缺全文翻译引擎（{why}）。后台正在下载安装（约 300MB），装好后会自动开始。")
+        if not exe_found:
+            raise HTTPException(400, f"缺全文翻译引擎（{why}）。自动下载没成功（{st.get('error') or '原因未知'}），"
+                                     "可再点一次「全文翻译」重试，或到「设置 → 翻译引擎」手动装。")
+        raise HTTPException(400, f"全文翻译引擎起不来（{why}）。到「设置 → 翻译引擎」重新检测，或重装引擎。")
     translate_full.start(pid, p["path"], paper_dir(pid), used,
                          cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                          note=note, engine=engine)

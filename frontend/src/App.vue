@@ -11,6 +11,8 @@ import Dialog from './components/Dialog.vue'
 import CiteCard from './components/CiteCard.vue'
 import UpdateCard from './components/UpdateCard.vue'
 import { dlg, dlgCancel } from './dialog'
+import { engInst, watchEngine, hideEngineCard, closeEngineCard, cancelEngineInstall,
+         startEngineInstall, onEngineReady, fmtMB } from './engine'
 import EggMark from './components/EggMark.vue'
 import { festivalSkin } from './festival'
 import { t, isEn, setLang } from './i18n'
@@ -603,8 +605,26 @@ async function doTranslateFull() {
     tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0 }
     await refreshPapers()
     toast(r.note || (again ? t('已开始重新全文翻译') : t('全文翻译已开始')))
-  } catch (e) { toast(t('启动失败：{m}', { m: e.message })) }
+  } catch (e) {
+    // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
+    // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
+    const st = await api.pdf2zhInstallStatus().catch(() => null)
+    if (st && (st.state === 'downloading' || st.state === 'unpacking')) {
+      engResumeId = store.currentId
+      watchEngine()
+    } else {
+      toast(t('启动失败：{m}', { m: e.message }))
+    }
+  }
 }
+/* 引擎装好后的自动续翻：只续"因为等引擎而停下"的那一篇——设置页手动装的
+ * （没记 engResumeId）只收 toast，不冷不丁替用户开翻译反而吓人。 */
+let engResumeId = ''
+onEngineReady(() => {
+  toast(t('翻译引擎装好了，继续全文翻译'))
+  if (engResumeId && store.currentId === engResumeId) doTranslateFull()
+  engResumeId = ''
+})
 
 /* 全文翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
    完成这一拍也在这里接——完成通知与「译文/双语」的解锁都看它。 */
@@ -962,6 +982,30 @@ function onKey(e) {
         <Dialog />
     <CiteCard />
     <UpdateCard />
+    <Transition name="pop">
+      <div class="eng-card" v-if="engInst.on && !engInst.hidden">
+        <div class="eng-title">
+          <span v-if="engInst.state === 'downloading'">{{ t('正在下载全文翻译引擎 {p}%', { p: engInst.pct }) }}</span>
+          <span v-else-if="engInst.state === 'unpacking'">{{ t('引擎解压安装中…') }}</span>
+          <span v-else-if="engInst.state === 'error'" style="color:var(--vermilion)">{{ engInst.error }}</span>
+        </div>
+        <div class="eng-track" v-if="engInst.state === 'downloading'"><i :style="{ width: engInst.pct + '%' }"></i></div>
+        <div class="eng-sub" v-if="engInst.state === 'downloading'">
+          {{ t('已下载 {a} / {b} MB（{s}）', { a: fmtMB(engInst.got), b: fmtMB(engInst.total), s: engInst.src }) }}
+        </div>
+        <div class="eng-sub" v-else-if="engInst.state === 'unpacking'">{{ t('装好后自动开始全文翻译') }}</div>
+        <div class="eng-btns">
+          <template v-if="engInst.state === 'error'">
+            <button @click="startEngineInstall">{{ t('重试') }}</button>
+            <button @click="closeEngineCard">{{ t('关闭') }}</button>
+          </template>
+          <template v-else>
+            <button @click="cancelEngineInstall">{{ t('停止下载') }}</button>
+            <button style="margin-left:auto" @click="hideEngineCard">{{ t('收起') }}</button>
+          </template>
+        </div>
+      </div>
+    </Transition>
         <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，这个页面可以关掉了。') }}</div>
         <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 
