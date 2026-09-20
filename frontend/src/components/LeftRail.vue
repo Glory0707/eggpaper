@@ -243,22 +243,21 @@ async function doDelete() {
   toggleSelMode()
   await _removePids(pids)
 }
-/* 批量归类：三态勾——全在=勾、全不在=空、部分=半；点一下按"任一没归"全归、否则全移出 */
+/* 批量归类：点分类名就整批归入并收起——不搞复选框三态（半选的横杠没人看得懂）；
+   右侧的 ✓ 只是状态标记：这批已经全在这个分类里 */
 function selCollState(cid) {
   const hits = [...selSet.value].filter(pid => collOf(pid).includes(cid)).length
   return hits === 0 ? 'none' : hits === selN.value ? 'all' : 'some'
 }
-async function selToggleColl(cid) {
-  const on = selCollState(cid) !== 'all'
+async function selAddColl(cid) {
   for (const pid of selSet.value) {
     const cur = collOf(pid)
-    const has = cur.includes(cid)
-    if (on === has) continue
-    try { await api.paperColls(pid, on ? [...cur, cid] : cur.filter(x => x !== cid)) } catch { /* 一篇失败不拖垮整批 */ }
+    if (cur.includes(cid)) continue
+    try { await api.paperColls(pid, [...cur, cid]) } catch { /* 一篇失败不拖垮整批 */ }
   }
   await refreshCollections()
   selMenu.value = false
-  toast(on ? t('已把 {n} 篇归入该分类', { n: selN.value }) : t('已把 {n} 篇移出该分类', { n: selN.value }))
+  toast(t('已把 {n} 篇归入该分类', { n: selN.value }))
 }
 
 /* ---------- 长按拖放区 = 从 Zotero 导入（点击仍是选文件） ---------- */
@@ -278,7 +277,7 @@ function hintUp() {
 }
 function hintClick() {
   if (zotArmed.value) { zotArmed.value = false; return }
-  fileInput.click()
+  fileInput.value?.click()      // ref 不会在函数里自动解包——普通点击导入就是这条路
 }
 function onZotImported() {
   refreshPapers()
@@ -308,13 +307,14 @@ function onCmpGoto(c) {
       </select>
       <button class="lib-multi" :class="{ on: selMode }" :title="t('多选：批量同屏 / 对比 / 分类 / 删除')"
               @click="toggleSelMode">
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <rect x="1" y="2" width="3.2" height="3.2" rx="0.9" fill="currentColor"/>
-          <rect x="6.2" y="2.7" width="8.8" height="1.8" rx="0.9" fill="currentColor"/>
-          <rect x="1" y="6.4" width="3.2" height="3.2" rx="0.9" fill="currentColor"/>
-          <rect x="6.2" y="7.1" width="8.8" height="1.8" rx="0.9" fill="currentColor"/>
-          <rect x="1" y="10.8" width="3.2" height="3.2" rx="0.9" fill="currentColor"/>
-          <rect x="6.2" y="11.5" width="8.8" height="1.8" rx="0.9" fill="currentColor"/>
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none">
+          <rect x="1.6" y="1.6" width="5.2" height="5.2" rx="1.5" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M3.1 4.1l1.2 1.2 2-2.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="1.6" y="7.4" width="5.2" height="5.2" rx="1.5" stroke="currentColor" stroke-width="1.7"/>
+          <rect x="1.6" y="13.2" width="5.2" height="5.2" rx="1.5" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M10.5 4.2h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M10.5 10h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M10.5 15.8h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
         </svg>
       </button>
     </div>
@@ -391,18 +391,16 @@ function onCmpGoto(c) {
       <span class="s-actions">
         <button :disabled="!canSplit" :title="canSplit ? t('这几篇一起同屏阅读') : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
         <button :disabled="!canCompare" :title="canCompare ? t('把这几篇的要点抽成一张对比表') : t('对比要选 2~5 篇')" @click="doCompare">{{ t('数据对比') }}</button>
-        <button :disabled="!selN" :title="t('给选中的篇统一加/去分类')" @click="selMenu = !selMenu">{{ t('分类') }}</button>
+        <button :disabled="!selN" :title="t('给选中的篇统一归入一个分类')" @click="selMenu = !selMenu">{{ t('分类') }}</button>
         <button :disabled="!selN" class="s-danger" :title="t('删除选中的篇')" @click="doDelete">{{ t('删除') }}</button>
       </span>
       <div class="coll-menu sel-coll" v-if="selMenu" @click.stop>
         <div class="cm-head">{{ t('归入分类 · {n} 篇', { n: selN }) }}</div>
-        <label v-for="c in colls" :key="c.id" class="cm-row">
-          <input type="checkbox" :checked="selCollState(c.id) === 'all'"
-                 :indeterminate.prop="selCollState(c.id) === 'some'" @change="selToggleColl(c.id)" />
-          <span>{{ c.name }}</span>
-        </label>
+        <button v-for="c in colls" :key="c.id" class="cm-row cm-act" @click="selAddColl(c.id)">
+          <span class="cm-name">{{ c.name }}</span>
+          <svg v-if="selCollState(c.id) === 'all'" viewBox="0 0 12 12" width="11" height="11" :title="t('这批已全部在这个分类')"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类，先在上面新建一个') }}</div>
-        <button class="cm-done" @click="selMenu = false">{{ t('完成') }}</button>
       </div>
     </div>
     <div class="drop-hint" :class="{ over, hot: zotArmed }" v-show="!selMode"

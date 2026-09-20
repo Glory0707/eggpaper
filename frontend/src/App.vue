@@ -689,7 +689,7 @@ async function onImport(list) {
   if (many && ok.length > 1) {
     toast(t('已导入 {n} 篇，其余在后台排队通读', { n: ok.length }))
   } else if (first.no_text) {
-    toast(t('扫描件：只能读，析读与眉批用不了'))
+    toast(t('扫描件：正在后台识别文字，识别完自动析读'))
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
     toast(t('只认出 {n} 段，析读会比较粗', { n: first.n_paragraphs }))
   }

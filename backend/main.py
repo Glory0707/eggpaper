@@ -29,6 +29,7 @@ import config
 import db
 import engine_install
 import llm
+import ocr
 import pdfparse
 import picker
 import translate_full
@@ -589,11 +590,46 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     db.update_paper(pid, last_read_at=time.strftime("%Y-%m-%d %H:%M:%S"))
     if paras:
         _enqueue_analysis(pid, paras)
+    elif ocr.available():
+        # 扫描件：无感补一段 OCR（后台线程），识别完段落入库、析读自动排队。
+        # 状态借「排队通读中」显示——用户不需要知道中间多了道识别的工序。
+        db.update_paper(pid, analysis_status="queued", analysis_error=None)
+        threading.Thread(target=_ocr_then_analyze, args=(pid, path), daemon=True).start()
     else:
         db.update_paper(pid, analysis_status="done")
     return {"paper": row, "n_paragraphs": len(paras),
             "n_captions": sum(1 for p in paras if p["caption"]),
             "no_text": not paras}
+
+
+def _ocr_then_analyze(pid: str, path: str):
+    """扫描件的隐形后半段：OCR → 段落入库 → 排析读。失败落 analysis_error，说人话。
+
+    登记成 ("analysis", pid) 的在跑任务：analysis 端点有"状态说 queued 但进程里没活 =
+    上次被中断"的惰性检测，OCR 这一段不登记的话刚导入的篇会被它误杀回 none。"""
+    with _q_lock:
+        _live_jobs.add(("analysis", pid))
+    t0 = time.time()
+    try:
+        paras = ocr.ocr_pdf(path)
+        if not paras:
+            raise ValueError("没认出文字")
+    except ocr.OcrUnavailable as e:
+        db.update_paper(pid, analysis_status="error", analysis_error=str(e))
+        return
+    except Exception:
+        _applog(f"OCR {pid} 失败：{traceback.format_exc(limit=3)}")
+        db.update_paper(pid, analysis_status="error",
+                        analysis_error="扫描件文字识别没成功——这份可能太糊，或重试一次")
+        return
+    finally:
+        _job_done("analysis", pid)
+    _applog(f"OCR {pid}: {len(paras)} 段，{time.time() - t0:.1f}s")
+    if _pid_gone(pid):
+        return
+    db.replace_paragraphs(pid, paras)
+    _ensure_paper_type(pid)
+    _enqueue_analysis(pid, paras)
 
 @app.post("/api/papers")
 async def upload(file: UploadFile = File(...)):
@@ -993,7 +1029,17 @@ def _run_analysis(pid: str, paras: list):
 
 @app.post("/api/papers/{pid}/analyze")
 def analyze(pid: str):
-    p = _paper_needing_paras(pid)
+    p = _paper_or_404(pid)
+    if not db.get_paragraphs(pid, with_lines=False):
+        # 扫描件重试：OCR 这道工序没跑成（引擎缺失/识别失败），点「重新析读」从头再来
+        if not ocr.available():
+            raise HTTPException(400, NO_TEXT)
+        with _key_lock("job:" + pid):
+            if _analysis_inflight(pid):
+                return {"status": p["analysis_status"] or "queued"}
+            db.update_paper(pid, analysis_status="queued", analysis_error=None)
+            threading.Thread(target=_ocr_then_analyze, args=(pid, p["path"]), daemon=True).start()
+        return {"status": "queued"}
     # 查互斥与占位排队必须同锁：拆开就有 TOCTOU——两边都过了检查再各自启动，照样互相清缓存
     with _key_lock("job:" + pid):
         if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
@@ -1580,10 +1626,12 @@ def compare_papers(body: dict):
         return db.get_paragraphs(xpid, with_lines=False), claims, annos
 
     demo = _demo_mode()
-    cells = compare.extract_all(papers, material_of, demo=demo)
+    dims = [str(k) for k in ((body or {}).get("dims") or []) if str(k) in compare.KEYS]
+    cells = compare.extract_all(papers, material_of, demo=demo, dims=dims or None)
     return {"papers": [{k: p.get(k) for k in ("id", "title", "filename", "authors", "year")}
                        for p in papers],
-            "cells": cells, "dims": [{"k": k, "label": label} for k, label, _h in compare.DIMS],
+            "cells": cells, "dims": [{"k": k, "label": label} for k, label, _h in compare.DIMS
+                                     if not dims or k in dims],
             "demo": demo}
 
 @app.get("/api/papers/{pid}/method-card")

@@ -11,12 +11,16 @@ import os
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
+from PyInstaller.utils.hooks import collect_data_files
+
 datas = [
     (os.path.join(ROOT, "frontend", "dist"), "frontend/dist"),   # 前端界面
     (os.path.join(ROOT, "VERSION"), "."),                        # 版本号（更新检查要用）
     (os.path.join(ROOT, "installer", "eggpaper.ico"), "."),      # 多尺寸图标：窗口/托盘取它
     (os.path.join(ROOT, "backend", "guide.html"), "."),          # 使用指南（设置里可打开）
 ]
+# 扫描件 OCR 的模型随包分发（det/rec/cls 三只 onnx），缺了运行时才发现不了
+datas += collect_data_files("rapidocr_onnxruntime")
 hiddenimports = [
     # 托盘（pystray 的后端是按平台动态选的，静态分析看不到）
     "pystray._win32", "PIL.Image", "PIL.ImageDraw",
@@ -28,6 +32,8 @@ hiddenimports = [
     # 整本翻译这条链：translate_full 由 main 静态导入、engine_install 由 translate_full
     # 在函数里导入——静态分析通常扫得到，但这是"缺了整本翻译就废"的命门，显式列出。
     "translate_full", "engine_install", "picker",
+    # 扫描件 OCR：引擎在 ocr.py 函数内懒加载，模型加载要 1~2 秒，不能拖慢服务启动
+    "ocr", "rapidocr_onnxruntime",
 ]
 
 a = Analysis(
@@ -40,7 +46,8 @@ a = Analysis(
     runtime_hooks=[],
     # 瘦身：这些一个都用不到。**注意别把 PIL 列进来**——托盘图标要用它，
     # excludes 的优先级高于 hiddenimports，列进去就是"明明装了却说找不到"。
-    excludes=["numpy", "scipy", "pandas", "matplotlib", "tkinter", "pytest",
+    # numpy 也不能列：onnxruntime（扫描件 OCR）靠它活着。
+    excludes=["scipy", "pandas", "matplotlib", "tkinter", "pytest",
               "IPython", "notebook",
               # 独立窗口走浏览器应用模式。pywebview 试过并撤掉：它在打包环境里
               # import 就卡住（pythonnet 加载 .NET 时握着 GIL，兜底计时都跑不到）。

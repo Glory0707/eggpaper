@@ -487,12 +487,13 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .paper-item.sel { background: var(--accent-soft); border-color: var(--accent-line); }
 .lib-multi {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 26px; border-radius: 4px; cursor: pointer;
+  width: 32px; height: 28px; border-radius: 4px; cursor: pointer;
   border: 1px solid transparent; background: none; color: var(--ink-3);
   transition: all var(--t-fast) var(--ease-smooth);
 }
 .lib-multi:hover, .lib-multi.on { background: var(--accent-soft); color: var(--accent-deep); }
 .lib-multi.on { border-color: var(--accent-line); }
+.lib-tools .lib-sort { max-width: 112px; }
 /* 选择模式的吸底动作条：替换拖放区的位置，动作将来加就往 s-actions 里添一颗。
    窄栏放不下四个动作一行，排两行：上行计数+完成、下行动作均分铺满 */
 .sel-bar {
@@ -1921,3 +1922,29 @@ html.dark .vis-img { background: #fff; }
 .cmp-ref:hover { border-color: var(--accent-line); transform: none; box-shadow: none; }
 .cmp-wait { padding: 52px 20px; text-align: center; color: var(--ink-3); font-size: var(--fs-sm); line-height: 2.1; }
 .cmp-wait-sub { font-size: var(--fs-xs); }
+
+/* 对比弹窗第一步：选维度 */
+.cmp-pick { padding: 18px 22px 20px; overflow-y: auto; }
+.cmp-hint { margin: 0 0 14px; font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
+.cmp-dims { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.cmp-dim {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--ink-2);
+  border: 1px solid var(--hairline); border-radius: 15px; padding: 6px 14px;
+  transition: all var(--t-fast) var(--ease-smooth); user-select: none;
+}
+.cmp-dim:hover { border-color: var(--accent-line); color: var(--ink); }
+.cmp-dim.on { border-color: var(--accent-deep); background: var(--accent-soft); color: var(--accent-deep); }
+.cmp-dim input { accent-color: var(--accent-deep); margin: 0; }
+.cmp-pick .f-actions { margin: 0; }
+.cmp-actions .cmp-ghost { border-color: transparent; background: none; color: var(--ink-3); }
+.cmp-actions .cmp-ghost:hover { color: var(--accent-deep); background: var(--accent-soft); }
+
+/* 批量归类菜单：点分类名即整批归入；右侧 ✓ 只是"已全在"的状态标记 */
+.coll-menu .cm-row.cm-act {
+  width: 100%; border: none; background: none; text-align: left;
+  justify-content: space-between; align-items: center;
+}
+.coll-menu .cm-row.cm-act:hover { background: var(--accent-soft); color: var(--accent-deep); }
+.coll-menu .cm-row .cm-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.coll-menu .cm-row.cm-act svg { color: var(--accent-deep); flex-shrink: 0; }
