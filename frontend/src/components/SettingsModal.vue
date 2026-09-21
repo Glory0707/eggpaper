@@ -159,25 +159,9 @@ async function installEngine() {
 onEngineReady(() => {
   const st = lsGet('engState', null)
   if (st) {
-    Object.assign(eng, { ok: st.ok, path: st.path, why: st.why, checked: true })
-    f.engine_path = st.path || f.engine_path
+    Object.assign(eng, { ok: st.ok, path: st.path, why: st.why, version: st.version || '', checked: true })
   }
 })
-
-/* 从本地 zip 装：网络到不了 GitHub 时的正路（下好一份跟安装包一起发）。
-   进度与收尾统一交给 engine.js 的唯一轮询——上面引擎行渲染的 engInst 就是它。 */
-const zipInput = ref(null)
-async function installFromFile(ev) {
-  const file = ev.target.files?.[0]
-  ev.target.value = ''
-  if (!file) return
-  try {
-    await api.pdf2zhInstallFromFile(file)
-    watchEngine()
-  } catch (e) {
-    toast(e.message)
-  }
-}
 
 onMounted(async () => {
   const cached = lsGet('engState', null)
@@ -290,22 +274,8 @@ function save() {
         </span>
         <button class="eng-check" style="margin-left:auto" @click="checkEngine" :disabled="eng.busy">
           {{ eng.busy ? '…' : t('检测') }}</button>
-      </div>
-      <div class="f-row">
-        <label class="mono-label">{{ t('数据目录') }}
-          <button class="eng-check" style="margin-left:8px" @click="api.revealUpdate(f.data_dir)">{{ t('打开') }}</button>
-          <button class="eng-check" style="margin-left:4px" @click="moveData" :disabled="picking || savingData">
-            {{ savingData ? t('迁移中…') : t('迁移') }}</button>
-        </label>
-        <div class="eng-state">{{ f.data_dir }}</div>
-      </div>
-      <div class="f-row" v-if="!isEn() && !eng.ok && !['downloading', 'unpacking', 'warming'].includes(engInst.state)">
-        <div class="model-row">
-          <input type="text" v-model="f.engine_path" :placeholder="t('pdf2zh.exe 路径（留空自动找）')" />
-          <button class="eng-install" @click="installEngine">{{ t('下载安装约 600MB') }}</button>
-          <button class="eng-file" @click="zipInput?.click()">{{ t('选 zip 安装') }}</button>
-        </div>
-        <input ref="zipInput" type="file" accept=".zip" hidden @change="installFromFile" />
+        <button class="eng-check" style="margin-left:4px" v-if="eng.checked && !eng.ok && engInst.state !== 'error'"
+                @click="installEngine">{{ t('安装') }}</button>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('截图') }}</span>
@@ -317,6 +287,14 @@ function save() {
         <label class="ck"><input type="checkbox" v-model="f.auto_check" />{{ t('打开时自动检查') }}</label>
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
                 @click="checkNow" :disabled="checking">{{ checking ? t('检查中…') : t('立即检查更新') }}</button>
+      </div>
+      <div class="f-row">
+        <label class="mono-label">{{ t('数据目录') }}
+          <button class="eng-check" style="margin-left:8px" @click="api.revealUpdate(f.data_dir)">{{ t('打开') }}</button>
+          <button class="eng-check" style="margin-left:4px" @click="moveData" :disabled="picking || savingData">
+            {{ savingData ? t('迁移中…') : t('迁移') }}</button>
+        </label>
+        <div class="eng-state">{{ f.data_dir }}</div>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('窗口') }}</span>

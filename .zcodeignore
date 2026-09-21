@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Node / frontend
+node_modules/
+dist-ssr/
+
+# Local config & secrets — never commit
+config*.yaml
+config*.toml
+.env
+*.key
+
+# User data — never commit
+data/
+logs/
+library/
+*.pdf
+
+_qa/
+_*.log
+_pid.txt
+
+# 作者私人笔记（作者要求不上传）
+docs/作者手记.md
+_cmsg.txt
+
+# 打包产物（安装包与冻结目录不入库；release/ 里的 latest.json 是发布产物）
+build/
+release/
+.build-venv/
+installer/eggpaper.ico
+installer/eggpaper-256.png
+
+
+# 走查/审计的临时截图与 playwright 快照
+/audit-*.png
+.playwright-mcp/
+
+# 全文翻译引擎（源码运行时装在 backend/engines/，~1.3GB，永不入库）
+backend/engines/
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）
