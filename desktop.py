@@ -300,8 +300,9 @@ def _install_crash_log(log):
     连一句原因都留不下——排查只能靠猜。主线程和子线程都挂上。
     """
     def hook(exc_type, exc, tb):
-        log("未捕获的异常：")
-        log("".join(traceback.format_exception(exc_type, exc, tb)))
+        # 头和栈合成一次写：分两行的话，进程若在两写之间死掉，日志就只剩
+        # 一个没有内容的头（2026-09-21 实测发生过）
+        log("未捕获的异常：\n" + "".join(traceback.format_exception(exc_type, exc, tb)))
     sys.excepthook = hook
     try:
         threading.excepthook = lambda a: hook(a.exc_type, a.exc_value, a.exc_traceback)
