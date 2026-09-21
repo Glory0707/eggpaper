@@ -1317,10 +1317,11 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   bottom: 18px; display: flex; flex-wrap: wrap; gap: 3px; align-items: stretch;
   background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 3px; box-shadow: var(--shadow-page);
-  /* 静息"安静"靠毛玻璃，不靠整条 opacity——opacity 会连实底一起透，
-     正文文字从按钮缝里钻出来，控件和文字互相打架（截图审查实锤） */
-  background: color-mix(in srgb, var(--card) 86%, transparent);
+  /* 静息透出纸面（72% 卡底），但模糊兜底——正文是糊的，不会从按钮缝里
+     钻出来跟控件打架；hover/拖动才实心 */
+  background: color-mix(in srgb, var(--card) 72%, transparent);
   backdrop-filter: blur(12px);
+  transition: background var(--t-base) var(--ease-smooth);
 }
 .zoom-bar:hover, .zoom-bar.dragging { background: var(--card); }
 .zoom-bar button { padding: 3px 9px; border-color: transparent; background: transparent; font-size: var(--fs-sm); color: var(--ink-2); }
