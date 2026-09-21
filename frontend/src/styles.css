@@ -2009,3 +2009,12 @@ html.dark .vis-img { background: #fff; }
   background: none; text-align: left; color: var(--ink-3);
 }
 .coll-menu .cm-row.cm-uncat:hover { color: var(--vermilion); background: none; }
+
+/* 组会月报弹层（CalendarPanel）：长文档要滚，动条在卡片内 */
+.rep-modal { width: min(680px, 92vw); display: flex; flex-direction: column; overflow: hidden; }
+.rep-modal .rep-body {
+  overflow-y: auto; min-height: 120px; max-height: min(56vh, 560px);
+  margin: 0 -6px; padding: 0 6px;
+  border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline);
+}
+.rep-acts { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }

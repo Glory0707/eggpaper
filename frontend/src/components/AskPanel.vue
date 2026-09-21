@@ -90,7 +90,7 @@ function scrollBottom(smooth = true) {
 }
 function follow() { if (atBottom.value) { const el = scrollEl.value; if (el) el.scrollTop = el.scrollHeight } }
 
-async function send(q) {
+async function send(q, opts = {}) {
   q = (q ?? text.value).trim()
   if (!q || busy.value || !pid.value) return
   if (!convId.value) await loadConvs()
@@ -124,7 +124,7 @@ async function send(q) {
     if (!raf) raf = requestAnimationFrame(flush)
   }
   const body = picked.value.length
-    ? { question: q, conv_id: id, refs: picked.value }
+    ? { question: q, conv_id: id, refs: picked.value, matrix: !!opts.matrix }
     : { question: q, conv_id: id }
   store.egg.nod++                      // 蛋注意到你在提问，歪头看一眼
   const h = askStream(pid.value, body, ev => {
@@ -279,6 +279,10 @@ function pickFirst() {
 }
 const citeCount = computed(() => picked.value.length)
 const citeTitle = computed(() => t('已引用：') + picked.value.slice(0, 5).join(', ') + (picked.value.length > 5 ? '…' : ''))
+/* 综述矩阵：引用了至少一篇别的论文时亮出来。问题文案就是给模型的任务书，
+   同时也是会话里用户那条消息——它在对话里要能自解释。 */
+const MATRIX_Q = () => t('把这几篇整理成综述矩阵：先一张对照表（要解决什么/怎么解决/关键结果与条件/局限与未竟），再一段能放进论文的 related work 草稿。')
+function sendMatrix() { send(MATRIX_Q(), { matrix: true }) }
 function pickFromPop(p) {
   toggleTitle((p.title || p.filename || '').trim())
   nextTick(() => citeFilterEl.value?.focus())
@@ -447,6 +451,10 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
       </Transition>
       <button v-if="citeCount" class="cite-inline" :title="citeTitle" @click="openCite">
         {{ t('引用 {n}', { n: citeCount }) }}
+      </button>
+      <button v-if="citeCount && !busy" class="cite-inline" :title="t('把引用的几篇收敛成对照表和 related work 草稿')"
+              @click="sendMatrix">
+        {{ t('综述矩阵') }}
       </button>
       <textarea ref="inputEl" v-model="text" rows="1" class="qa-ta"
                 :placeholder="t('基于这篇论文提问…（按 / 引用其他论文）')"

@@ -1009,6 +1009,95 @@ def calendar_view(month: str = ""):
         days[day] = entry
     return {"month": month, "days": days}
 
+MONTHLY_SYSTEM = """你在帮研究者写本月组会汇报。给你这个月读过的论文（每篇带一眼卡摘要）、
+新入库清单和排期。用中文输出一份 Markdown 月报，结构：
+
+1. 开头一段总述：这个月读了哪些方向、贯穿的问题或主线是什么（没有主线就如实说，别硬凑）
+2. 「本月精读」：每篇一个小节（### 《标题》），2~3 句——做了什么、关键结果或数字、
+   一句话点评或对自己课题的启发
+3. 「新入库」：一行清单
+4. 「下一步」：有排期就列；没有就给一句务实的建议（哪篇该先读、缺口在哪）
+
+克制：总长 500~800 字；不写"取得重要进展"这类没有信息量的话；所有数字必须来自摘要原文，
+摘要里没有的就写"见笔记"，不许编。"""
+
+@app.post("/api/calendar/report")
+def calendar_report(body: dict):
+    """组会月报：把这个月读过的篇目（带一眼卡）交给模型串成一份汇报。
+
+    「读过」的口径与 calendar_view 一致：阅读日志 ∪ 每篇 last_read_at 的日期；
+    没有逐天历史的老记录落在最后读的那天，不造假回填。同步一次 LLM 调用——
+    素材是一眼卡不是全文，单次调用装得下，不值得为它开一套任务轮询。"""
+    month = str((body or {}).get("month") or "").strip()
+    if not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", month):
+        raise HTTPException(400, "month 要是 YYYY-MM")
+    papers = db.list_papers()
+    by_id = {p["id"]: p for p in papers}
+    reads, added, plans = set(), set(), set()
+
+    def take(bucket, day, pid):
+        if day and day.startswith(month) and pid in by_id:
+            bucket.add(pid)
+
+    for row in db.reading_days(month):
+        take(reads, row["day"], row["paper_id"])
+    for p in papers:
+        take(reads, (p["last_read_at"] or "")[:10], p["id"])
+        take(added, (p["created_at"] or "")[:10], p["id"])
+        take(plans, (p["plan_day"] or "")[:10], p["id"])
+    reads.discard("")  # last_read_at 为空的篇会以空串日期进来
+    added.discard("")
+    plans.discard("")
+    if not reads and not added:
+        raise HTTPException(400, "这个月还没有读过的论文，先读几篇再来")
+
+    def brief(pid):
+        p = by_id[pid]
+        title = (p["title"] or p["filename"] or "").strip()
+        s = {}
+        try:
+            s = json.loads(p["summary"]) if p.get("summary") else {}
+        except (ValueError, TypeError):
+            s = {}
+        if not isinstance(s, dict):
+            s = {}
+        if not s:
+            return f"《{title}》（未析读，没有摘要）"
+        def cut(k, n=180):
+            return (s.get(k) or "").strip()[:n]
+        return (f"《{title}》：一句话={cut('one_line') or '文中未提及'}；"
+                f"贡献={cut('contributions') or '文中未提及'}；方法={cut('methods') or '文中未提及'}；"
+                f"发现={cut('findings') or '文中未提及'}")
+
+    READ_CAP = 20
+    read_list = sorted(reads)[:READ_CAP]
+    lines = [f"月份：{month}",
+             f"本月读过 {len(reads)} 篇：", *[f"- {brief(pid)}" for pid in read_list]]
+    if len(reads) > READ_CAP:
+        lines.append(f"（另有 {len(reads) - READ_CAP} 篇未列出）")
+    if added:
+        a = [(by_id[i]["title"] or by_id[i]["filename"] or "").strip() for i in sorted(added)][:20]
+        lines.append(f"本月新入库 {len(added)} 篇：" + "、".join(a))
+    if plans:
+        pl = [(by_id[i]["title"] or by_id[i]["filename"] or "").strip() for i in sorted(plans)][:10]
+        lines.append("排期待读：" + "、".join(pl))
+    if _demo_mode():
+        md = (f"# {month} 组会月报（演示）\n\n本月演示库共 {len(reads)} 篇阅读记录。"
+              "这里是演示模式的示例月报正文：配置模型后，我会把每篇的一眼卡串成"
+              "带结论与数字的真实汇报。\n\n## 本月精读\n\n" +
+              "\n\n".join(f"### {(by_id[i]['title'] or '').strip() or '未命名'}\n演示摘要。"
+                          for i in read_list[:3]))
+        return {"month": month, "md": md}
+    try:
+        md = llm.chat([{"role": "system", "content": MONTHLY_SYSTEM + llm.lang_tail()},
+                       {"role": "user", "content": "\n".join(lines)}],
+                      max_tokens=3000, temperature=0.3, no_think=True)
+    except Exception as e:
+        raise HTTPException(502, _human_msg(e))
+    if not (md or "").strip():
+        raise HTTPException(502, "模型这次没返回内容，再点一次试试")
+    return {"month": month, "md": md.strip()}
+
 def _rm(path: str):
     if path and os.path.exists(path):
         try:
@@ -2444,8 +2533,11 @@ def _recon_pick(question: str, papers: list):
         _applog(f"跨文献侦察失败，退回前 3 篇: {_human_msg(e)}")
         return [p["id"] for p in papers[:3]]
 
-def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
+def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None, matrix: bool = False):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
+
+    matrix=True 是综述矩阵：同一套流式/落库/溯源管线，但提示词换成"几篇平等对照、
+    收敛成一张表 + related work 草稿"，引用的其他篇上限也从 3 放到 4（表里多一行）。
 
     落库的时机有两处：正常结束在这里写；用户中途点"停止生成"由前端调 qa-save 写，
     因为客户端断开时服务端不保证还能把生成器走完——让能拿到半截答案的那一端负责存。
@@ -2467,13 +2559,17 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             if len(cand) > 3:
                 # 引用可能带着已删除的 pid：get_paper 回 None，先滤掉再侦察
                 cand = _recon_pick(question, [p for p in map(db.get_paper, cand) if p]) or cand[:3]
-            for x in cand[:3]:
+            for x in cand[:(4 if matrix else 3)]:
                 o = db.get_paper(x)
                 if o:
                     others.append({"title": o.get("title") or o.get("filename") or "未命名",
                                    "paras": db.get_paragraphs(x, with_lines=False)})
-            gen = llm.chat_stream(llm.ask_messages(p["title"], paras, ctx, question,
-                                                   hits, summary, others))
+            msgs = (llm.matrix_messages(p["title"], paras, ctx, question, hits, summary, others)
+                    if matrix else
+                    llm.ask_messages(p["title"], paras, ctx, question, hits, summary, others))
+            # 推理模型（deepseek-flash 实测）做多篇对照时会先烧掉几千 token 思考，
+            # 6000 的默认预算不够它写出正文——finish=length、内容为空（实测踩过）
+            gen = llm.chat_stream(msgs, max_tokens=10000 if matrix else 6000)
         for piece in gen:
             buf.append(piece)
             yield _sse({"type": "delta", "text": piece})
@@ -2517,9 +2613,11 @@ def ask(pid: str, body: dict):
         pid2 = _paper_by_title(t)
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
-    return StreamingResponse(_stream_answer(p, conv_id, question, ref_pids), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                                      "Connection": "keep-alive"})
+    return StreamingResponse(
+        _stream_answer(p, conv_id, question, ref_pids, matrix=bool(body.get("matrix"))),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"})
 
 @app.get("/api/papers/{pid}/conversations")
 def conversations(pid: str):
