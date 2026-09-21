@@ -600,51 +600,6 @@ def cites_of(text: str) -> list:
     cleaned = re.sub(r"《[^》]*》\s*¶\s*\d+", "", t)
     return sorted({int(n) for n in re.findall(r"¶\s*(\d+)", cleaned)})
 
-# ---------- 综述矩阵：几篇论文 → 一张对照表 + Related Work 草稿 ----------
-
-MATRIX_SYSTEM = """你在帮研究者把几篇论文收敛成综述材料。给你这几篇的正文，每篇以《标题》标记，
-¶ 编号属于它上方最近的篇。输出两样东西：
-
-1. 一张 Markdown 对照表：每行一篇论文（第一列写《标题》），列为「要解决什么」「怎么解决」
-   「关键结果与条件」「局限与未竟」。格子要短（每格一两句），每格末尾给依据段号
-   （本篇写 ¶n，别篇写《标题》¶n）。
-2. 表后空一行，写一段 200~400 字的连贯草稿（可以直接放进论文的 Related Work）：
-   写出各篇之间的承接、对照与互补，别逐格复述表格；每个论断后面标 ¶ 依据。
-
-规则：
-- 只依据给定的正文；正文里没有的就写"文中未提及"，数字必须照抄原文，不许编。
-- 草稿写的是"文献之间的关系"，不是每篇的摘要堆叠。
-- 只输出 Markdown（表格 + 草稿），不要开场白、不要总结陈词。"""
-
-def matrix_messages(title: str, paras: list, history: list, question: str,
-                    hits=None, summary: str = "", others: list = None) -> list:
-    """综述矩阵的消息体。素材与 ask_messages 同源（都是 ¶ 编号的正文块），
-    但框架不同：这里没有"当前论文/引用论文"的主次——当前篇也是对照表里平等的一行。"""
-    blocks = []
-    t = (title or "").strip()
-    if t:
-        lines = "\n".join(f"¶{p['idx']} {(p['text'] or '')[:1000]}"
-                          for p in paras or [] if not p.get("in_refs"))
-        if lines:
-            blocks.append((f"《{t}》\n" + lines)[:50000])
-    per = max(12000, 60000 // max(len(others or []), 1))
-    for o in others or []:
-        ot = (o.get("title") or o.get("filename") or "未命名").strip()
-        lines = "\n".join(f"¶{p['idx']} {(p['text'] or '')[:1000]}"
-                          for p in o.get("paras") or [] if not p.get("in_refs"))
-        if lines:
-            blocks.append(("《" + ot + "》\n" + lines)[:per])
-    msgs = [{"role": "system", "content": MATRIX_SYSTEM + _gloss_block(hits) + _lang_tail()}]
-    if summary:
-        msgs.append({"role": "system", "content":
-                     "以下是本次对话较早部分的摘要（其中的结论、术语译法、用户的关注点都继续有效，"
-                     "不要重复已经确认过的事）：\n" + summary})
-    for h in history:
-        if h.get("role") in ("user", "assistant") and h.get("content"):
-            msgs.append({"role": h["role"], "content": h["content"]})
-    msgs.append({"role": "user", "content": question + "\n\n" + "\n\n".join(blocks)})
-    return msgs
-
 # ---------- 长对话的上下文压缩 ----------
 DIALOG_SUMMARY_SYSTEM = """你在为一次论文研读对话做上下文压缩。把给出的较早对话压成一份摘要，只输出摘要正文。
 

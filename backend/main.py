@@ -2533,11 +2533,8 @@ def _recon_pick(question: str, papers: list):
         _applog(f"跨文献侦察失败，退回前 3 篇: {_human_msg(e)}")
         return [p["id"] for p in papers[:3]]
 
-def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None, matrix: bool = False):
+def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
-
-    matrix=True 是综述矩阵：同一套流式/落库/溯源管线，但提示词换成"几篇平等对照、
-    收敛成一张表 + related work 草稿"，引用的其他篇上限也从 3 放到 4（表里多一行）。
 
     落库的时机有两处：正常结束在这里写；用户中途点"停止生成"由前端调 qa-save 写，
     因为客户端断开时服务端不保证还能把生成器走完——让能拿到半截答案的那一端负责存。
@@ -2559,17 +2556,13 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None, matrix: 
             if len(cand) > 3:
                 # 引用可能带着已删除的 pid：get_paper 回 None，先滤掉再侦察
                 cand = _recon_pick(question, [p for p in map(db.get_paper, cand) if p]) or cand[:3]
-            for x in cand[:(4 if matrix else 3)]:
+            for x in cand[:3]:
                 o = db.get_paper(x)
                 if o:
                     others.append({"title": o.get("title") or o.get("filename") or "未命名",
                                    "paras": db.get_paragraphs(x, with_lines=False)})
-            msgs = (llm.matrix_messages(p["title"], paras, ctx, question, hits, summary, others)
-                    if matrix else
-                    llm.ask_messages(p["title"], paras, ctx, question, hits, summary, others))
-            # 推理模型（deepseek-flash 实测）做多篇对照时会先烧掉几千 token 思考，
-            # 6000 的默认预算不够它写出正文——finish=length、内容为空（实测踩过）
-            gen = llm.chat_stream(msgs, max_tokens=10000 if matrix else 6000)
+            gen = llm.chat_stream(llm.ask_messages(p["title"], paras, ctx, question,
+                                                   hits, summary, others))
         for piece in gen:
             buf.append(piece)
             yield _sse({"type": "delta", "text": piece})
@@ -2613,11 +2606,9 @@ def ask(pid: str, body: dict):
         pid2 = _paper_by_title(t)
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
-    return StreamingResponse(
-        _stream_answer(p, conv_id, question, ref_pids, matrix=bool(body.get("matrix"))),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"})
+    return StreamingResponse(_stream_answer(p, conv_id, question, ref_pids), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                                      "Connection": "keep-alive"})
 
 @app.get("/api/papers/{pid}/conversations")
 def conversations(pid: str):

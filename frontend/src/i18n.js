@@ -224,10 +224,7 @@ const EN = {
   '删除': 'Delete',
   '已复制': 'Copied',
   '正在想…': 'Thinking…',
-  '综述矩阵': 'Review matrix',
-  '把这几篇整理成综述矩阵：先一张对照表（要解决什么/怎么解决/关键结果与条件/局限与未竟），再一段能放进论文的 related work 草稿。':
-    'Turn these papers into a review matrix: one comparison table (problem / approach / key results / limitations), then a related-work paragraph I can put in a paper.',
-  '把引用的几篇收敛成对照表和 related work 草稿': 'Condense the cited papers into a comparison table + related-work draft',
+  '当前篇与引用篇做数据对比（六维度可选，逐格带 ¶ 锚点）': 'Compare the current paper with the cited ones (six dimensions, each cell anchored to ¶)',
   '生成月报': 'Draft monthly report',
   '生成中…': 'Drafting…',
   '组会月报': 'Monthly report',
