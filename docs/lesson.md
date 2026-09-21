@@ -5,7 +5,8 @@
 ## 一、构建 · 发布 · 重装验证
 
 - 发布一条龙：改 `VERSION` → `/d/hermes/uv-python/cpython-3.11.14-windows-x86_64-none/python.exe tools/build_installer.py --notes "…"`（前端构建→图标→冻结→Inno→latest.json 一条命令）。
-- **Gitee 更新源发布三步**（0.1.41 实测闭环）：① 把 `release/latest.json` 推到仓库 `update/latest.json`（`gitee.com/zhouao1207/eggpaper`，master 分支）；② 建发行版 tag `v<版本>`，附件名保持 `eggpaper-<版本>-setup.exe`（latest.json 的 url 按它拼）；③ 闭环验证：匿名 curl raw 清单 → 匿名下载附件比 sha256 → `GET /api/update/check?force=true` 看 has_update 判定。
+- **Gitee 更新源发布三步**（0.1.41 实测闭环；0.1.42 起全程 API 化）：① 推 `release/latest.json` 到仓库 `update/latest.json`（浅克隆 + 令牌推送，**推完删克隆**——令牌明文留在 .git/config 里）；② 建 release 走 API：`POST /api/v5/repos/zhouao1207/eggpaper/releases`（tag_name=v<版本>、target_commitish=master）→ `PATCH …/releases/{id}` 补中文说明（POST 时 curl 命令行会把中文搅成 GBK 乱码，body 一律用 python requests/httpx 发）→ `POST …/releases/{id}/attach_files` multipart 传 exe（201 即成，92MB 约两分钟）；③ 闭环验证：匿名 curl raw 清单 → 匿名下载附件比 sha256 → `GET /api/update/check?force=true` 看 has_update。
+- **Gitee 的 raw 地址现在会 302 到 raw.giteeusercontent.com**（0.1.42 实测变了）：curl 验证要加 `-L`；客户端 update.py 跟随重定向所以无感。
 - **Gitee 网页编辑器把整串路径当文件名会建出嵌套目录**（"raw/master/update/latest.json" 变三层文件夹）；且路径里含分支名（master）时 Gitee 的 tree/blob/delete 路由 404/405、?path= 只救得回 blob——网页 UI 删不掉，只能 git push 修。2FA 账号 HTTPS 推送必须用私人令牌当密码。
 - **`.build-venv` 不自动装依赖**：改了 `backend/requirements.txt` 必须手动 `uv pip install --python .build-venv/Scripts/python.exe -r backend/requirements.txt pyinstaller pillow`。OCR 引擎就这么漏过一次：包 34MB、模型没进去，装到别人机器才炸。
 - 本机重装验证：先 `taskkill //IM eggpaper.exe //F` → `powershell Start-Process <setup.exe> '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon'` ——**不要 `-Wait`**（运行中的 exe 锁着文件，安装器收尾不退，永远等不完）→ 轮询 tasklist 等退出 → 启动。
