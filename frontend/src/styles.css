@@ -1317,13 +1317,10 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   bottom: 18px; display: flex; flex-wrap: wrap; gap: 3px; align-items: stretch;
   background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 3px; box-shadow: var(--shadow-page);
-  /* 静息透出纸面（72% 卡底），但模糊兜底——正文是糊的，不会从按钮缝里
-     钻出来跟控件打架；hover/拖动才实心 */
-  background: color-mix(in srgb, var(--card) 72%, transparent);
-  backdrop-filter: blur(12px);
-  transition: background var(--t-base) var(--ease-smooth);
+  /* 平时半透，别跟论文抢注意力（正文会透出来）；鼠标过去或拖动时实心 */
+  opacity: 0.72; transition: opacity var(--t-base) var(--ease-smooth);
 }
-.zoom-bar:hover, .zoom-bar.dragging { background: var(--card); }
+.zoom-bar:hover, .zoom-bar.dragging { opacity: 1; }
 .zoom-bar button { padding: 3px 9px; border-color: transparent; background: transparent; font-size: var(--fs-sm); color: var(--ink-2); }
 .zoom-bar button:hover { background: var(--accent-soft); transform: none; box-shadow: none; }
 .zoom-bar button.on { background: var(--ink); color: var(--card); }
