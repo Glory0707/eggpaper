@@ -132,20 +132,20 @@ async function openShots() {
 function openGuide() { window.open('/guide', '_blank') }
 function openModel() { window.open('/model', '_blank') }
 
-/* 全文翻译引擎（pdf2zh）：不在安装包里（渠道上限 100MB，308MB 的引擎另装）。
+/* 全文翻译引擎（pdf2zh_next）：不在安装包里（渠道上限 100MB，380MB 的引擎另装）。
    状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。
    安装进度看全局的 engInst（engine.js）：不管安装从哪里发起（这里手动、
    点「全文翻译」时自动），这一行和右下角等待卡看到的是同一份状态。 */
-const eng = reactive({ busy: false, ok: false, path: '', why: '', checked: false })
+const eng = reactive({ busy: false, ok: false, path: '', why: '', version: '', checked: false })
 
 async function checkEngine() {
   eng.busy = true
   try {
     const r = await api.pdf2zhEngine(f.engine_path.trim())
-    Object.assign(eng, { ok: r.ok, path: r.path, why: r.why, checked: true })
-    lsSet('engState', { ok: r.ok, path: r.path, why: r.why })
+    Object.assign(eng, { ok: r.ok, path: r.path, why: r.why, version: r.version || '', checked: true })
+    lsSet('engState', { ok: r.ok, path: r.path, why: r.why, version: r.version || '' })
   } catch (e) {
-    Object.assign(eng, { ok: false, path: '', why: e.message, checked: true })
+    Object.assign(eng, { ok: false, path: '', why: e.message, version: '', checked: true })
   }
   eng.busy = false
 }
@@ -282,9 +282,10 @@ function save() {
         <span class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
           <template v-if="engInst.state === 'downloading'">{{ t('下载中 {p}%', { p: engInst.pct }) }} · {{ engInst.src }}</template>
           <template v-else-if="engInst.state === 'unpacking'">{{ t('解压中…') }}</template>
+          <template v-else-if="engInst.state === 'warming'">{{ t('引擎预热中（下载版面模型）…') }}</template>
           <template v-else-if="engInst.state === 'error'">{{ engInst.error }}</template>
           <template v-else-if="!eng.checked">…</template>
-          <template v-else-if="eng.ok">{{ t('可用（{v}）', { v: eng.why.replace('pdf2zh', '').trim() }) }}</template>
+          <template v-else-if="eng.ok">{{ t('可用（{v}）', { v: eng.version || eng.why.replace('pdf2zh', '').trim() }) }}</template>
           <template v-else>{{ t('未安装') }}</template>
         </span>
         <button class="eng-check" style="margin-left:auto" @click="checkEngine" :disabled="eng.busy">
@@ -298,10 +299,10 @@ function save() {
         </label>
         <div class="eng-state">{{ f.data_dir }}</div>
       </div>
-      <div class="f-row" v-if="!isEn() && !eng.ok && engInst.state !== 'downloading' && engInst.state !== 'unpacking'">
+      <div class="f-row" v-if="!isEn() && !eng.ok && !['downloading', 'unpacking', 'warming'].includes(engInst.state)">
         <div class="model-row">
           <input type="text" v-model="f.engine_path" :placeholder="t('pdf2zh.exe 路径（留空自动找）')" />
-          <button class="eng-install" @click="installEngine">{{ t('下载安装 308MB') }}</button>
+          <button class="eng-install" @click="installEngine">{{ t('下载安装约 600MB') }}</button>
           <button class="eng-file" @click="zipInput?.click()">{{ t('选 zip 安装') }}</button>
         </div>
         <input ref="zipInput" type="file" accept=".zip" hidden @change="installFromFile" />

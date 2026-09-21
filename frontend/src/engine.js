@@ -14,7 +14,7 @@ import { lsSet } from './ls'
 export const engInst = reactive({
   on: false,          // 等待卡要不要显示（error 时也显示，给重试/关闭）
   hidden: false,      // 用户点了「后台」：卡收起，轮询继续
-  state: 'idle',      // idle | downloading | unpacking | done | error
+  state: 'idle',      // idle | downloading | unpacking | warming | done | error
   pct: 0, got: 0, total: 0,
   src: '',            // 正在用的源（更新源/镜像/官方直连/本地文件）
   error: '',

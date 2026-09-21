@@ -11,6 +11,17 @@
 - 本机重装验证：先 `taskkill //IM eggpaper.exe //F` → `powershell Start-Process <setup.exe> '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon'` ——**不要 `-Wait`**（运行中的 exe 锁着文件，安装器收尾不退，永远等不完）→ 轮询 tasklist 等退出 → 启动。
 - 装完核两条：`GET /api/version` 的 version/packaged；首页引用的 `index-*.js` 哈希与 `frontend/dist` 一致（确认装的是新前端，不是浏览器缓存）。
 
+## 一·二、全文翻译引擎（pdf2zh_next 2.x，0.1.42 实测换装）
+
+- **发行形态只有 with-assets win64 zip 靠谱**（~620MB，官方 sha256 钉在 engine_install）：普通包首译要在线下版面模型/字体，上游竞速含 huggingface——国内超时就死在预热里，整个翻译起不来（实测两次）。with-assets 内置资产，启动器首启自动 restore 到 `~/.cache/babeldoc`（HOME 已重定向到数据目录），装完离线可用。
+- **装完把包里的 `offline_assets_*.zip` 改名 `.installed` 收起**：2.x 启动器每次进程启动见到它就把全部资产重新哈希一遍（~220MB），每批翻译白等 10-20 秒。engine_install._warmup 校验通过后做这件事。
+- **2.x 产物命名带中缀**：`<stem>.no_watermark.zh.mono.pdf`，不是 1.9 的 `<stem>-mono.pdf`——找产物按词干前缀 glob（`_product_mono`），别钉死整名。
+- **单进程冷启动 ~11s（收起 offline zip 后）**，1.9 约 3s：批大小 BATCH_PAGES 4→8 才摊得薄。`--pages` 配 `--only-include-translated-page` 让产物只含所选页；服务=每家一个旗标（`--bing`/`--openai`，默认引擎是 SiliconFlowFree 必须显式传）；key 只走 `PDF2ZH_*` 环境变量（`--openai-api-key` → `PDF2ZH_OPENAI_API_KEY`）。
+- **术语 CSV 三条红线**：表头 `source,target`；裸 utf-8（BOM 会把表头变成 `\ufeffsource`）；不写 tgt_lng 列（写了要跟 `--lang-out` 归一化对上，`zh-CN`≠`zh` 会被整列过滤）。只在 LLM 服务注入（bing/google 不吃 prompt，物理上没法锁术语）。译文 PDF 的文本层有兼容表意字符（量≠量），验证术语命中要 NFKC 归一。
+- **自动安装判断看 find_installed（磁盘真实态），不是 engine_path**：E2E 的 EGGPAPER_ENGINE_OFF 只让"寻找"失明；拿 engine_path 判断会让装好的引擎被当成没装、装完再起一轮下载（E2E 实测撞过）。
+- **预扫描续译必须按批映射**：批目录名是批首页（p9 = 第 9-16 页的批）。老代码逐页探测，把 p9 里的 8 页产物当成"第 9 页"，组装 at=None 取到产物最后一页——重启续译把第 16 页插到第 9 页的位置（实测"复用 3/24"暴露）。修法见 translate_full.start 的预扫描段。
+- 2.x 首译质量比 1.9 好一截（BabelDOC 版面模型 + 跨页上下文），bing 24 页实测 163-202s，3 批并行无锁；鉴权失败（401）会被 AUTH_FAILS 当场认出，rich 的 80 列换行没挤断关键词。
+
 ## 二、测试
 
 - 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8482）。测试 python 用 hermes venv（httpx/playwright/fitz/rapidocr 齐）。

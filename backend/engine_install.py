@@ -1,11 +1,11 @@
-"""全文翻译引擎（pdf2zh）的下载与安装：一次点击，后台全自动把引擎装到用户机器上。
+"""全文翻译引擎（pdf2zh_next，BabelDOC 内核）的下载与安装：一次点击，后台全自动把引擎装到用户机器上。
 
 **为什么不把 pdf2zh 打进安装包**：不是 AGPL（eggpaper 本来就是 AGPL-3.0，一起分发
 不改变任何义务），是**渠道**——安装包 96MB 已贴着 Gitee 附件 100MB 的单文件上限，
-塞进 308MB 的引擎就发不出去了。所以引擎永远"用户机器自己去上游取"，我们只把这一步
+塞进 ~600MB 的引擎就发不出去了。所以引擎永远"用户机器自己去上游取"，我们只把这一步
 做成全自动：点「全文翻译」→ 后台自动下载安装 → 装好自动继续。
 
-**怎么下得动（国内网络）**：官方 GitHub 直连实测 10 KB/s，308MB 等于下不动。
+**怎么下得动（国内网络）**：官方 GitHub 直连实测 10 KB/s，600MB 等于下不动。
 所以按顺序试一张源表，谁快用谁：
 1. 更新源同源（{feed}/pdf2zh-*.zip——作者把引擎包和安装包放同一目录时最快，404 就过）；
 2. gh-proxy 系镜像（前缀拼接官方 URL，国内通常几 MB/s；这类域名时不时换，死源几秒就跳过）；
@@ -13,17 +13,22 @@
 每个源都有**停滞判据**：开下 12 秒平均速度不足 64KB/s、或 25 秒没有任何新字节，
 就断开换下一个源——不等它慢慢磨 8 个小时。
 
-**完整性**：官方 zip 的 sha256 钉死在 ENGINE_SHA256，不管从哪个源下来（镜像再不可信
-也一样），解压前先校验，不对就删掉报错。**断点续传**：半截文件存在
-engines/pdf2zh.partial/，重试（换源、重开应用）都从断点接着下；服务器不支持 Range
-（回 200 而不是 206）就从头来。
+**完整性**：官方 zip 的 sha256 钉死在 ENGINE_SHA256（与 GitHub API 的 assets digest
+逐字核对过），不管从哪个源下来（镜像再不可信也一样），解压前先校验，不对就删掉报错。
+**断点续传**：半截文件存在 engines/pdf2zh.partial/，重试（换源、重开应用）都从断点
+接着下；服务器不支持 Range（回 200 而不是 206）就从头来。
 
 **装到哪**：{数据目录}/engines/pdf2zh/ —— 升级、卸载都不动这个目录（跟文库、配置
-一个待遇）。装完 translate_full.engine_path() 会自己找到它。
+一个待遇）。装完 translate_full.engine_path() 会自己找到它。从 1.9 升上来也落这里：
+下载完 _unpack 原地换掉旧目录，旧引擎无残留。
+
+**装完要预热**：with-assets 包资产内置，`--warmup` 只做本地校验（无网也秒过）；万一
+失败不挡安装，翻译时引擎会自己按需补。
 """
 import hashlib
 import os
 import shutil
+import subprocess
 import threading
 import time
 import zipfile
@@ -32,12 +37,15 @@ import httpx
 
 import appinfo
 
-ENGINE_URL = ("https://github.com/Byaidu/PDFMathTranslate/releases/download/"
-              "v1.9.11/pdf2zh-v1.9.11-win64.zip")
+ENGINE_URL = ("https://github.com/PDFMathTranslate-next/PDFMathTranslate-next/releases/download/"
+              "v2.9.0/pdf2zh-v2.9.0-BabelDOC-v0.6.4-with-assets-win64.zip")
 ENGINE_SHA256 = os.environ.get("EGGPAPER_ENGINE_SHA256",
-                               "aa46c8dd37a4209b2f54072e237dcd1576bd44d8f288107b12046b3744795748")
+                               "6916a2f299b029cfb75803c780528088d93e7694d5597c4250ba2dcf5598f1d8")
 # 官方指纹，与 GitHub API 的 assets digest 核对过；本地 zip 校验和也一样。换引擎版本时同步换。
 # E2E 用假 zip 时以 EGGPAPER_ENGINE_SHA256=（空串）跳过校验。
+# **必须用 with-assets 变体**（比普通包大 ~220MB）：普通包首译要在线下载版面模型与字体
+# （上游竞速含 huggingface，国内时常超时——实测整个翻译直接死在预热上），with-assets
+# 把资产全部内置，装完即离线可用；官方文档同样推荐受限网络用它。
 
 _MIRRORS = ("https://gh-proxy.com/", "https://gh-proxy.org/", "https://ghfast.top/")
 _MIN_SPEED = 64 * 1024      # 停滞判据：开下 12 秒平均不足 64KB/s 判这个源死刑
@@ -50,6 +58,50 @@ _cancel = threading.Event()
 
 def install_dir() -> str:
     return os.path.join(os.path.dirname(appinfo.data_dir()), "engines", "pdf2zh")
+
+def _no_window():
+    if os.name != "nt":
+        return 0, None
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0
+    return 0x08000000, si
+
+def _warmup(exe: str):
+    """装完先 `--warmup` 一次：把内置的 offline_assets 包 restore 进缓存并整体校验。
+
+    HOME/USERPROFILE 指到数据目录的 home/（跟翻译子进程同一套），资产缓存在我们自己的
+    文件夹里，不散落 C 盘。校验通过（退出码 0）后把包里的 offline_assets zip 改名收起：
+    2.x 启动器**每次进程启动**见到这个 zip 都会把全部资产重新校验一遍（~220MB 的哈希，
+    实测让每批翻译多等 10-20 秒）——资产既已入缓存，就不必每批都交这笔税。
+    万一缓存日后被清，warmup 会按需在线重下（with-assets 包本来也只在这时才需要网）。
+    warmup 失败不挡安装：状态照旧推进到 done，zip 原样保留。
+    """
+    _set(state="warming", pct=100)
+    flags, si = _no_window()
+    env = {**os.environ}
+    pkg_dir = ""
+    try:
+        home = os.path.join(appinfo.data_dir(), "home")
+        os.makedirs(home, exist_ok=True)
+        env["HOME"] = home
+        env["USERPROFILE"] = home
+        pkg_dir = os.path.dirname(exe)
+    except Exception:
+        pass
+    try:
+        r = subprocess.run([exe, "--warmup"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=1800,
+                           env=env, creationflags=flags, startupinfo=si)
+        if r.returncode == 0 and pkg_dir:
+            import glob
+            for zp in glob.glob(os.path.join(pkg_dir, "offline_assets_*.zip")):
+                try:
+                    os.rename(zp, zp + ".installed")
+                except OSError:
+                    pass
+    except Exception:
+        pass
 
 def _partial_dir() -> str:
     return install_dir() + ".partial"    # 断点的家：稳定目录，start() 重试不清它，装完才清
@@ -149,6 +201,7 @@ def _unpack(zpath: str):
             _set(state="error", error="包里没有 pdf2zh.exe")
             return
         shutil.rmtree(_partial_dir(), ignore_errors=True)   # 装好了，断点没用了
+        _warmup(exe)
         _set(state="done", path=exe)
         shutil.rmtree(install_dir() + ".tmp", ignore_errors=True)
     except Exception as e:

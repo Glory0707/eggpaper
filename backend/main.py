@@ -324,7 +324,7 @@ def _startup():
     _repair_paper_paths()
     try:
         for pid in os.listdir(PAPERS_DIR):
-            translate_full.sweep_configs(os.path.join(PAPERS_DIR, pid, ".pages"))
+            translate_full.sweep_key_copies(os.path.join(PAPERS_DIR, pid, ".pages"))
     except OSError:
         pass
     translate_full.sweep_page_dirs(PAPERS_DIR)
@@ -466,14 +466,16 @@ def pdf2zh_engine(path: str = ""):
     """全文翻译引擎在哪、能不能跑。设置面板用它显示状态。
 
     「给别人装」的场景全靠这一条：那台电脑上 pdf2zh 装没装、装在 PATH 之外、
-    还是装残了（.exe 在但包里没了）——从前只能靠"点一下全文翻译看它报什么"，
-    而报出来的是"bing 连不上"，指错方向。
+    还是装残了（.exe 在但包里没了）、或者是 1.9 旧版（没有术语锁定）——
+    从前只能靠"点一下全文翻译看它报什么"，而报出来的是"bing 连不上"，指错方向。
     """
     cfg = config.load()
     want = (path or cfg["pdf2zh"].get("path") or "").strip()
     exe = translate_full.engine_path(want)
     ok, why = translate_full.engine_probe_cached(exe)
-    return {"ok": ok, "path": exe, "why": why, "configured": bool(want)}
+    ver = translate_full.engine_version(exe) if ok else ()
+    return {"ok": ok, "path": exe, "why": why, "configured": bool(want),
+            "version": ".".join(map(str, ver)) if ver else ""}
 
 @app.post("/api/data/pick")
 def data_pick():
@@ -2693,10 +2695,11 @@ def translate_para(pid: str, body: dict):
 def _pdf2zh_env(service: str, cfg: dict):
     """全文翻译要的 key 从哪来：**用用户在「设置」里已经填的那一套**，不让他填第二遍。
 
-    只经环境变量交给子进程（pdf2zh 读 OPENAI_*/DEEPSEEK_* 这些）。
-    注意 pdf2zh 自己会把拿到的值落到 `~/.config/PDFMathTranslate/config.json`
-    （它的 GUI 就靠那个文件），这一层我们管不了——能保证的是 eggpaper 这边
-    不落盘、不进库、不打印。返回 (环境变量, 端点主机名)。
+    pdf2zh_next（2.x）的配置体系是 pydantic-settings：`--openai-api-key` 对应环境变量
+    `PDF2ZH_OPENAI_API_KEY`（`--` 换 `PDF2ZH_`、`-` 换 `_`），所以 key 只经环境变量
+    交给子进程，不进命令行。子进程 HOME 指到数据目录 home/（见 translate_full._page_env），
+    引擎若把收到的值自动落盘也只落在我们自己文件夹里，任务收尾会扫掉。
+    返回 (环境变量, 端点主机名)。
     """
     prov = cfg.get("provider") or {}
     key = (prov.get("api_key") or "").strip()
@@ -2707,20 +2710,20 @@ def _pdf2zh_env(service: str, cfg: dict):
         dk = ((cfg.get("pdf2zh") or {}).get("deepl_key") or "").strip()
         if not dk:
             return {}, ""
-        return {"DEEPL_AUTH_KEY": dk}, ""
+        return {"PDF2ZH_DEEPL_AUTH_KEY": dk}, ""
     if not key:
         return {}, ""
     if service == "openai":
-        envs = {"OPENAI_API_KEY": key}
+        envs = {"PDF2ZH_OPENAI_API_KEY": key}
         if base:
-            envs["OPENAI_BASE_URL"] = base
+            envs["PDF2ZH_OPENAI_BASE_URL"] = base
         if model:
-            envs["OPENAI_MODEL"] = model
+            envs["PDF2ZH_OPENAI_MODEL"] = model
         return envs, (urlparse(base).hostname or "") if base else ""
     if service == "deepseek":
-        envs = {"DEEPSEEK_API_KEY": key}
+        envs = {"PDF2ZH_DEEPSEEK_API_KEY": key}
         if model:
-            envs["DEEPSEEK_MODEL"] = model
+            envs["PDF2ZH_DEEPSEEK_MODEL"] = model
         return envs, "api.deepseek.com"
     return {}, ""
 
@@ -2751,23 +2754,33 @@ def translate_full_start(pid: str, force: bool = False):
     exe = translate_full.engine_path(engine)
     ok, why = translate_full.engine_probe_cached(exe)
     if not ok:
-        # 引擎不在：后台自动下载安装（多源+校验+续传，见 engine_install），
-        # 前端见到"状态变成下载中"就弹等待卡、装完自动把这次全文翻译续上。
+        # 引擎不在（或还是 1.9 旧版）：后台自动下载安装（多源+校验+续传+预热，
+        # 见 engine_install），旧版也会被原地换掉。前端见到"状态变成下载中"就弹
+        # 等待卡、装完自动把这次全文翻译续上。
+        # 自动安装的判断看**磁盘上装没装**（find_installed），不是 engine_path——
+        # E2E 的 EGGPAPER_ENGINE_OFF 只让"寻找"失明，不能让装好的引擎被当成没装，
+        # 否则装完又再起一轮下载（E2E 实测撞过）。
         st = engine_install.status()
         exe_found = engine_install.find_installed()
-        if not exe_found and st["state"] not in ("downloading", "unpacking"):
+        ver = translate_full.engine_version(exe_found) if exe_found else ()
+        stale = bool(ver) and ver < (2,)   # 1.9 在位（旧版安装或自填路径）：也要走重装换掉
+        if (not exe_found or stale) and st["state"] not in ("downloading", "unpacking", "warming"):
             engine_install.start()
-            raise HTTPException(400, f"缺全文翻译引擎（{why}）。已在后台自动下载安装（约 300MB，几分钟），"
+            why2 = (f"，检测到旧版 {why}" if stale else f"（{why}）")
+            raise HTTPException(400, f"{'旧版全文翻译引擎，正在升级' if stale else '缺全文翻译引擎'}"
+                                     f"{why2}。已在后台自动下载安装 2.x（约 600MB，几分钟），"
                                      "装好后会自动开始这篇的全文翻译。")
-        if st["state"] in ("downloading", "unpacking"):
-            raise HTTPException(400, f"缺全文翻译引擎（{why}）。后台正在下载安装（约 300MB），装好后会自动开始。")
-        if not exe_found:
-            raise HTTPException(400, f"缺全文翻译引擎（{why}）。自动下载没成功（{st.get('error') or '原因未知'}），"
-                                     "可再点一次「全文翻译」重试，或到「设置 → 翻译引擎」手动装。")
+        if st["state"] in ("downloading", "unpacking", "warming"):
+            raise HTTPException(400, f"全文翻译引擎正在后台下载安装（约 600MB），装好后会自动开始。")
+        if not exe_found or stale:
+            raise HTTPException(400, f"全文翻译引擎{'升级' if stale else '下载'}没成功"
+                                     f"（{st.get('error') or '原因未知'}）。可再点一次「全文翻译」重试，"
+                                     "或到「设置 → 翻译引擎」手动装。")
         raise HTTPException(400, f"全文翻译引擎起不来（{why}）。到「设置 → 翻译引擎」重新检测，或重装引擎。")
     translate_full.start(pid, _paper_src_or_404(pid, p), paper_dir(pid), used,
                          cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
-                         note=note, engine=engine)
+                         note=note, engine=engine,
+                         glossary_rows=db.glossary_list(pid))
     db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 

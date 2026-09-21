@@ -612,7 +612,7 @@ async function doTranslateFull() {
     // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
     const st = await api.pdf2zhInstallStatus().catch(() => null)
-    if (st && (st.state === 'downloading' || st.state === 'unpacking')) {
+    if (st && ['downloading', 'unpacking', 'warming'].includes(st.state)) {
       engResumeId = store.currentId
       watchEngine()
     } else {
@@ -996,13 +996,14 @@ function onKey(e) {
         <div class="eng-title">
           <span v-if="engInst.state === 'downloading'">{{ t('正在下载全文翻译引擎 {p}%', { p: engInst.pct }) }}</span>
           <span v-else-if="engInst.state === 'unpacking'">{{ t('引擎解压安装中…') }}</span>
+          <span v-else-if="engInst.state === 'warming'">{{ t('引擎预热中…') }}</span>
           <span v-else-if="engInst.state === 'error'" style="color:var(--vermilion)">{{ engInst.error }}</span>
         </div>
         <div class="eng-track" v-if="engInst.state === 'downloading'"><i :style="{ width: engInst.pct + '%' }"></i></div>
         <div class="eng-sub" v-if="engInst.state === 'downloading'">
           {{ t('已下载 {a} / {b} MB（{s}）', { a: fmtMB(engInst.got), b: fmtMB(engInst.total), s: engInst.src }) }}
         </div>
-        <div class="eng-sub" v-else-if="engInst.state === 'unpacking'">{{ t('装好后自动开始全文翻译') }}</div>
+        <div class="eng-sub" v-else-if="engInst.state === 'unpacking' || engInst.state === 'warming'">{{ t('装好后自动开始全文翻译') }}</div>
         <div class="eng-btns">
           <template v-if="engInst.state === 'error'">
             <button @click="startEngineInstall">{{ t('重试') }}</button>
