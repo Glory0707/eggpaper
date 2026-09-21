@@ -2,8 +2,6 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { api, store, openPaper, toast } from '../store'
 import { t, ui } from '../i18n'
-import { copyWithToast } from '../clip'
-import MdLite from './MdLite.vue'
 
 const open = computed(() => store.viewer.calOpen)
 const y = ref(0), m = ref(0)          // 正在看的年/月
@@ -142,35 +140,6 @@ function exportMonth() {
   URL.revokeObjectURL(a.href)
 }
 
-/* ---- 组会月报：当月篇目（带一眼卡）交给模型串成汇报。
-   弹层就地展示，复制进组会文档或下载 .md——它是"导出本月"的下一步，不另开新面。 ---- */
-const repBusy = ref(false)
-const repOpen = ref(false)
-const repMd = ref('')
-const repMaskEl = ref(null)
-
-async function makeReport() {
-  if (repBusy.value) return
-  repBusy.value = true
-  try {
-    const r = await api.monthReport(`${y.value}-${pad(m.value)}`)
-    repMd.value = r.md || ''
-    repOpen.value = true
-    nextTick(() => repMaskEl.value?.focus())
-  } catch (e) {
-    toast(e.message)
-  }
-  repBusy.value = false
-}
-function downloadRep() {
-  const blob = new Blob([repMd.value], { type: 'text/markdown;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `eggpaper-月报-${y.value}-${pad(m.value)}.md`
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
-
 /* 面板是 v-if 挂进来的：挂上来那刻 open 已经是 true，必须 immediate 才接得住首拍 */
 watch(open, v => {
   if (!v) return
@@ -195,9 +164,7 @@ watch(open, v => {
 
     <div class="cal-stat">
       <span>{{ statText }}</span>
-      <button class="lnk" style="margin-left:auto" v-if="monthStat.m" @click="makeReport" :disabled="repBusy">
-        {{ repBusy ? t('生成中…') : t('生成月报') }}</button>
-      <button class="lnk" v-if="monthStat.m" @click="exportMonth">{{ t('导出本月 .md') }}</button>
+      <button class="lnk" style="margin-left:auto" v-if="monthStat.m" @click="exportMonth">{{ t('导出本月 .md') }}</button>
     </div>
 
     <div class="cal-grid">
@@ -254,24 +221,5 @@ watch(open, v => {
         </button>
       </div>
     </div>
-
-    <Transition name="pop">
-      <div class="modal-mask" ref="repMaskEl" tabindex="-1" v-if="repOpen"
-           @click.self="repOpen = false" @keydown.esc.prevent="repOpen = false">
-        <div class="modal rep-modal">
-          <div class="modal-head">
-            <h3>{{ t('组会月报') }} · {{ label }}</h3>
-            <button class="modal-x" :title="t('关闭（Esc）')" @click="repOpen = false">×</button>
-          </div>
-          <div class="rep-body">
-            <MdLite class="md" :text="repMd || ' '" />
-          </div>
-          <div class="rep-acts">
-            <button @click="copyWithToast(repMd, t('已复制'))">{{ t('复制') }}</button>
-            <button class="primary" @click="downloadRep">{{ t('下载 .md') }}</button>
-          </div>
-        </div>
-      </div>
-    </Transition>
   </div>
 </template>

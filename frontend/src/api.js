@@ -52,7 +52,6 @@ export const api = {
   figures: (pid) => req('GET', `/api/papers/${pid}/figures`),
   figCaption: (pid, idx) => req('GET', `/api/papers/${pid}/fig_caption?idx=${idx}`),
   calendar: (month) => req('GET', `/api/calendar?month=${month}`),
-  monthReport: (month) => req('POST', '/api/calendar/report', { month }),
   plan: (pid, day) => req('POST', `/api/papers/${pid}/plan`, { day }),
   libraryVersion: () => req('GET', '/api/library/version'),
   toc: (pid) => req('GET', `/api/papers/${pid}/toc`),

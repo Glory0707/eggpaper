@@ -193,10 +193,6 @@ def _lang_tail() -> str:
             "Keep quoted sentences from the paper in their original language.") if _is_en() else ""
 
 
-def lang_tail() -> str:
-    """_lang_tail 的公开别名：main.py 里临时拼提示词的端点（组会月报）也用同一份语言规则。"""
-    return _lang_tail()
-
 TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者读这篇时会卡住、需要中英对照的那些说法。
 
 只收**这篇论文特有的**东西：
