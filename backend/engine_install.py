@@ -27,6 +27,7 @@
 """
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -37,8 +38,11 @@ import httpx
 
 import appinfo
 
-ENGINE_URL = ("https://github.com/PDFMathTranslate-next/PDFMathTranslate-next/releases/download/"
-              "v2.9.0/pdf2zh-v2.9.0-BabelDOC-v0.6.4-with-assets-win64.zip")
+ENGINE_URL = os.environ.get(
+    "EGGPAPER_ENGINE_URL",
+    "https://github.com/PDFMathTranslate-next/PDFMathTranslate-next/releases/download/"
+    "v2.9.0/pdf2zh-v2.9.0-BabelDOC-v0.6.4-with-assets-win64.zip")
+# 测试/局域网分发可用 EGGPAPER_ENGINE_URL 覆盖（文件名里要带 pdf2zh-v<版本> 供解析）。
 ENGINE_SHA256 = os.environ.get("EGGPAPER_ENGINE_SHA256",
                                "6916a2f299b029cfb75803c780528088d93e7694d5597c4250ba2dcf5598f1d8")
 # 官方指纹，与 GitHub API 的 assets digest 核对过；本地 zip 校验和也一样。换引擎版本时同步换。
@@ -46,6 +50,14 @@ ENGINE_SHA256 = os.environ.get("EGGPAPER_ENGINE_SHA256",
 # **必须用 with-assets 变体**（比普通包大 ~220MB）：普通包首译要在线下载版面模型与字体
 # （上游竞速含 huggingface，国内时常超时——实测整个翻译直接死在预热上），with-assets
 # 把资产全部内置，装完即离线可用；官方文档同样推荐受限网络用它。
+
+def pinned_version() -> str:
+    """钉住版本：从 ENGINE_URL 文件名里解析（pdf2zh-v2.9.0-… → "2.9.0"）。
+
+    升级链路的基准：已装引擎的版本比它老，设置页就亮「有新版 + 升级」。
+    解析不出（URL 被自定义且没按规范命名）返回 ""，升级提示安静关闭。"""
+    m = re.search(r"pdf2zh-v(\d+(?:\.\d+){1,3})", os.path.basename(ENGINE_URL))
+    return m.group(1) if m else ""
 
 _MIRRORS = ("https://gh-proxy.com/", "https://gh-proxy.org/", "https://ghfast.top/")
 _MIN_SPEED = 64 * 1024      # 停滞判据：开下 12 秒平均不足 64KB/s 判这个源死刑

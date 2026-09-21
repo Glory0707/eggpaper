@@ -44,7 +44,8 @@ async function poll() {
     engInst.hidden = false
     try {   // 刷一遍引擎缓存（lsGet/lsSet 的 engState，带 eggpaper: 前缀——裸 localStorage 写的键读取方永远看不见）
       const e = await api.pdf2zhEngine(s.path || '')
-      lsSet('engState', { ok: e.ok, path: e.path, why: e.why })
+      lsSet('engState', { ok: e.ok, path: e.path, why: e.why, version: e.version || '',
+                          upgrade: !!e.upgrade, pinned: e.pinned || '' })
     } catch { /* 探测失败不打扰安装成功的消息 */ }
     doneHooks.forEach(fn => { try { fn() } catch { /* 钩子自己的事 */ } })
   } else if (s.state === 'error') {

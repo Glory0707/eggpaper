@@ -411,6 +411,8 @@ const EN = {
   '可用（{v}）': 'Available ({v})',
   '未安装': 'Not installed',
   '安装': 'Install',
+  '升级': 'Upgrade',
+  '有新版（{v}）': 'New version available ({v})',
   '检测': 'Check',
   '数据目录': 'Data folder',
   '打开': 'Open',

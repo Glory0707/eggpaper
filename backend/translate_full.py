@@ -224,6 +224,10 @@ def engine_probe(path: str) -> tuple:
                 ver = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
             except ValueError:
                 ver = ()
+        try:
+            _VERS[path] = (os.path.getmtime(path), ver)   # 探一次，版本缓存同享（设置页首开少跑一遍 --version）
+        except OSError:
+            pass
         if ver and ver[0] < 2:
             return False, f"旧版引擎 {'.'.join(map(str, ver))}（全文术语锁定需要 2.x，请升级）"
         # 2.x 的 stdout 前面挂着 rich 日志（时间戳/模块名），只挑干净的那行给用户看

@@ -136,16 +136,19 @@ function openModel() { window.open('/model', '_blank') }
    状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。
    安装进度看全局的 engInst（engine.js）：不管安装从哪里发起（这里手动、
    点「全文翻译」时自动），这一行和右下角等待卡看到的是同一份状态。 */
-const eng = reactive({ busy: false, ok: false, path: '', why: '', version: '', checked: false })
+const eng = reactive({ busy: false, ok: false, path: '', why: '', version: '',
+                       upgrade: false, pinned: '', checked: false })
 
 async function checkEngine() {
   eng.busy = true
   try {
     const r = await api.pdf2zhEngine(f.engine_path.trim())
-    Object.assign(eng, { ok: r.ok, path: r.path, why: r.why, version: r.version || '', checked: true })
-    lsSet('engState', { ok: r.ok, path: r.path, why: r.why, version: r.version || '' })
+    Object.assign(eng, { ok: r.ok, path: r.path, why: r.why, version: r.version || '',
+                         upgrade: !!r.upgrade, pinned: r.pinned || '', checked: true })
+    lsSet('engState', { ok: r.ok, path: r.path, why: r.why, version: r.version || '',
+                        upgrade: !!r.upgrade, pinned: r.pinned || '' })
   } catch (e) {
-    Object.assign(eng, { ok: false, path: '', why: e.message, version: '', checked: true })
+    Object.assign(eng, { ok: false, path: '', why: e.message, version: '', upgrade: false, checked: true })
   }
   eng.busy = false
 }
@@ -159,7 +162,8 @@ async function installEngine() {
 onEngineReady(() => {
   const st = lsGet('engState', null)
   if (st) {
-    Object.assign(eng, { ok: st.ok, path: st.path, why: st.why, version: st.version || '', checked: true })
+    Object.assign(eng, { ok: st.ok, path: st.path, why: st.why, version: st.version || '',
+                         upgrade: !!st.upgrade, pinned: st.pinned || '', checked: true })
   }
 })
 
@@ -261,7 +265,7 @@ function save() {
         <label class="mono-label">{{ t('DeepL Key') }}</label>
         <input type="text" v-model="f.deepl_key" :placeholder="t('DeepL 的 AUTH_KEY（deepl.com/developers）')" />
       </div>
-      <div class="f-line" v-if="!isEn() && !(eng.checked && eng.ok)">
+      <div class="f-line" v-if="!isEn() && (!(eng.checked && eng.ok) || eng.upgrade)">
         <span class="mono-label" style="margin:0">{{ t('翻译引擎') }}</span>
         <span class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
           <template v-if="engInst.state === 'downloading'">{{ t('下载中 {p}%', { p: engInst.pct }) }} · {{ engInst.src }}</template>
@@ -269,13 +273,15 @@ function save() {
           <template v-else-if="engInst.state === 'warming'">{{ t('引擎预热中（下载版面模型）…') }}</template>
           <template v-else-if="engInst.state === 'error'">{{ engInst.error }}</template>
           <template v-else-if="!eng.checked">…</template>
-          <template v-else-if="eng.ok">{{ t('可用（{v}）', { v: eng.version || eng.why.replace('pdf2zh', '').trim() }) }}</template>
+          <template v-else-if="eng.ok">{{ t('可用（{v}）', { v: eng.version || eng.why.replace('pdf2zh', '').trim() }) }}<template v-if="eng.upgrade"> · {{ t('有新版（{v}）', { v: eng.pinned }) }}</template></template>
           <template v-else>{{ t('未安装') }}</template>
         </span>
         <button class="eng-check" style="margin-left:auto" @click="checkEngine" :disabled="eng.busy">
           {{ eng.busy ? '…' : t('检测') }}</button>
         <button class="eng-check" style="margin-left:4px" v-if="eng.checked && !eng.ok && engInst.state !== 'error'"
                 @click="installEngine">{{ t('安装') }}</button>
+        <button class="eng-check" style="margin-left:4px" v-if="eng.upgrade && !['downloading', 'unpacking', 'warming'].includes(engInst.state)"
+                @click="installEngine">{{ t('升级') }}</button>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('截图') }}</span>

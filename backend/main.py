@@ -474,8 +474,18 @@ def pdf2zh_engine(path: str = ""):
     exe = translate_full.engine_path(want)
     ok, why = translate_full.engine_probe_cached(exe)
     ver = translate_full.engine_version(exe) if ok else ()
+    # 升级链路：已装版本比钉住版本老就亮「有新版」。升级动作 = engine_install.start()
+    # （多源下载/校验/原地换装/预热全是现成的），前端只需要一个旗标。
+    pinned = engine_install.pinned_version()
+    upgrade = False
+    if ok and pinned and ver:
+        try:
+            upgrade = ver < tuple(int(x) for x in pinned.split("."))
+        except ValueError:
+            upgrade = False
     return {"ok": ok, "path": exe, "why": why, "configured": bool(want),
-            "version": ".".join(map(str, ver)) if ver else ""}
+            "version": ".".join(map(str, ver)) if ver else "",
+            "pinned": pinned, "upgrade": upgrade}
 
 @app.post("/api/data/pick")
 def data_pick():
