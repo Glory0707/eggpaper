@@ -2780,7 +2780,7 @@ def translate_full_start(pid: str, force: bool = False):
     translate_full.start(pid, _paper_src_or_404(pid, p), paper_dir(pid), used,
                          cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                          note=note, engine=engine,
-                         glossary_rows=db.glossary_list(pid))
+                         glossary_rows=db.glossary_list(pid), fresh=force)
     db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 

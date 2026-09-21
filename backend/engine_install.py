@@ -208,13 +208,29 @@ def _unpack(zpath: str):
         shutil.rmtree(tmp_root, ignore_errors=True)
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
 
-def _download_one(url: str, zpath: str, src: str) -> str:
-    """从一个源下载（带断点续传与停滞判据）。成功返回 ""，失败返回人话原因。
+_PARALLEL_CONNS = 4      # 分段并行下载的连接数：镜像普遍按单连接限速，4 段约 3~4 倍
 
-    zpath 与断点 .part 都放在 _partial_dir()（start() 的重试不会清它）；
-    下完整后把 .part 改名成 zpath，交给 _unpack 校验+解压。
+def _download_one(url: str, zpath: str, src: str) -> str:
+    """从一个源下载完整 zip（带断点续传与停滞判据）。成功返回 ""，失败返回人话原因。
+
+    zpath 与断点都放在 _partial_dir()（start() 的重试不会清它）。先探服务器吃不吃
+    Range：吃就 4 线程分段并行（镜像按单连接限速是常态，并行是下载速度的大头），
+    不吃或探不动就退回单流。两边的半截文件各自续传，互不兼容时以旧单流 .part 优先。
     """
     part = zpath + ".part"
+    try:
+        with httpx.stream("GET", url, headers={"Range": "bytes=0-0"},
+                          follow_redirects=True, timeout=httpx.Timeout(30, connect=15)) as r:
+            if r.status_code == 206 and (r.headers.get("content-range") or "").startswith("bytes"):
+                cr = r.headers["content-range"]          # bytes 0-0/总长
+                total = int(cr.split("/")[-1])
+                if total > 32 * 1024 * 1024:             # 小文件不值得开多线程
+                    return _download_parallel(url, zpath, total)
+    except Exception:
+        pass                                             # 探测失败照走单流
+    return _download_single(url, part, zpath)
+
+def _download_single(url: str, part: str, done: str, src: str = "") -> str:
     headers = {}
     have = os.path.getsize(part) if os.path.isfile(part) else 0
     append = False
@@ -248,10 +264,100 @@ def _download_one(url: str, zpath: str, src: str) -> str:
                         t0, base = now, got
         if got < total:
             return f"连接中断（{got * 100 // total if total else 0}%）"
-        shutil.move(part, zpath)     # 下完整了：挪出断点目录，交给 _unpack 校验+解压
+        shutil.move(part, done)      # 下完整了：挪出断点目录，交给 _unpack 校验+解压
         return ""
     except Exception as e:
         return f"{type(e).__name__}: {str(e)[:120]}"
+
+class _Pace:
+    """并行分段的聚合进度与停滞判据：所有线程共写，进度取总和，速度看全窗口。"""
+
+    def __init__(self, total: int):
+        self.total = total
+        self.got = 0
+        self.t0 = time.time()
+        self.base = 0                       # 窗口起点
+        self.lock = threading.Lock()
+
+    def add(self, n: int) -> str:
+        """累计 n 个字节。返回 "" 或停滞原因。"""
+        with self.lock:
+            self.got += n
+            _set(got=self.got, total=self.total,
+                 pct=round(self.got * 100 / self.total) if self.total else 0)
+            now = time.time()
+            span = now - self.t0
+            if span >= _SPEED_WINDOW:
+                speed = (self.got - self.base) / span
+                self.t0, self.base = now, self.got
+                if speed < _MIN_SPEED:
+                    return f"太慢（{int(speed / 1024)}KB/s），换源"
+        return ""
+
+def _download_parallel(url: str, zpath: str, total: int) -> str:
+    """Range 分段并行：每段独立 .partN、独立断点续传、独立停滞检测。"""
+    os.makedirs(_partial_dir(), exist_ok=True)
+    part = zpath + ".part"          # 旧单流的断点：有它就别开并行，接着单流走完
+    if os.path.isfile(part) and os.path.getsize(part) > 0:
+        return _download_single(url, part, "单流续传")
+    n = _PARALLEL_CONNS
+    span = (total + n - 1) // n
+    parts = [os.path.join(_partial_dir(), f".part{i}") for i in range(n)]
+    pace = _Pace(total)
+    errs = []
+
+    def worker(i: int):
+        if _cancel.is_set():
+            return
+        begin, end = i * span, min((i + 1) * span, total) - 1
+        fp = parts[i]
+        have = os.path.getsize(fp) if os.path.isfile(fp) else 0
+        if have >= end - begin + 1:
+            return                                   # 这段早就下完了
+        try:
+            with httpx.stream("GET", url, headers={"Range": f"bytes={begin + have}-{end}"},
+                              follow_redirects=True, timeout=httpx.Timeout(30, connect=15)) as r:
+                if r.status_code != 206:
+                    errs.append(f"段{i}：服务器不回 206")
+                    return
+                with open(fp, "ab") as f:
+                    for chunk in r.iter_bytes(512 * 1024):
+                        if _cancel.is_set():
+                            return
+                        f.write(chunk)
+                        have += len(chunk)
+                        why = pace.add(len(chunk))
+                        if why:
+                            errs.append(f"段{i}：{why}")
+                            return
+                if have < end - begin + 1:
+                    errs.append(f"段{i}：连接中断")
+        except Exception as e:
+            errs.append(f"段{i}：{type(e).__name__}: {str(e)[:80]}")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if _cancel.is_set():
+        return "已停止"
+    if errs:
+        return errs[0]
+    done = all(os.path.getsize(p) == (min((i + 1) * span, total) - i * span)
+               for i, p in enumerate(parts))
+    if not done:
+        return "分段长度不齐"
+    with open(zpath, "wb") as out:
+        for p in parts:
+            with open(p, "rb") as f:
+                shutil.copyfileobj(f, out)
+    for p in parts:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return ""
 
 def _install(urls):
     _set(state="downloading", pct=0, got=0, total=0, error="", url=urls[0][0] if urls else "",

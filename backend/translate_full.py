@@ -405,6 +405,10 @@ def job(pid: str) -> dict:
 
 PAGE_WORKERS_FREE = 3
 PAGE_WORKERS_LLM = 2
+# 全库共享的引擎进程上限：每篇各有自己的线程池，两篇同时译就是两份池——
+# 不设全局闸的话，6~8 个 pdf2zh 进程同时冷启动+跑 onnx，内存直接翻车
+ENGINE_PROCS_CAP = 4
+_SLOTS = threading.BoundedSemaphore(ENGINE_PROCS_CAP)
 PAGE_TIMEOUT = 150
 PAGE_TRIES = 2
 BATCH_PAGES = 8          # 一次 pdf2zh 进程译几页。2.x 单进程冷启动 ~15-35s（1.9 约 3s），
@@ -602,12 +606,14 @@ def _pdf_complete(path: str) -> bool:
 
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "",
-          glossary_rows: list = None) -> dict:
+          glossary_rows: list = None, fresh: bool = False) -> dict:
     """按页流水线翻译全文：进度=完成页数，坏页回退原文，一页卡不住整份文档。
 
     glossary_rows：本篇术语表（[{term_en, term_zh}, …]）。非空且服务是 LLM 家族时
     写成 BabelDOC 术语 CSV，随每一批进程 `--glossaries` 注入 prompt——全文链的
     术语锁定就靠它（bing/google 这类非 LLM 服务吃不了，跳过不报错）。
+    fresh=True：清掉全部页级缓存与成品再译——「重新全文翻译」按的是这个，不 fresh
+    的话预扫描会把上次译好的页全复用，按钮等于没按（实测踩过）。
     """
     j = job(pid)
     if j["status"] in ("running", "queued"):
@@ -637,6 +643,14 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         try:
             import pymupdf
             os.makedirs(out_dir, exist_ok=True)
+            if fresh:
+                # 重译 = 连缓存一起清：页级产物、成品、双语缓存都不要了
+                shutil.rmtree(page_root, ignore_errors=True)
+                for stale in ("mono.pdf", "dual.pdf"):
+                    try:
+                        os.remove(os.path.join(out_dir, stale))
+                    except OSError:
+                        pass
             try:
                 sig = json.dumps({"m": int(os.path.getmtime(pdf_path)),
                                   "s": os.path.getsize(pdf_path)})
@@ -664,6 +678,10 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     _say(f"全文翻译 {pid}: 术语表 {len(glossary_rows)} 条注入全文翻译")
             with pymupdf.open(pdf_path) as doc:
                 n = len(doc)
+            if n == 0:
+                j.update(status="error", error="这份 PDF 没有可翻译的页面")
+                say(f"全文翻译失败 {pid}：0 页")
+                return
             stem = os.path.splitext(os.path.basename(pdf_path))[0]
             # 预扫描续译：批目录名是批首页（1 基，worker 写 p{batch[0]+1}-…），一份产物
             # 覆盖整批。**必须按批映射**：老写法把 p9 目录里的 8 页产物当成"第 9 页"，
@@ -712,8 +730,13 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         return
                     pdir_t = _page_dir(out_dir, a, t)
                     os.makedirs(pdir_t, exist_ok=True)
-                    got, tail = _run_page(pdf_path, label, pdir_t, service, extra,
-                                          envs, procs, auth_out, engine, glossary_csv)
+                    # 全局闸：这里排队的是"引擎进程"而不是线程——同一时刻全库最多
+                    # ENGINE_PROCS_CAP 个 pdf2zh 在跑，跨篇也不会超
+                    with _SLOTS:
+                        if auth_error or j.get("_abort"):
+                            return
+                        got, tail = _run_page(pdf_path, label, pdir_t, service, extra,
+                                              envs, procs, auth_out, engine, glossary_csv)
                     if auth_out:
                         auth_error.append(auth_out[0])
                         return
