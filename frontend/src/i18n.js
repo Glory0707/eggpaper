@@ -291,6 +291,7 @@ const EN = {
   '搜标题 / 文件名…': 'Search title / filename…',
   '最近导入': 'Recently added',
   '最近阅读': 'Recently read',
+  '发表时间': 'Publication year',
   '标题': 'Title',
   '全部': 'All',
   '未分类': 'Unfiled',

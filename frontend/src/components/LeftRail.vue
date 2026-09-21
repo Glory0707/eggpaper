@@ -47,6 +47,7 @@ const shown = computed(() => {
   const title = p => (p.title || p.filename || '').toLowerCase()
   return [...list].sort((a, b) =>
     s === 'title' ? title(a).localeCompare(title(b))
+    : s === 'year' ? (parseInt(b.year) || 0) - (parseInt(a.year) || 0)
     : s === 'read' ? String(b.last_read_at || b.created_at || '').localeCompare(String(a.last_read_at || a.created_at || ''))
     : String(b.created_at || '').localeCompare(String(a.created_at || '')))
 })
@@ -332,6 +333,7 @@ function onCmpGoto(c) {
       <select v-model="sort" class="lib-sort">
         <option value="added">{{ t('最近导入') }}</option>
         <option value="read">{{ t('最近阅读') }}</option>
+        <option value="year">{{ t('发表时间') }}</option>
         <option value="title">{{ t('标题') }}</option>
       </select>
       <button class="lib-multi" :class="{ on: selMode }" :title="t('多选')"

@@ -307,15 +307,15 @@ function save() {
         <input ref="zipInput" type="file" accept=".zip" hidden @change="installFromFile" />
       </div>
       <div class="f-line">
+        <span class="mono-label" style="margin:0">{{ t('截图') }}</span>
+        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.shot_save" />{{ t('保存到本地') }}</label>
+        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openShots">{{ t('打开目录') }}</button>
+      </div>
+      <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('更新') }}</span>
         <label class="ck"><input type="checkbox" v-model="f.auto_check" />{{ t('打开时自动检查') }}</label>
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
                 @click="checkNow" :disabled="checking">{{ checking ? t('检查中…') : t('立即检查更新') }}</button>
-      </div>
-      <div class="f-line">
-        <span class="mono-label" style="margin:0">{{ t('截图') }}</span>
-        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.shot_save" />{{ t('保存到本地') }}</label>
-        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openShots">{{ t('打开目录') }}</button>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('窗口') }}</span>
