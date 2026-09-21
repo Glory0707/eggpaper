@@ -42,26 +42,9 @@
   <li><b>术语</b>：本篇的缩写和术语表，划词可收进；可导出 CSV。</li>
 </ul>
 
-<h2>第一次配模型 API</h2>
-<ul>
-  <li><b>为什么要配</b>：析读、问答、翻译都要调一个大模型，没配时是「演示模式」（数据是假的）。要填的只有三样——<b>BASE URL</b>（接口地址）、<b>API KEY</b>（密钥）、<b>模型名</b>，都只存在本机。费用按用量算，读一篇论文的析读通常几分钱。</li>
-  <li><b>三步上手（以 DeepSeek 为例）</b>：
-    ① 打开 <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a> 注册，充 10 元（能用很久）；
-    ② 左侧「API keys」→「创建 API key」，复制那串 <b>sk-…</b>（只显示这一次）；
-    ③ 回 eggpaper 设置：<b>BASE URL</b> 填 <b>https://api.deepseek.com</b>、<b>API KEY</b> 粘贴、模型填 <b>deepseek-flash</b>，点「测试连接」见 ✓ 即成。</li>
-  <li><b>其他家（同样三样，照抄即可）</b>：
-    <ul>
-      <li><b>智谱 GLM</b>（有免费模型，可先零成本试用）：<a href="https://open.bigmodel.cn" target="_blank">open.bigmodel.cn</a> 注册 → 控制台「API 密钥」创建。BASE URL 填 <b>https://open.bigmodel.cn/api/paas/v4</b>，模型填 <b>glm-4.7-flash</b>（免费）或 glm-4.7 等。</li>
-      <li><b>硅基流动</b>（聚合平台，有一批免费小模型）：<a href="https://cloud.siliconflow.cn" target="_blank">cloud.siliconflow.cn</a> 注册 →「API 密钥」新建。BASE URL 填 <b>https://api.siliconflow.cn/v1</b>，模型在「模型广场」里挑，名字照抄（标「免费」的也能用）。</li>
-      <li><b>阿里云百炼</b>（通义千问，新人有免费额度）：<a href="https://bailian.console.aliyun.com" target="_blank">bailian.console.aliyun.com</a> 开通 →「API-KEY 管理」创建。BASE URL 填 <b>https://dashscope.aliyuncs.com/compatible-mode/v1</b>，模型填 qwen-plus 等。</li>
-    </ul>
-  </li>
-  <li><b>零成本离线</b>：装好 <a href="https://ollama.com" target="_blank">Ollama</a> 并拉一个模型后，BASE URL 填 <b>http://127.0.0.1:11434/v1</b>，模型填它的名字（如 qwen3:8b）——数据不出本机。</li>
-  <li class="dim">填完点「测试连接」当场验真；不通多半是模型名抄错或 key 少了字符。API KEY 等同钱包钥匙，只填在这里，别发给别人。</li>
-</ul>
-
 <h2>其它</h2>
 <ul>
+  <li><b>配模型</b>：析读、问答、翻译要调大模型，三步上手见<a href="/model">配模型教程</a>（单独一页）。</li>
   <li><b>引用</b>：顶栏「引用」——GB/T / APA / Nature / BibTeX / RIS，点击复制。</li>
   <li><b>文库</b>：分类、搜索、按最近阅读排序；文献删除时批注、问答一并清除。搜索框旁的列表图标进<b>多选</b>：勾几篇批量同屏阅读、数据对比（每格可点 ¶ 跳回原文）、归入分类、删除。</li>
   <li><b>从 Zotero 导入</b>：文库底部<b>长按</b>拖放区（需要 Zotero 7+ 在本机开着）——勾选它库里的条目，PDF 连标题/作者/年份一起导进来。</li>

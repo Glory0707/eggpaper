@@ -2847,12 +2847,20 @@ def glossary_delete(gid: int):
 
 # ---------------- 前端静态托管（构建后） ----------------
 
+def _static_page(fname: str):
+    return FileResponse(os.path.join(os.path.dirname(__file__), fname),
+                        media_type="text/html; charset=utf-8",
+                        headers={"Cache-Control": "no-cache, must-revalidate"})
+
 @app.get("/guide")
 def guide_page():
     """使用指南：一页静态 HTML。设置里可打开；砍界面文案时的安全网。"""
-    return FileResponse(os.path.join(os.path.dirname(__file__), "guide.html"),
-                        media_type="text/html; charset=utf-8",
-                        headers={"Cache-Control": "no-cache, must-revalidate"})
+    return _static_page("guide.html")
+
+@app.get("/model")
+def model_page():
+    """配模型教程：与使用指南分开的一页，设置里模型一节的「教程」打开。"""
+    return _static_page("model.html")
 
 DIST = appinfo.dist_dir()
 if os.path.isdir(DIST):

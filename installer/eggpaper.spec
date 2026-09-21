@@ -18,6 +18,7 @@ datas = [
     (os.path.join(ROOT, "VERSION"), "."),                        # 版本号（更新检查要用）
     (os.path.join(ROOT, "installer", "eggpaper.ico"), "."),      # 多尺寸图标：窗口/托盘取它
     (os.path.join(ROOT, "backend", "guide.html"), "."),          # 使用指南（设置里可打开）
+    (os.path.join(ROOT, "backend", "model.html"), "."),          # 配模型教程（设置·BASE URL 旁可打开）
 ]
 # 扫描件 OCR 的模型随包分发（det/rec/cls 三只 onnx），缺了运行时才发现不了
 datas += collect_data_files("rapidocr_onnxruntime")

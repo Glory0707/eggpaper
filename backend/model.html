@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>eggpaper · 配模型</title>
+<style>
+  body { font: 15px/1.75 "Inter","Microsoft YaHei",sans-serif; color: #26221c; background: #faf8f4;
+         max-width: 720px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h1 em { font-style: normal; color: #8e8a80; font-size: 14px; margin-left: 10px; }
+  h2 { font-size: 16px; margin: 32px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #e6e1d8; }
+  li { margin: 4px 0; } ul { padding-left: 20px; margin: 6px 0; }
+  .dim { color: #8e8a80; }
+</style>
+</head>
+<body>
+<h1>配模型 <em>eggpaper</em></h1>
+
+<ul>
+  <li><b>为什么要配</b>：析读、问答、翻译都要调一个大模型，没配时是「演示模式」（数据是假的）。要填的只有三样——<b>BASE URL</b>（接口地址）、<b>API KEY</b>（密钥）、<b>模型名</b>，都只存在本机。费用按用量算，读一篇论文的析读通常几分钱。</li>
+  <li><b>三步上手（以 DeepSeek 为例）</b>：
+    ① 打开 <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a> 注册，充 10 元（能用很久）；
+    ② 左侧「API keys」→「创建 API key」，复制那串 <b>sk-…</b>（只显示这一次）；
+    ③ 回 eggpaper 设置：<b>BASE URL</b> 填 <b>https://api.deepseek.com</b>、<b>API KEY</b> 粘贴、模型填 <b>deepseek-flash</b>，点「测试连接」见 ✓ 即成。</li>
+  <li><b>其他家（同样三样，照抄即可）</b>：
+    <ul>
+      <li><b>智谱 GLM</b>（有免费模型，可先零成本试用）：<a href="https://open.bigmodel.cn" target="_blank">open.bigmodel.cn</a> 注册 → 控制台「API 密钥」创建。BASE URL 填 <b>https://open.bigmodel.cn/api/paas/v4</b>，模型填 <b>glm-4.7-flash</b>（免费）或 glm-4.7 等。</li>
+      <li><b>硅基流动</b>（聚合平台，有一批免费小模型）：<a href="https://cloud.siliconflow.cn" target="_blank">cloud.siliconflow.cn</a> 注册 →「API 密钥」新建。BASE URL 填 <b>https://api.siliconflow.cn/v1</b>，模型在「模型广场」里挑，名字照抄（标「免费」的也能用）。</li>
+      <li><b>阿里云百炼</b>（通义千问，新人有免费额度）：<a href="https://bailian.console.aliyun.com" target="_blank">bailian.console.aliyun.com</a> 开通 →「API-KEY 管理」创建。BASE URL 填 <b>https://dashscope.aliyuncs.com/compatible-mode/v1</b>，模型填 qwen-plus 等。</li>
+    </ul>
+  </li>
+  <li><b>零成本离线</b>：装好 <a href="https://ollama.com" target="_blank">Ollama</a> 并拉一个模型后，BASE URL 填 <b>http://127.0.0.1:11434/v1</b>，模型填它的名字（如 qwen3:8b）——数据不出本机。</li>
+  <li class="dim">填完点「测试连接」当场验真；不通多半是模型名抄错或 key 少了字符。API KEY 等同钱包钥匙，只填在这里，别发给别人。</li>
+</ul>
+</body>
+</html>

@@ -130,6 +130,7 @@ async function openShots() {
 }
 
 function openGuide() { window.open('/guide', '_blank') }
+function openModel() { window.open('/model', '_blank') }
 
 /* 全文翻译引擎（pdf2zh）：不在安装包里（渠道上限 100MB，308MB 的引擎另装）。
    状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。
@@ -211,7 +212,7 @@ function save() {
       </div>
       <div class="f-row">
         <label class="mono-label">BASE URL
-          <button class="lnk" style="margin-left:6px" @click="openGuide">{{ t('教程') }}</button>
+          <button class="lnk" style="margin-left:6px" @click="openModel">{{ t('教程') }}</button>
         </label>
         <input type="text" v-model="f.base_url" placeholder="https://api.deepseek.com" />
       </div>
