@@ -54,36 +54,47 @@ function jumpNote(n) {
   jumpPara(n.para_idx)
 }
 
-/* ---------- 五个问题（「问题」页签） ----------
+/* ---------- 七个问题（「问题」页签） ----------
    段落角色退到幕后：页边书签、跳转定位一律照旧，
-   但"图例 + 计数"那块 UI 换成读者真正会问的五个问题。
+   但"图例 + 计数"那块 UI 换成读者真正会问的七个问题。
    故意不把答案摊开：问题先出现，点哪条才展开哪条。
-   五条答案都在**首次析读时一次写完**并按篇缓存，进这一页就有，不需要点任何按钮。
-   （原来的①要解决什么/②为什么要解决重合度太高——同一件事的两种说法，合成了一问。） */
+   七条答案都在**首次析读时一次写完**并按篇缓存，进这一页就有，不需要点任何按钮。
+   ②③④是理解的三层：知识层（原理为什么成立）→ 方法层（实验/手段/改进）→ 结论层（主张-证据链）。
+   综述没有实验层：②换成「这个领域的共识」、③换成「它把文献怎么组织的」。 */
 const SIX = [
   { k: 'q1', n: 1, q: '要解决什么、为什么？', gen: 'motive' },
-  { k: 'q2', n: 2, q: '怎么解决的？' },
-  { k: 'q3', n: 3, q: '还有什么没解决？' },
-  { k: 'q4', n: 4, q: '还能做什么？', gen: 'next' },
-  { k: 'q5', n: 5, q: '换个学科怎么看？', gen: 'lens' },
+  { k: 'q2', n: 2, q: '原理是什么？', gen: 'principle' },
+  { k: 'q3', n: 3, q: '怎么解决的？', gen: 'method' },
+  { k: 'q4', n: 4, q: '结论有哪些？' },
+  { k: 'q5', n: 5, q: '还有什么没解决？' },
+  { k: 'q6', n: 6, q: '还能做什么？', gen: 'next' },
+  { k: 'q7', n: 7, q: '换个学科怎么看？', gen: 'lens' },
 ]  // 问题文案在渲染处过 t()
-const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false })
+const openSix = reactive({ q1: false, q2: false, q3: false, q4: false, q5: false, q6: false, q7: false })
 function toggleSix(k) { openSix[k] = !openSix[k] }
+/* 综述没有实验层：②问共识图景、③问组织方式（研究型保持原问句） */
+function sixQ(s) {
+  if (isReview.value && s.k === 'q2') return t('这个领域的共识是什么？')
+  if (isReview.value && s.k === 'q3') return t('它把文献怎么组织的？')
+  return t(s.q)
+}
 
-const six = reactive({ motive: null, how: null, next: null, lens: null })
-const sixBusy = reactive({ motive: false, how: false, next: false, lens: false })
-/* 五问各自的"答没答出来"。免费的 ②③ 看骨架，①④⑤ 看有没有取过。
-   综述的 ② 走模型生成的"谱系问"（研究型没有实验证据层，那条链对综述是空壳）。
+const six = reactive({ motive: null, principle: null, method: null, how: null, next: null, lens: null })
+const sixBusy = reactive({ motive: false, principle: false, method: false, how: false, next: false, lens: false })
+/* 七问各自的"答没答出来"。免费的 ④⑤ 看骨架，①②③⑥⑦ 看有没有取过。
+   综述的 ③ 走模型生成的"谱系问"（综述没有实验层，方法问对它是空壳）。
    有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
 const sixHas = computed(() => ({
   q1: !!six.motive?.text,
-  q2: isReview.value ? !!six.how?.text : !!store.analysis.claims.length,
-  q3: !!(limitParas.value.length + warnNotes.value.length),
-  q4: !!six.next?.items?.length, q5: !!six.lens?.items?.length,
+  q2: !!six.principle?.text,
+  q3: isReview.value ? !!six.how?.text : !!six.method?.text,
+  q4: !!store.analysis.claims.length,
+  q5: !!(limitParas.value.length + warnNotes.value.length),
+  q6: !!six.next?.items?.length, q7: !!six.lens?.items?.length,
 }))
 
 async function loadSix() {
-  Object.assign(six, { motive: null, how: null, next: null, lens: null })
+  Object.assign(six, { motive: null, principle: null, method: null, how: null, next: null, lens: null })
   Object.keys(openSix).forEach(k => (openSix[k] = false))   // 换篇回到"只有问题"的样子
   if (!store.currentId) return
   const mine = paperEpoch()
@@ -95,7 +106,7 @@ async function loadSix() {
     if (r.next && !r.next.v) delete r.next
     Object.assign(six, r)
   } catch { /* 没缓存很正常 */ }
-  const wanted = ['motive', 'next', 'lens'].concat(isReview.value ? ['how'] : [])
+  const wanted = ['motive', 'principle', 'next', 'lens'].concat(isReview.value ? ['how'] : ['method'])
   for (const k of wanted) {
     if (six[k] || sixBusy[k]) continue
     sixBusy[k] = true
@@ -285,13 +296,13 @@ watch(() => store.analysis.status, s => {
   loadSuggest(); loadCachedBlocks()
   termsTried.value = ''              // 重算析读 = 词表也重发了一批，允许再补一次空白
   loadTerms()
-  loadSix()          // 服务端重算析读时把五问的答案一并清了（answers_clear），
+  loadSix()          // 服务端重算析读时把七问的答案一并清了（answers_clear），
 })
 watch(() => store.marginalia.status, s => {
   if (s !== 'done') return
   advisor.value = []
   loadCachedBlocks()
-  loadSix()          // ⑤「还能做什么」是从"有坑"的批注长出来的，眉批一换就得重取
+  loadSix()          // ⑥「还能做什么」是从"有坑"的批注长出来的，眉批一换就得重取
 })
 
 /* ---------- 右栏宽度：拖动改，双击复位 ----------
@@ -544,12 +555,12 @@ watch(() => store.currentId, () => {
         </div>
                 <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? t('析读后出五问') : t('扫描件：能读能框选，五问答不了') }}
+            {{ store.paras.length ? t('析读后出七问') : t('扫描件：能读能框选，七问答不了') }}
           </div>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">{{ t('扫描件：能读能框选，五问答不了') }}<span v-if="figures.length">{{ t(' 速览页有 {n} 张图表。', { n: figures.length }) }}</span></div>
+          <div class="r-note">{{ t('扫描件：能读能框选，七问答不了') }}<span v-if="figures.length">{{ t(' 速览页有 {n} 张图表。', { n: figures.length }) }}</span></div>
         </template>
 
         <template v-else>
@@ -559,7 +570,7 @@ watch(() => store.currentId, () => {
 
           <section class="six" v-for="s in SIX" :key="s.k" :class="{ open: openSix[s.k] }">
             <button class="six-q" @click="toggleSix(s.k)">
-              <i :class="{ on: sixHas[s.k] }">{{ s.n }}</i><span class="qt">{{ t(s.k === 'q3' && isReview ? '它把文献怎么组织的？' : s.q) }}</span>
+              <i :class="{ on: sixHas[s.k] }">{{ s.n }}</i><span class="qt">{{ sixQ(s) }}</span>
             </button>
 
                         <div class="six-fold" :class="{ open: openSix[s.k] }">
@@ -570,14 +581,27 @@ watch(() => store.currentId, () => {
                 <div v-else class="six-note">{{ sixBusy.motive ? '…' : t('未生成') }}</div>
               </template>
 
-                            <template v-else-if="s.k === 'q2' && isReview">
+                            <template v-else-if="s.k === 'q2'">
+                <MdLite v-if="six.principle?.text" class="six-txt" :text="six.principle.text" @cite="c => jumpPara(c.n)" />
+                <div v-else class="six-note">{{ sixBusy.principle ? '…' : t('未生成') }}</div>
+              </template>
+
+              <template v-else-if="s.k === 'q3' && isReview">
                 <MdLite v-if="six.how?.text" class="six-txt" :text="six.how.text" @cite="c => jumpPara(c.n)" />
                 <div v-else class="six-note">{{ sixBusy.how ? '…' : t('未生成') }}</div>
                 <div class="six-foot">
                   <button @click="openMethod">{{ t('谱系卡 ↗') }}</button>
                 </div>
               </template>
-              <template v-else-if="s.k === 'q2'">
+              <template v-else-if="s.k === 'q3'">
+                <MdLite v-if="six.method?.text" class="six-txt" :text="six.method.text" @cite="c => jumpPara(c.n)" />
+                <div v-else class="six-note">{{ sixBusy.method ? '…' : t('未生成') }}</div>
+                <div class="six-foot">
+                  <button @click="openMethod">{{ t('方法卡 ↗') }}</button>
+                </div>
+              </template>
+
+              <template v-else-if="s.k === 'q4'">
                 <div class="claim-item" v-for="c in store.analysis.claims" :key="c.id">
                   <div class="c-head" @click="c.anchors.length && jumpPara(c.anchors[0])">
                     <span class="c-id">{{ c.id }}</span>
@@ -594,12 +618,9 @@ watch(() => store.currentId, () => {
                   </div>
                   <div v-if="!anchorsOf(c).length" class="six-note">{{ t('未找到直接证据段') }}</div>
                 </div>
-                <div class="six-foot">
-                  <button @click="openMethod">{{ t('方法卡 ↗') }}</button>
-                </div>
               </template>
 
-                            <template v-else-if="s.k === 'q3'">
+                            <template v-else-if="s.k === 'q5'">
                 <div v-for="p in limitParas" :key="p.idx" class="gap-node">
                   <div class="gap-row" @click="jumpPara(p.idx)">
                     <span class="g-tag">¶{{ p.idx }}</span>
@@ -620,7 +641,7 @@ watch(() => store.currentId, () => {
                 </div>
               </template>
 
-                            <template v-else-if="s.k === 'q4'">
+                            <template v-else-if="s.k === 'q6'">
                 <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
                   <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
@@ -629,7 +650,7 @@ watch(() => store.currentId, () => {
                 <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
               </template>
 
-                            <template v-else-if="s.k === 'q5'">
+                            <template v-else-if="s.k === 'q7'">
                 <div class="six-item" v-for="(it, i) in (six.lens?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
                   <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
@@ -690,7 +711,7 @@ watch(() => store.currentId, () => {
         </div>
         <div class="card-eye" v-else>
           <div class="ce-one">{{ prettyChem(store.summary.one_line) }}</div>
-          <div class="ce-row go" @click="gotoSix('q2')">
+          <div class="ce-row go" @click="gotoSix('q4')">
             <span class="ce-k">{{ t('发现') }}</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>

@@ -1097,9 +1097,54 @@ def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> di
     text = str(data.get("text") or "").strip()[:500]
     return {"text": text, "cites": cites_of(text)}
 
+def answer_principle(title: str, claims: list, paras: list, kind: str = "research") -> dict:
+    """②「原理是什么」：知识层那一问。研究型说清它靠什么机理/理论才成立、为什么会 work；
+    综述没有自己的机理，改说它脚下的领域共识——现在普遍接受什么、靠哪些概念框架撑着、
+    哪里还有争议。方法/实验是③的事，结论是④的事，这里都不说。"""
+    if kind == "review":
+        ask = ("这是一篇综述，你在帮一位研究生看懂它脚下的领域共识。看给出的正文与它的组织主张，"
+               "用两三句话说清：这个领域现在普遍接受的是什么（靠哪些概念/框架/判据撑着），"
+               "共识之上哪些点还有争议或没定论。说领域本身的知识图景，不要复述综述的组织方式。")
+    else:
+        ask = ("你在帮一位研究生看懂一篇论文'原理上为什么成立'。看给出的正文节选与它的主张，"
+               "用两三句话说清：这篇工作靠什么机理/效应/理论才成立——底层的道理是什么、"
+               "为什么会 work。不要复述它做了什么实验（那是另一问），也不要罗列结论。")
+    body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
+    data = chat_json([
+        {"role": "system", "content": ask +
+            "要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；"
+            "能标依据的句子都标段号（如 ¶12，直接写不要加方括号）。"
+            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
+        {"role": "user", "content":
+            f"论文标题：{title or ''}\n\n"
+            "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文节选]\n{body}"},
+    ], max_tokens=3000, temperature=0.3, no_think=True)
+    text = str(data.get("text") or "").strip()[:500]
+    return {"text": text, "cites": cites_of(text)}
+
+def answer_method(title: str, claims: list, paras: list) -> dict:
+    """③「怎么解决的」（研究型）：方法层那一问——设计了什么实验、用了什么方法/手段、
+    相比已有做法改进在哪。原理是②的事，结论是④的事，这里都不说。"""
+    body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
+    data = chat_json([
+        {"role": "system", "content":
+            "你在帮一位研究生说清一篇论文'怎么解决的'。看给出的正文节选与它的主张，"
+            "用两三句话说清：它设计了什么实验、用了什么方法/手段（关键设计点是什么），"
+            "相比已有做法改进在哪（更快/更准/更稳/更简单——具体说出来）。"
+            "不要展开机理解释（那是另一问），也不要罗列结论。"
+            "要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；"
+            "能标依据的句子都标段号（如 ¶12，直接写不要加方括号）。"
+            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
+        {"role": "user", "content":
+            f"论文标题：{title or ''}\n\n"
+            "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文节选]\n{body}"},
+    ], max_tokens=3000, temperature=0.3, no_think=True)
+    text = str(data.get("text") or "").strip()[:500]
+    return {"text": text, "cites": cites_of(text)}
+
 def answer_how_review(title: str, claims: list, paras: list) -> dict:
-    """综述版③「它把文献怎么组织的？」：研究型的③靠主张-证据链拼，综述没有实验证据层，
-    那条路是空壳。这里由模型直接说清它的组织方式——按什么分类、沿什么脉络、各条线的关系。"""
+    """综述版③「它把文献怎么组织的？」：研究型的③是方法层（answer_method），综述没有
+    实验层，换成组织方式——按什么分类、沿什么脉络、各条线的关系。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:700]}" for p in paras if not p.get("in_refs"))[:50000]
     data = chat_json([
         {"role": "system", "content":

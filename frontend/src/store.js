@@ -64,7 +64,7 @@ export const store = reactive({
     if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
     return this.viewer.railUser
   },
-  /* 多窗格（对比读两篇）也要能提问/看五问/导出：右栏改浮层盖上来，不再硬收——
+  /* 多窗格（对比读两篇）也要能提问/看七问/导出：右栏改浮层盖上来，不再硬收——
      原来是 getter 硬 false，「展开右栏」成了死按钮。 */
   get railOverlay() {
     if (this.openIds.length <= 1) return false
@@ -170,7 +170,7 @@ export async function refreshCollections() {
 }
 
 /* 按篇请求的统一口径：发之前记下"现在是哪一篇"（store.epoch），回来时对不上就丢掉。
-   为什么要有它：一眼卡/五问/导师三问/方法卡都是**秒级**的模型调用，用户"打开 A 看一眼
+   为什么要有它：一眼卡/七问/导师三问/方法卡都是**秒级**的模型调用，用户"打开 A 看一眼
    就点 B"时，A 的答案会落在 B 上（B 的速览页显示 A 的发现、A 的角色套到 B 的段落上），
    而 store.openPaper 是手写清场的——漏一个字段就漏一个洞。 */
 export function paperEpoch() { return store.epoch }

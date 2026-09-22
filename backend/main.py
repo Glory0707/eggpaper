@@ -1172,7 +1172,9 @@ def _run_analysis(pid: str, paras: list):
         if _analysis_cancelled(pid, "已取消（骨架完成后，骨架保留）"):
             return
         p2 = db.get_paper(pid)
-        todo = ["motive", "next", "lens"]
+        # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
+        todo = (["motive", "principle", "method"] if kind == "research"
+                else ["motive", "principle", "how"]) + ["next", "lens"]
         futs = {ex.submit(_mock_six, k) if demo else ex.submit(_gen_six, p2, k): k
                 for k in todo}
         if not demo:
@@ -1691,7 +1693,7 @@ def ask_visual(body: dict):
 
 # ---------------- 五问里需要现场生成的那几问 ----------------
 
-SIX_KEYS = ("motive", "how", "next", "lens")
+SIX_KEYS = ("motive", "principle", "method", "how", "next", "lens")
 
 def _paras_of_role(pid: str, roles: set, cap: int = 8):
     _, _, annos = db.get_analysis(pid)
@@ -1701,9 +1703,17 @@ def _paras_of_role(pid: str, roles: set, cap: int = 8):
 
 def _gen_six(p: dict, key: str):
     pid = p["id"]
+    is_review = p.get("paper_type") == "review"
     _, claims, annos = db.get_analysis(pid)
+    if key == "principle":
+        return llm.answer_principle(p["title"], claims, db.get_paragraphs(pid),
+                                    kind="review" if is_review else "research")
+    if key == "method":
+        if is_review:
+            raise HTTPException(400, "综述没有实验层，这一问是「它把文献怎么组织的」（how）")
+        return llm.answer_method(p["title"], claims, db.get_paragraphs(pid))
     if key == "how":
-        if p.get("paper_type") == "review":
+        if is_review:
             return llm.answer_how_review(p["title"], claims, db.get_paragraphs(pid))
         raise HTTPException(400, "研究型论文的这一问由骨架的主张-证据链直接拼出，无需生成")
     if key == "motive":
@@ -1741,6 +1751,18 @@ def _save_terms(pid: str, got) -> int:
     return len(terms)
 
 def _mock_six(key: str) -> dict:
+    if key == "principle":
+        return {"text": _demo_txt("〔演示模式〕这套做法成立靠的是一个已知的物理效应：结构规则化之后能量面变平，"
+                                  "反应不再赌概率 [¶4]——本质上是把随机过程换成了可设计的确定性路径。",
+                                  "[demo mode] This rests on a known physical effect: a regular structure "
+                                  "flattens the energy landscape, so formation stops being a gamble [¶4] — "
+                                  "in essence a random process replaced by a designable, deterministic path."), "cites": [4]}
+    if key == "method":
+        return {"text": _demo_txt("〔演示模式〕它用原位表征盯住全程，配一组对照实验把关键变量单离出来 [¶8]；"
+                                  "比前人改进在免掉了不可控的随机步骤，同样的产量下批次间差异小了一个量级 [¶10]。",
+                                  "[demo mode] It tracks the whole process with in-situ characterization plus "
+                                  "controls that isolate the key variable [¶8]; the improvement is dropping the "
+                                  "uncontrollable random step, with batch variability an order lower [¶10]."), "cites": [8, 10]}
     if key == "how":
         return {"text": _demo_txt("〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
                                   "最后落到位开放问题上 [¶5]。",
@@ -1935,12 +1957,15 @@ def export_md(pid: str):
                 if anno:
                     lines.append(f"  - ¶{a}：{anno['purpose']}")
             lines.append("")
-    # 五问：它们存在 answers 表里，原先导出漏了——写综述/组会汇报时最值钱的恰是这几问
+    # 七问：它们存在 answers 表里，原先导出漏了——写综述/组会汇报时最值钱的恰是这几问
     answers = db.answers_all(pid)
+    is_rev = (p.get("paper_type") == "review")
     SIX_LABELS = {"motive": ("① 要解决什么、为什么", "① What & why"),
-                  "how": ("② 怎么解决的", "② How"),
-                  "next": ("④ 还能做什么", "④ What next"),
-                  "lens": ("⑤ 换个学科怎么看", "⑤ Other lenses")}
+                  "principle": ("② 原理是什么", "② Underlying principle"),
+                  "method": ("③ 怎么解决的", "③ How it was done"),
+                  "how": ("③ 它把文献怎么组织的", "③ How the literature is organized"),
+                  "next": ("⑥ 还能做什么", "⑥ What next"),
+                  "lens": ("⑦ 换个学科怎么看", "⑦ Other lenses")}
     six_lines = []
     for k, lab in SIX_LABELS.items():
         a = answers.get(k)
@@ -1961,7 +1986,6 @@ def export_md(pid: str):
         except ValueError:
             mc = {}
         if mc.get("goal") or mc.get("steps"):
-            is_rev = (p.get("paper_type") == "review")
             lines += [f"## {L('scard' if is_rev else 'mcard')}", ""]
             if mc.get("goal"):
                 lab = ("Position" if is_rev else "Goal") if en else ("定位" if is_rev else "目标")
