@@ -443,7 +443,10 @@ def put_settings(body: dict):
     if "pdf2zh" in body:
         if not isinstance(body["pdf2zh"], dict):
             raise HTTPException(400, "翻译引擎那一栏格式不对")
-        cfg["pdf2zh"].update(body["pdf2zh"])
+        # 值一律收编成字符串/布尔：塞个数字进来，会在翻译启动的 .strip() 上炸出 500
+        for k, v in body["pdf2zh"].items():
+            if k in ("path", "service", "options", "deepl_key"):
+                cfg["pdf2zh"][k] = v.strip() if isinstance(v, str) else ""
     if "update" in body:
         u = body["update"]
         if not isinstance(u, dict):
@@ -1239,6 +1242,7 @@ def analyze(pid: str):
         return {"status": "queued"}
     # 查互斥与占位排队必须同锁：拆开就有 TOCTOU——两边都过了检查再各自启动，照样互相清缓存
     with _key_lock("job:" + pid):
+        p = db.get_paper(pid) or p     # 锁内重读：锁外那份可能是"已完成"的旧读，照它判会连环重析
         if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
             # 眉批也在收网析读：两边都会清五问/导师缓存，先结束的一方会删掉刚花钱生成的结果
             raise HTTPException(400, "AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束")
@@ -1579,6 +1583,14 @@ def _require_shape(data, keys: tuple, what: str):
         raise HTTPException(503, f"{what}没生成出来（模型这次返回的是空的），过一会儿再点一次")
 
 
+def _json_of(raw, fallback=None):
+    """缓存字段里可能存进坏 JSON（老版本/半截写盘）：读的时候一律过这道，别 500。"""
+    try:
+        return json.loads(raw) if raw else (fallback if fallback is not None else {})
+    except (ValueError, TypeError):
+        return fallback if fallback is not None else {}
+
+
 def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
               demo_fn, real_fn, precond=None, cached_value=None, cached: bool = False):
     """一眼卡/提问建议/导师三问/方法卡四个端点同用的骨架：
@@ -1589,7 +1601,10 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
     """
     p = _paper_needing_paras(pid)
     if p[field]:
-        return JSONResponse(json.loads(p[field]))
+        try:
+            return JSONResponse(json.loads(p[field]))
+        except ValueError:
+            pass                      # 坏缓存当没有，走重生成
     if cached and cached_value is not None:
         return cached_value
     if precond:                              # 锁外快返：前置不满足就别排在一次真生成后面
@@ -1599,7 +1614,10 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
     with _key_lock(lock + ":" + pid):
         p = db.get_paper(pid)
         if p[field]:
-            return JSONResponse(json.loads(p[field]))
+            try:
+                return JSONResponse(json.loads(p[field]))
+            except ValueError:
+                pass
         if cached and cached_value is not None:
             return cached_value
         empty = precond(p) if precond else None
@@ -1857,8 +1875,9 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
     """
     p = _paper_or_404(pid)
     if p["citation"] and not refresh:
-        meta = json.loads(p["citation"])
-        return {"meta": meta, "groups": citation.groups(meta)}
+        meta = _json_of(p["citation"])
+        if meta:
+            return {"meta": meta, "groups": citation.groups(meta)}
     if cached:
         return {"meta": None, "groups": []}
     if _demo_mode():
@@ -1901,7 +1920,7 @@ def export_md(pid: str):
 
     lines = [f"# {p['title'] or p['filename']}", ""]
     if p["summary"]:
-        s = json.loads(p["summary"])
+        s = _json_of(p["summary"])
         lines += [f"**{s.get('one_line', '')}**", "",
                   f"- 贡献：{s.get('contributions', '')}",
                   f"- 方法：{s.get('methods', '')}",
@@ -2003,7 +2022,7 @@ FIG_MIN_W, FIG_MIN_H = 60.0, 40.0
 
 CAPTION_RE = re.compile(
     r"^\s*(Fig(?:ure)?s?\.?|Table|Tab\.?|Scheme|Algorithm|Chart|Plate|图|表|算法|附图|附表)"
-    r"\s*\.?\s*(\d+)\s*([a-z])?\s*[:.．|—–－—:，,]?\s*", re.I)
+    r"\s*\.?\s*(\d+)([a-z])?\s*[:.．|—–－—:，,]?\s*", re.I)
 
 def _caption_of(first_text):
     """块首行像不像题注。返回 (kind, label)；不是题注返回 None。
@@ -2826,8 +2845,10 @@ def glossary_list(pid: str):
 def glossary_add(pid: str, body: dict):
     _paper_or_404(pid)
     # 控制字符剥掉（复制粘贴会带 \x00/\x1f，SQLite 存得下、界面显示不出来），
-    # 长度钳到术语的合理上限——这是词表不是文本库
-    clean = lambda s: "".join(ch for ch in s if ord(ch) >= 32).strip()
+    # 长度钳到术语的合理上限——这是词表不是文本库；非字符串一律收编成文本
+    def clean(s):
+        s = s if isinstance(s, str) else ("" if s is None else str(s))
+        return "".join(ch for ch in s if ord(ch) >= 32).strip()
     en = clean((body.get("term_en") or ""))[:120]
     zh = clean((body.get("term_zh") or ""))[:120]
     if not en or not zh:

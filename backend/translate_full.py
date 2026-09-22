@@ -813,7 +813,9 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                                    "换一个翻译服务（设置 → 全文翻译）再试。")
                     say(f"全文翻译失败 {pid}：全部页面失败")
                     return
-                mono.save(mono_path, garbage=4, deflate=True)
+                # 原子落盘：半截的成品不该被任何人读到（认领/GET 都看 %%EOF，临时名不冒充成品）
+                mono.save(mono_path + ".part", garbage=4, deflate=True)
+                os.replace(mono_path + ".part", mono_path)
                 try:
                     os.remove(os.path.join(out_dir, "dual.pdf"))
                 except OSError:

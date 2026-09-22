@@ -196,12 +196,12 @@ def find_duplicate(filename: str, size: int, pdf_hash: str = ""):
     if pdf_hash:
         for r in q("SELECT id FROM papers WHERE pdf_hash=?", (pdf_hash,)):
             return r["id"]
-    # 先让 SQL 把范围缩到同名，再逐个 stat 核对字节数
+    # 先让 SQL 把范围缩到同名，再逐个 stat 核对字节数（path 可能是 NULL/坏值，stat 炸了就跳过）
     for r in q("SELECT id, path FROM papers WHERE filename=?", (filename,)):
         try:
             if os.path.getsize(r["path"]) == size:
                 return r["id"]
-        except OSError:
+        except (OSError, TypeError, ValueError):
             continue
     return None
 
@@ -450,18 +450,24 @@ def glossary_list(pid: str):
 
 def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: str = "",
                  source: str = "manual") -> int:
-    # 手工添加也去重：同一个英文词条补一次中文译法=改这条，而不是插出两行
+    # 手工添加也去重：同一个英文词条补一次中文译法=改这条，而不是插出两行。
+    # 判重与插入必须在同一把锁里：拆开的 TOCTOU 会让并发同词插出两行（实测踩过）
     with _lock:
-        row = _get().execute(
+        c = _get()
+        row = c.execute(
             "SELECT id FROM glossary WHERE paper_id=? AND term_en=?", (pid, term_en)).fetchone()
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
         if row:
-            _get().execute("UPDATE glossary SET term_zh=?, note=CASE WHEN ?!='' THEN ? ELSE note END"
-                           " WHERE id=?", (term_zh, note, note, row["id"]))
-            _get().commit()
+            c.execute("UPDATE glossary SET term_zh=?, note=CASE WHEN ?!='' THEN ? ELSE note END"
+                      " WHERE id=?", (term_zh, note, note, row["id"]))
+            c.commit()
             return row["id"]
-    return q_insert("INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
-                    " VALUES(?,?,?,?,?,?,?)",
-                    (pid, term_en, term_zh, domain, note, source, time.strftime("%Y-%m-%d %H:%M:%S")))
+        cur = c.execute("INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
+                        " VALUES(?,?,?,?,?,?,?)",
+                        (pid, term_en, term_zh, domain, note, source, now))
+        rowid = cur.lastrowid
+        c.commit()
+        return rowid
 
 def glossary_delete(gid: int):
     q("DELETE FROM glossary WHERE id=?", (gid,), commit=True)
