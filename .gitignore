@@ -46,3 +46,6 @@ installer/eggpaper-256.png
 
 # 全文翻译引擎（源码运行时装在 backend/engines/，~1.3GB，永不入库）
 backend/engines/
+
+# ruff 本地缓存
+.ruff_cache/

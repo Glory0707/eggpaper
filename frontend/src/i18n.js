@@ -525,11 +525,11 @@ const EN = {
   '已完成 {n}/{m} 项': '{n}/{m} tasks done',
   '导出本月 .md': 'Export month .md',
 
-  // ---- 后端消息（静态原文，原样冒到界面上）----
-  '这份 PDF 没有可提取的文字层（多半是扫描件），析读和提问都无从下手；原文照样能读，图表也能框选问 AI':
-    'This PDF has no extractable text layer (likely a scan) — deep read and ask cannot work on it; the pages still read fine, and figures can be framed and asked',
-  '这篇论文的 PDF 不在原来的位置了（可能被移动或删除）。把它拖回来重新导入一次即可，批注不会丢。':
-    'The PDF of this paper is gone from its original location (moved or deleted). Drop the file back in to re-import; your notes are safe.',
+  // ---- 后端消息（静态原文，原样冒到界面上）与零散词条 ----
+  '这份 PDF 没有文字层（多半是扫描件）：析读和提问用不了，原文照样能读':
+    'No text layer in this PDF (likely a scan) — deep read and ask cannot work, but the pages still read fine',
+  'PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。':
+    'The PDF is gone from its original location. Drop it back in to re-import — your notes are safe.',
   '读取中…': 'Loading…',
 
   // ---- 后端消息（f-string 插值后的形态，由 t() 的模板匹配兜住）----
