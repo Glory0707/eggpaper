@@ -1175,7 +1175,9 @@ def _run_analysis(pid: str, paras: list):
         # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
         todo = (["motive", "principle", "method"] if kind == "research"
                 else ["motive", "principle", "how"]) + ["next", "lens"]
-        futs = {ex.submit(_mock_six, k) if demo else ex.submit(_gen_six, p2, k): k
+        # 真实模式走 _six_compute（与端点同锁同缓存）：前端在析读一完成就会来要答案，
+        # 两边必须串到同一把锁上，否则同一问生成两遍
+        futs = {ex.submit(_mock_six, k) if demo else ex.submit(_six_compute, pid, k): k
                 for k in todo}
         if not demo:
             futs[ex.submit(llm.summarize, p2["title"], paras)] = "summary"
@@ -1822,23 +1824,31 @@ def six_answers(pid: str):
             out[key] = val
     return out
 
-@app.get("/api/papers/{pid}/six-answers/{key}")
-def six_answer(pid: str, key: str):
-    _paper_or_404(pid)
-    if key not in SIX_KEYS:
-        raise HTTPException(404, "没有这个问题")
+def _six_compute(pid: str, key: str) -> dict:
+    """单键生成+落库：析读管线的预生成与端点的现场请求**共用同一把 per-key 锁**——
+    谁先拿到锁谁生成，后到的直接命中刚写回的缓存。以前管线在锁外生成、端点在锁内
+    生成，析读一完成前端立即来请求，同一问会真的生成两遍（两遍钱）。"""
     with _key_lock("six:" + pid + ":" + key):
         cached = db.answer_get(pid, key)
         if cached and key in ("lens", "next") and (cached.get("v") or 0) < 3:
             cached = None
         if cached:
             return cached
-        _require_paras(pid)
-        data = _mock_six(key) if _demo_mode() else _gen_six(db.get_paper(pid), key)
+        data = _gen_six(db.get_paper(pid), key)
         if not (data.get("text") or data.get("items")):
             raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
         db.answer_put(pid, key, data)
-    return data
+        return data
+
+@app.get("/api/papers/{pid}/six-answers/{key}")
+def six_answer(pid: str, key: str):
+    _paper_or_404(pid)
+    if key not in SIX_KEYS:
+        raise HTTPException(404, "没有这个问题")
+    if _demo_mode():
+        return _mock_six(key)
+    _require_paras(pid)
+    return _six_compute(pid, key)
 
 @app.post("/api/compare")
 def compare_papers(body: dict):
@@ -1940,9 +1950,10 @@ def export_md(pid: str):
     lines = [f"# {p['title'] or p['filename']}", ""]
     if p["summary"]:
         s = _json_of(p["summary"])
-        lines += [f"**{s.get('one_line', '')}**", "",
-                  f"- 创新点：{s.get('novelty', '')}",
-                  f"- 发现：{s.get('findings', '')}", ""]
+        lines += [f"**{s.get('one_line', '')}**", ""]
+        if s.get("novelty"):
+            lines.append(f"- 创新点：{s['novelty']}")
+        lines += [f"- 发现：{s.get('findings', '')}", ""]
     status, claims, annos = db.get_analysis(pid)
     if claims:
         lines += [f"## {L('skeleton')}", ""]
