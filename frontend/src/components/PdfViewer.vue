@@ -1468,7 +1468,7 @@ watch(store.marginalia, m => {
          v-drag="{ key: 'zoombar' }" data-drag>
       <button :title="t('上一页（PageUp）')" @click="stepPage(-1)">‹</button>
       <span class="zb-page">
-        <input ref="pageInputEl" v-model="pageIn" class="zb-input" :title="t('跳到第几页')"
+        <input type="text" ref="pageInputEl" v-model="pageIn" class="zb-input" :title="t('跳到第几页')"
                @keydown.enter="commitPage(); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
         <em>/ {{ paperMeta?.n_pages || 0 }}</em>
       </span>

@@ -53,9 +53,15 @@ def extract_title(path: str) -> str:
         body = [l for l in lines if not WATERMARK.match(l["text"])]
         top = [l for l in body if l["y"] < page.rect.height * 0.45] or body
         max_size = max(l["size"] for l in top)
-        cand = [l for l in top if l["size"] >= max_size - 1.6]
-        cand.sort(key=lambda l: l["y"])
-        return _clean(" ".join(l["text"] for l in cand))[:180]
+        cand = sorted((l for l in top if l["size"] >= max_size - 0.8), key=lambda l: l["y"])
+        # 只并**垂直相邻**的候选行：标题的行距在 1.5 倍字号以内，隔了空行就是别的块
+        # （摘要/作者行的字号常与标题只差零点几磅，光凭字号带会把整段开头并进来）
+        out = []
+        for l in cand:
+            if out and l["y"] - out[-1]["y"] > max(out[-1]["size"], l["size"]) * 1.8:
+                break
+            out.append(l)
+        return _clean(" ".join(l["text"] for l in out))[:150]
     finally:
         doc.close()
 
