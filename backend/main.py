@@ -1756,19 +1756,19 @@ def _mock_six(key: str) -> dict:
                                   "反应不再赌概率 [¶4]——本质上是把随机过程换成了可设计的确定性路径。",
                                   "[demo mode] This rests on a known physical effect: a regular structure "
                                   "flattens the energy landscape, so formation stops being a gamble [¶4] — "
-                                  "in essence a random process replaced by a designable, deterministic path."), "cites": [4]}
+                                  "in essence a random process replaced by a designable, deterministic path.")}
     if key == "method":
         return {"text": _demo_txt("〔演示模式〕它用原位表征盯住全程，配一组对照实验把关键变量单离出来 [¶8]；"
                                   "比前人改进在免掉了不可控的随机步骤，同样的产量下批次间差异小了一个量级 [¶10]。",
                                   "[demo mode] It tracks the whole process with in-situ characterization plus "
                                   "controls that isolate the key variable [¶8]; the improvement is dropping the "
-                                  "uncontrollable random step, with batch variability an order lower [¶10]."), "cites": [8, 10]}
+                                  "uncontrollable random step, with batch variability an order lower [¶10].")}
     if key == "how":
         return {"text": _demo_txt("〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
                                   "最后落到位开放问题上 [¶5]。",
                                   "[demo mode] This review organizes the literature into three blocks along its "
                                   "own classification, compares them block by block, and closes with open "
-                                  "questions [¶5]."), "cites": [5]}
+                                  "questions [¶5].")}
     if key == "motive":
         return {"text": _demo_txt("〔演示模式〕现有做法依赖随机、不可控的关键步骤，产出的质量波动大、没法按需设计 [¶3]；"
                                   "这件事卡住了下游一整类应用，而这到今天没有好解法 [¶2]——"
@@ -1776,40 +1776,35 @@ def _mock_six(key: str) -> dict:
                                   "[demo mode] Current practice relies on random, uncontrollable steps, so the "
                                   "output quality fluctuates and cannot be designed [¶3]; this blocks a whole "
                                   "class of downstream applications and still lacks a good solution [¶2] — hence "
-                                  "this work uses a designable, regular structure for stable, high-quality output."), "cites": [2, 3]}
+                                  "this work uses a designable, regular structure for stable, high-quality output.")}
     if key == "lens":
         return {"v": 3, "items": [
             {"lead": _demo_txt("做实验的", "Experimentalist"),
              "text": _demo_txt("〔演示模式〕会盯着原位数据太少这件事——漂亮的机理说法要配原位证据才站得住。",
                                "[demo mode] Would zero in on how thin the in-situ data is — a pretty "
                                "mechanism story needs in-situ evidence to stand."),
-             "ask": _demo_txt("有没有原位数据支持这条机理？", "Is there in-situ data supporting this mechanism?"),
-             "cites": []},
+             "ask": _demo_txt("有没有原位数据支持这条机理？", "Is there in-situ data supporting this mechanism?")},
             {"lead": _demo_txt("做计算的", "Simulation"),
              "text": _demo_txt("〔演示模式〕想拿这套实验数字先验一验自己的力场，对不上就说明模型缺项。",
                                "[demo mode] Would validate a force field against these experimental numbers; "
                                "mismatches would reveal missing terms."),
-             "ask": _demo_txt("这套数据能用来校准力场吗？", "Can this data calibrate a force field?"),
-             "cites": []},
+             "ask": _demo_txt("这套数据能用来校准力场吗？", "Can this data calibrate a force field?")},
             {"lead": _demo_txt("做政策的", "Policy"),
              "text": _demo_txt("〔演示模式〕看到的是成本表里那笔没算进去的外部性，会追问谁承担。",
                                "[demo mode] Sees the unpriced externality missing from the cost table, and "
                                "asks who bears it."),
-             "ask": _demo_txt("成本核算包含外部性吗？", "Does the cost accounting include externalities?"),
-             "cites": []},
+             "ask": _demo_txt("成本核算包含外部性吗？", "Does the cost accounting include externalities?")},
         ]}
     return {"v": 3, "items": [
         {"lead": _demo_txt("论文已说明", "Admitted"),
          "text": _demo_txt("〔演示模式〕换一组对照/基线把这条结论单离出来 [¶12]。",
                            "[demo mode] Isolate this conclusion with a different set of controls or baselines [¶12]."),
-         "ask": _demo_txt("怎么设计对照/基线才能单离这条结论？", "What controls or baselines would isolate this conclusion?"),
-         "cites": [12]},
+         "ask": _demo_txt("怎么设计对照/基线才能单离这条结论？", "What controls or baselines would isolate this conclusion?")},
         {"lead": _demo_txt("新方向", "New direction"),
          "text": _demo_txt("〔演示模式〕把这套判据搬去另一类体系或数据集，够撑一篇新论文：对象换了、结论还没人验证过 [¶18]。",
                            "[demo mode] Carry these criteria to another class of systems or datasets — enough for "
                            "a new paper: new subject, conclusions nobody has tested yet [¶18]."),
-         "ask": _demo_txt("搬到另一类体系要先验证什么？", "What must be validated first in the new setting?"),
-         "cites": [18]},
+         "ask": _demo_txt("搬到另一类体系要先验证什么？", "What must be validated first in the new setting?")},
     ]}
 
 @app.get("/api/papers/{pid}/six-answers")
@@ -2028,9 +2023,9 @@ def glossary_export(pid: str):
     buf = io.StringIO()
     buf.write("﻿")
     w = csv.writer(buf)
-    w.writerow(["term_en", "term_zh", "domain", "note", "source"])
+    w.writerow(["term_en", "term_zh", "source"])
     for r in db.glossary_list(pid):
-        w.writerow([r["term_en"], r["term_zh"], r["domain"], r["note"], r["source"]])
+        w.writerow([r["term_en"], r["term_zh"], r["source"]])
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
 
@@ -2533,15 +2528,14 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
         ans = "".join(buf)
         if not ans.strip():
             raise RuntimeError("模型这次没返回内容")
-        cites = llm.cites_of(ans)
-        aid = db.qa_add(pid, "assistant", ans, cites, conv_id=conv_id)
+        aid = db.qa_add(pid, "assistant", ans, conv_id=conv_id)
         _autotitle(pid, conv_id, question, not any(h["role"] == "user" for h in hist))
-        yield _sse({"type": "done", "citations": cites, "user_id": uid, "assistant_id": aid})
+        yield _sse({"type": "done", "user_id": uid, "assistant_id": aid})
     except Exception as e:
         hint = _human_msg(e)
         ans = "".join(buf)
         aid = db.qa_add(pid, "assistant", (ans + "\n\n⚠ " + hint) if ans.strip() else "⚠ " + hint,
-                        llm.cites_of(ans), conv_id=conv_id)
+                        conv_id=conv_id)
         yield _sse({"type": "error", "message": hint, "user_id": uid, "assistant_id": aid})
 
 @app.get("/api/library/overview")
@@ -2619,8 +2613,8 @@ def qa_save(pid: str, body: dict):
         c = db.conv_get(conv_id)
         if not c or c["paper_id"] != pid:
             raise HTTPException(404, "会话不存在")
-    aid = db.qa_add(pid, "assistant", content, llm.cites_of(content), conv_id=conv_id)
-    return {"ok": True, "citations": llm.cites_of(content),
+    aid = db.qa_add(pid, "assistant", content, conv_id=conv_id)
+    return {"ok": True,
             "assistant_id": aid, "user_id": db.qa_last_user_id(pid, conv_id) if conv_id else None}
 
 @app.post("/api/papers/{pid}/regenerate")
@@ -2876,8 +2870,7 @@ def glossary_add(pid: str, body: dict):
     zh = clean((body.get("term_zh") or ""))[:120]
     if not en or not zh:
         raise HTTPException(400, "中英文都要填")
-    gid = db.glossary_add(pid, en, zh, body.get("domain", "")[:60],
-                          body.get("note", "")[:200], body.get("source", "manual"))
+    gid = db.glossary_add(pid, en, zh, body.get("source", "manual"))
     return {"id": gid}
 
 @app.post("/api/papers/{pid}/glossary/generate")

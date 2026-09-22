@@ -204,14 +204,12 @@ TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者�
 **不要收**：通用学术词（method / result / figure / paper / study / data / analysis）、
 只在参考文献里出现的词、任何一篇论文都会有的词。
 
-kind 用三个短词之一：method（方法/框架）、material（材料/体系/对象）、metric（量/指标/判据）。
-
 另外单独给一份**这篇论文自己的缩写表** abbrs：正文里定义了、后面反复用的那些缩写，
 键是缩写字面（照原文，如 "CNT"、"oPad"），值是它展开的英文全称 + 中文（≤40 字）。
 不是这篇定义的、只是碰巧出现一次的缩写不要收；没有就给空对象。
 
 只输出 JSON，不要 markdown 代码块，不要解释：
-{"terms":[{"en":"<原文里的英文说法，逐字照抄>","zh":"<中文译名>","kind":"method|material|metric"}],
+{"terms":[{"en":"<原文里的英文说法，逐字照抄>","zh":"<中文译名>"}],
  "abbrs":{"<缩写>":"<英文全称 + 中文，≤40字>"}}
 
 terms 给 15~40 条，宁多勿少但必须真的属于这篇；en 要能在正文里原样找到，别改写、别翻译。
@@ -284,12 +282,10 @@ def _clean_terms(terms) -> list:
             continue
         en = str(t.get("en", "")).strip()
         zh = str(t.get("zh", "")).strip()
-        kind = str(t.get("kind", "")).strip()
         if not en or not zh or len(en) > 80 or len(zh) > 40 or en.lower() in seen:
             continue
         seen.add(en.lower())
-        clean.append({"en": en, "zh": zh,
-                      "kind": kind if kind in ("method", "material", "metric") else ""})
+        clean.append({"en": en, "zh": zh})
     return clean[:48]
 
 def _clean_abbrs(abbrs) -> dict:
@@ -587,13 +583,6 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
             msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": question})
     return msgs
-
-def cites_of(text: str) -> list:
-    """从回答里抓 [¶5] 这类依据段号——引用角标可点击跳原文，靠的就是它。
-    跨篇回答里的《某论文》¶3 是那篇的段号，跳到本篇会跳错地方，剔除。"""
-    t = text or ""
-    cleaned = re.sub(r"《[^》]*》\s*¶\s*\d+", "", t)
-    return sorted({int(n) for n in re.findall(r"¶\s*(\d+)", cleaned)})
 
 # ---------- 长对话的上下文压缩 ----------
 DIALOG_SUMMARY_SYSTEM = """你在为一次论文研读对话做上下文压缩。把给出的较早对话压成一份摘要，只输出摘要正文。
@@ -1071,8 +1060,7 @@ def _items(raw) -> dict:
             continue
         items.append({"lead": str(it.get("lead") or "").strip()[:20],
                       "text": text,
-                      "ask": str(it.get("ask") or "").strip()[:80],
-                      "cites": cites_of(text)})
+                      "ask": str(it.get("ask") or "").strip()[:80]})
     return {"items": items[:3]}
 
 def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
@@ -1094,7 +1082,7 @@ def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> di
             "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
     ], max_tokens=3000, temperature=0.3, no_think=True)
     text = str(data.get("text") or "").strip()[:500]
-    return {"text": text, "cites": cites_of(text)}
+    return {"text": text}
 
 def answer_principle(title: str, claims: list, paras: list, kind: str = "research") -> dict:
     """②「原理是什么」：知识层那一问。研究型说清它靠什么机理/理论才成立、为什么会 work；
@@ -1119,7 +1107,7 @@ def answer_principle(title: str, claims: list, paras: list, kind: str = "researc
             "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文节选]\n{body}"},
     ], max_tokens=3000, temperature=0.3, no_think=True)
     text = str(data.get("text") or "").strip()[:500]
-    return {"text": text, "cites": cites_of(text)}
+    return {"text": text}
 
 def answer_method(title: str, claims: list, paras: list) -> dict:
     """③「怎么解决的」（研究型）：方法层那一问——设计了什么实验、用了什么方法/手段、
@@ -1139,7 +1127,7 @@ def answer_method(title: str, claims: list, paras: list) -> dict:
             "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文节选]\n{body}"},
     ], max_tokens=3000, temperature=0.3, no_think=True)
     text = str(data.get("text") or "").strip()[:500]
-    return {"text": text, "cites": cites_of(text)}
+    return {"text": text}
 
 def answer_how_review(title: str, claims: list, paras: list) -> dict:
     """综述版③「它把文献怎么组织的？」：研究型的③是方法层（answer_method），综述没有
@@ -1157,7 +1145,7 @@ def answer_how_review(title: str, claims: list, paras: list) -> dict:
             "[它的组织主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文]\n{body}"},
     ], max_tokens=3000, temperature=0.3, no_think=True)
     text = str(data.get("text") or "").strip()[:500]
-    return {"text": text, "cites": cites_of(text)}
+    return {"text": text}
 
 def answer_next(title: str, limits: list, exts: list, claims: list, warns: list) -> dict:
     """还能做什么：两条腿都要有——论文自己承认的局限/延伸里长出来的方向，以及你顺着这篇

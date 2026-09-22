@@ -448,8 +448,7 @@ def get_analysis(pid: str):
 def glossary_list(pid: str):
     return [dict(r) for r in q("SELECT * FROM glossary WHERE paper_id=? ORDER BY term_en", (pid,))]
 
-def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: str = "",
-                 source: str = "manual") -> int:
+def glossary_add(pid: str, term_en: str, term_zh: str, source: str = "manual") -> int:
     # 手工添加也去重：同一个英文词条补一次中文译法=改这条，而不是插出两行。
     # 判重与插入必须在同一把锁里：拆开的 TOCTOU 会让并发同词插出两行（实测踩过）
     with _lock:
@@ -458,13 +457,12 @@ def glossary_add(pid: str, term_en: str, term_zh: str, domain: str = "", note: s
             "SELECT id FROM glossary WHERE paper_id=? AND term_en=?", (pid, term_en)).fetchone()
         now = time.strftime("%Y-%m-%d %H:%M:%S")
         if row:
-            c.execute("UPDATE glossary SET term_zh=?, note=CASE WHEN ?!='' THEN ? ELSE note END"
-                      " WHERE id=?", (term_zh, note, note, row["id"]))
+            c.execute("UPDATE glossary SET term_zh=? WHERE id=?", (term_zh, row["id"]))
             c.commit()
             return row["id"]
-        cur = c.execute("INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
-                        " VALUES(?,?,?,?,?,?,?)",
-                        (pid, term_en, term_zh, domain, note, source, now))
+        cur = c.execute("INSERT INTO glossary(paper_id, term_en, term_zh, source, created_at)"
+                        " VALUES(?,?,?,?,?)",
+                        (pid, term_en, term_zh, source, now))
         rowid = cur.lastrowid
         c.commit()
         return rowid
@@ -477,9 +475,9 @@ def glossary_put_ai(pid: str, terms: list):
     with _lock:
         _get().execute("DELETE FROM glossary WHERE paper_id=? AND source='ai'", (pid,))
         _get().executemany(
-            "INSERT INTO glossary(paper_id, term_en, term_zh, domain, note, source, created_at)"
-            " VALUES(?,?,?,?,?,?,?)",
-            [(pid, t["en"], t["zh"], t.get("kind", ""), "", "ai",
+            "INSERT INTO glossary(paper_id, term_en, term_zh, source, created_at)"
+            " VALUES(?,?,?,?,?)",
+            [(pid, t["en"], t["zh"], "ai",
               time.strftime("%Y-%m-%d %H:%M:%S")) for t in terms])
         _get().commit()
 

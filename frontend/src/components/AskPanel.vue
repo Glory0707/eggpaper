@@ -99,7 +99,7 @@ async function send(q) {
   await nextTick(); autoGrow(); inputEl.value?.focus()
   const um = reactive({ role: 'user', content: q })
   msgs.value.push(um)
-  const m = reactive({ role: 'assistant', content: '', citations: [], streaming: true, error: '' })
+  const m = reactive({ role: 'assistant', content: '', streaming: true, error: '' })
   msgs.value.push(m)
   busy.value = true
   gotDone = false
@@ -130,7 +130,7 @@ async function send(q) {
   store.egg.nod++                      // 蛋注意到你在提问，歪头看一眼
   const h = askStream(pid.value, body, ev => {
     if (ev.type === 'delta') queue(ev.text)
-    else if (ev.type === 'done') { flush(); gotDone = true; m.citations = ev.citations || []; applyIds(ev) }
+    else if (ev.type === 'done') { flush(); gotDone = true; applyIds(ev) }
     else if (ev.type === 'error') {
       flush()
       applyIds(ev)
