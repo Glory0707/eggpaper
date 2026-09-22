@@ -541,8 +541,7 @@ def summarize(title: str, paras: list, hits=None) -> dict:
         {"role": "system", "content": _lang_tail() + _gloss_block(hits) +
             "你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
             '{"one_line":"<一句话说清这篇论文做了什么、核心结果是什么，≤60字>",'
-            '"contributions":"<贡献：解决了什么问题、为什么重要，≤80字>",'
-            '"methods":"<方法：关键思路/研究对象/实施手段，≤80字>",'
+            '"novelty":"<创新点：相对已有工作新在哪——新在对象、方法还是结论，和前人比别在哪儿；不是复述它做了什么，≤80字>",'
             '"findings":"<发现：最硬的数据结论，带关键数字；写得下就写，别硬压——按重要性排，读者先看到最要紧的那个>",'
             '"keywords":["<3~5个关键词>"]}'
             "不要 markdown 代码块，不要解释。"},

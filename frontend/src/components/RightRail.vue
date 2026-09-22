@@ -711,6 +711,9 @@ watch(() => store.currentId, () => {
         </div>
         <div class="card-eye" v-else>
           <div class="ce-one">{{ prettyChem(store.summary.one_line) }}</div>
+          <div class="ce-row" v-if="store.summary.novelty">
+            <span class="ce-k">{{ t('创新点') }}</span><span class="ce-v">{{ prettyChem(store.summary.novelty) }}</span>
+          </div>
           <div class="ce-row go" @click="gotoSix('q4')">
             <span class="ce-k">{{ t('发现') }}</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>

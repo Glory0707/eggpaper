@@ -1640,11 +1640,11 @@ def summary(pid: str):
         paras = db.get_paragraphs(pid)
         hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
         return llm.summarize(p["title"], paras, hits)
-    return _gen_card(pid, "summary", "summary", what="一眼卡", shape=("one_line", "findings", "keywords"),
+    return _gen_card(pid, "summary", "summary", what="一眼卡", shape=("one_line", "novelty", "findings", "keywords"),
                      demo_fn=lambda: {"one_line": _demo_txt("〔演示模式〕这是一篇测试论文的一眼卡摘要。",
                                                             "[demo mode] A one-glance summary of a test paper."),
-                                      "contributions": _demo_txt("演示贡献", "demo contributions"),
-                                      "methods": _demo_txt("演示方法", "demo methods"),
+                                      "novelty": _demo_txt("演示创新点：换了一类可设计的对象，别的还在用老办法",
+                                                           "[demo] Novelty: a new designable subject, the rest is standard"),
                                       "findings": _demo_txt("演示发现", "demo findings"),
                                       "keywords": [_demo_txt("演示", "demo")]},
                      real_fn=real)
@@ -1944,8 +1944,7 @@ def export_md(pid: str):
     if p["summary"]:
         s = _json_of(p["summary"])
         lines += [f"**{s.get('one_line', '')}**", "",
-                  f"- 贡献：{s.get('contributions', '')}",
-                  f"- 方法：{s.get('methods', '')}",
+                  f"- 创新点：{s.get('novelty', '')}",
                   f"- 发现：{s.get('findings', '')}", ""]
     status, claims, annos = db.get_analysis(pid)
     if claims:

@@ -38,6 +38,7 @@ const EN = {
   '原理是什么？': 'What is the underlying principle?',
   '结论有哪些？': 'What are the conclusions?',
   '这个领域的共识是什么？': 'What is the consensus in this field?',
+  '创新点': 'Novelty',
   '没找到明确的局限': 'No explicit limitations found',
   '本文正文没有这个词': 'Not found in this paper',
   '已复制 Markdown': 'Markdown copied',
