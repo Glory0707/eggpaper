@@ -154,6 +154,16 @@ def engine_path(explicit: str = "") -> str:
 
 _VER = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?")
 
+def _parse_ver(out: str) -> tuple:
+    """`--version` 输出 → (major, minor, patch)；认不出返回 ()。"""
+    m = _VER.search(out or "")
+    if not m:
+        return ()
+    try:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+    except ValueError:
+        return ()
+
 def _run_version(path: str) -> tuple:
     """跑一次 `--version`，返回 (returncode, 合并输出)；起不来返回 (-1, "")。
 
@@ -187,13 +197,7 @@ def engine_version(path: str) -> tuple:
     if hit and hit[0] == mt:
         return hit[1]
     rc, out = _run_version(path)
-    m = _VER.search(out) if out else None
-    ver = ()
-    if m:
-        try:
-            ver = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
-        except ValueError:
-            ver = ()
+    ver = _parse_ver(out)
     _VERS[path] = (mt, ver)
     return ver
 
@@ -217,13 +221,7 @@ def engine_probe(path: str) -> tuple:
     if "no module named 'pdf2zh'" in low or "modulenotfounderror" in low:
         return False, "exe 在但包已丢（空壳）"
     if rc == 0 and "pdf2zh" in low:
-        m = _VER.search(out)
-        ver = ()
-        if m:
-            try:
-                ver = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
-            except ValueError:
-                ver = ()
+        ver = _parse_ver(out)
         try:
             _VERS[path] = (os.path.getmtime(path), ver)   # 探一次，版本缓存同享（设置页首开少跑一遍 --version）
         except OSError:
@@ -332,7 +330,7 @@ def _no_window():
     si.wShowWindow = 0
     return 0x08000000, si
 
-def sweep_key_copies(page_root: str, pid: str = ""):
+def sweep_key_copies(page_root: str):
     """扫掉页级目录里 1.9 时代的 pdf2zh 配置副本（里面带着 key）。
 
     留着复用是**为了省时间**，不是为了存 key。1.9 会把环境变量里的 key 写进
@@ -340,8 +338,7 @@ def sweep_key_copies(page_root: str, pid: str = ""):
     """
     for dirpath, _dirs, files in os.walk(page_root):
         for fn in files:
-            if fn.startswith(".pdf2zh-") and fn.endswith(".json") and (
-                    not pid or fn.startswith(f".pdf2zh-{pid}")):
+            if fn.startswith(".pdf2zh-") and fn.endswith(".json"):
                 try:
                     os.remove(os.path.join(dirpath, fn))
                 except OSError:
@@ -626,7 +623,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         return j
 
     def run():
-        _say = say = log or (lambda _m: None)
+        say = log or (lambda _m: None)
         if j.pop("_abort", None):
             # start 返回后、线程还没调度到就被取消（或删论文）：安静收场，别照跑到底
             j.update(status="none", error="", pages=[0, 0])
@@ -679,7 +676,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 gp = os.path.join(page_root, "glossary.csv")
                 if write_glossary_csv(gp, glossary_rows):
                     glossary_csv = gp
-                    _say(f"全文翻译 {pid}: 术语表 {len(glossary_rows)} 条注入全文翻译")
+                    say(f"全文翻译 {pid}: 术语表 {len(glossary_rows)} 条注入全文翻译")
             with pymupdf.open(pdf_path) as doc:
                 n = len(doc)
             if n == 0:
@@ -711,7 +708,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                             results[p] = {"mono": got["mono"], "at": p - (a - 1)}
                     break
             if results:
-                _say(f"全文翻译 {pid}: 复用上次已译好的 {len(results)}/{n} 页，只译剩下的")
+                say(f"全文翻译 {pid}: 复用上次已译好的 {len(results)}/{n} 页，只译剩下的")
             j["pages"] = [len(results), n]
             _RUNNING[pid] = procs
             lock = threading.Lock()
@@ -721,7 +718,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 try:
                     _worker(batch)
                 except Exception as e:
-                    _say(f"全文翻译 {pid}: 第 {batch[0] + 1} 页起的一批异常（{type(e).__name__}），保留原文")
+                    say(f"全文翻译 {pid}: 第 {batch[0] + 1} 页起的一批异常（{type(e).__name__}），保留原文")
 
             def _worker(batch: list):
                 """batch：连续的 0 基页号。整批两次都没成时拆成单页各再试一遍——
@@ -746,7 +743,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         return
                     if got:
                         if t > 0:
-                            _say(f"全文翻译 {pid}: 第 {label} 页第二次尝试成功")
+                            say(f"全文翻译 {pid}: 第 {label} 页第二次尝试成功")
                         break
                 if got:
                     # pdf2zh 对 --pages 的产物有两种形态：全文（只有选中的页被译了）或只含选中页。
@@ -768,11 +765,11 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         j["pages"] = [len(results), n]
                     return
                 if len(batch) > 1:
-                    _say(f"全文翻译 {pid}: 第 {label} 页整批两次都没成，拆成单页再各试一遍")
+                    say(f"全文翻译 {pid}: 第 {label} 页整批两次都没成，拆成单页再各试一遍")
                     for p in batch:
                         _worker([p])
                     return
-                _say(f"全文翻译 {pid}: 第 {a} 页两次都没译成，这一页保留原文"
+                say(f"全文翻译 {pid}: 第 {a} 页两次都没译成，这一页保留原文"
                      f"（{' / '.join(tail[-2:])}）")
 
             from concurrent.futures import ThreadPoolExecutor
@@ -828,7 +825,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                                         if failed else "")
             j.update(status="done", dual="", mono=mono_path,
                      error="", pages=[n, n], note=done_note)
-            _say(f"全文翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
+            say(f"全文翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
                  f" · {len(results)}/{n} 页" + (f" · 失败页 {failed}" if failed else ""))
         except Exception as e:
             j.update(status="error", error=f"{type(e).__name__}: {str(e)[-400:]}")

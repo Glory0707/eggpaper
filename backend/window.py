@@ -102,9 +102,9 @@ def _give_window_icon(pid: int):
     Chromium 取自 favicon.ico，而且按**物理像素**挑档位——150% 缩放下它取 24px 那一档，
     再被 Windows 当逻辑 24 放大 1.5 倍到 36 物理像素。源头位图偏小，怎么画都软；
     `--app-icon` 开关实测无效（红方块 A/B：任务栏零变化）。
-    原生 WM_SETICON 没有这层缩放：LoadImage 按窗口 DPI 要多大就从多尺寸 ICO 里取多大
-    （150% 下大图标取 48、小图标取 24，ICO 里都有原图），于是任务栏拿到的和桌面快捷方式
-    是**同一份、按物理尺寸 1:1 的位图**——这就是用户认可的那枚。
+    原生 WM_SETICON 没有这层缩放：下面**按窗口 DPI 现画**精确像素的位图（mark.draw +
+    CreateIconIndirect，见 `_hicon_from_pil`；多尺寸 ICO 的 LoadImage 只留作现画失败的退路），
+    于是任务栏拿到的和桌面快捷方式是**同一份、按物理尺寸 1:1 的位图**——这就是用户认可的那枚。
 
     在后台线程里做：窗口刚出现时 favicon 还没加载完，Chromium 会在加载后把图标重设回
     favicon，所以要反复压 ~20 秒。本地是单页应用，之后不再导航，图标也就稳定了。

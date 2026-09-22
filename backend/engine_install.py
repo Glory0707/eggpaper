@@ -222,7 +222,7 @@ def _unpack(zpath: str):
 
 _PARALLEL_CONNS = 4      # 分段并行下载的连接数：镜像普遍按单连接限速，4 段约 3~4 倍
 
-def _download_one(url: str, zpath: str, src: str) -> str:
+def _download_one(url: str, zpath: str) -> str:
     """从一个源下载完整 zip（带断点续传与停滞判据）。成功返回 ""，失败返回人话原因。
 
     zpath 与断点都放在 _partial_dir()（start() 的重试不会清它）。先探服务器吃不吃
@@ -242,7 +242,7 @@ def _download_one(url: str, zpath: str, src: str) -> str:
         pass                                             # 探测失败照走单流
     return _download_single(url, part, zpath)
 
-def _download_single(url: str, part: str, done: str, src: str = "") -> str:
+def _download_single(url: str, part: str, done: str) -> str:
     headers = {}
     have = os.path.getsize(part) if os.path.isfile(part) else 0
     append = False
@@ -311,7 +311,7 @@ def _download_parallel(url: str, zpath: str, total: int) -> str:
     os.makedirs(_partial_dir(), exist_ok=True)
     part = zpath + ".part"          # 旧单流的断点：有它就别开并行，接着单流走完
     if os.path.isfile(part) and os.path.getsize(part) > 0:
-        return _download_single(url, part, "单流续传")
+        return _download_single(url, part, zpath)
     n = _PARALLEL_CONNS
     span = (total + n - 1) // n
     parts = [os.path.join(_partial_dir(), f".part{i}") for i in range(n)]
@@ -387,7 +387,7 @@ def _install(urls):
                 _set(state="idle", src="", url="")
                 return
             _set(src=src, url=url)
-            why = _download_one(url, zpath, src)
+            why = _download_one(url, zpath)
             if not why:
                 break
             tried.append(f"{src}：{why}")

@@ -71,7 +71,7 @@ def start_tray(url: str, port: int, log) -> bool:
     "后台服务"只能进设置里点，或者去任务管理器。"""
     try:
         import pystray
-        from PIL import Image
+        from PIL import Image   # noqa: F401 ——依赖探针：托盘起来之前先确认 PIL 在
     except ImportError as e:
         log(f"托盘不可用（{e}）")
         return False

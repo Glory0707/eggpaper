@@ -2314,6 +2314,8 @@ def fig_caption(pid: str, idx: int = 0):
         caps[str(idx)] = zh
         db.set_fig_caps(pid, caps)
     return {"zh": zh or cap, "original": cap}
+
+
 @app.get("/api/papers/{pid}/toc")
 def paper_toc(pid: str):
     """PDF 自带的书签目录（get_toc：[层级, 标题, 页码]，页码 1 起）。
@@ -2729,7 +2731,7 @@ def _pdf2zh_env(service: str, cfg: dict):
             envs["PDF2ZH_OPENAI_BASE_URL"] = base
         if model:
             envs["PDF2ZH_OPENAI_MODEL"] = model
-        return envs, (urlparse(base).hostname or "") if base else ""
+        return envs, urlparse(base).hostname or ""
     if service == "deepseek":
         envs = {"PDF2ZH_DEEPSEEK_API_KEY": key}
         if model:
@@ -2781,7 +2783,7 @@ def translate_full_start(pid: str, force: bool = False):
                                      f"{why2}。已在后台自动下载安装 2.x（约 600MB，几分钟），"
                                      "装好后会自动开始这篇的全文翻译。")
         if st["state"] in ("downloading", "unpacking", "warming"):
-            raise HTTPException(400, f"全文翻译引擎正在后台下载安装（约 600MB），装好后会自动开始。")
+            raise HTTPException(400, "全文翻译引擎正在后台下载安装（约 600MB），装好后会自动开始。")
         if not exe_found or stale:
             raise HTTPException(400, f"全文翻译引擎{'升级' if stale else '下载'}没成功"
                                      f"（{st.get('error') or '原因未知'}）。可再点一次「全文翻译」重试，"

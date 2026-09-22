@@ -905,8 +905,13 @@ def mock_analyze(paras: list) -> dict:
             r = "background"
         roles[str(p["idx"])] = r
         purposes[str(p["idx"])] = _mock_purpose(r)
-    claims = [{"id": f"C{i+1}", "text": paras[ci-1]["text"][:40] + "…", "anchors": [
-        int(k) for k, v in roles.items() if v == "evidence"][:2]} for i, ci in enumerate(claim_idx[:3])]
+    by_idx = {p["idx"]: p for p in paras}
+    claims = []
+    for ci in claim_idx[:3]:
+        if ci not in by_idx:
+            continue
+        claims.append({"id": f"C{len(claims) + 1}", "text": by_idx[ci]["text"][:40] + "…", "anchors": [
+            int(k) for k, v in roles.items() if v == "evidence"][:2]})
     if not claims:
         claims = [{"id": "C1", "text": _demo_txt("（演示模式：未识别到明确主张）",
                                                  "(demo mode: no explicit claim recognized)"), "anchors": []}]

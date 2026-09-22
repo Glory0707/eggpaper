@@ -431,6 +431,8 @@ const EN = {
   '在独立窗口打开': 'Open in its own window',
   '退出 eggpaper': 'Quit eggpaper',
   '保存': 'Save',
+  '显示': 'Show',
+  '隐藏': 'Hide',
   '正在下载全文翻译引擎 {p}%': 'Downloading translation engine {p}%',
   '引擎解压安装中…': 'Installing engine…',
   '引擎预热中…': 'Warming up engine…',

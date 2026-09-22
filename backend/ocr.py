@@ -11,7 +11,6 @@
 和 pdfparse 产出的段落/行同一坐标系，框选、眉批锚点才能对得上。
 """
 import re
-import statistics
 import threading
 
 _DPI = 200

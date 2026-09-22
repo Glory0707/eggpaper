@@ -111,7 +111,7 @@ def contact_sheet(out_path: str) -> str:
     sizes = [16, 24, 30, 36, 48, 72, 256]
     zoom = 8 if max(sizes) * 8 <= 2048 else 4
     imgs = [_draw(s, tile=True) for s in sizes]
-    pad, label_h = 12, 0
+    pad = 12
     W = sum(i.width * zoom + pad for i in imgs) + pad
     H = max(i.height for i in imgs) * zoom + pad * 2
     sheet = Image.new("RGBA", (W, H), (246, 245, 242, 255))
