@@ -1206,11 +1206,11 @@ def _run_analysis(pid: str, paras: list):
                         _applog(f"析读 {pid}: 推荐问题这次是空的（提问页会再试一次）")
                 elif got.get("text") or got.get("items"):
                     if _pid_gone(pid):
-                        _applog(f"析读 {pid}: 论文已删除，丢弃五问·{k}")
+                        _applog(f"析读 {pid}: 论文已删除，丢弃七问·{k}")
                         return
                     db.answer_put(pid, k, got)
                 else:
-                    _applog(f"析读 {pid}: 五问·{k} 这次是空的")
+                    _applog(f"析读 {pid}: 七问·{k} 这次是空的")
             except Exception as e:
                 _applog(f"析读 {pid}: {k} 没生成（{_human_msg(e)}）")
             d = _analysis_progress.get(pid)
@@ -1246,7 +1246,7 @@ def analyze(pid: str):
     with _key_lock("job:" + pid):
         p = db.get_paper(pid) or p     # 锁内重读：锁外那份可能是"已完成"的旧读，照它判会连环重析
         if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
-            # 眉批也在收网析读：两边都会清五问/导师缓存，先结束的一方会删掉刚花钱生成的结果
+            # 眉批也在收网析读：两边都会清七问/导师缓存，先结束的一方会删掉刚花钱生成的结果
             raise HTTPException(400, "AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束")
         if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
             return {"status": p["analysis_status"]}
@@ -1579,7 +1579,7 @@ def _require_shape(data, keys: tuple, what: str):
     为什么：`parse_json` 取"第一个 { 到最后一个 }"，模型把结果包成 `[{...}]` 时能解析成
     里面那个对象，于是 `data.get("questions", [])` 得到 `[]`——而路由会把这个空壳
     `json.dumps` 存进 papers，从此永远命中缓存（速览页空着、而且不会自愈，因为"重新析读"
-    也不一定清得到它）。五问与引用早就做了这个判断，这里是把它补成统一的一道闸。
+    也不一定清得到它）。七问与引用早就做了这个判断，这里是把它补成统一的一道闸。
     """
     if not isinstance(data, dict) or not any(data.get(k) for k in keys):
         raise HTTPException(503, f"{what}没生成出来（模型这次返回的是空的），过一会儿再点一次")
@@ -1691,7 +1691,7 @@ def ask_visual(body: dict):
         raise HTTPException(503, "模型这次没返回内容，请重试")
     return {"answer": ans}
 
-# ---------------- 五问里需要现场生成的那几问 ----------------
+# ---------------- 七问里需要现场生成的那几问 ----------------
 
 SIX_KEYS = ("motive", "principle", "method", "how", "next", "lens")
 
@@ -1750,33 +1750,35 @@ def _save_terms(pid: str, got) -> int:
         print(f"[eggpaper] 本篇缩写补了 {added} 条")
     return len(terms)
 
+# text 型演示答案：zh/en 各一段，_mock_six 查表
+_MOCK_TEXT = {
+    "motive": ("〔演示模式〕现有做法依赖随机、不可控的关键步骤，产出的质量波动大、没法按需设计 [¶3]；"
+               "这件事卡住了下游一整类应用，而这到今天没有好解法 [¶2]——"
+               "所以这篇要用一套可设计的规则化结构来实现稳定的高质量输出。",
+               "[demo mode] Current practice relies on random, uncontrollable steps, so the "
+               "output quality fluctuates and cannot be designed [¶3]; this blocks a whole "
+               "class of downstream applications and still lacks a good solution [¶2] — hence "
+               "this work uses a designable, regular structure for stable, high-quality output."),
+    "principle": ("〔演示模式〕这套做法成立靠的是一个已知的物理效应：结构规则化之后能量面变平，"
+                  "反应不再赌概率 [¶4]——本质上是把随机过程换成了可设计的确定性路径。",
+                  "[demo mode] This rests on a known physical effect: a regular structure "
+                  "flattens the energy landscape, so formation stops being a gamble [¶4] — "
+                  "in essence a random process replaced by a designable, deterministic path."),
+    "method": ("〔演示模式〕它用原位表征盯住全程，配一组对照实验把关键变量单离出来 [¶8]；"
+               "比前人改进在免掉了不可控的随机步骤，同样的产量下批次间差异小了一个量级 [¶10]。",
+               "[demo mode] It tracks the whole process with in-situ characterization plus "
+               "controls that isolate the key variable [¶8]; the improvement is dropping the "
+               "uncontrollable random step, with batch variability an order lower [¶10]."),
+    "how": ("〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
+            "最后落到位开放问题上 [¶5]。",
+            "[demo mode] This review organizes the literature into three blocks along its "
+            "own classification, compares them block by block, and closes with open "
+            "questions [¶5]."),
+}
+
 def _mock_six(key: str) -> dict:
-    if key == "principle":
-        return {"text": _demo_txt("〔演示模式〕这套做法成立靠的是一个已知的物理效应：结构规则化之后能量面变平，"
-                                  "反应不再赌概率 [¶4]——本质上是把随机过程换成了可设计的确定性路径。",
-                                  "[demo mode] This rests on a known physical effect: a regular structure "
-                                  "flattens the energy landscape, so formation stops being a gamble [¶4] — "
-                                  "in essence a random process replaced by a designable, deterministic path.")}
-    if key == "method":
-        return {"text": _demo_txt("〔演示模式〕它用原位表征盯住全程，配一组对照实验把关键变量单离出来 [¶8]；"
-                                  "比前人改进在免掉了不可控的随机步骤，同样的产量下批次间差异小了一个量级 [¶10]。",
-                                  "[demo mode] It tracks the whole process with in-situ characterization plus "
-                                  "controls that isolate the key variable [¶8]; the improvement is dropping the "
-                                  "uncontrollable random step, with batch variability an order lower [¶10].")}
-    if key == "how":
-        return {"text": _demo_txt("〔演示模式〕这篇综述按它的分类线索把文献组织成三大块，逐块对比优劣，"
-                                  "最后落到位开放问题上 [¶5]。",
-                                  "[demo mode] This review organizes the literature into three blocks along its "
-                                  "own classification, compares them block by block, and closes with open "
-                                  "questions [¶5].")}
-    if key == "motive":
-        return {"text": _demo_txt("〔演示模式〕现有做法依赖随机、不可控的关键步骤，产出的质量波动大、没法按需设计 [¶3]；"
-                                  "这件事卡住了下游一整类应用，而这到今天没有好解法 [¶2]——"
-                                  "所以这篇要用一套可设计的规则化结构来实现稳定的高质量输出。",
-                                  "[demo mode] Current practice relies on random, uncontrollable steps, so the "
-                                  "output quality fluctuates and cannot be designed [¶3]; this blocks a whole "
-                                  "class of downstream applications and still lacks a good solution [¶2] — hence "
-                                  "this work uses a designable, regular structure for stable, high-quality output.")}
+    if key in _MOCK_TEXT:
+        return {"text": _demo_txt(*_MOCK_TEXT[key])}
     if key == "lens":
         return {"v": 3, "items": [
             {"lead": _demo_txt("做实验的", "Experimentalist"),

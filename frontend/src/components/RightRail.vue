@@ -576,14 +576,9 @@ watch(() => store.currentId, () => {
                         <div class="six-fold" :class="{ open: openSix[s.k] }">
              <div class="six-fold-in">
             <div class="six-a">
-                            <template v-if="s.k === 'q1'">
-                <MdLite v-if="six.motive?.text" class="six-txt" :text="six.motive.text" @cite="c => jumpPara(c.n)" />
-                <div v-else class="six-note">{{ sixBusy.motive ? '…' : t('未生成') }}</div>
-              </template>
-
-                            <template v-else-if="s.k === 'q2'">
-                <MdLite v-if="six.principle?.text" class="six-txt" :text="six.principle.text" @cite="c => jumpPara(c.n)" />
-                <div v-else class="six-note">{{ sixBusy.principle ? '…' : t('未生成') }}</div>
+                            <template v-if="s.k === 'q1' || s.k === 'q2'">
+                <MdLite v-if="six[s.gen]?.text" class="six-txt" :text="six[s.gen].text" @cite="c => jumpPara(c.n)" />
+                <div v-else class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
               </template>
 
               <template v-else-if="s.k === 'q3' && isReview">

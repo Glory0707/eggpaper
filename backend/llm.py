@@ -496,7 +496,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
     口径与"导师三问"划死边界：**这一栏只帮读者读懂**（这里到底怎么做的、
     数字是在什么条件下得的、这个说法能不能推广到我要用的体系），审稿人式挑刺归导师三问。
     """
-    claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
+    claims_txt = _claims_lines(claims) or "（无）"
     gap = next((v["purpose"] for k, v in sorted(annos.items(), key=lambda x: int(x[0])) if v["role"] == "gap"), "")
     data = chat_json([
         {"role": "system", "content":
@@ -978,7 +978,7 @@ def extract_citation(title: str, src: str) -> dict:
 # ---------------- 导师三问 ----------------
 
 def advisor_questions(title: str, claims: list, warnings: list, kind: str = "research") -> dict:
-    claims_txt = "\n".join(f"- {c['text']}" for c in claims) or "（无）"
+    claims_txt = _claims_lines(claims) or "（无）"
     warn_txt = "\n".join(f"- {w}" for w in warnings) or "（无）"
     if kind == "review":
         sys = ("你是苛刻但建设性的导师。学生要拿这篇**综述**去组会汇报/答辩。"
@@ -1044,7 +1044,7 @@ def vision_ask(image_dataurl: str, question: str) -> str:
             last = e
     raise last
 
-# ---------------- 五问里需要现场生成的那几问 ----------------
+# ---------------- 七问里需要现场生成的那几问 ----------------
 
 def _paras_block(items: list, cap: int = 600) -> str:
     return "\n".join(f"¶{p['idx']} {(p.get('text') or '')[:cap]}" for p in items)
@@ -1063,26 +1063,34 @@ def _items(raw) -> dict:
                       "ask": str(it.get("ask") or "").strip()[:80]})
     return {"items": items[:3]}
 
+# text 型生成题（①②③与综述组织问）共用的输出约束与骨架：同一次调用、同一种清洗。
+_CITE_TAIL = ("要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；一共两三句；"
+              "能标依据的句子都标段号（如 ¶12，直接写不要加方括号）。"
+              '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。')
+
+def _claims_lines(claims: list) -> str:
+    return "\n".join(f"- {c['text']}" for c in claims)
+
+def _short_answer(ask: str, payload: str) -> dict:
+    data = chat_json([
+        {"role": "system", "content": ask + _CITE_TAIL + _lang_tail()},
+        {"role": "user", "content": payload},
+    ], max_tokens=3000, temperature=0.3, no_think=True)
+    return {"text": str(data.get("text") or "").strip()[:500]}
+
 def answer_motive(title: str, gaps: list, backgrounds: list, claims: list) -> dict:
     """①「要解决什么、为什么」：原来的①②两问（要解决什么 / 为什么要解决）各吃一遍
     缺口段+背景段+主张，出来的常是同一件事的两种说法——合并成一问，两三句话说清
     "要解决什么"和"为什么非解决不可"（多重要、为什么到现在还没解决）。"""
-    data = chat_json([
-        {"role": "system", "content":
-            "你在帮一位研究生说清一篇论文'要解决什么、为什么值得解决'。看下面给出的缺口段、"
-            "背景段与主张，用你自己的话说清两件事：这篇要解决什么（谁在什么条件下还没做到什么，"
-            "因此这篇论文要回答什么）；为什么非解决不可（对领域意味着什么、为什么到现在还没解决"
-            "或有争议）。要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；一共两三句；"
-            "句尾用 ¶n 标出你是从哪几段看出来的（直接写 ¶n，不要加方括号）。"
-            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
-        {"role": "user", "content":
-            f"论文标题：{title or ''}\n\n"
-            f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
-            f"[背景]\n{_paras_block(backgrounds, 400)}\n\n"
-            "[作者的主张]\n" + "\n".join(f"- {c['text']}" for c in claims)},
-    ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(data.get("text") or "").strip()[:500]
-    return {"text": text}
+    return _short_answer(
+        "你在帮一位研究生说清一篇论文'要解决什么、为什么值得解决'。看下面给出的缺口段、"
+        "背景段与主张，用你自己的话说清两件事：这篇要解决什么（谁在什么条件下还没做到什么，"
+        "因此这篇论文要回答什么）；为什么非解决不可（对领域意味着什么、为什么到现在还没解决"
+        "或有争议）。",
+        f"论文标题：{title or ''}\n\n"
+        f"[作者指出的问题]\n{_paras_block(gaps)}\n\n"
+        f"[背景]\n{_paras_block(backgrounds, 400)}\n\n"
+        "[作者的主张]\n" + _claims_lines(claims))
 
 def answer_principle(title: str, claims: list, paras: list, kind: str = "research") -> dict:
     """②「原理是什么」：知识层那一问。研究型说清它靠什么机理/理论才成立、为什么会 work；
@@ -1097,55 +1105,30 @@ def answer_principle(title: str, claims: list, paras: list, kind: str = "researc
                "用两三句话说清：这篇工作靠什么机理/效应/理论才成立——底层的道理是什么、"
                "为什么会 work。不要复述它做了什么实验（那是另一问），也不要罗列结论。")
     body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
-    data = chat_json([
-        {"role": "system", "content": ask +
-            "要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；"
-            "能标依据的句子都标段号（如 ¶12，直接写不要加方括号）。"
-            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
-        {"role": "user", "content":
-            f"论文标题：{title or ''}\n\n"
-            "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文节选]\n{body}"},
-    ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(data.get("text") or "").strip()[:500]
-    return {"text": text}
+    return _short_answer(
+        ask,
+        f"论文标题：{title or ''}\n\n[主张]\n" + _claims_lines(claims) + f"\n\n[正文节选]\n{body}")
 
 def answer_method(title: str, claims: list, paras: list) -> dict:
     """③「怎么解决的」（研究型）：方法层那一问——设计了什么实验、用了什么方法/手段、
     相比已有做法改进在哪。原理是②的事，结论是④的事，这里都不说。"""
     body = _paras_block([p for p in paras if not p.get("in_refs")][:24], 500)
-    data = chat_json([
-        {"role": "system", "content":
-            "你在帮一位研究生说清一篇论文'怎么解决的'。看给出的正文节选与它的主张，"
-            "用两三句话说清：它设计了什么实验、用了什么方法/手段（关键设计点是什么），"
-            "相比已有做法改进在哪（更快/更准/更稳/更简单——具体说出来）。"
-            "不要展开机理解释（那是另一问），也不要罗列结论。"
-            "要求：直接说结论，不要摘抄原文原句、不要'本文''该研究'开头；"
-            "能标依据的句子都标段号（如 ¶12，直接写不要加方括号）。"
-            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
-        {"role": "user", "content":
-            f"论文标题：{title or ''}\n\n"
-            "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文节选]\n{body}"},
-    ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(data.get("text") or "").strip()[:500]
-    return {"text": text}
+    return _short_answer(
+        "你在帮一位研究生说清一篇论文'怎么解决的'。看给出的正文节选与它的主张，"
+        "用两三句话说清：它设计了什么实验、用了什么方法/手段（关键设计点是什么），"
+        "相比已有做法改进在哪（更快/更准/更稳/更简单——具体说出来）。"
+        "不要展开机理解释（那是另一问），也不要罗列结论。",
+        f"论文标题：{title or ''}\n\n[主张]\n" + _claims_lines(claims) + f"\n\n[正文节选]\n{body}")
 
 def answer_how_review(title: str, claims: list, paras: list) -> dict:
     """综述版③「它把文献怎么组织的？」：研究型的③是方法层（answer_method），综述没有
     实验层，换成组织方式——按什么分类、沿什么脉络、各条线的关系。"""
     body = "\n\n".join(f"¶{p['idx']} {p['text'][:700]}" for p in paras if not p.get("in_refs"))[:50000]
-    data = chat_json([
-        {"role": "system", "content":
-            "这是一篇综述，你在帮一位研究生说清它『把文献怎么组织的』。看给出的正文与它的组织主张，"
-            "用两三句话说清：它按什么线索/维度分类，分成哪几块，各块之间什么关系（并列/递进/交叉），"
-            "最后落到哪些开放问题。要求：说它自己的组织方式，不要复述被综述的内容；"
-            "能标依据的句子都标段号（如 ¶12，直接写不要加方括号）。"
-            '只输出 JSON：{"text":"<两三句话，含 ¶n 标注>"}，不要代码块，不要解释。' + _lang_tail()},
-        {"role": "user", "content":
-            f"论文标题：{title or ''}\n\n"
-            "[它的组织主张]\n" + "\n".join(f"- {c['text']}" for c in claims) + f"\n\n[正文]\n{body}"},
-    ], max_tokens=3000, temperature=0.3, no_think=True)
-    text = str(data.get("text") or "").strip()[:500]
-    return {"text": text}
+    return _short_answer(
+        "这是一篇综述，你在帮一位研究生说清它『把文献怎么组织的』。看给出的正文与它的组织主张，"
+        "用两三句话说清：它按什么线索/维度分类，分成哪几块，各块之间什么关系（并列/递进/交叉），"
+        "最后落到哪些开放问题。说它自己的组织方式，不要复述被综述的内容。",
+        f"论文标题：{title or ''}\n\n[它的组织主张]\n" + _claims_lines(claims) + f"\n\n[正文]\n{body}")
 
 def answer_next(title: str, limits: list, exts: list, claims: list, warns: list) -> dict:
     """还能做什么：两条腿都要有——论文自己承认的局限/延伸里长出来的方向，以及你顺着这篇
@@ -1157,7 +1140,7 @@ def answer_next(title: str, limits: list, exts: list, claims: list, warns: list)
     payload = (f"论文标题：{title or ''}\n\n"
                f"[作者承认的局限]\n{_paras_block(limits)}\n\n"
                f"[作者做的延伸]\n{_paras_block(exts, 400)}\n\n"
-               "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims))
+               "[主张]\n" + _claims_lines(claims))
     if warns:
         payload += "\n\n[可疑之处]\n" + "\n".join(f"- {w}" for w in warns)
     data = chat_json([
@@ -1202,7 +1185,7 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
             '"ask":"他会提出的那个问题，≤40字"}]}，不要代码块。' + _lang_tail()},
         {"role": "user", "content":
             f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
-            "[主张]\n" + "\n".join(f"- {c['text']}" for c in claims) +
+            "[主张]\n" + _claims_lines(claims) +
             f"\n\n[正文节选]\n{body}"},
     ], max_tokens=4000, temperature=0.6, no_think=True)
     items = _items(data.get("items"))
