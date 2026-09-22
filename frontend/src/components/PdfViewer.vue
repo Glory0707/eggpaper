@@ -121,22 +121,37 @@ async function getDoc(kind) {
   const key = `${props.pid}:${kind}`
   const hit = docCache.get(key)
   if (hit) { hit.at = Date.now(); return hit.doc }
-  const task = pdfjsLib.getDocument(`/api/papers/${props.pid}/pdf?variant=${kind}`)
-  if (!sheets.value.length) {
-    task.onProgress = ({ loaded, total }) => {
-      if (total) loadPct.value = Math.max(loadPct.value, Math.min(0.94, loaded / total))
+  // worker 会假死（休眠恢复/标签页冻结/内嵌环境节流）：promise 永不落定，纸面永久白屏。
+  // 看门狗 20s：超时就销毁这个 task 换新 worker 重来一次；再挂才向上抛（load 的 catch 接住）。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const task = pdfjsLib.getDocument(`/api/papers/${props.pid}/pdf?variant=${kind}`)
+    if (!sheets.value.length) {
+      task.onProgress = ({ loaded, total }) => {
+        if (total) loadPct.value = Math.max(loadPct.value, Math.min(0.94, loaded / total))
+      }
     }
+    const doc = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('pdf worker timeout')), 20000)
+      task.promise.then(
+        d => { clearTimeout(timer); resolve(d) },
+        e => { clearTimeout(timer); reject(e) })
+    })
+      .catch(e => {
+        try { task.destroy() } catch { /* 已死不碍事 */ }
+        if (attempt === 0 && String(e.message).includes('timeout')) return null   // 换 worker 重试
+        throw e
+      })
+    if (!doc) continue
+    docCache.set(key, { doc, at: Date.now() })
+    while (docCache.size > 10) {              // LRU：多窗格 × dual 变体轻松要 8 份，6 会互相挤掉
+      let oldest = null, ot = Infinity
+      for (const [k, e] of docCache) if (e.at < ot) { ot = e.at; oldest = k }
+      const e = docCache.get(oldest)
+      try { e.doc.destroy() } catch { /* */ }
+      docCache.delete(oldest)
+    }
+    return doc
   }
-  const doc = await task.promise
-  docCache.set(key, { doc, at: Date.now() })
-  while (docCache.size > 10) {              // LRU：多窗格 × dual 变体轻松要 8 份，6 会互相挤掉
-    let oldest = null, ot = Infinity
-    for (const [k, e] of docCache) if (e.at < ot) { ot = e.at; oldest = k }
-    const e = docCache.get(oldest)
-    try { e.doc.destroy() } catch { /* */ }
-    docCache.delete(oldest)
-  }
-  return doc
 }
 
 async function meta(doc) {
@@ -430,32 +445,37 @@ function doRenderItem(it) {
   const canvas = canvases.value[it.gi], tlEl = textLayers.value[it.gi], el = pageEls.value[it.gi]
   if (!canvas || !el) return
   const doc = getDoc(it.doc)
-  return doc.then(async d => {
-    const page = await d.getPage(it.page + 1)
-    const viewport = page.getViewport({ scale: scale.value })
-    const dpr = Math.min(2.5, window.devicePixelRatio || 1)
-    canvas.width = Math.floor(viewport.width * dpr)
-    canvas.height = Math.floor(viewport.height * dpr)
-    canvas.style.width = viewport.width + 'px'
-    canvas.style.height = viewport.height + 'px'
-    el.style.setProperty('--scale-factor', scale.value)
-    const ctx = canvas.getContext('2d', { alpha: false })
-    ctx.fillStyle = '#fff'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    try {
-      await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise
-      if (tlEl && it.text) {
-        tlEl.innerHTML = ''
-        clearTextIndex(tlEl)          // 节点全换了，旧的引文索引作废
-        const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
-        await tl.render()
-        clearTextIndex(tlEl)
+  // 渲染看门狗 45s：单页假死时让出串行队列（不标记 doneKeys，下一轮渲染会重试该页），
+  // 别让一页卡死把整条渲染链和 ready 落位永远堵死
+  return Promise.race([
+    doc.then(async d => {
+      const page = await d.getPage(it.page + 1)
+      const viewport = page.getViewport({ scale: scale.value })
+      const dpr = Math.min(2.5, window.devicePixelRatio || 1)
+      canvas.width = Math.floor(viewport.width * dpr)
+      canvas.height = Math.floor(viewport.height * dpr)
+      canvas.style.width = viewport.width + 'px'
+      canvas.style.height = viewport.height + 'px'
+      el.style.setProperty('--scale-factor', scale.value)
+      const ctx = canvas.getContext('2d', { alpha: false })
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      try {
+        await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise
+        if (tlEl && it.text) {
+          tlEl.innerHTML = ''
+          clearTextIndex(tlEl)          // 节点全换了，旧的引文索引作废
+          const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
+          await tl.render()
+          clearTextIndex(tlEl)
+        }
+        doneKeys.add(key)
+      } catch (err) {
+        console.error('[eggpaper] render fail', it.key, err)
       }
-      doneKeys.add(key)
-    } catch (err) {
-      console.error('[eggpaper] render fail', it.key, err)
-    }
-  })
+    }),
+    new Promise(resolve => setTimeout(resolve, 45000)),
+  ])
 }
 
 function renderItem(it) {
