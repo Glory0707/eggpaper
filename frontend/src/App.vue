@@ -779,7 +779,7 @@ const tranTip = computed(() => {
     return t('正在译{svc} · 已用 {t}', { svc: tranProg.value.svc ? `（${tranProg.value.svc}）` : '',
                                          t: tranElapsed.value || t('刚刚') })
   }
-  return t('译出第二份 PDF，供「译文 / 双语」')
+  return ''
 })
 
 /* ---------------- 键盘流 ---------------- */
@@ -893,7 +893,7 @@ function onKey(e) {
       </div>
       <div class="actions">
         <button class="demo-badge" v-if="demoOn" @click="showSettings = true"
-                :title="t('演示数据——点这里去设置')">{{ t('演示模式') }}</button>
+                :title="t('演示数据')">{{ t('演示模式') }}</button>
         <button class="ghost" @click="showSettings = true" :title="t('设置')">⚙</button>
       </div>
             <div class="tran-line" v-if="tranSt === 'running' && !isEn()">
@@ -959,7 +959,7 @@ function onKey(e) {
           <div class="desk-hint demo-hint" v-if="demoOn" role="button" tabindex="0"
                @click="showSettings = true" @keydown.enter.prevent="showSettings = true"
                @keydown.space.prevent="showSettings = true">
-            {{ t('演示数据——先到设置里配好模型') }}
+            {{ t('去设置配好模型') }}
           </div>
         </div>
         <PdfViewer v-else :pid="store.currentId" :key="store.currentId" />
@@ -1016,7 +1016,7 @@ function onKey(e) {
         </div>
       </div>
     </Transition>
-        <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，这个页面可以关掉了。') }}</div>
+        <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，可以关掉这个页面') }}</div>
         <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 
         <Transition name="pop">

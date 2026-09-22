@@ -60,7 +60,7 @@ async function recognize() {
 
 async function copy(row) {
   const ok = await copyText(row.text)
-  toast(ok ? t('已复制 · {label}', { label: row.label }) : t('复制没成功，选中文字手动复制一下'))
+  toast(ok ? t('已复制 · {label}', { label: row.label }) : t('复制失败'))
 }
 </script>
 

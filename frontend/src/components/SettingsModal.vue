@@ -51,7 +51,7 @@ async function moveData() {
   savingData.value = true
   try {
     await api.setDataLocation(target)
-    toast(t('已迁移：重启 eggpaper 后生效'))
+    toast(t('已迁移，重启后生效'))
     f.data_dir = target
   } catch (e) { toast(e.message) }
   savingData.value = false
@@ -260,22 +260,22 @@ function save() {
         <label class="mono-label">{{ t('全文翻译服务') }}</label>
         <select v-model="f.service">
           <option value="bing">{{ t('bing（免费）') }}</option>
-          <option value="openai">{{ t('openai（用上面的模型与端点）') }}</option>
-          <option v-if="f.service === 'deepseek'" value="deepseek">{{ t('deepseek（已不推荐，请换一个）') }}</option>
+          <option value="openai">openai</option>
+          <option v-if="f.service === 'deepseek'" value="deepseek">{{ t('deepseek（不推荐）') }}</option>
           <option value="google">google</option>
           <option value="deepl">deepl</option>
         </select>
       </div>
       <div class="f-row" v-if="!isEn() && f.service === 'deepl'">
         <label class="mono-label">{{ t('DeepL Key') }}</label>
-        <input type="text" v-model="f.deepl_key" :placeholder="t('DeepL 的 AUTH_KEY（deepl.com/developers）')" />
+        <input type="text" v-model="f.deepl_key" placeholder="DeepL AUTH_KEY" />
       </div>
       <div class="f-line" v-if="!isEn() && (!(eng.checked && eng.ok) || eng.upgrade)">
         <span class="mono-label" style="margin:0">{{ t('翻译引擎') }}</span>
         <span class="eng-state" :class="{ bad: eng.checked && !eng.ok, ok: eng.ok }">
           <template v-if="engInst.state === 'downloading'">{{ t('下载中 {p}%', { p: engInst.pct }) }} · {{ engInst.src }}</template>
           <template v-else-if="engInst.state === 'unpacking'">{{ t('解压中…') }}</template>
-          <template v-else-if="engInst.state === 'warming'">{{ t('引擎预热中（下载版面模型）…') }}</template>
+          <template v-else-if="engInst.state === 'warming'">{{ t('引擎预热中…') }}</template>
           <template v-else-if="engInst.state === 'error'">{{ engInst.error }}</template>
           <template v-else-if="!eng.checked">…</template>
           <template v-else-if="eng.ok">{{ t('可用（{v}）', { v: eng.version || eng.why.replace('pdf2zh', '').trim() }) }}<template v-if="eng.upgrade"> · {{ t('有新版（{v}）', { v: eng.pinned }) }}</template></template>
@@ -297,7 +297,7 @@ function save() {
         <span class="mono-label" style="margin:0">{{ t('更新') }}</span>
         <label class="ck"><input type="checkbox" v-model="f.auto_check" />{{ t('打开时自动检查') }}</label>
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
-                @click="checkNow" :disabled="checking">{{ checking ? t('检查中…') : t('立即检查更新') }}</button>
+                @click="checkNow" :disabled="checking">{{ checking ? t('检查中…') : t('检查更新') }}</button>
       </div>
       <div class="f-row">
         <label class="mono-label">{{ t('数据目录') }}

@@ -207,7 +207,7 @@ async function delConv() {
   if (!c) return
   const yes = await confirmBox({
     title: t('删除会话'), danger: true, ok: t('删除'),
-    body: t('「{t}」里的问答会一起删掉，论文与批注不受影响。', { t: c.title }),
+    body: t('「{t}」的问答将删除，论文与批注不受影响。', { t: c.title }),
   })
   if (!yes) return
   try {
@@ -431,7 +431,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         <div class="qa-input">
       <Transition name="fade">
         <div v-if="citeOpen" class="cite-pop">
-          <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" :placeholder="t('筛选标题…（Esc 关闭，Enter 选第一个）')" @keydown.esc.stop="closeCite">
+          <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" :placeholder="t('筛选标题…')" @keydown.esc.stop="closeCite">
           <div class="cite-list" ref="citeListEl">
             <button class="cite-item lib" :class="{ on: libAll }" @click="toggleLibAll">
               <span class="box">
@@ -467,11 +467,11 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         {{ t('引用 {n}', { n: citeCount }) }}
       </button>
       <button v-if="citeCount && !busy && cmpIds.length >= 2" class="cite-inline"
-              :title="t('当前篇与引用篇做数据对比（六维度可选，逐格带 ¶ 锚点）')" @click="openCompare">
+              @click="openCompare">
         {{ t('数据对比') }}
       </button>
       <textarea ref="inputEl" v-model="text" rows="1" class="qa-ta"
-                :placeholder="t('基于这篇论文提问…（按 / 引用其他论文）')"
+                :placeholder="t('基于这篇论文提问…')"
                 @keydown="onKey"></textarea>
       <button v-if="busy" class="qa-send stop" @click="stop()" :title="t('停止生成')">■</button>
       <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" :title="t('发送（Enter）')">↑</button>

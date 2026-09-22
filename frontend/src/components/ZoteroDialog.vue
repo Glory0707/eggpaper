@@ -102,7 +102,7 @@ async function doImport() {
             <span class="z-nopdf" v-if="!x.pdf">{{ t('无 PDF') }}</span>
           </div>
           <div v-if="loading" class="zot-empty">{{ t('正在读 Zotero 的库…') }}</div>
-          <div v-else-if="!shown.length" class="zot-empty">{{ t('没有匹配的条目。') }}</div>
+          <div v-else-if="!shown.length" class="zot-empty">{{ t('没有匹配的条目') }}</div>
         </div>
         <div class="f-actions">
           <button @click="close">{{ t('取消') }}</button>

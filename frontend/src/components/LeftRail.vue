@@ -139,7 +139,7 @@ async function doRename(c) {
 async function delColl(c) {
   const yes = await confirmBox({
     title: t('删除分类'), ok: t('删除'), danger: true,
-    body: t('「{name}」里的文献不会被删，只是不再归在这一类。', { name: c.name }),
+    body: t('里面的文献不会被删。'),
   })
   if (!yes) return
   try {
@@ -154,7 +154,7 @@ async function delColl(c) {
 async function collFail(e) {
   if (String(e.message || '').includes('不存在')) {
     await refreshPapers()
-    toast(t('这篇已被删除，文库已刷新'))
+    toast(t('这篇已被删除'))
   } else toast(e.message)
 }
 const dragPid = ref(null)
@@ -205,7 +205,7 @@ async function _removePids(pids) {
 async function del(pid, name) {
   const yes = await confirmBox({
     title: t('删除文献'), ok: t('删除'), danger: true,
-    body: t('《{name}》以及它的批注、析读、问答会一起从本机删掉。', { name: name.slice(0, 40) }),
+    body: t('《{name}》及其批注、析读、问答将一并删除。', { name: name.slice(0, 40) }),
   })
   if (!yes) return
   await _removePids([pid])
@@ -256,7 +256,7 @@ async function doDelete() {
   if (!selN.value) return
   const yes = await confirmBox({
     title: t('删除文献'), ok: t('删除'), danger: true,
-    body: t('这 {n} 篇以及它们的批注、析读、问答会一起从本机删掉。', { n: selN.value }),
+    body: t('这 {n} 篇及其批注、析读、问答将一并删除。', { n: selN.value }),
   })
   if (!yes) return
   const pids = [...selSet.value]
@@ -320,7 +320,7 @@ function onCmpGoto(c) {
 
 <template>
   <div class="lib-panel" :style="{ '--lib-w': libW + 'px' }" @keydown.esc="emit('close')">
-    <div class="rail-grip lib-grip" :title="t('拖动改宽度 · 双击复位')"
+    <div class="rail-grip lib-grip"
          @mousedown="lib.start" @dblclick="lib.reset"></div>
 
     <div class="rail-head">
@@ -329,7 +329,7 @@ function onCmpGoto(c) {
     </div>
 
     <div class="lib-tools">
-      <input type="text" v-model="q" :placeholder="t('搜标题 / 文件名…')" class="lib-search" />
+      <input type="text" v-model="q" :placeholder="t('搜索…')" class="lib-search" />
       <select v-model="sort" class="lib-sort">
         <option value="added">{{ t('最近导入') }}</option>
         <option value="read">{{ t('最近阅读') }}</option>
@@ -369,7 +369,7 @@ function onCmpGoto(c) {
       <div v-for="p in shown" :key="p.id" class="paper-item" :class="{ on: p.id === store.currentId, sel: selSet.has(p.id) }"
            :draggable="!selMode" @dragstart="dragPid = p.id" @dragend="dragPid = null"
            @click="selMode ? toggleSel(p.id) : touch(p)">
-        <i class="p-check" v-if="selMode" :class="{ on: selSet.has(p.id) }" :title="t('勾选这篇')">
+        <i class="p-check" v-if="selMode" :class="{ on: selSet.has(p.id) }">
           <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </i>
         <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
@@ -379,7 +379,7 @@ function onCmpGoto(c) {
         <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
         <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
-        <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败，可重试') }}</div>
+        <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败') }}</div>
 
       </div>
       </TransitionGroup>
@@ -399,9 +399,9 @@ function onCmpGoto(c) {
       </Teleport>
       <div v-if="!shown.length" class="p-empty">
         <template v-if="!store.papers.length">{{ t('文库是空的') }}</template>
-        <template v-else-if="q.trim()">{{ t('没有匹配「{q}」的文献。', { q: q.trim() }) }}</template>
+        <template v-else-if="q.trim()">{{ t('没有匹配「{q}」的文献', { q: q.trim() }) }}</template>
         <template v-else-if="typeof SEL === 'number'">{{ t('这个分类还没有文献') }}</template>
-        <template v-else-if="SEL === 'none'">{{ t('每一篇都归类了。') }}</template>
+        <template v-else-if="SEL === 'none'">{{ t('每一篇都归类了') }}</template>
         <template v-else>{{ t('没有符合条件的结果') }}</template>
       </div>
     </div>
@@ -420,7 +420,7 @@ function onCmpGoto(c) {
         <div class="cm-head">{{ t('归入分类 · {n} 篇', { n: selN }) }}</div>
         <button v-for="c in colls" :key="c.id" class="cm-row cm-act" @click="selAddColl(c.id)">
           <span class="cm-name">{{ c.name }}</span>
-          <svg v-if="selCollState(c.id) === 'all'" viewBox="0 0 12 12" width="11" height="11" :title="t('这批已全部在这个分类')"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg v-if="selCollState(c.id) === 'all'" viewBox="0 0 12 12" width="11" height="11"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <button class="cm-row cm-act cm-uncat" @click="selToUncategorized">{{ t('未分类') }}</button>
         <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类') }}</div>
@@ -428,7 +428,6 @@ function onCmpGoto(c) {
     </div>
     </Transition>
     <div class="drop-hint" :class="{ over, hot: zotArmed }" v-show="!selMode"
-         :title="t('拖入 PDF 或点击导入 · 长按 Zotero 导入')"
          @mousedown="hintDown" @mouseup="hintUp" @mouseleave="hintUp" @click="hintClick"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
       {{ t('拖入 PDF 或点击导入') }}

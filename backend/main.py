@@ -1444,8 +1444,7 @@ def _run_marginalia(pid: str):
         db.set_marginalia(pid, notes)
         if misses:
             db.update_paper(pid, marginalia_error=(
-                f"{misses} 段块没能生成批注（模型限流或超时，已重试过一遍）。"
-                f"这些段落现在是空的——想补齐可以再点一次「重新生成」。"))
+                f"{misses} 块没生成批注（限流或超时）。空着的段落再点一次「重写」可补。"))
             _applog(f"眉批 {pid}: {misses} 块重试后仍失败")
         db.answers_clear(pid)
         db.update_paper(pid, advisor=None)
@@ -1739,7 +1738,7 @@ def _mock_six(key: str) -> dict:
                                   "class of downstream applications and still lacks a good solution [¶2] — hence "
                                   "this work uses a designable, regular structure for stable, high-quality output."), "cites": [2, 3]}
     if key == "lens":
-        return {"v": 2, "items": [
+        return {"v": 3, "items": [
             {"lead": _demo_txt("做实验的", "Experimentalist"),
              "text": _demo_txt("〔演示模式〕会盯着原位数据太少这件事——漂亮的机理说法要配原位证据才站得住。",
                                "[demo mode] Would zero in on how thin the in-situ data is — a pretty "
@@ -1759,7 +1758,7 @@ def _mock_six(key: str) -> dict:
              "ask": _demo_txt("成本核算包含外部性吗？", "Does the cost accounting include externalities?"),
              "cites": []},
         ]}
-    return {"items": [
+    return {"v": 3, "items": [
         {"lead": _demo_txt("论文已说明", "Admitted"),
          "text": _demo_txt("〔演示模式〕换一组对照/基线把这条结论单离出来 [¶12]。",
                            "[demo mode] Isolate this conclusion with a different set of controls or baselines [¶12]."),

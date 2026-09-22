@@ -516,7 +516,7 @@ watch(() => store.currentId, () => {
 <template>
   <aside class="rail-right">
         <div class="rail-grip" :class="{ on: railDragging }" role="separator" aria-orientation="vertical"
-         tabindex="0" :title="t('拖动改宽度 · 双击复位 · ←→')"
+         tabindex="0"
          @mousedown="rail.start" @dblclick="rail.reset"
          @keydown.left.prevent="rail.nudge(28)" @keydown.right.prevent="rail.nudge(-28)"></div>
     <div class="rtabs">
@@ -669,7 +669,7 @@ watch(() => store.currentId, () => {
               </button>
             </div>
             <div class="band-alloff" v-if="mnotes.length && !bandAny">
-              {{ t('AI 眉批三档都收起（你自己钉的还在）：纸面上没有批注 ·') }}
+              {{ t('AI 眉批都已收起 ·') }}
               <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true }">{{ t('全开') }}</button>
             </div>
             <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
@@ -690,7 +690,7 @@ watch(() => store.currentId, () => {
         </div>
         <div class="card-eye" v-else>
           <div class="ce-one">{{ prettyChem(store.summary.one_line) }}</div>
-          <div class="ce-row go" @click="gotoSix('q2')" :title="t('去问题页 · 发现')">
+          <div class="ce-row go" @click="gotoSix('q2')">
             <span class="ce-k">{{ t('发现') }}</span><span class="ce-v">{{ prettyChem(store.summary.findings) }}</span>
             <span class="ce-go">↗</span>
           </div>
