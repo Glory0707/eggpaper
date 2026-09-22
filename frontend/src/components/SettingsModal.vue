@@ -19,6 +19,7 @@ const f = reactive({
   base_url: (S.provider || {}).base_url || '',
   model: (S.provider || {}).model || '',
   api_key: (S.provider || {}).key_masked || '',
+  show_key: false,
   vision: !!(S.provider || {}).vision_model,   // 勾上 = 就用上面这个模型做视觉问答
   mock: !!S.mock,
   service: (S.pdf2zh || {}).service || 'bing',
@@ -205,8 +206,12 @@ function save() {
         <input type="text" v-model="f.base_url" placeholder="https://api.deepseek.com" />
       </div>
       <div class="f-row">
-        <label class="mono-label">API KEY</label>
-        <input type="text" v-model="f.api_key" placeholder="sk-…" />
+        <label class="mono-label">API KEY
+          <button class="lnk" style="margin-left:6px" @click="f.show_key = !f.show_key">
+            {{ f.show_key ? t('隐藏') : t('显示') }}</button>
+        </label>
+        <input :type="f.show_key ? 'text' : 'password'" v-model="f.api_key" placeholder="sk-…"
+               autocomplete="off" />
       </div>
       <div class="f-row">
         <label class="mono-label">{{ t('模型') }}</label>
