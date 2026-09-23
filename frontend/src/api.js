@@ -32,6 +32,7 @@ export const api = {
   paper: (pid) => req('GET', `/api/papers/${pid}`),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
   supersede: (newPid, oldPid) => req('POST', `/api/papers/${newPid}/supersede`, { old_pid: oldPid }),
+  citeTable: (ids) => req('POST', '/api/cite-table', { ids }),
   touchPaper: (pid) => req('POST', `/api/papers/${pid}/touch`),
   openRequest: () => req('GET', '/api/open-request'),
   paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),

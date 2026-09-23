@@ -2109,6 +2109,27 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
     db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
     return {"meta": meta, "groups": citation.groups(meta)}
 
+@app.post("/api/cite-table")
+def cite_table(body: dict):
+    """批量引用表格（文库多选导出）：每篇一行，引用格式全部本地排版。
+
+    **不触发任何模型调用**——没识别过刊头的那几篇如实标 recognized=false，
+    让前端提示用户补识别，而不是悄悄为几十篇各花一次调用。
+    """
+    ids = (body or {}).get("ids") or []
+    out = []
+    for pid in ids[:200]:
+        p = db.get_paper(pid)
+        if not p:
+            continue
+        meta = _json_of(p["citation"]) if p["citation"] else None
+        row = {"id": pid, "title": p["title"] or p["filename"], "authors": p["authors"] or "",
+               "year": p["year"] or "", "recognized": bool(meta)}
+        if meta:
+            row["cite"] = {r["k"]: r["text"] for g in citation.groups(meta) for r in g["rows"]}
+        out.append(row)
+    return out
+
 @app.get("/api/papers/{pid}/export.md")
 def export_md(pid: str):
     """导出笔记 .md。栏目标题跟随界面语言（ui_lang），内容本身保持原文

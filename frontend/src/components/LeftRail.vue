@@ -6,6 +6,7 @@ import { t } from '../i18n'
 import { useEdgeResize } from '../edgeResize'
 import ZoteroDialog from './ZoteroDialog.vue'
 import CompareOverlay from './CompareOverlay.vue'
+import CiteExport from './CiteExport.vue'
 
 const emit = defineEmits(['import', 'close', 'splitMany'])
 const fileInput = ref(null)
@@ -278,6 +279,14 @@ function doCompare() {
   cmpIds.value = [...selSet.value]
   cmpOpen.value = true          // 覆盖层关掉后回选择模式，勾选还在，方便接着调
 }
+/* 批量引用表格：弹格式选择（带示例），选好直接出 CSV */
+const citeOpen = ref(false)
+const citeIds = ref([])
+function doCite() {
+  if (!selN.value) return
+  citeIds.value = [...selSet.value]
+  citeOpen.value = true
+}
 async function doDelete() {
   if (!selN.value) return
   const yes = await confirmBox({
@@ -442,6 +451,7 @@ function onCmpGoto(c) {
       <span class="s-actions">
         <button :disabled="!canSplit" :title="canSplit ? '' : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
         <button :disabled="!canCompare" :title="canCompare ? '' : t('对比要选 2~5 篇')" @click="doCompare">{{ t('数据对比') }}</button>
+        <button :disabled="!selN" :title="''" @click="doCite">{{ t('引用') }}</button>
         <button :disabled="!selN" :title="''" @click="selMenu = !selMenu">{{ t('分类') }}</button>
         <button :disabled="!selN" class="s-danger" :title="''" @click="doDelete">{{ t('删除') }}</button>
       </span>
@@ -464,5 +474,6 @@ function onCmpGoto(c) {
     <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFile" />
     <ZoteroDialog v-model:open="zotOpen" @imported="onZotImported" />
     <CompareOverlay :open="cmpOpen" :ids="cmpIds" @close="cmpOpen = false" @goto="onCmpGoto" />
+    <CiteExport v-model:open="citeOpen" :ids="citeIds" />
   </div>
 </template>
