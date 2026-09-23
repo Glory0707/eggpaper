@@ -97,6 +97,7 @@ async def _bad_params(request, exc):
 
 PAPERS_DIR = os.path.join(config.DATA_DIR, "papers")
 _import_lock = threading.Lock()     # 查重到建库必须一气呵成：并发导入同一份文件会各得一篇
+_restore_lock = threading.Lock()    # 恢复的解包全程持锁：并发恢复会互相拆对方的暂存目录
 
 _dir_cache = {}                     # pid -> papers/ 下的目录名（可读名迁移后与解析结果）
 _dir_lock = threading.Lock()
@@ -643,43 +644,45 @@ def backup_restore(body: dict):
 
     这里校验两道：是个能读的 zip、里面有 eggpaper.db（防选错文件把文库清了）。
     解包时跳过 zip slip（路径里带 .. 的条目）和排除名单。
+    全程持锁：并发恢复会互相拆掉对方正在写的暂存目录。
     """
-    import zipfile
-    src = str((body or {}).get("path") or "").strip().strip('"')
-    if not src or not os.path.isfile(src):
-        raise HTTPException(404, "找不到这个文件")
-    if not src.lower().endswith(".zip"):
-        raise HTTPException(400, "要选备份的 .zip 文件")
-    try:
-        z = zipfile.ZipFile(src)
-    except zipfile.BadZipFile:
-        raise HTTPException(400, "这个 zip 读不了")
-    with z:
-        names = z.namelist()
-        if "eggpaper.db" not in names:
-            raise HTTPException(400, "这不是 eggpaper 的备份文件（里面没有 eggpaper.db）")
-        staged = config.DATA_DIR + ".restore"
-        # 解包前先估总量：塞满磁盘会把正在运行的库一起拖死
-        need = sum(i.file_size for i in z.infolist())
-        free = shutil.disk_usage(config.DATA_DIR).free
-        if need > free * 0.9:
-            raise HTTPException(400, f"磁盘空间不够，这份备份约需 {need // (1 << 20)} MB")
-        shutil.rmtree(staged, ignore_errors=True)
-        os.makedirs(staged)
-        for info in z.infolist():
-            parts = info.filename.replace("\\", "/").split("/")
-            if not info.filename.endswith("/") and parts[0] not in _BACKUP_SKIP_DIRS \
-                    and ".." not in parts and "/".join(parts) not in _BACKUP_SKIP_FILES:
-                target = os.path.join(staged, *parts)
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with z.open(info) as fsrc, open(target, "wb") as fdst:
-                    shutil.copyfileobj(fsrc, fdst, 1 << 20)
-    try:
-        with open(os.path.join(config.DATA_DIR, "pending_restore.json"), "w", encoding="utf-8") as f:
-            json.dump({"staged": staged}, f)
-    except OSError as e:
-        raise HTTPException(500, f"写恢复标记失败：{_human_msg(e)}")
-    return {"ok": True, "restart": True}
+    with _restore_lock:
+        import zipfile
+        src = str((body or {}).get("path") or "").strip().strip('"')
+        if not src or not os.path.isfile(src):
+            raise HTTPException(404, "找不到这个文件")
+        if not src.lower().endswith(".zip"):
+            raise HTTPException(400, "要选备份的 .zip 文件")
+        try:
+            z = zipfile.ZipFile(src)
+        except zipfile.BadZipFile:
+            raise HTTPException(400, "这个 zip 读不了")
+        with z:
+            names = z.namelist()
+            if "eggpaper.db" not in names:
+                raise HTTPException(400, "这不是 eggpaper 的备份文件（里面没有 eggpaper.db）")
+            staged = config.DATA_DIR + ".restore"
+            # 解包前先估总量：塞满磁盘会把正在运行的库一起拖死
+            need = sum(i.file_size for i in z.infolist())
+            free = shutil.disk_usage(config.DATA_DIR).free
+            if need > free * 0.9:
+                raise HTTPException(400, f"磁盘空间不够，这份备份约需 {need // (1 << 20)} MB")
+            shutil.rmtree(staged, ignore_errors=True)
+            os.makedirs(staged)
+            for info in z.infolist():
+                parts = info.filename.replace("\\", "/").split("/")
+                if not info.filename.endswith("/") and parts[0] not in _BACKUP_SKIP_DIRS \
+                        and ".." not in parts and "/".join(parts) not in _BACKUP_SKIP_FILES:
+                    target = os.path.join(staged, *parts)
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with z.open(info) as fsrc, open(target, "wb") as fdst:
+                        shutil.copyfileobj(fsrc, fdst, 1 << 20)
+        try:
+            with open(os.path.join(config.DATA_DIR, "pending_restore.json"), "w", encoding="utf-8") as f:
+                json.dump({"staged": staged}, f)
+        except OSError as e:
+            raise HTTPException(500, f"写恢复标记失败：{_human_msg(e)}")
+        return {"ok": True, "restart": True}
 
 @app.post("/api/pdf2zh/install")
 def pdf2zh_install(body: dict = None):

@@ -315,11 +315,13 @@ def find_same_title(title: str, exclude_pid: str = ""):
     """归一化标题相同的已有论文（不同文件的"同一篇"：arXiv 换了 v2、换源重下的排版）。
     同一份文件在 find_duplicate 已经拦掉，这里抓的是内容不同的——要不要替换由用户拍板，
     这里只负责找到。标题归一化只留字母数字：大小写、空白、标点全忽略，误报几乎不存在
-    （论文标题的唯一性足够高）。"""
+    （论文标题的唯一性足够高）。库里已有多篇同名时挑**最近导入**的那篇——用户拿来
+    新版本要替换的几乎总是最新的一份。"""
     t = _norm_title(title)
     if len(t) < 8:
         return None
-    for r in q("SELECT id, title FROM papers WHERE id != ?", (exclude_pid or "",)):
+    rows = q("SELECT id, title FROM papers WHERE id != ? ORDER BY created_at DESC", (exclude_pid or "",))
+    for r in rows:
         if _norm_title(r["title"]) == t:
             return r["id"]
     return None

@@ -472,6 +472,8 @@ function doRenderItem(it) {
           await tl.render()
           clearTextIndex(tlEl)
           docLinks.value[it.gi] = findDocLinks(el)     // 链接层跟着文本层走，一次微秒级的正则扫描
+        } else if (docLinks.value[it.gi]?.length) {
+          docLinks.value[it.gi] = []                   // 无文本层的变体（扫描件态）：别留上一版的链接
         }
         doneKeys.add(key)
       } catch (err) {
