@@ -151,7 +151,7 @@ button.ghost { background: transparent; border-color: transparent; color: var(--
 button.ghost:hover { background: rgba(var(--ink-rgb), 0.06); border-color: transparent; }
 button:disabled { opacity: 0.45; cursor: default; }
 
-input[type='text'], textarea, select {
+input[type='text'], input[type='password'], textarea, select {
   font-family: var(--sans);
   font-size: var(--fs-md);
   color: var(--ink);
@@ -162,7 +162,7 @@ input[type='text'], textarea, select {
   outline: none;
   transition: border-color var(--t-fast) var(--ease-smooth), box-shadow var(--t-fast) var(--ease-smooth);
 }
-input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input[type='text']:focus, input[type='password']:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 .chip {
   display: inline-flex; align-items: center; gap: 5px;
@@ -1617,7 +1617,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .six-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 210ms var(--ease-out); }
 .six-fold.open { grid-template-rows: 1fr; }
-.six-fold > .six-fold-in { overflow: hidden; min-height: 0; }
+.six-fold > .six-fold-in { overflow: clip; min-height: 0; }   /* clip：容器永远不可滚动，拖选到边界也不会把答案卷走 */
 .six-txt { font-size: var(--fs-read); line-height: 1.74; color: var(--ink); }
 .six-note { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
 .six-foot { margin-top: 8px; }
