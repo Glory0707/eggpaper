@@ -256,9 +256,9 @@ def search_content(kw: str, limit: int = 30):
     pat = "%" + kw.translate(_LIKE_ESC) + "%"
     out = {}   # pid -> {"where", "n", "snippet"}，插入序即来源优先级
 
-    def add(rows, where):
+    def add(rows, where, is_json=False):
         for r in rows:
-            raw = r["text"]
+            raw = _json_text(r["text"]) if is_json else r["text"]
             d = out.get(r["paper_id"])
             if d:
                 d["n"] += 1
@@ -267,10 +267,8 @@ def search_content(kw: str, limit: int = 30):
             elif raw:
                 out[r["paper_id"]] = {"where": where, "n": 1, "snippet": _snippet(raw, kw)}
 
-    for r in q("SELECT id AS paper_id, summary FROM papers WHERE summary LIKE ?", (pat,)):
-        add([{"paper_id": r["paper_id"], "text": _json_text(r["summary"])}], "glance")
-    for r in q("SELECT paper_id, json FROM answers WHERE json LIKE ?", (pat,)):
-        add([{"paper_id": r["paper_id"], "text": _json_text(r["json"])}], "seven")
+    add(q("SELECT id AS paper_id, summary AS text FROM papers WHERE summary LIKE ?", (pat,)), "glance", True)
+    add(q("SELECT paper_id, json AS text FROM answers WHERE json LIKE ?", (pat,)), "seven", True)
     add(q("SELECT paper_id, text FROM claims WHERE text LIKE ?", (pat,)), "claims")
     add(q("SELECT paper_id, content AS text FROM qa_messages WHERE content LIKE ?", (pat,)), "qa")
     add(q("SELECT paper_id, text FROM paragraphs WHERE text LIKE ? LIMIT 400", (pat,)), "body")

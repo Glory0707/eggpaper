@@ -588,7 +588,6 @@ def _backup_zip_stream():
     """整个数据目录打成一个 zip（STORED：PDF 本来就是压缩格式，再压一遍白烧 CPU）。
     db 不能直接读文件——写入进行中 WAL 里还有没合页的账，用 SQLite 的 backup API
     出一份完整快照。"""
-    import io
     import sqlite3
     import zipfile
     tmp = tempfile.TemporaryFile()
@@ -660,6 +659,12 @@ def backup_restore(body: dict):
         if "eggpaper.db" not in names:
             raise HTTPException(400, "这不是 eggpaper 的备份文件（里面没有 eggpaper.db）")
         staged = config.DATA_DIR + ".restore"
+        # 解包前先估总量：塞满磁盘会把正在运行的库一起拖死
+        need = sum(i.file_size for i in z.infolist())
+        free = shutil.disk_usage(config.DATA_DIR).free
+        if need > free * 0.9:
+            raise HTTPException(400, "磁盘剩余空间不够放下这份备份（约需 "
+                                    f"{need // (1 << 20)} MB），先清理一下")
         shutil.rmtree(staged, ignore_errors=True)
         os.makedirs(staged)
         for info in z.infolist():
@@ -857,7 +862,7 @@ def papers():
 @app.get("/api/search")
 def search_everywhere(q: str = ""):
     """全库内容检索（粗粒度）：一眼卡/七问/主张/问答/正文，命中按篇聚合。"""
-    return db.search_content(q)
+    return db.search_content((q or "")[:200])
 
 def _pdf_hash_file(path: str) -> str:
     """流式算一份 PDF 的 sha256（几百 MB 也就一两秒，内存只占一块 1MB 的缓冲）。"""
@@ -1038,6 +1043,9 @@ def supersede_paper(pid: str, body: dict):
     _paper_or_404(pid)
     if old["id"] == pid:
         raise HTTPException(400, "新旧是同一篇")
+    for row in (db.get_paper(pid), db.get_paper(old["id"])):
+        if row and row["translate_status"] == "running":
+            raise HTTPException(400, "这篇正在全文翻译，结束后再替换")
     stats = db.supersede(pid, old["id"])
     with _dir_lock:
         d = _dir_cache.pop(old["id"], None)
