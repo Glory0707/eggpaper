@@ -22,6 +22,7 @@ async function req(method, url, body) {
 
 export const api = {
   papers: () => req('GET', '/api/papers'),
+  search: (q) => req('GET', '/api/search?q=' + encodeURIComponent(q)),
   libOverview: () => req('GET', '/api/library/overview'),
   upload: (file) => { const fd = new FormData(); fd.append('file', file); return req('POST', '/api/papers', fd) },
   importPath: (path) => req('POST', '/api/papers/import-path', { path }),

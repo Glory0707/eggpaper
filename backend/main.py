@@ -700,6 +700,11 @@ def quit_app(body: dict = None):
 def papers():
     return db.list_papers()
 
+@app.get("/api/search")
+def search_everywhere(q: str = ""):
+    """全库内容检索（粗粒度）：一眼卡/七问/主张/问答/正文，命中按篇聚合。"""
+    return db.search_content(q)
+
 def _pdf_hash_file(path: str) -> str:
     """流式算一份 PDF 的 sha256（几百 MB 也就一两秒，内存只占一块 1MB 的缓冲）。"""
     import hashlib

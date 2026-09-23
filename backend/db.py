@@ -210,6 +210,86 @@ def papers_missing_hash():
     return [(r["id"], r["path"]) for r in
             q("SELECT id, path FROM papers WHERE pdf_hash IS NULL OR pdf_hash=''")]
 
+# ---------- 全库内容检索（粗粒度） ----------
+
+_LIKE_ESC = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
+
+def _snippet(text: str, kw: str, before: int = 20, after: int = 44) -> str:
+    text = " ".join(str(text or "").split())
+    i = text.lower().find(kw.lower())
+    if i < 0:
+        return text[:before + after]
+    s, e = max(0, i - before), min(len(text), i + len(kw) + after)
+    return ("…" if s else "") + text[s:e] + ("…" if e < len(text) else "")
+
+def _json_text(raw: str) -> str:
+    """一眼卡/七问答案存的是 JSON：把里面的字符串值抽出来拼平，片段才不带 JSON 壳。"""
+    try:
+        v = json.loads(raw)
+    except Exception:
+        return raw or ""
+    parts = []
+    def walk(x):
+        if isinstance(x, str):
+            parts.append(x)
+        elif isinstance(x, list):
+            for i in x:
+                walk(i)
+        elif isinstance(x, dict):
+            for k, val in x.items():
+                if k not in ("anchors", "para"):
+                    walk(val)
+    walk(v)
+    return " ".join(parts)
+
+def search_content(kw: str, limit: int = 30):
+    """全库内容检索：**按篇聚合**（粗粒度——告诉你是哪篇、哪里命中，不逐条展开）。
+
+    搜的是"读过的痕迹"：一眼卡 / 七问答案 / 核心主张 / 问答 / 正文段落；
+    页边批注与查译不搜——那是页边自己的入口，混进全库搜索只会添噪音。
+    LIKE 全扫不建索引：几百篇的库也就几万行短文本，百毫秒级，FTS 的索引与分词
+    维护在这个量级不值得。来源按"越像这篇的身份越靠前"排序，同篇只记第一条片段。
+    """
+    kw = (kw or "").strip()
+    if not kw:
+        return []
+    pat = "%" + kw.translate(_LIKE_ESC) + "%"
+    out = {}   # pid -> {"where", "n", "snippet"}，插入序即来源优先级
+
+    def add(rows, where):
+        for r in rows:
+            raw = r["text"]
+            d = out.get(r["paper_id"])
+            if d:
+                d["n"] += 1
+                if not d["snippet"] and raw:
+                    d["snippet"] = _snippet(raw, kw)
+            elif raw:
+                out[r["paper_id"]] = {"where": where, "n": 1, "snippet": _snippet(raw, kw)}
+
+    for r in q("SELECT id AS paper_id, summary FROM papers WHERE summary LIKE ?", (pat,)):
+        add([{"paper_id": r["paper_id"], "text": _json_text(r["summary"])}], "glance")
+    for r in q("SELECT paper_id, json FROM answers WHERE json LIKE ?", (pat,)):
+        add([{"paper_id": r["paper_id"], "text": _json_text(r["json"])}], "seven")
+    add(q("SELECT paper_id, text FROM claims WHERE text LIKE ?", (pat,)), "claims")
+    add(q("SELECT paper_id, content AS text FROM qa_messages WHERE content LIKE ?", (pat,)), "qa")
+    add(q("SELECT paper_id, text FROM paragraphs WHERE text LIKE ? LIMIT 400", (pat,)), "body")
+    if not out:
+        return []
+    ids = list(out)[:limit]
+    qmarks = ",".join("?" * len(ids))
+    meta = {r["id"]: r for r in q(
+        f"SELECT id, title, filename, authors, year FROM papers WHERE id IN ({qmarks})", tuple(ids))}
+    res = []
+    for pid in ids:
+        m = meta.get(pid)      # 搜索和删除赛跑，篇已删就不出
+        if not m:
+            continue
+        d = out[pid]
+        res.append({"id": pid, "title": m["title"] or m["filename"], "authors": m["authors"],
+                    "year": m["year"], "where": d["where"], "n": d["n"], "snippet": d["snippet"]})
+    return res
+
 def purge_paper(pid: str):
     """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
     漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列；

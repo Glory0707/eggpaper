@@ -40,17 +40,43 @@ const shown = computed(() => {
     if (typeof SEL.value === 'number') return collOf(p.id).includes(SEL.value)
     return true
   })
+  let extra = []
   if (kw) {
     list = list.filter(p => (p.title || p.filename || '').toLowerCase().includes(kw))
+    const inCat = id => SEL.value === 'all' || (SEL.value === 'none' ? !collOf(id).length : collOf(id).includes(SEL.value))
+    const titleIds = new Set(list.map(p => p.id))
+    extra = contentHits.value.filter(h => !titleIds.has(h.id) && inCat(h.id))
   }
   const s = store.lib.sort
   const title = p => (p.title || p.filename || '').toLowerCase()
-  return [...list].sort((a, b) =>
+  const sorted = [...list].sort((a, b) =>
     s === 'title' ? title(a).localeCompare(title(b))
     : s === 'year' ? (parseInt(b.year) || 0) - (parseInt(a.year) || 0)
     : s === 'read' ? String(b.last_read_at || b.created_at || '').localeCompare(String(a.last_read_at || a.created_at || ''))
     : String(b.created_at || '').localeCompare(String(a.created_at || '')))
+  return [...sorted, ...extra]
 })
+const hitOf = pid => contentHits.value.find(h => h.id === pid)
+const WHERE_KEYS = { glance: '一眼卡', seven: '七问', claims: '核心主张', qa: '问答', body: '正文' }
+
+/* 全库内容检索：标题过滤是即时的（打一个字列表就收），内容命中防抖问后端——
+   两路结果一个列表：标题命中的照旧排前，只在内容里命中的追加在后、带一行出处。 */
+const contentHits = ref([])
+let searchT = null
+let searchSeq = 0
+watch(q, v => {
+  clearTimeout(searchT)
+  const my = ++searchSeq
+  const kw = v.trim()
+  if (!kw) { contentHits.value = []; return }
+  searchT = setTimeout(async () => {
+    try {
+      const r = await api.search(kw)
+      if (my === searchSeq) contentHits.value = r
+    } catch { if (my === searchSeq) contentHits.value = [] }
+  }, 350)
+})
+onBeforeUnmount(() => clearTimeout(searchT))
 const nUnfiled = computed(() => store.papers.filter(p => !collOf(p.id).length).length)
 
 function pickColl(v) { store.lib.coll = v }
@@ -329,7 +355,7 @@ function onCmpGoto(c) {
     </div>
 
     <div class="lib-tools">
-      <input type="text" v-model="q" :placeholder="t('搜索…')" class="lib-search" />
+      <input type="text" v-model="q" :placeholder="t('搜索标题或全文…')" class="lib-search" />
       <select v-model="sort" class="lib-sort">
         <option value="added">{{ t('最近导入') }}</option>
         <option value="read">{{ t('最近阅读') }}</option>
@@ -377,6 +403,9 @@ function onCmpGoto(c) {
                 @click.stop="openMenu(p, $event)">+</button>
         <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
         <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
+        <div class="p-hit" v-if="hitOf(p.id)" :title="`${t(WHERE_KEYS[hitOf(p.id).where])} · ${hitOf(p.id).n} 处\n${hitOf(p.id).snippet}`">
+          <b>{{ t(WHERE_KEYS[hitOf(p.id).where]) }}</b>{{ hitOf(p.id).snippet }}
+        </div>
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
         <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
         <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败') }}</div>
