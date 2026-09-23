@@ -308,6 +308,74 @@ def purge_paper(pid: str):
             c.rollback()
             raise
 
+# ---------- 同论文识别与版本升级 ----------
+
+def _norm_title(s: str) -> str:
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+def find_same_title(title: str, exclude_pid: str = ""):
+    """归一化标题相同的已有论文（不同文件的"同一篇"：arXiv 换了 v2、换源重下的排版）。
+    同一份文件在 find_duplicate 已经拦掉，这里抓的是内容不同的——要不要替换由用户拍板，
+    这里只负责找到。标题归一化只留字母数字：大小写、空白、标点全忽略，误报几乎不存在
+    （论文标题的唯一性足够高）。"""
+    t = _norm_title(title)
+    if len(t) < 8:
+        return None
+    for r in q("SELECT id, title FROM papers WHERE id != ?", (exclude_pid or "",)):
+        if _norm_title(r["title"]) == t:
+            return r["id"]
+    return None
+
+def supersede(new_pid: str, old_pid: str) -> dict:
+    """版本升级：新导入的那份（new）顶掉旧篇（old）。
+
+    跟着论文走的软资产整表改主：问答会话、术语、分类、阅读日志；Zotero 回填过的
+    作者/年份比新解析的准，老的非空就带过来。挂在段落号上的东西不迁——新版的段落
+    结构已经变了，旧锚点留着只会指错地方（析读与眉批本来就会对新文重跑）；唯独
+    用户钉的页边卡按引句文本尽力跟迁（去空白比对），新版里找不回原句的只能丢下，
+    丢了几条如实在统计里报。七问/一眼卡等缓存清掉：那是按旧文生成的。一个事务，
+    中途崩了整体回滚。
+    """
+    stats = {"pins": 0, "pins_lost": 0}
+    with _lock:
+        c = _get()
+        try:
+            c.execute("BEGIN")
+            for t in ("conversations", "qa_messages", "glossary", "reading_log",
+                      "paper_collections"):
+                c.execute(f"UPDATE {t} SET paper_id=? WHERE paper_id=?", (new_pid, old_pid))
+            old = c.execute("SELECT authors, year FROM papers WHERE id=?", (old_pid,)).fetchone()
+            if old and (old["authors"] or old["year"]):
+                c.execute("UPDATE papers SET authors=COALESCE(?,authors), year=COALESCE(?,year) "
+                          "WHERE id=?", (old["authors"], old["year"], new_pid))
+            c.execute("DELETE FROM answers WHERE paper_id IN (?,?)", (new_pid, old_pid))
+            # 用户钉卡跟迁：引句去空白后在新段落里找（跨版本文本层的空格常有出入）
+            new_paras = [(_squash(r["text"]), r["idx"]) for r in
+                         c.execute("SELECT idx, text FROM paragraphs WHERE paper_id=?", (new_pid,))]
+            for m in c.execute("SELECT id, quote FROM marginalia WHERE paper_id=? "
+                               "AND kind IN ('lookup','region','note')", (old_pid,)).fetchall():
+                q_ = _squash(m["quote"])[:60]
+                hit = next((idx for sq, idx in new_paras if q_ and q_ in sq), None)
+                if hit is not None:
+                    c.execute("UPDATE marginalia SET paper_id=?, para_idx=?, rect=NULL WHERE id=?",
+                              (new_pid, hit, m["id"]))
+                    stats["pins"] += 1
+                else:
+                    stats["pins_lost"] += 1
+            for t in ("paragraphs", "annotations", "claims", "marginalia", "glossary",
+                      "qa_messages", "conversations", "paper_collections", "answers",
+                      "reading_log"):
+                c.execute(f"DELETE FROM {t} WHERE paper_id=?", (old_pid,))
+            c.execute("DELETE FROM papers WHERE id=?", (old_pid,))
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
+    return stats
+
+def _squash(s: str) -> str:
+    return "".join((s or "").split())
+
 # ---------- 现场生成问题的答案缓存 ----------
 
 def _plain_cites(v):

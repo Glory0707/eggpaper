@@ -10,7 +10,7 @@ import SettingsModal from './components/SettingsModal.vue'
 import Dialog from './components/Dialog.vue'
 import CiteCard from './components/CiteCard.vue'
 import UpdateCard from './components/UpdateCard.vue'
-import { dlg, dlgCancel } from './dialog'
+import { dlg, dlgCancel, choiceBox } from './dialog'
 import { engInst, watchEngine, hideEngineCard, closeEngineCard, cancelEngineInstall,
          startEngineInstall, onEngineReady, fmtMB } from './engine'
 import EggMark from './components/EggMark.vue'
@@ -698,6 +698,7 @@ async function onImport(list) {
       if (typeof c === 'number') {
         try { await api.paperColls(r.paper.id, [c]); await refreshCollections() } catch { /* 归类失败不影响导入 */ }
       }
+      if (r.same_title) await askSupersede(r)
       if (i === 0) {                    // 只打开第一篇：剩下的别把界面抢过去
         await openPaper(r.paper.id)
         store.viewer.libOpen = false
@@ -716,6 +717,32 @@ async function onImport(list) {
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
     toast(t('只认出 {n} 段，析读会比较粗', { n: first.n_paragraphs }))
   }
+}
+
+/* 导入进来的是库里已有论文的另一个版本（arXiv v2、换源重排）：问一次——
+   替换旧篇（问答/术语/分类跟迁到新版）还是两篇都留。不做任何默认动作。 */
+async function askSupersede(r) {
+  const act = await choiceBox({
+    title: t('疑似同一篇论文'),
+    body: t('刚导入的《{a}》和库里的《{b}》像是同一篇的不同版本。', {
+      a: (r.paper.title || '').slice(0, 40), b: (r.same_title.title || '').slice(0, 40),
+    }),
+    actions: [
+      { key: 'keep', label: t('两篇都保留') },
+      { key: 'replace', label: t('替换旧篇') },
+    ],
+  })
+  if (act !== 'replace') return
+  const oldId = r.same_title.id
+  try {
+    const st = await api.supersede(r.paper.id, oldId)
+    store.openIds = store.openIds.filter(x => x !== oldId)
+    await refreshPapers()
+    await refreshCollections()
+    toast(st.pins_lost
+      ? t('已替换；{n} 条页边卡在新版里找不回原句，没有跟迁', { n: st.pins_lost })
+      : t('已替换，问答、术语与分类都跟了过来'))
+  } catch (e) { toast(e.message) }
 }
 
 async function saveSettings(body) {

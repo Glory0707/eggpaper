@@ -825,7 +825,11 @@ async def upload(file: UploadFile = File(...)):
             path = os.path.join(pid_dir, "paper.pdf")     # 库内自存一份：删原件、挪原件都不影响
             with open(path, "wb") as f:
                 f.write(raw)
-            return _ingest(pid, name, path, pdf_hash)
+            out = _ingest(pid, name, path, pdf_hash)
+            same = db.find_same_title((out["paper"] or {}).get("title") or "", exclude_pid=pid)
+            if same:
+                out["same_title"] = db.get_paper(same)
+            return out
 
     return await run_in_threadpool(_import)
 
@@ -865,10 +869,27 @@ def import_path(body: dict):
             _pending_open["pid"] = dup
             return {"paper": db.get_paper(dup), "duplicate": True}
         out = _ingest(pid, name, dest, pdf_hash)
+        same = db.find_same_title((out["paper"] or {}).get("title") or "", exclude_pid=pid)
+        if same:
+            out["same_title"] = db.get_paper(same)
     _pending_open["pid"] = pid
     return out
 
 _pending_open = {"pid": None}
+
+@app.post("/api/papers/{pid}/supersede")
+def supersede_paper(pid: str, body: dict):
+    """版本升级：pid（刚导入的那份）顶掉旧篇 old_pid——软资产跟迁、旧篇删除。"""
+    old = _paper_or_404((body or {}).get("old_pid") or "")
+    _paper_or_404(pid)
+    if old["id"] == pid:
+        raise HTTPException(400, "新旧是同一篇")
+    stats = db.supersede(pid, old["id"])
+    with _dir_lock:
+        d = _dir_cache.pop(old["id"], None)
+    if d:
+        _rm(os.path.join(PAPERS_DIR, d))
+    return stats
 
 @app.get("/api/open-request")
 def open_request():

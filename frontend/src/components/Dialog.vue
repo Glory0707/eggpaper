@@ -1,6 +1,6 @@
 <script setup>
 import { nextTick, ref, watch } from 'vue'
-import { dlg, dlgOk, dlgCancel } from '../dialog'
+import { dlg, dlgOk, dlgCancel, dlgChoice } from '../dialog'
 import { t } from '../i18n'
 import { vDrag } from '../drag'
 import { modalFocus } from '../modalFocus'
@@ -12,7 +12,7 @@ const maskEl = ref(null)
 modalFocus(maskEl, () => dlg.open, () => (dlg.kind === 'input' ? inputEl.value : primaryEl.value))
 function onKey(e) {
   if (e.key === 'Escape') { e.preventDefault(); dlgCancel() }
-  else if (e.key === 'Enter') { e.preventDefault(); dlgOk() }
+  else if (e.key === 'Enter') { e.preventDefault(); if (dlg.kind !== 'choice') dlgOk() }
 }
 watch(() => dlg.open, v => {
   if (v && dlg.kind === 'input') nextTick(() => inputEl.value?.select())   // 输入框默认全选，直接打字就覆盖
@@ -30,9 +30,15 @@ watch(() => dlg.open, v => {
         <div class="dlg-body" v-if="dlg.body">{{ dlg.body }}</div>
         <input v-if="dlg.kind === 'input'" ref="inputEl" class="dlg-input" v-model="dlg.value"
                :placeholder="dlg.placeholder" @keydown="onKey" />
-        <div class="f-actions">
+        <div class="f-actions" v-if="dlg.kind !== 'choice'">
           <button @click="dlgCancel">{{ dlg.cancel }}</button>
           <button class="primary" ref="primaryEl" :class="{ danger: dlg.danger }" @click="dlgOk">{{ dlg.ok }}</button>
+        </div>
+        <div class="f-actions" v-else>
+          <button v-for="(a, i) in dlg.actions" :key="a.key"
+                  :class="{ primary: i === dlg.actions.length - 1 && !a.danger, danger: a.danger }"
+                  :ref="i === dlg.actions.length - 1 ? el => (primaryEl = el) : undefined"
+                  @click="dlgChoice(a.key)">{{ a.label }}</button>
         </div>
       </div>
     </div>

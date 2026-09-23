@@ -31,6 +31,7 @@ export const api = {
   compare: (ids, dims) => req('POST', '/api/compare', { ids, dims }),
   paper: (pid) => req('GET', `/api/papers/${pid}`),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
+  supersede: (newPid, oldPid) => req('POST', `/api/papers/${newPid}/supersede`, { old_pid: oldPid }),
   touchPaper: (pid) => req('POST', `/api/papers/${pid}/touch`),
   openRequest: () => req('GET', '/api/open-request'),
   paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
