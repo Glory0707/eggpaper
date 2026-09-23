@@ -45,7 +45,7 @@ async function moveData() {
   if (target.replace(/[\\/]+$/, '') === f.data_dir.replace(/[\\/]+$/, '')) return
   const yes = await confirmBox({
     title: t('迁移数据目录'), ok: t('迁移'), danger: false,
-    body: t('把文库、批注、配置整体迁到：{p}。重启后生效。', { p: target }),
+    body: t('文库、批注与配置将迁到：{p}。重启后生效。', { p: target }),
   })
   if (!yes) return
   savingData.value = true
@@ -63,7 +63,7 @@ function exportBackup() {
   a.href = api.backupExportUrl()
   a.download = ''
   a.click()
-  toast(t('正在打包文库，稍候浏览器会下载 zip（库大要等一会儿）'))
+  toast(t('正在打包文库，完成后自动下载'))
 }
 async function restoreBackup() {
   let path = ''
@@ -74,12 +74,12 @@ async function restoreBackup() {
   if (!path) return
   const yes = await confirmBox({
     title: t('从备份恢复'), ok: t('恢复'),
-    body: t('当前文库将被这份备份整体替换，重启 eggpaper 后生效。'),
+    body: t('当前文库将被这份备份替换，重启后生效。'),
   })
   if (!yes) return
   try {
     await api.backupRestore(path)
-    toast(t('备份已就位，重启 eggpaper 后生效'))
+    toast(t('备份已就位，重启后生效'))
   } catch (e) { toast(e.message) }
 }
 

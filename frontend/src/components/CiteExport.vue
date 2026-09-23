@@ -72,7 +72,7 @@ async function doExport() {
     a.download = `eggpaper-引用-${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
     URL.revokeObjectURL(a.href)
-    if (missing) toast(t('{n} 篇还没识别过引用信息，这几行的引用列是空的', { n: missing }))
+    if (missing) toast(t('{n} 篇未识别过引用，引用列为空', { n: missing }))
     emit('update:open', false)
   } catch (e) {
     toast(e.message)

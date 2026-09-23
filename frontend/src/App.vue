@@ -388,7 +388,7 @@ async function poll() {
       const v = await api.version()
       if (v.version && v.version !== bootVersion) {
         verHintShown = true
-        toast(t('eggpaper 已更新到 {v}，正在刷新界面…', { v: v.version }), 6000)
+        toast(t('已更新到 {v}，刷新中…', { v: v.version }), 6000)
         setTimeout(() => window.location.reload(), 1200)
       }
     } catch { /* 下个 15 秒再问 */ }
@@ -724,7 +724,7 @@ async function onImport(list) {
 async function askSupersede(r) {
   const act = await choiceBox({
     title: t('疑似同一篇论文'),
-    body: t('刚导入的《{a}》和库里的《{b}》像是同一篇的不同版本。', {
+    body: t('《{a}》和库里的《{b}》像是同一篇的不同版本。', {
       a: (r.paper.title || '').slice(0, 40), b: (r.same_title.title || '').slice(0, 40),
     }),
     actions: [
@@ -740,8 +740,8 @@ async function askSupersede(r) {
     await refreshPapers()
     await refreshCollections()
     toast(st.pins_lost
-      ? t('已替换；{n} 条页边卡在新版里找不回原句，没有跟迁', { n: st.pins_lost })
-      : t('已替换，问答、术语与分类都跟了过来'))
+      ? t('已替换；{n} 条页边卡在新版找不到了', { n: st.pins_lost })
+      : t('已替换，问答、术语与分类已迁到新版'))
   } catch (e) { toast(e.message) }
 }
 

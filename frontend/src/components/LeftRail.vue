@@ -451,9 +451,9 @@ function onCmpGoto(c) {
       <span class="s-actions">
         <button :disabled="!canSplit" :title="canSplit ? '' : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
         <button :disabled="!canCompare" :title="canCompare ? '' : t('对比要选 2~5 篇')" @click="doCompare">{{ t('数据对比') }}</button>
-        <button :disabled="!selN" :title="''" @click="doCite">{{ t('引用') }}</button>
-        <button :disabled="!selN" :title="''" @click="selMenu = !selMenu">{{ t('分类') }}</button>
-        <button :disabled="!selN" class="s-danger" :title="''" @click="doDelete">{{ t('删除') }}</button>
+        <button :disabled="!selN">{{ t('引用') }}</button>
+        <button :disabled="!selN">{{ t('分类') }}</button>
+        <button :disabled="!selN" class="s-danger" @click="doDelete">{{ t('删除') }}</button>
       </span>
       <div class="coll-menu sel-coll" v-if="selMenu" @click.stop>
         <div class="cm-head">{{ t('归入分类 · {n} 篇', { n: selN }) }}</div>

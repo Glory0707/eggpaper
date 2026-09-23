@@ -216,7 +216,8 @@ async function load({ keepPlace = false } = {}) {
     if (store.viewer.variant !== 'original') {
       const was = store.viewer.variant
       store.viewer.variant = 'original'      // 赋值会触发 watch → 重新 load
-      toast(t((was === 'mono' ? '译文版' : '双语版') + '打不开，已切回原文'), 5000)
+      if (was === 'mono') toast(t('译文版打不开，已切回原文'), 5000)
+      else toast(t('双语版打不开，已切回原文'), 5000)
       loading = false
       return
     }

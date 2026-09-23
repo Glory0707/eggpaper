@@ -663,8 +663,7 @@ def backup_restore(body: dict):
         need = sum(i.file_size for i in z.infolist())
         free = shutil.disk_usage(config.DATA_DIR).free
         if need > free * 0.9:
-            raise HTTPException(400, "磁盘剩余空间不够放下这份备份（约需 "
-                                    f"{need // (1 << 20)} MB），先清理一下")
+            raise HTTPException(400, f"磁盘空间不够，这份备份约需 {need // (1 << 20)} MB")
         shutil.rmtree(staged, ignore_errors=True)
         os.makedirs(staged)
         for info in z.infolist():
