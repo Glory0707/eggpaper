@@ -114,10 +114,17 @@ def extract_authors(path: str) -> str:
                        key=lambda l: l["y0"])
         for ln in below[:3]:
             t = ln["text"]
-            if len(t) > 200 or AFFIL.search(t) or EMAIL.search(t) or DATEISH.search(t):
+            if len(t) > 200:
                 continue
+            if AFFIL.search(t) or EMAIL.search(t):
+                continue          # 机构行/邮箱行本身不是作者，但后面可能还有
+            # 年份/DOI/received 是刊头页脚的信号——作者区到这儿就结束了。
+            # 只跳过不终止的话，下一行就是正文首行，标题的词会被当成作者（实测
+            # 整库的作者全变成标题开头两个词）。宁可漏认，不可错认。
+            if DATEISH.search(t):
+                break
             if t.replace(" ", "").lower().startswith(("abstract", "keywords", "摘要", "关键词")):
-                continue
+                break             # 摘要开头 = 作者区结束，同理
             # 全角逗号/顿号也是作者分隔（中文论文的作者行没有半角逗号）
             first = re.split(r",|，|、|\band\b", t)[0]
             first = SUP.sub("", EMAIL.sub("", first)).strip(" .·&")
