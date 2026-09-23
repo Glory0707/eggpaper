@@ -33,7 +33,6 @@ docs/作者手记.md
 _cmsg.txt
 
 # 打包产物（安装包与冻结目录不入库；release/ 里的 latest.json 是发布产物）
-build/
 release/
 .build-venv/
 installer/eggpaper.ico
