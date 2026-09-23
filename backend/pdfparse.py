@@ -9,10 +9,25 @@ PURE_NUM = re.compile(r"^\d{1,4}$")
 CAPTION = re.compile(r"^(fig|figure|table|scheme|图|表)\.?\s*[0-9IVXS]+\.?", re.I)
 SECTION_HEAD = re.compile(r"^(I|II|III|IV|V|VI|VII|VIII|IX|X)+\.?\s+[A-Z]")
 
-HEAD_REFS = ("references", "bibliography")
+HEAD_REFS = ("references", "bibliography", "参考文献")
 HEAD_STOP = ("supplementalmaterial", "supplementarymaterial", "supportinginformation", "appendixsupp")
-HEAD_NONBODY = ("acknowledg", "funding", "authorcontrib", "conflictofinterest", "dataavailab", "citedata")
-AFFIL = re.compile(r"(University|Laboratory|Institute|Department|College|Academy|School of)")
+HEAD_NONBODY = ("acknowledg", "funding", "authorcontrib", "conflictofinterest", "dataavailab", "citedata",
+                "致谢", "作者贡献", "利益冲突")
+AFFIL = re.compile(r"(University|Laboratory|Institute|Department|College|Academy|School of"
+                   r"|大学|学院|研究院|研究所|实验室|研究中心)")
+
+HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
+
+def _enough(text: str, words: int = 14) -> bool:
+    """"这段够长，是正文"的门槛。中文没有空格，split() 永远数不出词——按字符数。"""
+    if HAS_CJK.search(text):
+        return len(text) >= 40
+    return len(text.split()) >= words
+
+def _enough_caption(text: str) -> bool:
+    if HAS_CJK.search(text):
+        return len(text) >= 10
+    return len(text.split()) >= 6
 
 def _clean(text: str) -> str:
     text = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)
@@ -101,9 +116,10 @@ def extract_authors(path: str) -> str:
             t = ln["text"]
             if len(t) > 200 or AFFIL.search(t) or EMAIL.search(t) or DATEISH.search(t):
                 continue
-            if t.lower().startswith(("abstract", "keywords", "摘要", "关键词")):
+            if t.replace(" ", "").lower().startswith(("abstract", "keywords", "摘要", "关键词")):
                 continue
-            first = t.split(",")[0].split(" and ")[0]
+            # 全角逗号/顿号也是作者分隔（中文论文的作者行没有半角逗号）
+            first = re.split(r",|，|、|\band\b", t)[0]
             first = SUP.sub("", EMAIL.sub("", first)).strip(" .·&")
             words = first.split()
             if 1 <= len(words) <= 5 and 2 <= len(first) <= 40 and re.search(r"[A-Za-zÀ-ÿ\u4e00-\u9fff]", first):
@@ -197,7 +213,10 @@ def extract_paragraphs(path: str) -> list:
                 gaps = [b - a for a, b in zip(ys, ys[1:]) if 3 < b - a < 30]
                 pitch = statistics.median(gaps) if gaps else 12
 
-                cur = {"lines": [col[0]]}
+                # 每组记下生成时的区域状态：refs 标题行触发 break 时 in_refs 才置位，
+                # 它只该作用于它**之后**的组——处理循环若看外层变量，同列 refs 之前的
+                # 正文组会被整体误杀（英文论文最后一页 References 前的段落一直在丢）
+                cur = {"lines": [col[0]], "refs": in_refs}
                 groups = []
                 for prev, ln in zip(col, col[1:]):
                     hk = _heading_kind(ln["text"])
@@ -213,7 +232,7 @@ def extract_paragraphs(path: str) -> list:
                     same_style = abs(ln["size"] - cur["lines"][0]["size"]) < 1.2
                     if gap > pitch * 0.55 or not same_style:
                         groups.append(cur)
-                        cur = {"lines": [ln]}
+                        cur = {"lines": [ln], "refs": in_refs}
                     else:
                         cur["lines"].append(ln)
                 if cur is not None:
@@ -242,14 +261,16 @@ def extract_paragraphs(path: str) -> list:
                              for l in ls]
                     caption = bool(CAPTION.match(first))
                     if caption:
-                        if len(text.split()) < 6:
+                        if not _enough_caption(text):
                             continue
                         paras.append({"page": pno, "bbox": bbox, "text": _clean(text), "lines": lines,
                                       "in_refs": False, "caption": True})
                         continue
-                    if in_refs or len(text.split()) < 14 or size > body_size + 2.2:
+                    if g["refs"] or not _enough(text) or size > body_size + 2.2:
                         continue
-                    if len(AFFIL.findall(text)) >= 2 and len(text.split()) < 60:
+                    # 机构行滤除只对"短行"下手：中文按字符算，否则带两处"大学"的正文段会被误杀
+                    affilish = len(text.split()) < 60 if not HAS_CJK.search(text) else len(text) < 120
+                    if affilish and len(AFFIL.findall(text)) >= 2:
                         continue
                     paras.append({"page": pno, "bbox": bbox, "text": _clean(text), "lines": lines,
                                   "in_refs": False, "caption": False})
