@@ -223,3 +223,52 @@ export function findAllRects(pageEl, query, limit = 60) {
   }
   return out
 }
+
+/* ---------- DOI / arXiv 的原文链接层 ---------- */
+
+/* 只认"结构上就不会认错"的两类编号：DOI（10.前后缀）和 arXiv 编号。跳转的是
+   doi.org / arxiv.org 的解析页——不是猜出来的元数据，认不出的条目就不加链接，
+   跟"引用格式认不出的字段一律留空"是同一条口径。只在单个文本节点内匹配
+   （pdf.js 一行一个节点）：跨行的编号抓不到，但换来零误报——参考文献条目
+   连续排版，跨节点拼接会把下一条的文字吞进编号里。 */
+const DOI_RE = /\b10\.\d{4,9}\/[^\s"'<>]+/g
+const ARXIV_RE = /\barXiv\s*:?\s*(\d{4}\.\d{4,5})(v\d+)?/gi
+
+export function findDocLinks(pageEl) {
+  const tl = pageEl?.querySelector?.('.textLayer')
+  if (!tl) return []
+  const base = pageEl.getBoundingClientRect()
+  const out = []
+  const walker = document.createTreeWalker(tl, NodeFilter.SHOW_TEXT)
+  let node
+  while ((node = walker.nextNode())) {
+    const t = node.nodeValue || ''
+    if (t.length < 8) continue
+    const hits = []
+    let m
+    DOI_RE.lastIndex = 0
+    while ((m = DOI_RE.exec(t))) {
+      const doi = m[0].replace(/[.,;)\]]+$/, '')
+      if (doi.length > 8) hits.push({ at: m.index, len: doi.length, url: 'https://doi.org/' + doi })
+    }
+    ARXIV_RE.lastIndex = 0
+    while ((m = ARXIV_RE.exec(t))) {
+      hits.push({ at: m.index, len: m[0].length, url: 'https://arxiv.org/abs/' + m[1] + (m[2] || '') })
+    }
+    for (const h of hits) {
+      const r = document.createRange()
+      try {
+        r.setStart(node, h.at)
+        r.setEnd(node, h.at + h.len)
+        let best = null
+        for (const box of r.getClientRects()) {
+          if (box.width < 1 || box.height < 1) continue
+          if (!best || box.width > best.width) best = box
+        }
+        if (best) out.push({ x: best.left - base.left, y: best.top - base.top,
+                             w: best.width, h: best.height, url: h.url })
+      } catch { /* 边界异常跳过这一处 */ }
+    }
+  }
+  return out
+}

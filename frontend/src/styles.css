@@ -631,6 +631,10 @@ input[type='text']:focus, textarea:focus { border-color: var(--accent); box-shad
 .page canvas { display: block; }
 .page .textLayer { z-index: 5; }
 
+/* DOI / arXiv 原文链接：平时完全隐形（不干扰阅读、不遮挡文字），悬停才露一点提示 */
+.page .doc-link { position: absolute; z-index: 6; border-radius: 2px; cursor: pointer; }
+.page .doc-link:hover { background: rgba(29, 78, 95, 0.14); box-shadow: 0 1px 0 var(--accent-deep); }
+
 .page .textLayer.tl-off { pointer-events: none; user-select: none; visibility: hidden; }
 
 .care-wash {

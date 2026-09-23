@@ -32,7 +32,7 @@ async function loadPaperData() {
   annos.value = a.annotations || {}
   mnotes.value = m.notes || []
 }
-import { lineSpanOf, findQuoteRects, findAllRects, clearTextIndex, sentenceAround } from '../find'
+import { lineSpanOf, findQuoteRects, findAllRects, findDocLinks, clearTextIndex, sentenceAround } from '../find'
 import { prettyChem } from '../chem'
 import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
@@ -76,6 +76,8 @@ const searchInputEl = ref(null)
 const visInputEl = ref(null)
 
 const canvases = ref([]), textLayers = ref([]), pageEls = ref([])
+/* 每页的 DOI / arXiv 原文链接（文本层建好时现算，缩放重建自动跟着重算） */
+const docLinks = ref([])
 const doneKeys = new Set()
 const renderQueues = new Map()   // gi -> 渲染链尾：同一画布严格串行，杜绝并发 render
 let passToken = 0
@@ -468,6 +470,7 @@ function doRenderItem(it) {
           const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
           await tl.render()
           clearTextIndex(tlEl)
+          docLinks.value[it.gi] = findDocLinks(el)     // 链接层跟着文本层走，一次微秒级的正则扫描
         }
         doneKeys.add(key)
       } catch (err) {
@@ -1396,6 +1399,10 @@ watch(store.marginalia, m => {
             <div class="care-wash" v-if="store.viewer.care !== 'off'"></div>
                         <div class="textLayer" v-if="it.text" :class="{ 'tl-off': store.viewer.frame }"
                  :ref="el => (textLayers[it.gi] = el)"></div>
+            <a v-if="!store.viewer.frame" v-for="(lk, li) in docLinks[it.gi] || []" :key="'dl' + li"
+               class="doc-link" :href="lk.url" target="_blank" rel="noopener" :title="lk.url"
+               :style="{ left: lk.x + 'px', top: lk.y + 'px', width: lk.w + 'px', height: lk.h + 'px' }"
+               @click.stop></a>
             <div v-if="frameRect && frameRect.gi === it.gi" class="frame-rect"
                  :style="{ left: Math.min(frameRect.x0, frameRect.x1) + 'px', top: Math.min(frameRect.y0, frameRect.y1) + 'px',
                            width: Math.abs(frameRect.x1 - frameRect.x0) + 'px', height: Math.abs(frameRect.y1 - frameRect.y0) + 'px' }"></div>
