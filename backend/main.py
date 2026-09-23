@@ -5,6 +5,7 @@ import os
 import queue
 import re
 import shutil
+import tempfile
 import threading
 import time
 import traceback
@@ -317,6 +318,8 @@ def _paper_src_or_404(pid: str, p: dict) -> str:
 
 @app.on_event("startup")
 def _startup():
+    _apply_pending_restore()   # 必须最先生效：换的是数据目录的内容，db 还没被碰过
+    _sweep_old_data_dirs()
     config.ensure_dirs()
     os.makedirs(PAPERS_DIR, exist_ok=True)
     _migrate_paper_layout()
@@ -339,6 +342,57 @@ def _startup():
         except Exception:
             pass
     threading.Thread(target=_warm_engine, daemon=True).start()
+
+def _apply_pending_restore():
+    """上一次会话里「从备份恢复」的暂存在这里落地：此刻 db 还没人打开、papers 无人引用，
+    才换得动整个数据目录的内容（Windows 上打开中的文件不能改名）。
+
+    旧目录整个改名让位、暂存顶上之后，引擎的资产缓存（home/，几百 MB，跟着数据目录住）
+    从旧目录搬回来——那是引擎自己能重新生成的，但重新生成要重新解包几分钟，没必要。
+    旧目录留给后台线程慢慢删，起不来不等它。
+    """
+    mark = os.path.join(config.DATA_DIR, "pending_restore.json")
+    if not os.path.isfile(mark):
+        return
+    try:
+        with open(mark, encoding="utf-8") as f:
+            staged = (json.load(f) or {}).get("staged") or ""
+        os.remove(mark)
+        if not staged or not os.path.isdir(staged):
+            return
+        data = config.DATA_DIR
+        old = data + ".old-" + time.strftime("%Y%m%d%H%M%S")
+        os.rename(data, old)
+        try:
+            os.rename(staged, data)
+        except OSError:
+            os.rename(old, data)      # 顶不上就回滚，库里还是原样
+            raise
+        home_old = os.path.join(old, "home")
+        if os.path.isdir(home_old) and not os.path.exists(os.path.join(data, "home")):
+            try:
+                os.rename(home_old, os.path.join(data, "home"))
+            except OSError:
+                pass
+        _applog(f"备份恢复生效：{staged} -> {data}")
+        def _rmtree_late():
+            time.sleep(5)
+            shutil.rmtree(old, ignore_errors=True)
+        threading.Thread(target=_rmtree_late, daemon=True).start()
+    except Exception:
+        _applog("备份恢复落地失败：" + traceback.format_exc(limit=3))
+
+def _sweep_old_data_dirs():
+    """恢复落地后的旧目录，若上个会话没删完（落地后马上退出，删除线程跟着死了），
+    启动时顺手清掉。"""
+    base = os.path.dirname(config.DATA_DIR)
+    name = os.path.basename(config.DATA_DIR) + ".old-"
+    try:
+        leftovers = [d for d in os.listdir(base) if d.startswith(name)]
+    except OSError:
+        return
+    for d in leftovers:
+        shutil.rmtree(os.path.join(base, d), ignore_errors=True)
 
 def _sweep_orphan_papers():
     """清掉 papers/ 里没有论文指向的文件夹。
@@ -522,6 +576,106 @@ def set_data_location(body: dict):
         raise HTTPException(400, f"这个位置写不进去（{type(e).__name__}）")
     appinfo.write_pointer(target)
     return {"ok": True, "restart": True, "path": target}
+
+# ---------------- 全库备份（换机迁移：导出的 zip 就是一份数据目录） ----------------
+
+# 这些不进备份：home/ 是引擎的资产缓存（换机后引擎自己重新解包），db 的 wal/shm 陪跑文件
+# 用快照替代；zip 名单里出现即跳过——老版本备份文件里带着它们也恢复不进来。
+_BACKUP_SKIP_DIRS = {"home"}
+_BACKUP_SKIP_FILES = {"eggpaper.db-wal", "eggpaper.db-shm", "pending_restore.json"}
+
+def _backup_zip_stream():
+    """整个数据目录打成一个 zip（STORED：PDF 本来就是压缩格式，再压一遍白烧 CPU）。
+    db 不能直接读文件——写入进行中 WAL 里还有没合页的账，用 SQLite 的 backup API
+    出一份完整快照。"""
+    import io
+    import sqlite3
+    import zipfile
+    tmp = tempfile.TemporaryFile()
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+        snap = os.path.join(tempfile.gettempdir(), f"eggpaper_db_snap_{os.getpid()}.tmp")
+        src = sqlite3.connect(db.DB_PATH)
+        try:
+            dst = sqlite3.connect(snap)
+            with dst:
+                src.backup(dst)
+            dst.close()
+            z.write(snap, "eggpaper.db")
+        finally:
+            src.close()
+            try:
+                os.remove(snap)
+            except OSError:
+                pass
+        for root, dirs, files in os.walk(config.DATA_DIR):
+            dirs[:] = [d for d in dirs if d not in _BACKUP_SKIP_DIRS]
+            for fn in files:
+                full = os.path.join(root, fn)
+                rel = os.path.relpath(full, config.DATA_DIR).replace("\\", "/")
+                if rel in _BACKUP_SKIP_FILES or rel.endswith(".tmp"):
+                    continue
+                z.write(full, rel)
+    tmp.seek(0)
+    try:
+        while True:
+            chunk = tmp.read(1 << 20)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        tmp.close()
+
+@app.get("/api/backup/export")
+def backup_export():
+    name = time.strftime("eggpaper-backup-%Y%m%d.zip")
+    return StreamingResponse(_backup_zip_stream(), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+@app.post("/api/backup/pick")
+def backup_pick():
+    """弹原生文件框选备份 zip（本地服务代劳浏览器拿不到的路径），取消返回空串。"""
+    return {"path": picker.pick_file(
+        "选择 eggpaper 备份文件", "eggpaper 备份\0*.zip\0所有文件\0*.*\0")}
+
+@app.post("/api/backup/restore")
+def backup_restore(body: dict):
+    """从备份 zip 恢复。**重启后生效**：db 此刻开着，换不动整个数据目录；
+    先解包到旁边的暂存目录并留标记，下次启动 _apply_pending_restore() 落地。
+
+    这里校验两道：是个能读的 zip、里面有 eggpaper.db（防选错文件把文库清了）。
+    解包时跳过 zip slip（路径里带 .. 的条目）和排除名单。
+    """
+    import zipfile
+    src = str((body or {}).get("path") or "").strip().strip('"')
+    if not src or not os.path.isfile(src):
+        raise HTTPException(404, "找不到这个文件")
+    if not src.lower().endswith(".zip"):
+        raise HTTPException(400, "要选备份的 .zip 文件")
+    try:
+        z = zipfile.ZipFile(src)
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "这个 zip 读不了")
+    with z:
+        names = z.namelist()
+        if "eggpaper.db" not in names:
+            raise HTTPException(400, "这不是 eggpaper 的备份文件（里面没有 eggpaper.db）")
+        staged = config.DATA_DIR + ".restore"
+        shutil.rmtree(staged, ignore_errors=True)
+        os.makedirs(staged)
+        for info in z.infolist():
+            parts = info.filename.replace("\\", "/").split("/")
+            if not info.filename.endswith("/") and parts[0] not in _BACKUP_SKIP_DIRS \
+                    and ".." not in parts and "/".join(parts) not in _BACKUP_SKIP_FILES:
+                target = os.path.join(staged, *parts)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with z.open(info) as fsrc, open(target, "wb") as fdst:
+                    shutil.copyfileobj(fsrc, fdst, 1 << 20)
+    try:
+        with open(os.path.join(config.DATA_DIR, "pending_restore.json"), "w", encoding="utf-8") as f:
+            json.dump({"staged": staged}, f)
+    except OSError as e:
+        raise HTTPException(500, f"写恢复标记失败：{_human_msg(e)}")
+    return {"ok": True, "restart": True}
 
 @app.post("/api/pdf2zh/install")
 def pdf2zh_install(body: dict = None):

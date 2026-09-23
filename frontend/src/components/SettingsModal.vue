@@ -57,6 +57,32 @@ async function moveData() {
   savingData.value = false
 }
 
+/* ---------- 备份：导出的 zip 就是一份数据目录（换机 = 新机装好 → 从备份恢复 → 重启） ---------- */
+function exportBackup() {
+  const a = document.createElement('a')
+  a.href = api.backupExportUrl()
+  a.download = ''
+  a.click()
+  toast(t('正在打包文库，稍候浏览器会下载 zip（库大要等一会儿）'))
+}
+async function restoreBackup() {
+  let path = ''
+  try {
+    const r = await api.backupPick()
+    path = (r.path || '').trim()
+  } catch { return }
+  if (!path) return
+  const yes = await confirmBox({
+    title: t('从备份恢复'), ok: t('恢复'),
+    body: t('当前文库将被这份备份整体替换，重启 eggpaper 后生效。'),
+  })
+  if (!yes) return
+  try {
+    await api.backupRestore(path)
+    toast(t('备份已就位，重启 eggpaper 后生效'))
+  } catch (e) { toast(e.message) }
+}
+
 /* 护眼底纹：豆沙绿 / 浅青绿 / 米黄是三个公认的经典护眼色。
    点一下立刻生效（选颜色不看效果等于没选），所以不进「保存」，直接改 store。 */
 const CARES = [
@@ -306,6 +332,13 @@ function save() {
             {{ savingData ? t('迁移中…') : t('迁移') }}</button>
         </label>
         <div class="eng-state">{{ f.data_dir }}</div>
+      </div>
+      <div class="f-line">
+        <span class="mono-label" style="margin:0">{{ t('备份') }}</span>
+        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
+                @click="exportBackup">{{ t('导出全库') }}</button>
+        <button style="margin-left:6px;padding:2px 10px;font-size:var(--fs-sm)"
+                @click="restoreBackup">{{ t('从备份恢复') }}</button>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('窗口') }}</span>

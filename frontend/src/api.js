@@ -107,6 +107,9 @@ export const api = {
   pdf2zhInstallCancel: () => req('POST', '/api/pdf2zh/install-cancel'),
   setDataLocation: (path) => req('POST', '/api/data/location', { path }),
   dataPick: () => req('POST', '/api/data/pick', {}),
+  backupExportUrl: () => '/api/backup/export',
+  backupPick: () => req('POST', '/api/backup/pick', {}),
+  backupRestore: (path) => req('POST', '/api/backup/restore', { path }),
   pdf2zhInstallFromFile: (file) => {
     const fd = new FormData()
     fd.append('file', file)

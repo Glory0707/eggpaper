@@ -54,3 +54,36 @@ def pick_folder(title: str = "选择数据目录") -> str:
             ole32.CoUninitialize()
         except Exception:
             pass
+
+OFN_FILEMUSTEXIST = 0x00001000
+OFN_HIDEREADONLY = 0x00000004
+
+class OPENFILENAMEW(ctypes.Structure):
+    _fields_ = [("lStructSize", wintypes.DWORD), ("hwndOwner", wintypes.HWND),
+                ("hInstance", wintypes.HINSTANCE), ("lpstrFilter", wintypes.LPCWSTR),
+                ("lpstrCustomFilter", wintypes.LPWSTR), ("nMaxCustFilter", wintypes.DWORD),
+                ("nFilterIndex", wintypes.DWORD), ("lpstrFile", wintypes.LPWSTR),
+                ("nMaxFile", wintypes.DWORD), ("lpstrFileTitle", wintypes.LPWSTR),
+                ("nMaxFileTitle", wintypes.DWORD), ("lpstrInitialDir", wintypes.LPCWSTR),
+                ("lpstrTitle", wintypes.LPCWSTR), ("Flags", wintypes.DWORD),
+                ("nFileOffset", wintypes.WORD), ("nFileExtension", wintypes.WORD),
+                ("lpstrDefExt", wintypes.LPCWSTR), ("lCustData", wintypes.LPARAM),
+                ("lpfnHook", wintypes.LPVOID), ("lpTemplateName", wintypes.LPCWSTR),
+                ("pvReserved", ctypes.c_void_p), ("dwReserved", wintypes.DWORD),
+                ("FlagsEx", wintypes.DWORD)]
+
+def pick_file(title: str = "选择文件", filt: str = "所有文件\0*.*\0") -> str:
+    """弹原生文件选择框（comdlg32，不用 tkinter——打包体积不认）。确定返回完整路径，
+    取消返回空串。同 pick_folder 的道理：本地服务，代劳浏览器拿不到的路径。"""
+    if os.name != "nt":
+        return ""
+    comdlg32 = ctypes.windll.comdlg32
+    buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+    ofn = OPENFILENAMEW()
+    ofn.lStructSize = ctypes.sizeof(OPENFILENAMEW)
+    ofn.lpstrFilter = filt
+    ofn.lpstrFile = ctypes.cast(buf, wintypes.LPWSTR)
+    ofn.nMaxFile = wintypes.MAX_PATH
+    ofn.lpstrTitle = title
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY
+    return buf.value if comdlg32.GetOpenFileNameW(ctypes.byref(ofn)) else ""
