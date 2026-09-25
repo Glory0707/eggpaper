@@ -996,7 +996,7 @@ function onKey(e) {
       </main>
 
             <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
-              @click="store.viewer.railUser = true">◂</button>
+              @click="store.viewer.railUser = true" aria-label="展开右栏"></button>
             <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight, overlay: store.railOverlay }">
         <RightRail @analyze="doAnalyze" @marginalia="doMarginalia" />
       </div>

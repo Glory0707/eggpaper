@@ -808,8 +808,15 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   z-index: 90; width: 14px; height: 64px;
   background: var(--card); border: 1px solid var(--hairline); border-right: none;
   border-radius: 4px 0 0 4px; color: var(--ink-3);
-  font-size: calc(15px * var(--fs-scale)); padding: 0;
-  display: flex; align-items: center; justify-content: center;
+  padding: 0; display: flex; align-items: center; justify-content: center;
+}
+/* 箭头用 border 画而不放字符：字符三角高宽等比，框只有 14px 宽，竖向拉不长——
+   border 三角可以独立控制「上下长度」（border-top/bottom）与横向宽度。 */
+.rail-tab::before {
+  content: ""; width: 0; height: 0;
+  border-top: 9px solid transparent;
+  border-bottom: 9px solid transparent;
+  border-right: 6px solid currentColor;
 }
 .rail-tab:hover { color: var(--ink); box-shadow: none; transform: translateY(-50%); }
 .rail-right .rtabs { display: flex; border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
