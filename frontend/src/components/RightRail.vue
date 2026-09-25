@@ -174,7 +174,7 @@ const limitParas = computed(() => parasOfRole(['limitation']))
 /* ④「还有什么没解决」里"眉批标出的可疑之处"：按**档位**收，不按类型名收。
    类型现在是开放词表——模型可以自造「参考态不一」这种 warn 档的批注，
    只认 kind==='warning' 会把它们漏在外面（第四问说的是"读者要当心的"，都属于这条）。 */
-const warnNotes = computed(() => store.marginalia.notes.filter(n => bandOf(n) === 'warn'))
+const warnNotes = computed(() => (store.marginalia.notes || []).filter(n => bandOf(n) === 'warn'))
 
 /* 页边批注的四个档位开关。四档不是四个色相，是"读的时候给多少注意力"——
    它们同时是纸面上四种笔触，关了就在两边一起消失（纸上、页边各少一批）。

@@ -1706,7 +1706,7 @@ def marginalia_get(pid: str):
     status = p["marginalia_status"]
     if status == "running":                      # 跑的时候一条都没落库，别每秒白取全量
         return {"status": status, "error": None,
-                "progress": _margin_progress.get(pid), "notes": None}
+                "progress": _margin_progress.get(pid), "notes": []}
     if status == "done":
         notes = db.get_marginalia(pid)
         if any(not n["rect"] for n in notes):

@@ -308,7 +308,7 @@ export async function refreshMarginalia() {
     return        // 同上：篇没了就不刷
   }
   if (store.epoch !== mine) return             // 同上：别把上一篇的批注装到这篇上
-  Object.assign(store.marginalia, m, { pid: store.currentId })
+  Object.assign(store.marginalia, m, { notes: m.notes || [], pid: store.currentId })
 }
 
 /* 重新析读会把一眼卡一并作废（它是旧主张的产物），所以析读完成后要重新取一次。
