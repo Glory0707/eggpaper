@@ -1339,14 +1339,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .desk-float { position: fixed; translate: -50% 0; z-index: 88; }
 .zoom-bar {
   bottom: 18px; display: flex; flex-wrap: wrap; gap: 3px; align-items: stretch;
-  /* 卡底磨砂：半透但正文不再从按钮缝里透出来（比整块降 opacity 清爽） */
-  background: color-mix(in srgb, var(--card) 84%, transparent);
-  backdrop-filter: blur(10px) saturate(1.05);
-  border: 1px solid var(--hairline);
+  background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 3px; box-shadow: var(--shadow-page);
-  transition: border-color var(--t-base) var(--ease-smooth);
+  /* 平时半透，别跟论文抢注意力（正文会透出来）；鼠标过去或拖动时实心 */
+  opacity: 0.72; transition: opacity var(--t-base) var(--ease-smooth);
 }
-.zoom-bar:hover, .zoom-bar.dragging { border-color: var(--ink-3); }
+.zoom-bar:hover, .zoom-bar.dragging { opacity: 1; }
 .zoom-bar button { padding: 3px 9px; border-color: transparent; background: transparent; font-size: var(--fs-sm); color: var(--ink-2); }
 .zoom-bar button:hover { background: var(--accent-soft); transform: none; box-shadow: none; }
 .zoom-bar button.on { background: var(--ink); color: var(--card); }
@@ -1376,16 +1374,13 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .frame-hint {
   top: 70px;
   display: flex; align-items: center;
-  background: color-mix(in srgb, var(--card) 88%, transparent);
-  backdrop-filter: blur(10px);
-  color: var(--ink);
-  border: 1px solid var(--hairline);
-  border-radius: 8px; padding: 4px 6px; font-size: var(--fs-sm);
+  background: var(--ink); color: var(--card);
+  border-radius: 20px; padding: 5px 7px; font-size: var(--fs-sm);
   box-shadow: var(--shadow-pop);
 }
 .frame-hint button {
-  background: none; border: none; border-radius: 6px;
-  font-size: var(--fs-sm); padding: 3px 12px; color: var(--accent-deep); font-weight: 600;
+  background: var(--card-2); border: none; border-radius: 14px;
+  font-size: var(--fs-sm); padding: 3px 12px; color: var(--ink); font-weight: 600;
 }
 .frame-hint button:hover { transform: none; box-shadow: none; background: var(--card-2); }
 
@@ -1843,11 +1838,6 @@ html.dark .vis-img { background: #fff; }
 .demo-badge:hover { box-shadow: none; transform: translateY(-1px); }
 .empty .desk-hint.demo-hint {
   position: static; display: block; margin: 14px auto 0; width: fit-content;
-  color: var(--accent-deep); cursor: pointer; border-radius: 4px; padding: 2px 6px;
-}
-.empty .desk-hint.lib-hint {
-  /* 与 demo-hint 同款居中；右下角那个位置是拖放提示的，别去挤它 */
-  position: static; display: block; margin: 2px auto 0; width: fit-content;
   color: var(--accent-deep); cursor: pointer; border-radius: 4px; padding: 2px 6px;
 }
 .empty .desk-hint.demo-hint:hover { background: var(--accent-soft); }

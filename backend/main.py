@@ -1091,15 +1091,10 @@ def _paper_or_404(pid: str) -> dict:
 
 @app.get("/api/library/version")
 def library_version():
-    """文库版本号：篇数 + 最新导入时间 + 通读/翻译中的篇数。开着的页面每几秒对一次账，
-    别的窗口导入/删除了，这边列表自动跟新——不再拿着陈旧列表去撞「论文不存在」。
-    状态计数也在账里：否则别的窗口译完了，这边文库列表里的「翻译中…」永远不落定。"""
-    n, mx, ar, tr = db.q(
-        "SELECT COUNT(*), IFNULL(MAX(created_at),''),"
-        " IFNULL(SUM(CASE WHEN analysis_status IN ('running','queued') THEN 1 ELSE 0 END),0),"
-        " IFNULL(SUM(CASE WHEN translate_status IN ('running','queued') THEN 1 ELSE 0 END),0)"
-        " FROM papers")[0]
-    return {"v": f"{n}:{mx}:{ar}:{tr}"}
+    """文库版本号：篇数 + 最新导入时间。开着的页面每几秒对一次账，
+    别的窗口导入/删除了，这边列表自动跟新——不再拿着陈旧列表去撞「论文不存在」。"""
+    n, mx = db.q("SELECT COUNT(*), IFNULL(MAX(created_at),'') FROM papers")[0]
+    return {"v": f"{n}:{mx}"}
 
 NO_TEXT = "这份 PDF 没有文字层（多半是扫描件）：析读和提问用不了，原文照样能读"
 PDF_GONE = "PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。"

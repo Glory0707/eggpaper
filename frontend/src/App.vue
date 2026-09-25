@@ -992,12 +992,6 @@ function onKey(e) {
                @keydown.space.prevent="showSettings = true">
             {{ t('去设置配好模型') }}
           </div>
-          <!-- 库里有存货时别让 hero 装成空库：给一条直通文库的入口 -->
-          <div class="desk-hint lib-hint" v-if="store.papers.length" role="button" tabindex="0"
-               @click="store.viewer.libOpen = true" @keydown.enter.prevent="store.viewer.libOpen = true"
-               @keydown.space.prevent="store.viewer.libOpen = true">
-            {{ t('文库里有 {n} 篇——去挑一篇', { n: store.papers.length }) }}
-          </div>
         </div>
         <PdfViewer v-else :pid="store.currentId" :key="store.currentId" />
       </main>
