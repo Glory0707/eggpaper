@@ -18,7 +18,7 @@ const S = store.settings || { provider: {}, pdf2zh: {}, update: {} }
 const f = reactive({
   base_url: (S.provider || {}).base_url || '',
   model: (S.provider || {}).model || '',
-  api_key: (S.provider || {}).key_masked || '',
+  api_key: (S.provider || {}).api_key || '',   // 完整 key：默认 password 遮着，「显示」切明文时看全
   show_key: false,
   vision: !!(S.provider || {}).vision_model,   // 勾上 = 就用上面这个模型做视觉问答
   mock: !!S.mock,

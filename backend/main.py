@@ -469,7 +469,12 @@ def get_settings():
     p = cfg["provider"]
     return {"provider": {"base_url": p["base_url"], "model": p["model"],
                          "vision_model": p.get("vision_model", ""),
-                         "has_key": bool(p["api_key"]), "key_masked": (p["api_key"][:6] + "…") if p["api_key"] else ""},
+                         "has_key": bool(p["api_key"]),
+                         # 完整 key 给前端：本地单机应用，key 本就明文躺在 config.yaml；
+                         # 输入框默认 password 遮着，「显示」按钮切明文时能看到全 key——
+                         # 之前只回前 6 字符加省略号，点显示还是一堆点，等于没显示。
+                         # 保存端（PUT）对带 "…" 的回传不落盘，打码链路残留也写不坏。
+                         "api_key": p["api_key"] or ""},
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
             "ui_lang": cfg.get("ui_lang", "zh"),
             "shot_save": cfg.get("shot_save", True),
