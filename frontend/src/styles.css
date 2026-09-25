@@ -808,7 +808,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   z-index: 90; width: 14px; height: 64px;
   background: var(--card); border: 1px solid var(--hairline); border-right: none;
   border-radius: 4px 0 0 4px; color: var(--ink-3);
-  font-size: var(--fs-xs); padding: 0; display: flex; align-items: center; justify-content: center;
+  font-size: calc(15px * var(--fs-scale)); padding: 0;
+  display: flex; align-items: center; justify-content: center;
 }
 .rail-tab:hover { color: var(--ink); box-shadow: none; transform: translateY(-50%); }
 .rail-right .rtabs { display: flex; border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
