@@ -457,8 +457,6 @@ def _adopt_orphan_translation():
         got = _claim_existing_translation(p["id"])
         if not got:
             continue
-        db.update_paper(p["id"], dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
-                        translate_status="done", translate_error="")
         _applog(f"认领上次没结算的译文：{p['id']} → {os.path.basename(got.get('mono') or got.get('dual'))}")
 
 # ---------------- 设置 ----------------
@@ -851,13 +849,12 @@ def quit_app(body: dict = None):
         return {"ok": False, "reason": "开发模式：直接在终端里 Ctrl+C"}
     if (body or {}).get("reason") != "upgrade":
         _QUITTING["user"] = True
-    import threading as _th
     def bye():
         # 宽限 4.5 秒：页面 3 秒轮询一次 open-request，3.2 只留 0.2 秒余量——
         # 刚轮询过一圈的页面会赶不上这一拍，托盘退出就留着满屏尸体页
         time.sleep(4.5)
         os._exit(0)
-    _th.Thread(target=bye, daemon=True).start()
+    threading.Thread(target=bye, daemon=True).start()
     return {"ok": True}
 
 # ---------------- 论文 ----------------
@@ -1047,10 +1044,10 @@ _pending_open = {"pid": None}
 def supersede_paper(pid: str, body: dict):
     """版本升级：pid（刚导入的那份）顶掉旧篇 old_pid——软资产跟迁、旧篇删除。"""
     old = _paper_or_404((body or {}).get("old_pid") or "")
-    _paper_or_404(pid)
+    new = _paper_or_404(pid)
     if old["id"] == pid:
         raise HTTPException(400, "新旧是同一篇")
-    for row in (db.get_paper(pid), db.get_paper(old["id"])):
+    for row in (new, old):
         if row and row["translate_status"] == "running":
             raise HTTPException(400, "这篇正在全文翻译，结束后再替换")
     stats = db.supersede(pid, old["id"])
@@ -1599,7 +1596,6 @@ def _applog(msg: str):
     而"这次到底花了多久、卡在哪一段"恰恰是用户最常问的。和 window.py 写的是同一份日志。
     文件超过 1MB 就截到尾部的 1/4：日志只增不删的话，跑上一年能吃掉几十 MB。"""
     try:
-        import time as _t
         d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, "app.log")
@@ -1614,13 +1610,12 @@ def _applog(msg: str):
         except OSError:
             pass
         with open(path, "a", encoding="utf-8") as f:
-            f.write("[%s] %s\n" % (_t.strftime("%Y-%m-%d %H:%M:%S"), msg))
+            f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
     except OSError:
         pass
 
 def _run_marginalia(pid: str):
-    import time as _t
-    t0 = _t.time()
+    t0 = time.time()
     _margin_progress[pid] = {"done": 0, "total": 0, "t0": t0}
 
     def on_chunk(done, total):
@@ -1643,7 +1638,7 @@ def _run_marginalia(pid: str):
             db.update_paper(pid, marginalia_status="none", marginalia_error=None)
             _applog(f"眉批 {pid}: 已取消")
             return
-        t_llm = _t.time() - t0
+        t_llm = time.time() - t0
         db.set_marginalia(pid, notes)
         if misses:
             db.update_paper(pid, marginalia_error=(
@@ -1652,7 +1647,7 @@ def _run_marginalia(pid: str):
         db.answers_clear(pid)
         db.update_paper(pid, advisor=None)
         _resolve_rects(pid)
-        t_all = _t.time() - t0
+        t_all = time.time() - t0
         n = _margin_progress.get(pid, {}).get("total") or 0
         cfg = config.load()["provider"]
         _applog(f"眉批完成 {pid}: {len(notes)} 条 / {n} 块 · 模型 {t_llm:.1f}s · "
@@ -2204,10 +2199,7 @@ def export_md(pid: str):
     if six_lines:
         lines += [f"## {L('six')}", ""] + six_lines + [""]
     if p["method_card"]:
-        try:
-            mc = json.loads(p["method_card"])
-        except ValueError:
-            mc = {}
+        mc = _json_of(p["method_card"])
         if mc.get("goal") or mc.get("steps"):
             lines += [f"## {L('scard' if is_rev else 'mcard')}", ""]
             if mc.get("goal"):
@@ -2224,7 +2216,7 @@ def export_md(pid: str):
         lines += [f"## {L('notes')}", ""]
         for n in notes:
             zh = (n.get("label") or "").strip() or KIND_ZH.get(n["kind"], n["kind"])
-            who = ("你 · " if en else "你 · ") + zh if n["kind"] in ("lookup", "region", "note") else zh
+            who = "你 · " + zh if n["kind"] in ("lookup", "region", "note") else zh
             lines.append(f"- **[{who}] {n['note']}** — “{n['quote'][:48]}”")
         lines.append("")
     convs = db.conv_list(pid)
@@ -2434,7 +2426,8 @@ def _figure_regions(path):
                     blockers.append(brect)
                 else:
                     cands.extend((r, False, w) for r, w in zip(rects, wide))
-            for info in page.get_image_info():
+            imgs = page.get_image_info()
+            for info in imgs:
                 r = pymupdf.Rect(info["bbox"])
                 if r.width < 12 or r.height < 8 or r.get_area() > 0.85 * pw * ph:
                     continue
@@ -2490,18 +2483,17 @@ def _figure_regions(path):
                 if any(_iou(e["region"], k["region"]) > 0.45 for k in keep):
                     continue
                 keep.append(e)
-            for info in page.get_image_info():
-                if pno == 0:
-                    break
-                r = pymupdf.Rect(info["bbox"])
-                if r.width < 180 or r.height < 110 or r.get_area() > 0.55 * pw * ph:
-                    continue
-                if r.y1 < ytop or r.y0 > ybot:
-                    continue
-                if any((rg & r).get_area() > 0.4 * r.get_area() for rg in
-                       [e["region"] for e in keep]):
-                    continue
-                keep.append({"region": r, "kind": "figure", "label": "", "caption": ""})
+            if pno > 0:   # 首页的大图多是期刊 logo/排版图，不当天图收
+                for info in imgs:
+                    r = pymupdf.Rect(info["bbox"])
+                    if r.width < 180 or r.height < 110 or r.get_area() > 0.55 * pw * ph:
+                        continue
+                    if r.y1 < ytop or r.y0 > ybot:
+                        continue
+                    if any((rg & r).get_area() > 0.4 * r.get_area() for rg in
+                           [e["region"] for e in keep]):
+                        continue
+                    keep.append({"region": r, "kind": "figure", "label": "", "caption": ""})
             for c in keep:
                 r = c["region"]
                 out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
@@ -2622,6 +2614,12 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
 def _sse(obj: dict) -> str:
     return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
 
+def _type_out(text: str, step: int = 3, delay: float = 0.02):
+    """演示流的假打字：每次吐 step 个字符，拖出真流式的手感。"""
+    for i in range(0, len(text), step):
+        yield text[i:i + step]
+        time.sleep(delay)
+
 def _mock_stream(question: str):
     """演示模式也走流式：同一条前端代码路径，接上真 key 不用改任何东西。"""
     if (config.load().get("ui_lang") or "zh") == "en":
@@ -2633,9 +2631,7 @@ def _mock_stream(question: str):
         text = ("〔演示模式〕这是模拟回答，用来跑通界面。[¶1] 配好 API key 后这里会是真答案。\n\n"
                 "· 你问的是：" + question[:60] + "\n"
                 "· 回答会逐字出现，可以中途停下；停下时已经吐出来的部分会留着。")
-    for i in range(0, len(text), 3):
-        yield text[i:i + 3]
-        time.sleep(0.02)
+    yield from _type_out(text)
 
 def _autotitle(pid: str, conv_id: int, question: str, is_first: bool):
     """第一个问题就是这摊对话的标题——和豆包/DeepSeek 一样，省得用户自己起名。"""
@@ -2684,13 +2680,11 @@ def _paper_by_title(title: str):
     t = (title or "").strip().lower()
     if not t:
         return None
-    rows = db.list_papers()
-    for r in rows:
-        if (r["title"] or "").strip().lower() == t:
+    norm = [(r, (r["title"] or "").strip().lower()) for r in db.list_papers()]
+    for r, rt in norm:
+        if rt == t:
             return r["id"]
-    contains = [r for r in rows
-                if t in (r["title"] or "").strip().lower()
-                or (r["title"] or "").strip().lower() in t]
+    contains = [r for r, rt in norm if (t in rt or rt in t) and rt]
     return contains[0]["id"] if contains else None
 
 def _recon_pick(question: str, papers: list):
@@ -2918,10 +2912,7 @@ def paper_collections_set(pid: str, body: dict):
 
 def _mock_translate(text: str):
     """演示模式的假译文也假装在打字：同一条前端代码路径。前缀随界面语言。"""
-    t = _demo_txt("〔演示译文〕", "[demo translation] ") + text[:120]
-    for i in range(0, len(t), 3):
-        yield t[i:i + 3]
-        time.sleep(0.02)
+    yield from _type_out(_demo_txt("〔演示译文〕", "[demo translation] ") + text[:120])
 
 def _translate_sse(pid: str, text: str, context: str, hits: list):
     """流式翻译。事件：delta（增量）/ done（术语命中）/ error（人话）。

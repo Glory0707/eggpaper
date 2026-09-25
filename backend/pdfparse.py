@@ -50,35 +50,42 @@ def _heading_kind(text: str):
         return "nonbody"
     return None
 
-def extract_title(path: str) -> str:
+def _page0_lines(path: str):
+    """首页的干净行列表（text/size/y0/y1，水印行已滤）与页高。
+    标题、作者两个提取器共用这一趟扫描——不然一篇 PDF 光元数据就要开两遍文档。"""
     doc = pymupdf.open(path)
     try:
         page = doc[0]
+        h = page.rect.height
         lines = []
         for b in page.get_text("dict")["blocks"]:
             if b["type"] != 0:
                 continue
             for line in b["lines"]:
                 t = _clean(" ".join(s["text"] for s in line["spans"]))
-                size = max((s["size"] for s in line["spans"]), default=0)
-                if t:
-                    lines.append({"text": t, "size": size, "y": line["bbox"][1]})
-        if not lines:
-            return ""
-        body = [l for l in lines if not WATERMARK.match(l["text"])]
-        top = [l for l in body if l["y"] < page.rect.height * 0.45] or body
-        max_size = max(l["size"] for l in top)
-        cand = sorted((l for l in top if l["size"] >= max_size - 0.8), key=lambda l: l["y"])
-        # 只并**垂直相邻**的候选行：标题的行距在 1.5 倍字号以内，隔了空行就是别的块
-        # （摘要/作者行的字号常与标题只差零点几磅，光凭字号带会把整段开头并进来）
-        out = []
-        for l in cand:
-            if out and l["y"] - out[-1]["y"] > max(out[-1]["size"], l["size"]) * 1.8:
-                break
-            out.append(l)
-        return _clean(" ".join(l["text"] for l in out))[:150]
+                if not t or WATERMARK.match(t):
+                    continue
+                lines.append({"text": t, "size": max((s["size"] for s in line["spans"]), default=0),
+                              "y0": line["bbox"][1], "y1": line["bbox"][3]})
+        return lines, h
     finally:
         doc.close()
+
+def extract_title(path: str) -> str:
+    lines, h = _page0_lines(path)
+    if not lines:
+        return ""
+    top = [l for l in lines if l["y0"] < h * 0.45] or lines
+    max_size = max(l["size"] for l in top)
+    cand = sorted((l for l in top if l["size"] >= max_size - 0.8), key=lambda l: l["y0"])
+    # 只并**垂直相邻**的候选行：标题的行距在 1.5 倍字号以内，隔了空行就是别的块
+    # （摘要/作者行的字号常与标题只差零点几磅，光凭字号带会把整段开头并进来）
+    out = []
+    for l in cand:
+        if out and l["y0"] - out[-1]["y0"] > max(out[-1]["size"], l["size"]) * 1.8:
+            break
+        out.append(l)
+    return _clean(" ".join(l["text"] for l in out))[:150]
 
 SUP = re.compile(r"[\d*†‡§¶#{}\[\]]+")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+")
@@ -89,51 +96,37 @@ def extract_authors(path: str) -> str:
 
     刻意保守：认不出来就返回空串（界面上就不显示），绝不拿机构名或日期凑数。
     """
-    doc = pymupdf.open(path)
-    try:
-        page = doc[0]
-        lines = []
-        for b in page.get_text("dict")["blocks"]:
-            if b["type"] != 0:
-                continue
-            for line in b["lines"]:
-                t = _clean(" ".join(s["text"] for s in line["spans"]))
-                if not t or WATERMARK.match(t):
-                    continue
-                size = max((s["size"] for s in line["spans"]), default=0)
-                lines.append({"text": t, "size": size, "y0": line["bbox"][1], "y1": line["bbox"][3]})
-        top = [l for l in lines if l["y0"] < page.rect.height * 0.5]
-        if not top:
-            return ""
-        max_size = max(l["size"] for l in top)
-        title = [l for l in top if l["size"] >= max_size - 1.6]
-        if not title:
-            return ""
-        t_bottom = max(l["y1"] for l in title)
-        below = sorted([l for l in top if l["y0"] >= t_bottom - 2 and l["size"] < max_size - 1.6],
-                       key=lambda l: l["y0"])
-        for ln in below[:3]:
-            t = ln["text"]
-            if len(t) > 200:
-                continue
-            if AFFIL.search(t) or EMAIL.search(t):
-                continue          # 机构行/邮箱行本身不是作者，但后面可能还有
-            # 年份/DOI/received 是刊头页脚的信号——作者区到这儿就结束了。
-            # 只跳过不终止的话，下一行就是正文首行，标题的词会被当成作者（实测
-            # 整库的作者全变成标题开头两个词）。宁可漏认，不可错认。
-            if DATEISH.search(t):
-                break
-            if t.replace(" ", "").lower().startswith(("abstract", "keywords", "摘要", "关键词")):
-                break             # 摘要开头 = 作者区结束，同理
-            # 全角逗号/顿号也是作者分隔（中文论文的作者行没有半角逗号）
-            first = re.split(r",|，|、|\band\b", t)[0]
-            first = SUP.sub("", EMAIL.sub("", first)).strip(" .·&")
-            words = first.split()
-            if 1 <= len(words) <= 5 and 2 <= len(first) <= 40 and re.search(r"[A-Za-zÀ-ÿ\u4e00-\u9fff]", first):
-                return first
+    lines, h = _page0_lines(path)
+    top = [l for l in lines if l["y0"] < h * 0.5]
+    if not top:
         return ""
-    finally:
-        doc.close()
+    max_size = max(l["size"] for l in top)
+    title = [l for l in top if l["size"] >= max_size - 1.6]
+    if not title:
+        return ""
+    t_bottom = max(l["y1"] for l in title)
+    below = sorted([l for l in top if l["y0"] >= t_bottom - 2 and l["size"] < max_size - 1.6],
+                   key=lambda l: l["y0"])
+    for ln in below[:3]:
+        t = ln["text"]
+        if len(t) > 200:
+            continue
+        if AFFIL.search(t) or EMAIL.search(t):
+            continue          # 机构行/邮箱行本身不是作者，但后面可能还有
+        # 年份/DOI/received 是刊头页脚的信号——作者区到这儿就结束了。
+        # 只跳过不终止的话，下一行就是正文首行，标题的词会被当成作者（实测
+        # 整库的作者全变成标题开头两个词）。宁可漏认，不可错认。
+        if DATEISH.search(t):
+            break
+        if t.replace(" ", "").lower().startswith(("abstract", "keywords", "摘要", "关键词")):
+            break             # 摘要开头 = 作者区结束，同理
+        # 全角逗号/顿号也是作者分隔（中文论文的作者行没有半角逗号）
+        first = re.split(r",|，|、|\band\b", t)[0]
+        first = SUP.sub("", EMAIL.sub("", first)).strip(" .·&")
+        words = first.split()
+        if 1 <= len(words) <= 5 and 2 <= len(first) <= 40 and re.search(r"[A-Za-zÀ-ÿ\u4e00-\u9fff]", first):
+            return first
+    return ""
 
 def citation_source(path: str) -> str:
     """给"识别引用信息"用的首页原文：不筛选、不去重，连页眉页脚一起交出去。

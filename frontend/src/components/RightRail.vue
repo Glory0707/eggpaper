@@ -688,10 +688,7 @@ watch(() => store.currentId, () => {
               {{ t('AI 眉批都已收起 ·') }}
               <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true }">{{ t('全开') }}</button>
             </div>
-            <p class="blk-warn" v-if="store.marginalia.status === 'error' && store.marginalia.error">
-              {{ t(store.marginalia.error) }}
-            </p>
-                        <p class="blk-warn" v-else-if="store.marginalia.error">{{ t(store.marginalia.error) }}</p>
+            <p class="blk-warn" v-if="store.marginalia.error">{{ t(store.marginalia.error) }}</p>
           </div>
         </template>
       </template>

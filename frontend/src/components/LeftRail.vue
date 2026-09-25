@@ -17,9 +17,8 @@ const cmpIds = ref([])
 
 /* ---------- 分栏宽度：和右栏同一个手势（edgeResize.js） ---------- */
 const LIB_MIN = 236, LIB_MAX = 560, LIB_DEF = 300
-const libW = ref(store.viewer.libW)
 const lib = useEdgeResize({
-  get: () => libW.value, set: w => { libW.value = w; store.viewer.libW = w },
+  get: () => store.viewer.libW, set: w => { store.viewer.libW = w },
   min: LIB_MIN, max: LIB_MAX, def: LIB_DEF,
 })
 onBeforeUnmount(() => lib.end())
@@ -354,7 +353,7 @@ function onCmpGoto(c) {
 </script>
 
 <template>
-  <div class="lib-panel" :style="{ '--lib-w': libW + 'px' }" @keydown.esc="emit('close')">
+  <div class="lib-panel" :style="{ '--lib-w': store.viewer.libW + 'px' }" @keydown.esc="emit('close')">
     <div class="rail-grip lib-grip"
          @mousedown="lib.start" @dblclick="lib.reset"></div>
 

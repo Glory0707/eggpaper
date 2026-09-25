@@ -71,13 +71,7 @@ _cancel = threading.Event()
 def install_dir() -> str:
     return os.path.join(os.path.dirname(appinfo.data_dir()), "engines", "pdf2zh")
 
-def _no_window():
-    if os.name != "nt":
-        return 0, None
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 0
-    return 0x08000000, si
+from translate_full import _no_window   # 子进程藏控制台：与 translate_full 共用一份
 
 def _warmup(exe: str):
     """装完先 `--warmup` 一次：把内置的 offline_assets 包 restore 进缓存并整体校验。
@@ -215,7 +209,6 @@ def _unpack(zpath: str):
         shutil.rmtree(_partial_dir(), ignore_errors=True)   # 装好了，断点没用了
         _warmup(exe)
         _set(state="done", path=exe)
-        shutil.rmtree(install_dir() + ".tmp", ignore_errors=True)
     except Exception as e:
         shutil.rmtree(tmp_root, ignore_errors=True)
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
@@ -372,8 +365,6 @@ def _download_parallel(url: str, zpath: str, total: int) -> str:
     return ""
 
 def _install(urls):
-    _set(state="downloading", pct=0, got=0, total=0, error="", url=urls[0][0] if urls else "",
-         path="", src=urls[0][1] if urls else "", tried=[])
     tmp_root = install_dir() + ".tmp"
     zname = os.path.basename(ENGINE_URL.split("?")[0])
     zpath = os.path.join(_partial_dir(), zname)     # zip 落 partial 目录：不被 _unpack 的暂存清理波及

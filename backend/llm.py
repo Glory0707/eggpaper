@@ -67,8 +67,6 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
         if out.strip():
             return out
         budget = int(budget * 1.6)
-    if out.strip():
-        return out
     if last_err is not None:
         raise last_err
     return out
@@ -98,9 +96,9 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
             if not raw:
                 continue
             line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
-            if not line or line == "[DONE]":
-                if line == "[DONE]":
-                    break
+            if line == "[DONE]":
+                break
+            if not line:
                 continue
             try:
                 j = json.loads(line)
@@ -152,13 +150,13 @@ def parse_json(text: str) -> dict:
         raise ValueError("模型这次没有按约定的 JSON 格式回，重试一次通常就好")
     raw = text[i:j + 1] if j > i else text[i:]   # 截断的输出可能整个右括号都没了，交给 _json_patch 补
     no_curly = raw.replace("“", '"').replace("”", '"')
-    attempts = [raw, no_curly, _json_patch(no_curly),
-                _json_patch(no_curly).replace("'", '"')]    # 单引号 JSON 兜底
+    patched = _json_patch(no_curly)
+    attempts = [raw, no_curly, patched, patched.replace("'", '"')]   # 单引号 JSON 兜底
     last = None
     for a in attempts:
         try:
             return json.loads(a)
-        except (json.JSONDecodeError, ValueError) as e:
+        except ValueError as e:
             last = e
     raise last
 
@@ -414,7 +412,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
         try:
             data = parse_json(out)
             break
-        except (ValueError, json.JSONDecodeError) as e:
+        except ValueError as e:
             if attempt == 0:
                 msgs = [
                     {"role": "system", "content": system},
@@ -772,7 +770,6 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
             pass
     batches = [None] * total
     state = {}
-    failed = []
 
     def wave(idx_list):
         """跑一批块（第一遍全部；第二遍只补失败的）。返回没成的块号。"""

@@ -32,7 +32,7 @@ export const store = reactive({
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
     railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
     libW: lsGet('libW', null) ?? 300,      // 文库抽屉宽：日历/目录抽屉共用这把尺
-    noteBands: lsGet('noteBands', { good: true, warn: true, noise: true, mine: true }),
+    noteBands: lsGet('noteBands', { good: true, warn: true, noise: true }),
     frame: false,
     libOpen: false,
     calOpen: false,        // 论文日历抽屉（与文库同侧，互斥打开）
@@ -56,7 +56,7 @@ export const store = reactive({
   toast: '',
   toastN: 0,             // 连发时递增：模板 :key 让 pop 动画每次重放
   epoch: 0,              // 换一篇 +1：按篇的异步请求回来时对不上就丢掉（见 openPaper）
-  viewerApi: null,       // PdfViewer 注册：{step, translateCurrent, jumpBack, translateSelectionKey}
+  viewerApi: null,       // PdfViewer 注册：{step, stepPage, gotoPage, translateCurrent, translateSelectionKey, jumpBack, startShot, openSearch, findInPaper}
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
 
   get narrow() { return this.vw < 1180 },

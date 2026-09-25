@@ -189,7 +189,6 @@ def _give_window_icon(pid: int):
             except Exception:
                 _window_log("现画窗口图标失败，退回 LoadImage：\n" + traceback.format_exc())
             if not hbig:
-                ico = icon_path()
                 hbig = li(0, ico, IMAGE_ICON, bx, bx, LR_LOADFROMFILE) if ico else 0
             if not hsmall:
                 ico = ico or icon_path()

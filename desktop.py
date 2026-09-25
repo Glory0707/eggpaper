@@ -237,13 +237,6 @@ def _running_instance():
         return None
     return port, str(info.get("version") or "")
 
-def _ver_tuple(v: str):
-    out = []
-    for part in str(v or "").split("."):
-        digits = "".join(c for c in part if c.isdigit())
-        out.append(int(digits) if digits else 0)
-    return tuple(out + [0, 0, 0])[:4]
-
 def _ask_quit(port: int) -> bool:
     """请那个实例退出（它自己有 /api/quit）。升级接管的让位不通知页面关窗——
     旧页面要留给版本轮询自动刷新到新实例。"""
@@ -313,9 +306,11 @@ def main():
     _setup_paths()
     _dpi_aware()
     if "--window-only" in sys.argv:
-        port = _running_instance() or PORTS[0]
+        running = _running_instance()
+        port = running[0] if running else PORTS[0]
         return _window_only_mode(f"http://{HOST}:{port}/")
     import appinfo
+    from update import _ver_tuple   # 版本号比较：与 backend/update 同一份实现
     log = _log
     _install_crash_log(log)
     log(f"启动 eggpaper {appinfo.version()}（packaged={appinfo.is_frozen()}）")

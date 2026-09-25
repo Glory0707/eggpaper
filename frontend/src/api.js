@@ -111,15 +111,6 @@ export const api = {
   backupExportUrl: () => '/api/backup/export',
   backupPick: () => req('POST', '/api/backup/pick', {}),
   backupRestore: (path) => req('POST', '/api/backup/restore', { path }),
-  pdf2zhInstallFromFile: (file) => {
-    const fd = new FormData()
-    fd.append('file', file)
-    return fetch('/api/pdf2zh/install-from-file', { method: 'POST', body: fd })
-      .then(async r => {
-        if (!r.ok) throw await respError(r, `HTTP ${r.status}`)
-        return r.json()
-      })
-  },
 }
 
 /* SSE 流式回答。EventSource 不能 POST，所以用 fetch + ReadableStream 自己拆帧。

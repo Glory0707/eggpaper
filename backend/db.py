@@ -288,12 +288,15 @@ def search_content(kw: str, limit: int = 30):
                     "year": m["year"], "where": d["where"], "n": d["n"], "snippet": d["snippet"]})
     return res
 
+# 删库清单唯一正本：删一篇文献要扫的全部从表（purge 与 supersede 共用，加表只改这里）
+PAPER_TABLES = ("paragraphs", "annotations", "claims", "marginalia", "glossary",
+                "qa_messages", "conversations", "paper_collections", "answers", "reading_log")
+
 def purge_paper(pid: str):
     """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
-    漏掉任何一张表都会留下读不出来的孤儿数据，所以这里一张一张点名列；
+    漏掉任何一张表都会留下读不出来的孤儿数据，所以一张一张点名列（见 PAPER_TABLES）；
     全程一个事务——中途崩了就整体回滚，不留半删状态。"""
-    tables = ("paragraphs", "annotations", "claims", "marginalia", "glossary",
-              "qa_messages", "conversations", "paper_collections", "answers", "reading_log")
+    tables = PAPER_TABLES
     with _lock:
         c = _get()
         try:
@@ -362,9 +365,7 @@ def supersede(new_pid: str, old_pid: str) -> dict:
                     stats["pins"] += 1
                 else:
                     stats["pins_lost"] += 1
-            for t in ("paragraphs", "annotations", "claims", "marginalia", "glossary",
-                      "qa_messages", "conversations", "paper_collections", "answers",
-                      "reading_log"):
+            for t in PAPER_TABLES:
                 c.execute(f"DELETE FROM {t} WHERE paper_id=?", (old_pid,))
             c.execute("DELETE FROM papers WHERE id=?", (old_pid,))
             c.commit()

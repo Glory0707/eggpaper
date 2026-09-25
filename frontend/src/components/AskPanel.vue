@@ -229,7 +229,6 @@ const libMap = ref({})
 const picked = ref([])          // ['标题', …]——整个文库/分类全选/手选，都是这一份集合
 const allTitles = computed(() => libPapers.value.map(p => (p.title || p.filename || '').trim()).filter(Boolean))
 const libAll = computed(() => allTitles.value.length > 0 && allTitles.value.every(t => picked.value.includes(t)))
-const citeListEl = ref(null)
 const citeFilterEl = ref(null)
 
 async function loadLib() {
@@ -432,7 +431,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
       <Transition name="fade">
         <div v-if="citeOpen" class="cite-pop">
           <input ref="citeFilterEl" v-model="citeQ" class="cite-filter" :placeholder="t('筛选标题…')" @keydown.esc.stop="closeCite">
-          <div class="cite-list" ref="citeListEl">
+          <div class="cite-list">
             <button class="cite-item lib" :class="{ on: libAll }" @click="toggleLibAll">
               <span class="box">
                 <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"

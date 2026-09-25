@@ -285,24 +285,7 @@ function pageItem(pno) {
 /* 当前读到哪：原文页码 + 页内高度比例（比例让不同缩放/排布之间也能对上） */
 function currentAnchor() {
   const sc = scroller()
-  if (!sc) return null
-  const items = flatItems.value
-  if (!items.length) return null
-  const top = sc.scrollTop + 8
-  let cur = null
-  for (const it of items) {
-    const el = pageEls.value[it.gi]
-    if (!el) continue
-    if (el.offsetTop <= top) cur = it
-    else break
-  }
-  if (!cur) return { page: origPageOf(items[0]), frac: 0 }
-  const el = pageEls.value[cur.gi]
-  const h = el?.offsetHeight || 1
-  return {
-    page: origPageOf(cur),
-    frac: Math.min(1, Math.max(0, (top - (el?.offsetTop || 0)) / h)),
-  }
+  return sc ? anchorAt(sc.scrollTop + 8) : null
 }
 
 function restoreAnchor(a, viewOff = 0) {
@@ -383,7 +366,7 @@ function measure() {
 }
 
 function updateMid() {
-  const el = deskEl.value?.closest('.desk') || deskEl.value
+  const el = scroller()
   if (!el) return
   const r = el.getBoundingClientRect()
   midX.value = Math.round(r.left + r.width / 2)
@@ -651,7 +634,15 @@ function quoteY(n) {
   return (paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value
 }
 const currentHit = computed(() => searchHits.value[searchAt.value] || null)
-function searchHitsOnPage(pno) { return searchHits.value.filter(h => h.page === pno) }
+const searchHitsByPage = computed(() => {
+  const m = new Map()
+  for (const h of searchHits.value) {
+    if (!m.has(h.page)) m.set(h.page, [])
+    m.get(h.page).push(h)
+  }
+  return m
+})
+function searchHitsOnPage(pno) { return searchHitsByPage.value.get(pno) || [] }
 
 const progPct = ref(0)
 function updateProg() {
@@ -714,7 +705,7 @@ function onMouseUp(e) {
   const r = range.getBoundingClientRect()
   const pageEl = node.closest('.page')
   const it = flatItems.value.find(x => pageEls.value[x.gi] === pageEl)
-  let context = '', paraIdx = -1, page = it ? (it.origPage >= 0 ? it.origPage : origPageOf(it)) : 0
+  let context = '', paraIdx = -1, page = it ? origPageOf(it) : 0
   if (it && it.origPage >= 0) {
     const localY = r.top - pageEl.getBoundingClientRect().top
     for (const p of parasByPage.value[it.origPage] || []) {
@@ -1141,7 +1132,7 @@ function findInPaper(q) {
     return
   }
   if (store.viewer.frame) {
-    store.viewer.frame = false        // 文字层是 v-if 挂的：退出框选这一拍就回来了
+    store.viewer.frame = false        // 文字层只是被 tl-off（visibility）藏住，这一拍就恢复
     nextTick(() => { searchQ.value = q; searchOpen.value = true; runSearch() })
     return
   }

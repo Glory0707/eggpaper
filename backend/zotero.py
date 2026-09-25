@@ -134,9 +134,7 @@ def list_items() -> list:
                     "year": _year(d.get("date")),
                     "pdf": pdf_of.get(it.get("key"), ""),
                 })
-    except httpx.ConnectError:
-        raise ZoteroUnavailable("连不上 Zotero——先把它打开，再回来点导入")
-    except httpx.ConnectTimeout:
+    except (httpx.ConnectError, httpx.ConnectTimeout):
         raise ZoteroUnavailable("连不上 Zotero——先把它打开，再回来点导入")
     except httpx.HTTPError as e:
         raise ZoteroUnavailable(f"Zotero 的本地接口出了问题：{e}")

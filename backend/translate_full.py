@@ -97,9 +97,10 @@ def choose_service(service: str, host: str = ""):
     """
     service = (service or "bing").strip()
     target = host or SERVICE_HOST.get(service, "")
-    if probe(target)[0]:
+    ok, why = probe(target)
+    if ok:
         return service, ""
-    why = probe(target)[1]
+
     for alt in AUTO_FALLBACK:
         if alt == service or not probe(SERVICE_HOST.get(alt, ""))[0]:
             continue

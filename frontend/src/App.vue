@@ -829,9 +829,7 @@ function onKey(e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return   // 其余组合键还给浏览器：Ctrl+C 复制不该顺手开截图
   if (e.key === 'Escape') {
     gPending.value = false         // 弦按到一半被 Esc 打断：整条作废
-    store.viewer.libOpen = false
-    store.viewer.calOpen = false
-    store.viewer.tocOpen = false
+    openDrawer(null)
     store.shortcutCard = false
     store.cite.open = false
     dragOver.value = false
@@ -878,7 +876,7 @@ function onKey(e) {
        @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
     <header class="topbar">
       <div class="wordmark" :title="t('回书桌')" @click="goHome">
-        <span class="egg-wrap" :class="{ gone: petPos || dragFloat }" :title="t('彩蛋')"
+        <span class="egg-wrap" :title="t('彩蛋')"
               :ref="r => (homeEl = r)" @pointerdown="petDown" @click.stop="petClick" @wheel="topPet.wheel"
               @dragenter="topPet.enter" @dragover="topPet.over" @dragleave="topPet.leave" @drop="topPet.drop">
           <EggMark :skin="eggSkin" class="egg pet" v-if="!petPos && !dragFloat" :class="petCls(topPet)" :style="spinStyle(topPet)" />
@@ -1007,7 +1005,7 @@ function onKey(e) {
 
     <Transition name="fade">
       <div class="lib-mask" v-if="store.viewer.libOpen || store.viewer.calOpen || store.viewer.tocOpen"
-           @click="store.viewer.libOpen = store.viewer.calOpen = store.viewer.tocOpen = false"></div>
+           @click="openDrawer(null)"></div>
     </Transition>
     <Transition name="slide-l">
       <LibPanel v-if="store.viewer.libOpen" @import="onImport" @split-many="onSplitMany" @close="store.viewer.libOpen = false" />
