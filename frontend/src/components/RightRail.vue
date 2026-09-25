@@ -163,7 +163,7 @@ async function copyExport() {
     if (await copyText(md)) {
       exportCopied.value = true
       setTimeout(() => (exportCopied.value = false), 1600)
-    } else toast(t('复制失败，手动选吧'))
+    } else toast(t('复制失败'))
   } catch (e) { toast(t('复制失败：{m}', { m: e.message })) }
 }
 
@@ -477,7 +477,7 @@ async function copyFig() {
     const blob = await (await fetch(api.figureUrl(store.currentId, lightbox.value, 200))).blob()
     await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
     toast(t('图片已复制'))
-  } catch { toast(t('复制失败，手动选吧')) }
+  } catch { toast(t('复制失败')) }
 }
 function downloadFig() {
   const name = (lightbox.value.label || lightbox.value.caption || 'figure').replace(/[\s/]+/g, '_').slice(0, 40)
@@ -800,7 +800,7 @@ watch(() => store.currentId, () => {
         </div>
         <input type="text" v-model="termFilter" :placeholder="t('筛选…')" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>{{ t('导出 CSV') }}</a></div>
-        <p class="t-empty" v-if="!termsBusy && !terms.length">{{ t('还是空的——框选问 AI、按 t 段译时碰到的词会自动收进来，也可以在上面手动加。') }}</p>
+        <p class="t-empty" v-if="!termsBusy && !terms.length">{{ t('还没有术语。') }}</p>
         <p class="t-empty" v-else-if="!termsBusy && terms.length && !termsFiltered.length">{{ t('没有词匹配这个筛选。') }}</p>
         <TransitionGroup name="plist" tag="div">
           <div v-for="term in termsFiltered" :key="term.id" class="term-row">

@@ -794,7 +794,7 @@ def open_native_window():
     import window as winmod
     how = winmod.open_window(f"http://127.0.0.1:{_my_port()}/")
     if not how:
-        raise HTTPException(503, "没找到可用的浏览器（Edge/Chrome），用当前这个窗口看就行")
+        raise HTTPException(503, "没找到可用的浏览器（Edge/Chrome）")
     return {"ok": True, "how": how}
 
 @app.post("/api/screenshot")
@@ -951,7 +951,7 @@ def _ocr_then_analyze(pid: str, path: str):
     except Exception:
         _applog(f"OCR {pid} 失败：{traceback.format_exc(limit=3)}")
         db.update_paper(pid, analysis_status="error",
-                        analysis_error="扫描件文字识别没成功——这份可能太糊，或重试一次")
+                        analysis_error="扫描件文字识别没成功，可能太糊")
         return
     finally:
         _job_done("analysis", pid)
@@ -968,7 +968,7 @@ async def upload(file: UploadFile = File(...)):
     if raw[:4] != b"%PDF":
         raise HTTPException(400, "不是 PDF 文件")
     if len(raw) < 256:
-        raise HTTPException(400, "这个文件太小了，不像是完整的 PDF（可能没传完）")
+        raise HTTPException(400, "文件太小，不像完整的 PDF")
     name = (file.filename or "paper.pdf").split("/")[-1].split("\\")[-1]
 
     def _import():
@@ -1093,7 +1093,7 @@ def library_version():
     n, mx = db.q("SELECT COUNT(*), IFNULL(MAX(created_at),'') FROM papers")[0]
     return {"v": f"{n}:{mx}"}
 
-NO_TEXT = "这份 PDF 没有文字层（多半是扫描件）：析读和提问用不了，原文照样能读"
+NO_TEXT = "这份 PDF 没有文字层（多半是扫描件），析读和提问用不了"
 PDF_GONE = "PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。"
 
 def _require_paras(pid: str) -> None:
@@ -1441,7 +1441,7 @@ def analyze(pid: str):
         p = db.get_paper(pid) or p     # 锁内重读：锁外那份可能是"已完成"的旧读，照它判会连环重析
         if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
             # 眉批也在收网析读：两边都会清七问/导师缓存，先结束的一方会删掉刚花钱生成的结果
-            raise HTTPException(400, "AI 眉批还在跑——它和析读会互相清对方的缓存，先等眉批结束")
+            raise HTTPException(400, "AI 眉批还在跑，先等它结束")
         if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
             return {"status": p["analysis_status"]}
         if p["analysis_status"] in ("running", "queued"):
@@ -1642,7 +1642,7 @@ def _run_marginalia(pid: str):
         db.set_marginalia(pid, notes)
         if misses:
             db.update_paper(pid, marginalia_error=(
-                f"{misses} 块没生成批注（限流或超时）。空着的段落再点一次「重写」可补。"))
+                f"{misses} 块没生成批注（限流或超时）"))
             _applog(f"眉批 {pid}: {misses} 块重试后仍失败")
         db.answers_clear(pid)
         db.update_paper(pid, advisor=None)
@@ -1668,7 +1668,7 @@ def marginalia_start(pid: str):
     _paper_or_404(pid)
     with _key_lock("job:" + pid):       # 与 analyze 同一把每篇锁：检查+占位原子化
         if _analysis_inflight(pid):
-            raise HTTPException(400, "析读还在跑——它和眉批会互相清对方的缓存，先等析读结束")
+            raise HTTPException(400, "析读还在跑，先等它结束")
         _cancel_clear("marginalia", pid)    # 上次取消留下的旗子别误杀这次
         with _live_lock:
             if _job_live("marginalia", pid):
@@ -1774,7 +1774,7 @@ def _require_shape(data, keys: tuple, what: str):
     也不一定清得到它）。七问与引用早就做了这个判断，这里是把它补成统一的一道闸。
     """
     if not isinstance(data, dict) or not any(data.get(k) for k in keys):
-        raise HTTPException(503, f"{what}没生成出来（模型这次返回的是空的），过一会儿再点一次")
+        raise HTTPException(503, f"{what}没生成出来，再点一次")
 
 
 def _json_of(raw, fallback=None):
@@ -2115,7 +2115,7 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         raw = llm.extract_citation(p["title"], src)
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
     if not (meta.get("title") or meta.get("authors")):
-        raise HTTPException(503, "首页没认出文献信息，这份 PDF 可能没印刊头刊脚，只能手工补了")
+        raise HTTPException(503, "首页没认出文献信息，可能没印刊头")
     db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
     return {"meta": meta, "groups": citation.groups(meta)}
 
@@ -2623,14 +2623,14 @@ def _type_out(text: str, step: int = 3, delay: float = 0.02):
 def _mock_stream(question: str):
     """演示模式也走流式：同一条前端代码路径，接上真 key 不用改任何东西。"""
     if (config.load().get("ui_lang") or "zh") == "en":
-        text = ("[Demo mode] This is a canned answer for trying the UI. [para 1] With an API key "
+        text = ("[Demo mode] This is a canned answer. [para 1] With an API key "
                 "configured, real answers appear here.\n\n"
                 "· You asked: " + question[:60] + "\n"
-                "· Answers stream in token by token; you can stop midway and keep what arrived.")
+                "· Answers stream in; stop anytime.")
     else:
-        text = ("〔演示模式〕这是模拟回答，用来跑通界面。[¶1] 配好 API key 后这里会是真答案。\n\n"
+        text = ("〔演示模式〕这是模拟回答，配好 API key 后这里会是真答案。\n\n"
                 "· 你问的是：" + question[:60] + "\n"
-                "· 回答会逐字出现，可以中途停下；停下时已经吐出来的部分会留着。")
+                "· 回答逐字出现，可中途停下。")
     yield from _type_out(text)
 
 def _autotitle(pid: str, conv_id: int, question: str, is_first: bool):
@@ -3013,7 +3013,7 @@ def translate_full_start(pid: str, force: bool = False):
     if not force:
         if _claim_existing_translation(pid):
             _applog(f"全文翻译 {pid}: 发现上次已经译好的成品，直接认领")
-            return {"status": "done", "service": "", "note": "上次已经译好了，直接用了那份成品"}
+            return {"status": "done", "service": "", "note": "上次已经译好了"}
     used, note = translate_full.choose_service(svc, host)
     if used is None:
         raise HTTPException(400, note)
@@ -3041,15 +3041,13 @@ def translate_full_start(pid: str, force: bool = False):
             engine_install.start()
             why2 = (f"，检测到旧版 {why}" if stale else f"（{why}）")
             raise HTTPException(400, f"{'旧版全文翻译引擎，正在升级' if stale else '缺全文翻译引擎'}"
-                                     f"{why2}。已在后台自动下载安装 2.x（约 600MB，几分钟），"
-                                     "装好后会自动开始这篇的全文翻译。")
+                                     f"{why2}，正在后台自动下载 2.x（约 600MB）。")
         if st["state"] in ("downloading", "unpacking", "warming"):
-            raise HTTPException(400, "全文翻译引擎正在后台下载安装（约 600MB），装好后会自动开始。")
+            raise HTTPException(400, "全文翻译引擎正在后台下载安装（约 600MB）。")
         if not exe_found or stale:
             raise HTTPException(400, f"全文翻译引擎{'升级' if stale else '下载'}没成功"
-                                     f"（{st.get('error') or '原因未知'}）。可再点一次「全文翻译」重试，"
-                                     "或到「设置 → 翻译引擎」手动装。")
-        raise HTTPException(400, f"全文翻译引擎起不来（{why}）。到「设置 → 翻译引擎」重新检测，或重装引擎。")
+                                     f"（{st.get('error') or '原因未知'}）")
+        raise HTTPException(400, f"全文翻译引擎起不来（{why}）")
     translate_full.start(pid, _paper_src_or_404(pid, p), paper_dir(pid), used,
                          cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                          note=note, engine=engine,

@@ -1059,7 +1059,7 @@ function onKey(e) {
       <div class="k-row" v-if="!isEn()"><span>{{ t('译当前段并钉页边') }}</span><kbd>t</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('翻译划选') }}</span><kbd>s</kbd></div>
       <div class="k-row"><span>{{ t('框选问 AI（Esc 退出）') }}</span><kbd>r</kbd></div>
-      <div class="k-row"><span>{{ t('截图（复制到剪贴板）') }}</span><kbd>c</kbd></div>
+      <div class="k-row"><span>{{ t('截图') }}</span><kbd>c</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('原文 / 译文 / 双语') }}</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>{{ t('聚焦提问') }}</span><kbd>/</kbd></div>
       <div class="k-row"><span>{{ t('折叠右栏') }}</span><kbd>x</kbd></div>

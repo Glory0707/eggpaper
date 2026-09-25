@@ -796,7 +796,6 @@ async function copySel() {
 function sendToGlossary() {
   store.glossaryPrefill = { term_en: sel.text.slice(0, 80), term_zh: (sel.zh || '').replace('〔演示译文〕', '').slice(0, 24) }
   closeSel()
-  toast(t('已收进术语表'))
   window.dispatchEvent(new CustomEvent('eggpaper:terms-prefill'))
 }
 

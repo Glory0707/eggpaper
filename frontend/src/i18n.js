@@ -30,7 +30,6 @@ const EN = {
   '还没有分类': 'No collections yet',
   '这个分类还没有文献': 'Nothing in this collection yet',
   '没有符合条件的结果': 'No matches',
-  '已收进术语表': 'Added to the glossary',
   '切回「原文」再框选': 'Switch to Original to frame-ask',
   '已切回原文': 'Switched to Original',
   '析读后出七问': 'Seven answers appear after a deep read',
@@ -83,7 +82,7 @@ const EN = {
   '收起所有浮层 / 退出框选': 'Dismiss pop-ups / exit framing',
   '出错了：{m}': 'Something went wrong: {m}',
   '未知错误': 'unknown error',
-  '初始化失败：{m}': 'Startup failed: {m} (the backend may still be waking up)',
+  '初始化失败：{m}': 'Startup failed: {m}',
   '全文翻译已开始': 'Translation started',
   '启动失败：{m}': 'Failed to start: {m}',
   '全文翻译完成': 'Full-paper translation finished',
@@ -149,7 +148,6 @@ const EN = {
   '先滚动到要译的段落': 'Scroll to the paragraph you want translated first',
   '已钉在页边': 'Pinned to the margin',
   '译文已复制': 'Translation copied',
-  '复制失败，手动选吧': 'Copy failed — select it manually',
   '已写在页边': 'Written to the margin',
   '钉到页边没成功：{m}': 'Could not pin to the margin: {m}',
   '没写上：{m}': 'Not saved: {m}',
@@ -214,7 +212,7 @@ const EN = {
   '收进术语表': 'Save to glossary',
   '添加': 'Add',
   '依据': 'Evidence',
-  '还是空的——框选问 AI、按 t 段译时碰到的词会自动收进来，也可以在上面手动加。': 'Empty for now — terms met while asking on a selection or translating a paragraph (t) land here automatically, or add one above.',
+  '还没有术语。': 'No terms yet.',
   '没有词匹配这个筛选。': 'No terms match this filter.',
   '通读失败': 'Reading failed',
   '基于这篇论文提问…': 'Ask about this paper…',
@@ -240,7 +238,6 @@ const EN = {
   '文库': 'Library',
   '彩蛋': 'Easter egg',
   '截图': 'Screenshot',
-  '截图（复制到剪贴板）': 'Screenshot (copies to clipboard)',
   '保存到本地': 'Save locally',
   '打开目录': 'Open folder',
   '已复制到剪贴板': 'Copied to clipboard',
@@ -556,8 +553,8 @@ const EN = {
   '导出本月 .md': 'Export month .md',
 
   // ---- 后端消息（静态原文，原样冒到界面上）与零散词条 ----
-  '这份 PDF 没有文字层（多半是扫描件）：析读和提问用不了，原文照样能读':
-    'No text layer in this PDF (likely a scan) — deep read and ask cannot work, but the pages still read fine',
+  '这份 PDF 没有文字层（多半是扫描件），析读和提问用不了':
+    'No text layer in this PDF (likely a scan) — deep read and ask cannot work',
   'PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。':
     'The PDF is gone from its original location. Drop it back in to re-import — your notes are safe.',
   '读取中…': 'Loading…',

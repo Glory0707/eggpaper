@@ -24,6 +24,6 @@ import { t } from './i18n'
 
 export async function copyWithToast(text, okMsg) {
   const ok = await copyText(text)
-  toast(ok ? okMsg : t('复制失败，手动选吧'))
+  toast(ok ? okMsg : t('复制失败'))
   return ok
 }
