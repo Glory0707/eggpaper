@@ -558,7 +558,9 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 
 /* 时段问候：取景框纸卡，淡入浮起、角标展开、下沉淡出；纯展示不挡操作。
    框随文字收紧（padding 小、圆角小），留白克制 */
-.greet-box { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); z-index: 700;
+/* 轴线跟内容区走（左条 46px 的一半），不跟整窗：问候只在书桌出现，
+   而 hero 内容群是扣除左条后居中的，按整窗居中会左偏 23px。 */
+.greet-box { position: fixed; left: calc(50% + 23px); top: 22%; transform: translateX(-50%); z-index: 700;
   pointer-events: none; background: var(--card); border-radius: 8px; padding: 9px 18px;
   box-shadow: 0 8px 30px rgba(var(--wash-rgb), .10); }
 .greet-box .gt { font-size: calc(16px * var(--fs-scale)); color: var(--ink); letter-spacing: .03em; font-weight: 500; white-space: nowrap; }
@@ -957,6 +959,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .term-row .t-go:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
 
 .term-row .t-no { flex: 0 0 auto; margin-left: auto; color: var(--ink-3); font-size: var(--fs-xs); padding: 0 3px; }
+.t-empty { font-size: var(--fs-xs); color: var(--ink-3); padding: 10px 4px 12px; line-height: 1.7; }
 
 .term-form { display: flex; gap: 6px; margin-bottom: 10px; }
 .term-form input { font-size: var(--fs-sm); min-width: 0; flex: 1 1 0; }
@@ -1334,12 +1337,14 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .desk-float { position: fixed; translate: -50% 0; z-index: 88; }
 .zoom-bar {
   bottom: 18px; display: flex; flex-wrap: wrap; gap: 3px; align-items: stretch;
-  background: var(--card); border: 1px solid var(--hairline);
+  /* 卡底磨砂：半透但正文不再从按钮缝里透出来（比整块降 opacity 清爽） */
+  background: color-mix(in srgb, var(--card) 84%, transparent);
+  backdrop-filter: blur(10px) saturate(1.05);
+  border: 1px solid var(--hairline);
   border-radius: 4px; padding: 3px; box-shadow: var(--shadow-page);
-  /* 平时半透，别跟论文抢注意力（正文会透出来）；鼠标过去或拖动时实心 */
-  opacity: 0.72; transition: opacity var(--t-base) var(--ease-smooth);
+  transition: border-color var(--t-base) var(--ease-smooth);
 }
-.zoom-bar:hover, .zoom-bar.dragging { opacity: 1; }
+.zoom-bar:hover, .zoom-bar.dragging { border-color: var(--ink-3); }
 .zoom-bar button { padding: 3px 9px; border-color: transparent; background: transparent; font-size: var(--fs-sm); color: var(--ink-2); }
 .zoom-bar button:hover { background: var(--accent-soft); transform: none; box-shadow: none; }
 .zoom-bar button.on { background: var(--ink); color: var(--card); }
@@ -1369,13 +1374,16 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .frame-hint {
   top: 70px;
   display: flex; align-items: center;
-  background: var(--ink); color: var(--card);
-  border-radius: 20px; padding: 5px 7px; font-size: var(--fs-sm);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  backdrop-filter: blur(10px);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: 8px; padding: 4px 6px; font-size: var(--fs-sm);
   box-shadow: var(--shadow-pop);
 }
 .frame-hint button {
-  background: var(--card-2); border: none; border-radius: 14px;
-  font-size: var(--fs-sm); padding: 3px 12px; color: var(--ink); font-weight: 600;
+  background: none; border: none; border-radius: 6px;
+  font-size: var(--fs-sm); padding: 3px 12px; color: var(--accent-deep); font-weight: 600;
 }
 .frame-hint button:hover { transform: none; box-shadow: none; background: var(--card-2); }
 
@@ -1833,6 +1841,11 @@ html.dark .vis-img { background: #fff; }
 .demo-badge:hover { box-shadow: none; transform: translateY(-1px); }
 .empty .desk-hint.demo-hint {
   position: static; display: block; margin: 14px auto 0; width: fit-content;
+  color: var(--accent-deep); cursor: pointer; border-radius: 4px; padding: 2px 6px;
+}
+.empty .desk-hint.lib-hint {
+  /* 与 demo-hint 同款居中；右下角那个位置是拖放提示的，别去挤它 */
+  position: static; display: block; margin: 2px auto 0; width: fit-content;
   color: var(--accent-deep); cursor: pointer; border-radius: 4px; padding: 2px 6px;
 }
 .empty .desk-hint.demo-hint:hover { background: var(--accent-soft); }

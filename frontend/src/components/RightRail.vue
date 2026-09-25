@@ -803,6 +803,8 @@ watch(() => store.currentId, () => {
         </div>
         <input type="text" v-model="termFilter" :placeholder="t('筛选…')" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>{{ t('导出 CSV') }}</a></div>
+        <p class="t-empty" v-if="!termsBusy && !terms.length">{{ t('还是空的——框选问 AI、按 t 段译时碰到的词会自动收进来，也可以在上面手动加。') }}</p>
+        <p class="t-empty" v-else-if="!termsBusy && terms.length && !termsFiltered.length">{{ t('没有词匹配这个筛选。') }}</p>
         <TransitionGroup name="plist" tag="div">
           <div v-for="term in termsFiltered" :key="term.id" class="term-row">
             <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>

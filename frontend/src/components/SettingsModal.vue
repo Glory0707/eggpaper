@@ -104,8 +104,8 @@ function pickFs(k) { store.viewer.fs = k }
 
 /* 界面语言：点一下立即生效（整棵组件树读 ui.lang，切过去就是英文），
    再把选择同步给后端——LLM 的产出语言跟着它走。 */
-function toggleLang() {
-  const next = isEn() ? 'zh' : 'en'
+function setUiLang(next) {
+  if ((isEn() ? 'en' : 'zh') === next) return
   setLang(next)
   api.saveSettings({ ui_lang: next }).then(r => { store.settings = r }).catch(() => { /* 后端没收到也不回切：下次启动再同步 */ })
 }
@@ -279,7 +279,8 @@ function save() {
       <div class="f-row">
         <label class="mono-label">{{ t('语言') }}</label>
         <div class="care-row">
-          <button class="care-chip" :class="{ on: isEn() }" @click="toggleLang">English</button>
+          <button class="care-chip" :class="{ on: !isEn() }" @click="setUiLang('zh')">中文</button>
+          <button class="care-chip" :class="{ on: isEn() }" @click="setUiLang('en')">English</button>
         </div>
       </div>
       <div class="f-row" v-if="!isEn()">

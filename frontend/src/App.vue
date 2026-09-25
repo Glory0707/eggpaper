@@ -334,8 +334,7 @@ onMounted(async () => {
   try {
     store.settings = await api.settings()
     if (store.settings?.ui_lang) setLang(store.settings.ui_lang)
-    await refreshPapers()
-    await refreshCollections()
+    await Promise.all([refreshPapers(), refreshCollections()])   // 两个列表互不依赖，并行走
     const lastId = lsGet('lastPaper', '')
     const last = store.papers.find(p => p.id === lastId)
     if (last) openPaper(last.id)
@@ -848,6 +847,9 @@ function onKey(e) {
     if (e.key === 'h') { goHome(); e.preventDefault() }
     return
   }
+  /* g 弦必须在「没开论文」的守卫之前注册：书桌正是最需要 g l/g c/g o 的地方，
+     挡在后面这组主导航在书桌上就全是死的。 */
+  if (e.key === 'g') { gPending.value = true; setTimeout(() => (gPending.value = false), 700); return }
   if (!store.paper) return
   if (isEn() && ['t', 's', '2', '3'].includes(e.key)) return
   switch (e.key) {
@@ -866,7 +868,6 @@ function onKey(e) {
     case 'x': store.viewer.railUser = !store.viewer.railUser; break
     case 'a': doAnalyze(); break
     case 'm': doMarginalia(); break
-    case 'g': gPending.value = true; setTimeout(() => (gPending.value = false), 700); break
     case '?': store.shortcutCard = !store.shortcutCard; break
   }
 }
@@ -991,12 +992,20 @@ function onKey(e) {
                @keydown.space.prevent="showSettings = true">
             {{ t('去设置配好模型') }}
           </div>
+          <!-- 库里有存货时别让 hero 装成空库：给一条直通文库的入口 -->
+          <div class="desk-hint lib-hint" v-if="store.papers.length" role="button" tabindex="0"
+               @click="store.viewer.libOpen = true" @keydown.enter.prevent="store.viewer.libOpen = true"
+               @keydown.space.prevent="store.viewer.libOpen = true">
+            {{ t('文库里有 {n} 篇——去挑一篇', { n: store.papers.length }) }}
+          </div>
         </div>
         <PdfViewer v-else :pid="store.currentId" :key="store.currentId" />
       </main>
 
-            <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
-              @click="store.viewer.railUser = true" aria-label="展开右栏"></button>
+            <Transition name="fade">
+              <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
+                @click="store.viewer.railUser = true" aria-label="展开右栏"></button>
+            </Transition>
             <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight, overlay: store.railOverlay }">
         <RightRail @analyze="doAnalyze" @marginalia="doMarginalia" />
       </div>

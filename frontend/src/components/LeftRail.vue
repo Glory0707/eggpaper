@@ -418,6 +418,9 @@ function onCmpGoto(c) {
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
         <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
         <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败') }}</div>
+        <div class="p-state busy" v-if="p.translate_status === 'running'">{{ t('翻译中…') }}</div>
+        <div class="p-state" v-else-if="p.translate_status === 'done'">{{ t('已全文翻译') }}</div>
+        <div class="p-state" v-else-if="p.translate_status === 'error'">{{ t('翻译失败') }}</div>
 
       </div>
       </TransitionGroup>
