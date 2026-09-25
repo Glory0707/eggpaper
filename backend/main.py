@@ -3023,8 +3023,14 @@ def translate_full_start(pid: str, force: bool = False):
         raise HTTPException(400, note)
     engine = (cfg["pdf2zh"].get("path") or "").strip()
     exe = translate_full.engine_path(engine)
-    ok, why = translate_full.engine_probe_cached(exe)
-    if not ok:
+    hot = translate_full.probe_cached(exe)
+    if hot is None:
+        # 冷缓存：一次探测要跑 `--version`，实测 3 秒起——点「全文翻译」不该卡在它
+        # 上面。放行 start()（后台线程里有同款把关，探出坏引擎会落成任务错误），
+        # 这里只起个后台预热，让下一次点击拿到热缓存。
+        threading.Thread(target=translate_full.engine_probe_cached, args=(exe,), daemon=True).start()
+    elif not hot[0]:
+        ok, why = hot
         # 引擎不在（或还是 1.9 旧版）：后台自动下载安装（多源+校验+续传+预热，
         # 见 engine_install），旧版也会被原地换掉。前端见到"状态变成下载中"就弹
         # 等待卡、装完自动把这次全文翻译续上。

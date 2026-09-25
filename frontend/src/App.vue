@@ -605,7 +605,7 @@ async function doTranslateFull() {
   const again = tranSt.value === 'done'
   try {
     const r = await api.translateFull(store.currentId, again)
-    tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0 }
+    tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0, cur: [] }
     await refreshPapers()
     toast(r.note || t('全文翻译已开始'))
   } catch (e) {
@@ -634,7 +634,7 @@ onEngineReady(() => {
 async function pollTranslate() {
   if (!store.currentId) return
   const j = await api.translateStatus(store.currentId)
-  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '' }
+  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [] }
   if (j.status === 'done') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
@@ -779,7 +779,7 @@ async function onSplitMany(ids) {
   }
 }
 const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
-const tranProg = ref({ done: 0, total: 0, svc: '', started: 0 })
+const tranProg = ref({ done: 0, total: 0, svc: '', started: 0, cur: [] })
 const tranPct = computed(() => tranProg.value.total
   ? Math.round(tranProg.value.done * 100 / tranProg.value.total) : 0)
 const tranTick = ref(0)
@@ -803,8 +803,11 @@ const tranLabel = computed(() => {
 })
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
-    return t('正在译{svc} · 已用 {t}', { svc: tranProg.value.svc ? `（${tranProg.value.svc}）` : '',
-                                         t: tranElapsed.value || t('刚刚') })
+    // pdf2zh 2.x 不吐实时页进度，后端报的是"正在译哪些批"——至少让用户看见在动
+    const cur = tranProg.value.cur?.length
+      ? ` ${t('第{p}页', { p: tranProg.value.cur.join('、') })}` : ''
+    return t('正在译{svc}{cur} · 已用 {t}', { svc: tranProg.value.svc ? `（${tranProg.value.svc}）` : '',
+                                              cur, t: tranElapsed.value || t('刚刚') })
   }
   return ''
 })

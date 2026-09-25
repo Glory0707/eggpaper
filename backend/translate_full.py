@@ -169,17 +169,25 @@ def _run_version(path: str) -> tuple:
 
     HOME/USERPROFILE 指到数据目录 home/：pdf2zh_next 在 import 时就会创建
     ~/.config/pdf2zh——探测也要守"我们写的都规范在 eggpaper 文件夹里"这条线。
+
+    **全程持锁，探测必须串行**：BabelDOC 2.9.0 在 home 无缓存时会边启边初始化
+    资产（onnx 模型），两个 --version 并发跑会撞车——实测一个崩出
+    `RuntimeError: asset coroutine failed: NameError: name 'exit' is not defined`。
+    启动预热探测和用户点翻译时的探测就是这么撞上的（serve 起来 3 秒内点翻译）。
     """
     if not path or not os.path.exists(path):
         return -1, ""
     flags, si = _no_window()
     try:
-        r = subprocess.run([path, "--version"], capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=120,
-                           creationflags=flags, startupinfo=si, env=_page_env({}))
+        with _RUNVER_LOCK:
+            r = subprocess.run([path, "--version"], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=120,
+                               creationflags=flags, startupinfo=si, env=_page_env({}))
     except Exception:
         return -1, ""
     return r.returncode, ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
+
+_RUNVER_LOCK = threading.RLock()   # 可重入：engine_probe_cached 持锁时 engine_probe → _run_version 同线程再进
 
 def engine_version(path: str) -> tuple:
     """解析引擎版本号为 (major, minor, patch)；认不出返回 ()。
@@ -252,9 +260,32 @@ def engine_probe_cached(path: str, ttl: float = 900) -> tuple:
     hit = _ENGINE.get(path)
     if hit and hit["mtime"] == mt and time.time() - hit["at"] < ttl:
         return hit["ok"], hit["why"]
-    ok, why = engine_probe(path)
-    _ENGINE[path] = {"mtime": mt, "ok": ok, "why": why, "at": time.time()}
-    return ok, why
+    with _RUNVER_LOCK:
+        # 双重检查：排队等锁的工夫，别的线程（比如启动预热）可能已经探完写缓存了
+        hit = _ENGINE.get(path)
+        if hit and hit["mtime"] == mt and time.time() - hit["at"] < ttl:
+            return hit["ok"], hit["why"]
+        ok, why = engine_probe(path)
+        _ENGINE[path] = {"mtime": mt, "ok": ok, "why": why, "at": time.time()}
+        return ok, why
+
+def probe_cached(path: str) -> tuple | None:
+    """engine_probe_cached 的**只读**版：缓存热就返回结果，冷返回 None（绝不跑探测）。
+
+    给点击链路用：冷缓存的一次探测要 3 秒，点「全文翻译」不该卡在它上面。
+    返回 None 时调用方应当放行 start()（后台线程里有同款把关）并自己起个
+    后台预热，让下一次点击拿到热缓存。
+    """
+    if not path:
+        return False, "没找到"
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return False, "没找到"
+    hit = _ENGINE.get(path)
+    if hit and hit["mtime"] == mt and time.time() - hit["at"] < 900:
+        return hit["ok"], hit["why"]
+    return None
 
 # ---------------- 起进程 ----------------
 
@@ -400,7 +431,8 @@ def adopt_existing(out_dir: str):
 
 def job(pid: str) -> dict:
     return JOBS.setdefault(pid, {"status": "none", "error": "", "dual": "", "mono": "",
-                                 "service": "", "note": "", "pages": [0, 0], "started": 0.0})
+                                 "service": "", "note": "", "pages": [0, 0],
+                                 "current": [], "started": 0.0})
 
 # ---------------- 全文翻译：按页流水线 ----------------
 
@@ -629,7 +661,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             j.update(status="none", error="", pages=[0, 0])
             return
         j.update(status="running", error="", dual="", mono="", service=service,
-                 note=note, pages=[0, 0], started=time.time())
+                 note=note, pages=[0, 0], current=[], started=time.time())
         page_root = os.path.join(out_dir, ".pages")
         procs = []
         results = {}
@@ -736,8 +768,18 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     with _SLOTS:
                         if auth_error or j.get("_abort"):
                             return
-                        got, tail = _run_page(pdf_path, label, pdir_t, service, extra,
-                                              envs, procs, auth_out, engine, glossary_csv)
+                        # current：正在译的批区间，给前端的"正在译第 x-y 页"。
+                        # pdf2zh 2.x 在管道下不吐实时进度（实测：进度行全是任务完成时
+                        # 才一次性打出），批内的页级进度物理上拿不到——把"在译哪些页"
+                        # 报出去，进度就不会在 0/20 上看起来像死了。
+                        with lock:
+                            j["current"] = [*(j.get("current") or []), label]
+                        try:
+                            got, tail = _run_page(pdf_path, label, pdir_t, service, extra,
+                                                  envs, procs, auth_out, engine, glossary_csv)
+                        finally:
+                            with lock:
+                                j["current"] = [x for x in (j.get("current") or []) if x != label]
                     if auth_out:
                         auth_error.append(auth_out[0])
                         return
@@ -834,6 +876,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             say(f"全文翻译失败 {pid}：{type(e).__name__}: {str(e)[-300:]}")
         finally:
             _RUNNING.pop(pid, None)
+            j["current"] = []
             if j["status"] == "done" or not results:
                 shutil.rmtree(page_root, ignore_errors=True)
             else:
@@ -845,6 +888,6 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 except Exception:
                     pass
 
-    j.update(status="queued", error="", pages=[0, 0])   # 线程还没跑到的窗口期也让 cancel 有归属
+    j.update(status="queued", error="", pages=[0, 0], current=[])   # 线程还没跑到的窗口期也让 cancel 有归属
     threading.Thread(target=run, daemon=True).start()
     return j
