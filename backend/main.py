@@ -1,5 +1,6 @@
 """eggpaper 本地服务。唯一出网：用户配置的 LLM API 与 pdf2zh 翻译服务。"""
 import base64
+import copy
 import json
 import os
 import queue
@@ -482,7 +483,9 @@ def get_settings():
 def put_settings(body: dict):
     if not isinstance(body, dict):
         raise HTTPException(400, "设置内容格式不对")
-    cfg = config.load()
+    # 在副本上改、存盘成功后才生效：否则 save 失败（盘满/被锁）时内存已被改掉，
+    # 本会话用新值、重启回旧值，用户看到"没保存成功"却行为诡异
+    cfg = copy.deepcopy(config.load())
     if "provider" in body:
         if not isinstance(body["provider"], dict):
             raise HTTPException(400, "模型服务那一栏格式不对")
@@ -988,7 +991,13 @@ async def upload(file: UploadFile = File(...)):
             path = os.path.join(pid_dir, "paper.pdf")     # 库内自存一份：删原件、挪原件都不影响
             with open(path, "wb") as f:
                 f.write(raw)
-            out = _ingest(pid, name, path, pdf_hash)
+            try:
+                out = _ingest(pid, name, path, pdf_hash)
+            except Exception:
+                shutil.rmtree(pid_dir, ignore_errors=True)   # 坏文件别留空论文目录
+                with _dir_lock:
+                    _dir_cache.pop(pid, None)
+                raise
             same = db.find_same_title((out["paper"] or {}).get("title") or "", exclude_pid=pid)
             if same:
                 out["same_title"] = db.get_paper(same)
@@ -1050,11 +1059,18 @@ def supersede_paper(pid: str, body: dict):
     for row in (new, old):
         if row and row["translate_status"] == "running":
             raise HTTPException(400, "这篇正在全文翻译，结束后再替换")
+    with _deleted_lock:
+        # 旧篇从现在起视同已删：析读/眉批/七问线程的 _pid_gone 护栏全部生效，
+        # 不再往被替换掉的 pid 白烧 LLM 或插回孤儿行
+        _deleted_pids.add(old["id"])
+    _cancel_request("analysis", old["id"])
+    _cancel_request("marginalia", old["id"])
     stats = db.supersede(pid, old["id"])
     with _dir_lock:
         d = _dir_cache.pop(old["id"], None)
     if d:
         _rm(os.path.join(PAPERS_DIR, d))
+    shutil.rmtree(paper_dir(old["id"]), ignore_errors=True)   # 缓存漏了也要兜底删
     return stats
 
 @app.get("/api/open-request")
@@ -1234,6 +1250,8 @@ def delete_paper(pid: str):
     with _deleted_lock:
         _deleted_pids.add(pid)
     _lines_probe_done.discard(pid)
+    _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
+    _cancel_request("marginalia", pid)
     db.purge_paper(pid)
     if translate_full.cancel(pid):
         _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
@@ -1727,7 +1745,7 @@ def translate_cancel(pid: str):
 def pin_lookup(pid: str, body: dict):
     """把查译/段译/框选答疑/自己写的批注钉到页边（用户资产，持久化）。"""
     _paper_or_404(pid)
-    quote = (body.get("quote") or "").strip()
+    quote = str(body.get("quote") or "").strip()
     note = (body.get("note") or "").strip()
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
@@ -2027,6 +2045,8 @@ def _six_compute(pid: str, key: str) -> dict:
         data = _gen_six(db.get_paper(pid), key)
         if not (data.get("text") or data.get("items")):
             raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
+        if _pid_gone(pid):      # 生成隔着一次 LLM 调用，期间论文可能已被删/被替换：只返回不落库
+            return data
         db.answer_put(pid, key, data)
         return data
 
@@ -2245,8 +2265,14 @@ def glossary_export(pid: str):
     buf.write("﻿")
     w = csv.writer(buf)
     w.writerow(["term_en", "term_zh", "source"])
+    formula_leads = ("=", "+", "-", "@", "\t", "\r")
+    def _safe_cell(v):
+        # Excel/WPS 把 =+-@、制表符开头的单元格当公式执行（AI 词条源自 PDF 原文，
+        # 恶意构造的论文能把公式种进词表）：统一前置 ' 中性化
+        v = str(v)
+        return "'" + v if v[:1] in formula_leads else v
     for r in db.glossary_list(pid):
-        w.writerow([r["term_en"], r["term_zh"], r["source"]])
+        w.writerow([_safe_cell(r["term_en"]), _safe_cell(r["term_zh"]), _safe_cell(r["source"])])
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
 
@@ -2517,13 +2543,13 @@ def _figures_for(pid: str, p: dict) -> list:
         key = (src, 0)
     if key in _fig_cache:
         return _fig_cache[key]
-    ev = _fig_inflight.get(key)
-    if ev:
+    ev = _fig_inflight.setdefault(key, threading.Event())
+    mine = _fig_inflight[key] is ev
+    if not mine:
+        # 已经有人在算这份图表：等它，别双份跑 O(n²) 邻行扫描
         ev.wait(120)
         if key in _fig_cache:
             return _fig_cache[key]
-    ev = threading.Event()
-    _fig_inflight[key] = ev
     try:
         try:
             out = _figure_regions(src)
@@ -2531,7 +2557,8 @@ def _figures_for(pid: str, p: dict) -> list:
             raise HTTPException(400, f"这份 PDF 解析图表时失败了：{str(e)[:120]}")
     finally:
         ev.set()
-        _fig_inflight.pop(key, None)
+        if mine:
+            _fig_inflight.pop(key, None)
     _fig_cache[key] = out
     while len(_fig_cache) > 8:
         _fig_cache.pop(next(iter(_fig_cache)))
@@ -2596,15 +2623,20 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
     import pymupdf
     p = _paper_or_404(pid)
     src = _paper_src_or_404(pid, p)
-    doc = pymupdf.open(src)
+    try:
+        doc = pymupdf.open(src)
+    except Exception as e:
+        raise HTTPException(400, f"这份 PDF 打不开：{str(e)[:120]}")
     try:
         if page < 0 or page >= len(doc):
             raise HTTPException(404, f"页码越界：这篇只有 {len(doc)} 页")
         if not (36 <= dpi <= 400):
             raise HTTPException(400, "dpi 只支持 36–400")
-        if x1 - x0 < 4 or y1 - y0 < 4:
+        clip = pymupdf.Rect(x0, y0, x1, y1) & doc[page].rect
+        if clip.is_empty or clip.width < 4 or clip.height < 4:
             raise HTTPException(400, "截图范围太小")
-        pix = doc[page].get_pixmap(clip=pymupdf.Rect(x0, y0, x1, y1), dpi=dpi)
+        # 不与页面求交的超大 clip 会按 dpi 放大成巨幅像素请求，直接打爆内存
+        pix = doc[page].get_pixmap(clip=clip, dpi=dpi)
         return Response(content=pix.tobytes("png"), media_type="image/png")
     finally:
         doc.close()
@@ -2805,7 +2837,7 @@ def conversation_new(pid: str, body: dict = None):
 def conversation_patch(cid: int, body: dict):
     if not db.conv_get(cid):
         raise HTTPException(404, "会话不存在")
-    db.conv_rename(cid, (body.get("title") or db.NEW_CONV).strip() or db.NEW_CONV)
+    db.conv_rename(cid, str(body.get("title") or db.NEW_CONV).strip() or db.NEW_CONV)
     return {"ok": True}
 
 @app.delete("/api/conversations/{cid}")
@@ -2877,14 +2909,14 @@ def collections():
 
 @app.post("/api/collections")
 def collection_new(body: dict):
-    name = (body.get("name") or "").strip()[:60]
+    name = str(body.get("name") or "").strip()[:60]
     if not name:
         raise HTTPException(400, "分类要有名字")
     return {"id": db.collection_add(name)}
 
 @app.patch("/api/collections/{cid}")
 def collection_patch(cid: int, body: dict):
-    name = (body.get("name") or "").strip()[:60]
+    name = str(body.get("name") or "").strip()[:60]
     if not name:
         raise HTTPException(400, "分类要有名字")
     db.collection_rename(cid, name)

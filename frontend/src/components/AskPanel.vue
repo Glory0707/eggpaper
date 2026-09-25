@@ -94,6 +94,7 @@ function follow() { if (atBottom.value) { const el = scrollEl.value; if (el) el.
 async function send(q) {
   q = (q ?? text.value).trim()
   if (!q || busy.value || !pid.value) return
+  const reqPid = pid.value            // 钉住提问时的 pid：流式中途换篇，半截答案得存回原论文
   if (!convId.value) await loadConvs()
   text.value = ''
   await nextTick(); autoGrow(); inputEl.value?.focus()
@@ -152,7 +153,7 @@ async function send(q) {
   m.streaming = false
   busy.value = false
   if (!gotDone && m.content.trim() && !m.error) {
-    api.qaSave(pid.value, { conv_id: id, content: m.content })
+    api.qaSave(reqPid, { conv_id: id, content: m.content })
        .then(r => { if (r?.assistant_id) applyIds({ user_id: r.user_id, assistant_id: r.assistant_id }) })
        .catch(() => {})
   }

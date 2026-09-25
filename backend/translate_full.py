@@ -762,13 +762,15 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 for t in range(PAGE_TRIES):
                     if auth_error or j.get("_abort"):
                         return
-                    pdir_t = _page_dir(out_dir, a, t)
-                    os.makedirs(pdir_t, exist_ok=True)
                     # 全局闸：这里排队的是"引擎进程"而不是线程——同一时刻全库最多
-                    # ENGINE_PROCS_CAP 个 pdf2zh 在跑，跨篇也不会超
+                    # ENGINE_PROCS_CAP 个 pdf2zh 在跑，跨篇也不会超。
+                    # 目录创建必须在拿到槽、过了取消复查**之后**：否则删篇+排队期间
+                    # 会把 .pages 目录复活成幽灵（pdf2zh 的 cwd 还指着它时 rmtree 也删不掉）
                     with _SLOTS:
                         if auth_error or j.get("_abort"):
                             return
+                        pdir_t = _page_dir(out_dir, a, t)
+                        os.makedirs(pdir_t, exist_ok=True)
                         # current：正在译的批区间，给前端的"正在译第 x-y 页"。
                         # pdf2zh 2.x 在管道下不吐实时进度（实测：进度行全是任务完成时
                         # 才一次性打出），批内的页级进度物理上拿不到——把"在译哪些页"
@@ -877,6 +879,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             say(f"全文翻译失败 {pid}：{type(e).__name__}: {str(e)[-300:]}")
         finally:
             _RUNNING.pop(pid, None)
+            j.pop("_abort", None)   # 组装期点取消会再置旗：残留会让下一次 start 静默空转
             j["current"] = []
             if j["status"] == "done" or not results:
                 shutil.rmtree(page_root, ignore_errors=True)

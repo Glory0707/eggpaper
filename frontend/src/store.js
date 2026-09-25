@@ -316,10 +316,15 @@ export async function refreshMarginalia() {
    总比留一张对不上新主张的卡片好。 */
 export async function reloadSummary() {
   if (!store.currentId) return
+  const mine = paperEpoch()
   store.summary = null
   store.summaryErr = ''
-  try { store.summary = await api.summary(store.currentId) }
-  catch (e) { store.summaryErr = e.message }
+  // 生成隔着一次 LLM 调用，期间可能已换到别的论文：A 的摘要不能落到 B 的速览页上
+  try {
+    const sum = await api.summary(store.currentId)
+    if (samePaper(mine)) store.summary = sum
+  }
+  catch (e) { if (samePaper(mine)) store.summaryErr = e.message }
 }
 
 /* 眉批卡上的「问 ↗」：质疑这条批注的问题直接带进提问面板并发出去。

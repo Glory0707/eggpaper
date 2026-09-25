@@ -526,10 +526,11 @@ def paragraphs_match(pid: str, paras: list) -> bool:
 # ---------- skeleton ----------
 
 def set_analysis(pid: str, claims: list, annos: list, status: str = "done", error: str = None):
-    if not get_paper(pid):
-        return
     with _lock:
         c = _get()
+        # 存在性检查必须在锁内：purge 的事务可能插在 get 与写之间，把孤儿行插回死篇
+        if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
+            return
         c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
         c.execute("DELETE FROM claims WHERE paper_id=?", (pid,))
         c.executemany("INSERT INTO claims(paper_id, cid, text, anchors) VALUES(?,?,?,?)",
@@ -800,10 +801,10 @@ def set_marginalia(pid: str, notes: list, status: str = "done", error: str = Non
     只删 AI 写的那几种，**用户自己钉的（lookup/region/note）一根都不动**——
     这张表里住着两种人写的东西，前者可以重算，后者是读者的资产，重算眉批不该顺手把它抹了。
     """
-    if not get_paper(pid):
-        return
     with _lock:
         c = _get()
+        if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
+            return
         c.execute("DELETE FROM marginalia WHERE paper_id=? AND kind NOT IN ('lookup','region','note')", (pid,))
         c.executemany(
             "INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, label, band) "

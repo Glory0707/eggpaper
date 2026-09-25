@@ -404,10 +404,13 @@ def _install(urls):
         _cancel.clear()
 
 def start(url: str = "") -> dict:
+    # 检查+占位必须同一把锁（_set 自己也拿 _lock，锁内只能直接 update，否则死锁）：
+    # 否则两个毫秒级相邻的请求可双双通过守卫，二开安装会在预热中的 exe 脚下玩 rename
     with _lock:
-        if _prog["state"] in ("downloading", "unpacking"):
+        if _prog["state"] in ("downloading", "unpacking", "warming"):
             return dict(_prog)
-    _cancel.clear()
+        _prog.update(state="downloading", pct=0, got=0, total=0, error="", url=url or "",
+                     path="", src="", tried=[])
     if (url or "").strip():
         urls = [(url.strip(), "指定地址")]
     else:
@@ -424,10 +427,10 @@ def start_from_zip(zip_path: str) -> dict:
     对方在设置里选这个文件即可（零基础：不需要 Python、不需要能上外网）。
     """
     with _lock:
-        if _prog["state"] in ("downloading", "unpacking"):
+        if _prog["state"] in ("downloading", "unpacking", "warming"):
             return dict(_prog)
-    _set(state="unpacking", pct=100, got=0, total=0, error="", url="(本地文件)", path="",
-         src="本地文件", tried=[])
+        _prog.update(state="unpacking", pct=100, got=0, total=0, error="", url="(本地文件)",
+                     path="", src="本地文件", tried=[])
     threading.Thread(target=_from_zip, args=(zip_path,), daemon=True).start()
     return status()
 
