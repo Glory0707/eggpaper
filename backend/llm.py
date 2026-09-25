@@ -60,10 +60,17 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             continue
         # 200 也可能是网关的错误 JSON / 空 choices：按缺内容走重试与兜底，别拿 KeyError 砸用户
         try:
-            choices = r.json().get("choices") or [{}]
+            data = r.json()
         except ValueError:
-            choices = [{}]     # 网关 200 但回了非 JSON：当缺内容重试，不把 JSONDecodeError 撒出去
+            data = {}
+        choices = data.get("choices") or [{}]
         out = ((choices[0].get("message") or {}).get("content", "")) or ""
+        usage = data.get("usage") or {}
+        hit = usage.get("prompt_cache_hit_tokens")
+        miss = usage.get("prompt_cache_miss_tokens")
+        if hit is not None and miss is not None and (hit + miss) >= 1000:
+            pct = round(100 * hit / (hit + miss))
+            print(f"[eggpaper] 输入 {hit + miss} tokens，缓存命中 {pct}%")
         if out.strip():
             return out
         budget = int(budget * 1.6)
@@ -191,6 +198,30 @@ def _lang_tail() -> str:
             "Keep quoted sentences from the paper in their original language.") if _is_en() else ""
 
 
+# ---------------- 共享前缀：给上下文缓存命中铺路 ----------------
+# DeepSeek 等服务对「从第 0 个 token 起完全相同」的输入前缀自动做上下文缓存，
+# 命中部分的输入按约 1/50 计费（response 里的 prompt_cache_hit_tokens 可查）。
+# 前提极苛刻：必须逐字节相同。所以同一篇论文的**所有整文任务**共用同一个开头——
+# 恒定身份句 + paper_doc() 产出的全文块；各任务自己的规则、输出格式一律放到全文之后。
+# 任何会随任务/调用变化的字段（图表注、术语表、问题、历史）都不许进前缀。
+
+SHARED_SYSTEM = ("你是学术深度阅读工具 eggpaper 的分析引擎，读者是正在精读这篇论文的研究者。"
+                 "下面的论文全文以 ¶编号 标出每一段，回答时引用依据就写对应的 ¶n。")
+
+def paper_doc(title: str, paras: list) -> str:
+    """整文任务的共享全文块：同一篇论文在所有任务里逐字节相同。
+
+    这是跨任务缓存命中的前提——历史上 terms/skeleton/summarize/ask 各自用不同的
+    每段截断（600/1200/800/1000 字）和总量上限，前缀从第 1 个 token 就分叉，命中为零。
+    现在统一一份：每段截 1200 字、全文 90000 字封顶（与析读一致），滤参考文献段。"""
+    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras if not p.get("in_refs"))
+    return f"论文标题：{title or ''}\n\n{_cut_tail(body, 90000)}"
+
+def _kick(what: str) -> str:
+    """共享前缀结构里最后一条 user 消息：任务指令已在 system（全文之后），这里只管开跑。"""
+    return f"论文全文已给出。{what}，按 system 里的规则输出。"
+
+
 TERMS_SYSTEM = """你正在为一篇论文建它**自己的**术语表：读者读这篇时会卡住、需要中英对照的那些说法。
 
 只收**这篇论文特有的**东西：
@@ -220,11 +251,10 @@ def extract_terms(title: str, paras: list) -> dict:
     （"这篇文献自己的说法有哪些"），分两次问既慢又会让两份表互相打架。
     失败由调用方兜住。
     """
-    parts = ["¶%s %s" % (p["idx"], p["text"][:600]) for p in paras if not p.get("in_refs")]
-    body = "\n\n".join(parts)
     msgs = [
-        {"role": "system", "content": TERMS_SYSTEM + _lang_tail()},
-        {"role": "user", "content": "论文标题：" + (title or "") + "\n\n" + _cut_tail(body, 48000)},
+        {"role": "system", "content": SHARED_SYSTEM + "\n\n" + paper_doc(title, paras)
+            + "\n\n【任务：建这篇论文自己的术语表】" + TERMS_SYSTEM + _lang_tail()},
+        {"role": "user", "content": _kick("把术语表与缩写表整理出来")},
     ]
     # 坏 JSON 交给 chat_json 带纠错说明重发——原来的自建循环是原样重发 48k 全文，
     # 三次全挂就白烧三遍整本上下文；chat_json 的重试成功率更高且次数有顶。
@@ -393,15 +423,14 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。
     fig_caps：图表注列表（[编号, 图注全文] 对，编号与图表列表的下标一致）——
     给了就顺手把图注翻成中文，析读一次全带出来，灯箱打开即得、不再现翻。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras)
-    user = f"论文标题：{title or '（未识别）'}\n\n{_cut_tail(body, 90000)}"   # 长综述防爆上下文；超限回退段边界（参考文献在最后）
+    system = SHARED_SYSTEM + "\n\n" + paper_doc(title, paras) + "\n\n" + _skeleton_system(kind)
+    user = _kick("分析这篇论文的论证结构")
     if fig_caps:
         listing = "\n".join(f"[{i}] {cap}" for i, cap in fig_caps)
         user += (f"\n\n【图表注】这篇论文有 {len(fig_caps)} 张带图注的图表（方括号是编号）：\n" + listing +
                  "\n\n输出 JSON 里增加一个键 \"fig_caps\"：把每条图注**完整**翻译成中文——"
                  "子图 (a)(b) 的说明逐条译出，不省略、不截断、不保留英文原句"
                  "（方法名/专名/统计量缩写可照抄）。键就是方括号里的编号。")
-    system = _skeleton_system(kind)
     msgs = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -530,16 +559,15 @@ def _gloss_block(hits) -> str:
     return "术语表（以下术语必须使用锁定译法）：\n" + "\n".join(f"- {h['en']} → {h['zh']}" for h in hits) + "\n\n"
 
 def summarize(title: str, paras: list, hits=None) -> dict:
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:800]}" for p in paras if not p.get("in_refs"))
     return chat_json([
-        {"role": "system", "content": _lang_tail() + _gloss_block(hits) +
-            "你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
+        {"role": "system", "content": SHARED_SYSTEM + "\n\n" + paper_doc(title, paras) + "\n\n"
+            + "【任务：生成一眼卡】你是论文精读助手。基于全文生成'一眼卡'，只输出 JSON："
             '{"one_line":"<一句话说清这篇论文做了什么、核心结果是什么，≤60字>",'
             '"novelty":"<创新点：相对已有工作新在哪——新在对象、方法还是结论，和前人比别在哪儿；不是复述它做了什么，≤80字>",'
             '"findings":"<发现：最硬的数据结论，带关键数字；写得下就写，别硬压——按重要性排，读者先看到最要紧的那个>",'
             '"keywords":["<3~5个关键词>"]}'
-            "不要 markdown 代码块，不要解释。"},
-        {"role": "user", "content": f"论文标题：{title or ''}\n\n{_cut_tail(body, 60000)}"},
+            "不要 markdown 代码块，不要解释。" + _gloss_block(hits) + _lang_tail()},
+        {"role": "user", "content": _kick("生成这张一眼卡")},
     ], max_tokens=4000, temperature=0.3)
 
 # ---------------- 问答 ----------------
@@ -555,9 +583,10 @@ QA_SYSTEM = """你是论文精读助手，陪研究者读这篇论文，也顺�
    ¶ 编号属于它上方最近的标记篇；提到其他论文先写《标题》再写 ¶（如《某论文》¶3）。与问题无关的论文不要硬扯"""
 
 def ask_messages(title: str, paras: list, history: list, question: str, hits=None, summary: str = "", others: list = None) -> list:
-    """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1000]}" for p in paras if not p.get("in_refs"))
-    body = _cut_tail(body, 50000 if others else 80000)
+    """组一次问答的消息体。流式与非流式走同一份，免得两边的上下文不一致。
+
+    开头与其余整文任务共用 SHARED_SYSTEM + paper_doc（逐字节相同）——多轮对话里
+    历史只往后追加，前缀稳定，每一轮都命中上一轮写下的缓存。"""
     if others:
         per = max(12000, 60000 // len(others))
         blocks = []
@@ -567,11 +596,14 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
                               for p in o.get("paras") or [] if not p.get("in_refs"))
             if lines:
                 blocks.append(("《" + t + "》\n" + lines)[:per])
-        if blocks:
-            body += ("\n\n【用户同时引用的其他论文全文——每篇的 ¶ 编号是它自己的段落。"
-                     "提到这些论文时先写《标题》再写 ¶ 编号（如《某论文》¶3）】\n" + "\n\n".join(blocks))
+        others_txt = ("\n\n【用户同时引用的其他论文全文——每篇的 ¶ 编号是它自己的段落。"
+                      "提到这些论文时先写《标题》再写 ¶ 编号（如《某论文》¶3）】\n" + "\n\n".join(blocks)) if blocks else ""
+    else:
+        others_txt = ""
     # 语言尾巴必须压轴：QA_SYSTEM 规则 4 写死"回答用中文"，尾巴放前面会被它吃掉
-    msgs = [{"role": "system", "content": QA_SYSTEM + _gloss_block(hits) + f"\n\n【当前论文】{title or ''}\n\n{body}" + _lang_tail()}]
+    msgs = [{"role": "system", "content": SHARED_SYSTEM + "\n\n" + paper_doc(title, paras)
+             + "\n\n【当前论文】就是上面这份全文。" + others_txt
+             + "\n\n" + QA_SYSTEM + _gloss_block(hits) + _lang_tail()}]
     if summary:
         msgs.append({"role": "system", "content":
                      "以下是本次对话较早部分的摘要（其中的结论、术语译法、用户的关注点都继续有效，"
@@ -905,10 +937,9 @@ def mock_analyze(paras: list) -> dict:
 # ---------------- 方法卡（可复现 protocol）/ 谱系卡（综述导览） ----------------
 
 def method_card(title: str, paras: list) -> dict:
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
     return chat_json([
-        {"role": "system", "content":
-            "你是研究方法专家。把论文的方法部分整理成可复现的 protocol 卡，只输出 JSON："
+        {"role": "system", "content": SHARED_SYSTEM + "\n\n" + paper_doc(title, paras) + "\n\n"
+            + "【任务：整理方法卡】你是研究方法专家。把论文的方法部分整理成可复现的 protocol 卡，只输出 JSON："
             '{"goal":"<这套方法要达成什么，≤40字>",'
             '"system":"<研究对象/体系，≤60字>",'
             '"conditions":"<关键条件与参数：仪器、软件、参数值，≤120字>",'
@@ -918,17 +949,16 @@ def method_card(title: str, paras: list) -> dict:
             "读者要点着它跳回原文核对。写法：化学式与上下标用 Unicode 字符"
             "（Sc₂O₃、10⁻⁷、Oₛ），不要 LaTeX、不要 $…$、不要用下划线代替下标。"
             "不要 markdown 代码块，不要解释。" + _lang_tail()},
-        {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
+        {"role": "user", "content": _kick("整理这张方法卡")},
     ], max_tokens=6000, temperature=0.3)
 
 def survey_card(title: str, paras: list) -> dict:
     """谱系卡：综述版的方法卡。字段与 method_card 同一套 key（前端同一块渲染），
     语义换成导览——普适于任何领域，**不预设数据集/基准**：它梳理了什么就写什么，
     没有的东西（没有数据集、没有参数）就整段留空，绝不硬凑。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in paras)[:50000]
     return chat_json([
-        {"role": "system", "content":
-            "你在为一篇综述做一张『谱系卡』——读者 30 秒看懂这篇综述把领域名梳理成了什么样子。"
+        {"role": "system", "content": SHARED_SYSTEM + "\n\n" + paper_doc(title, paras) + "\n\n"
+            + "【任务：整理谱系卡】你在为一篇综述做一张『谱系卡』——读者 30 秒看懂这篇综述把领域名梳理成了什么样子。"
             "只输出 JSON："
             '{"goal":"<这张卡帮读者定位什么，≤40字>",'
             '"system":"<它梳理的对象：领域/材料/方法族/现象，≤60字>",'
@@ -940,7 +970,7 @@ def survey_card(title: str, paras: list) -> dict:
             "**普适性**：领域不同载体不同——它用数据集/基准/材料体系/理论模型中的哪一种，就写哪一种；"
             "没提到的东西不要编。化学式与上下标用 Unicode 字符（Sc₂O₃、10⁻⁷），不要 LaTeX。"
             "不要 markdown 代码块，不要解释。" + _lang_tail()},
-        {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
+        {"role": "user", "content": _kick("整理这张谱系卡")},
     ], max_tokens=6000, temperature=0.3)
 
 # ---------------- 引用信息 ----------------
