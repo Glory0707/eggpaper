@@ -923,9 +923,12 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .lnk:hover { background: none; box-shadow: none; transform: none; }
 
 .qa-msg .qa-wait { color: var(--ink-3); }
-.md .md-cite {
+/* 段落引用角标统一 chip：七问（MdLite）与方法卡步骤共用同一个类，
+   以前样式挂在 .md 下，方法卡的步骤不是 .md 容器就退化成了默认灰框 */
+.md-cite {
   font-family: var(--mono); font-size: var(--fs-xs); padding: 0 4px; margin: 0 1px;
   background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-deep);
+  white-space: nowrap;
 }
 .qa-quick { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin-bottom: 12px; }
 
@@ -1184,7 +1187,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   text-align: left; vertical-align: top;
 }
 .md .md-table th { font-weight: 650; background: var(--veil, rgba(0, 0, 0, 0.04)); }
-.md .md-table td button.md-cite, .md .md-table th button.md-cite { white-space: nowrap; }
 .md code {
   font-family: var(--mono); font-size: 0.92em; padding: 1px 4px; border-radius: 2px;
   background: var(--code-bg); color: var(--ink);
