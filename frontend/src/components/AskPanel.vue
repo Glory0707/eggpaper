@@ -52,8 +52,11 @@ const empty = computed(() => !msgs.value.length && !loading.value)
 
 async function loadConvs(keep = false) {
   if (!pid.value) return
+  const reqPid = pid.value
   try {
-    convs.value = await api.conversations(pid.value)
+    const r = await api.conversations(reqPid)
+    if (pid.value !== reqPid) return          // 回来时换了篇：旧篇的会话列表不落到新篇
+    convs.value = r
   } catch { return }
   if (!keep && !convs.value.some(c => c.id === convId.value)) convId.value = convs.value[0]?.id ?? null
 }
@@ -91,12 +94,13 @@ function scrollBottom(smooth = true) {
 }
 function follow() { if (atBottom.value) { const el = scrollEl.value; if (el) el.scrollTop = el.scrollHeight } }
 
-async function send(q) {
+async function send(q, pidArg) {
   q = (q ?? text.value).trim()
   if (!q || busy.value || !pid.value) return
   busy.value = true                   // 先占住：双击/快速问题连点只放行第一条，其余在入口被挡
-  const reqPid = pid.value            // 钉住提问时的 pid：流式中途换篇，半截答案得存回原论文
+  const reqPid = pidArg || pid.value  // 钉住提问时的 pid：流式中途换篇，半截答案得存回原论文
   if (!convId.value) await loadConvs()
+  if (pid.value !== reqPid) { busy.value = false; return }   // 等会话的空当换了篇：这次发送作罢
   text.value = ''
   await nextTick(); autoGrow(); inputEl.value?.focus()
   const um = reactive({ role: 'user', content: q })
@@ -129,7 +133,7 @@ async function send(q) {
     ? { question: q, conv_id: id, refs: picked.value }
     : { question: q, conv_id: id }
   store.egg.nod++                      // 蛋注意到你在提问，歪头看一眼
-  const h = askStream(pid.value, body, ev => {
+  const h = askStream(reqPid, body, ev => {
     if (ev.type === 'delta') queue(ev.text)
     else if (ev.type === 'done') { flush(); gotDone = true; applyIds(ev) }
     else if (ev.type === 'error') {
@@ -171,13 +175,16 @@ let regenBusy = false
 async function regen() {
   if (busy.value || regenBusy) return
   regenBusy = true        // POST 在途时连点会重复 regenerate + 多弹一轮消息
+  const reqPid = pid.value, reqCid = convId.value
   try {
-    const r = await api.qaRegenerate(pid.value, convId.value)
+    const r = await api.qaRegenerate(reqPid, reqCid)
+    // 等待期间换了篇/换了会话：别 pop 新地方的消息，更别把旧篇的问题发进新篇
+    if (pid.value !== reqPid || convId.value !== reqCid) return
     while (msgs.value.length && msgs.value[msgs.value.length - 1].role !== 'user') msgs.value.pop()
     msgs.value.pop()
     await nextTick()
     regenBusy = false
-    await send(r.question)
+    await send(r.question, reqPid)
   } catch (e) { toast(e.message) } finally { regenBusy = false }
 }
 async function delMsg(i) {
@@ -353,7 +360,8 @@ watch(() => store.askPrefill, pf => { if (pf) { takePrefill(pf); store.askPrefil
 watch(() => store.askFocusTick, () => nextTick(() => inputEl.value?.focus({ preventScroll: true })))
 
 function onDocKey(e) {
-  if (e.key === 'Escape' && citeOpen.value) { e.preventDefault(); closeCite() }
+  // 只想关引用弹层：stopPropagation 拦住冒泡，别让全局 Esc 把抽屉、查找框一起收了
+  if (e.key === 'Escape' && citeOpen.value) { e.preventDefault(); e.stopPropagation(); closeCite() }
 }
 function onDocPointer(e) {
   if (!citeOpen.value) return

@@ -50,10 +50,13 @@ watch(() => store.cite.open, v => { if (v) { data.value = null; load() } })
 watch(() => store.currentId, () => { if (store.cite.open) { data.value = null; load() } })
 
 async function recognize() {
+  const pid = store.currentId
   busy.value = true
   err.value = ''
   try {
-    data.value = await api.citation(store.currentId, false, true)
+    const r = await api.citation(pid, false, true)
+    if (store.currentId !== pid) return      // 识别在途时换了篇：A 的结果别盖到 B 的卡上
+    data.value = r
   } catch (e) { err.value = e.message } finally { busy.value = false }
 }
 

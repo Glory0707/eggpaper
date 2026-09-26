@@ -125,8 +125,12 @@ def download(url: str, sha256: str = "", size: int = 0):
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:160]}")
 
 def start_download(url: str, sha256: str = "", size: int = 0):
-    if _progress["state"] == "downloading":
-        return
+    # 检查+占位同一把锁：拆开的话两个相邻请求双双通过，两条线程写同一个文件互截断
+    # （engine_install.start 同款问题；锁内只能直接 update，_set 自己也拿这把锁）
+    with _lock:
+        if _progress["state"] == "downloading":
+            return
+        _progress.update(state="downloading", pct=0, got=0, total=size, path="", error="")
     threading.Thread(target=download, args=(url, sha256, size), daemon=True).start()
 
 def install(path: str) -> bool:

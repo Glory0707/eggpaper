@@ -20,6 +20,7 @@ export const ui = reactive({
  * {n} 之类的槽位由 t() 的第二个参数填。 */
 const EN = {
   '正在停止…': 'Stopping…',
+  '设置还没加载好，稍后再试': "Settings haven't loaded yet — try again shortly",
   '已停止': 'Stopped',
   '引擎装好了，继续翻译': 'Engine ready — resuming translation',
   '库里已有这篇，直接打开': 'Already in the library — opening it',

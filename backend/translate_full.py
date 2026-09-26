@@ -469,6 +469,7 @@ def _product_mono(dirpath: str, stem: str) -> str:
     多个命中取最新的（同目录反复重跑不会互相清干净时，认最新那份）。
     """
     import glob
+    stem = glob.escape(stem)    # 旧库的源可能叫 paper[1].pdf：方括号是字符类，不转义产物永远找不到
     cands = (glob.glob(os.path.join(dirpath, f"{stem}*.mono.pdf")) +
              glob.glob(os.path.join(dirpath, f"{stem}-mono.pdf")))
     if not cands:
@@ -853,9 +854,19 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                                    "换一个翻译服务（设置 → 全文翻译服务）再试。")
                     say(f"全文翻译失败 {pid}：全部页面失败")
                     return
+                if j.get("_abort"):
+                    j.update(status="none", error="")   # 组装途中删了篇/点了停止：别把成品写进已删的目录
+                    return
                 # 原子落盘：半截的成品不该被任何人读到（认领/GET 都看 %%EOF，临时名不冒充成品）
                 mono.save(mono_path + ".part", garbage=4, deflate=True)
-                os.replace(mono_path + ".part", mono_path)
+                for _try in range(3):
+                    try:
+                        os.replace(mono_path + ".part", mono_path)
+                        break
+                    except OSError:
+                        if _try == 2:
+                            raise       # 旧 mono 还被浏览器响应占着句柄：等它放手再换名，
+                        time.sleep(1.5) # 别把整场已经译完的活儿标成失败
                 _remove_quiet(os.path.join(out_dir, "dual.pdf"))
             finally:
                 src.close(); mono.close()

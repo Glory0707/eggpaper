@@ -229,6 +229,7 @@ const termsTried = ref('')          // 已经替**哪一篇**试过生成（试�
 
 async function loadTerms() {
   if (!store.currentId) { terms.value = []; return }
+  terms.value = []                    // 先清：拉取在途或失败时，不能把上一篇的词表留在这篇
   const mine = paperEpoch()
   try {
     const items = await api.glossary(store.currentId)   // 术语是按篇的

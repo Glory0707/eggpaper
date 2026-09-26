@@ -1,7 +1,9 @@
 <script>
 /* 解析好的 PDF 文档缓存是**文件级**的：多窗格/重挂载共享同一份解析结果（key = pid:variant），
-   第二次打开秒出。LRU 上限 10 份，超出淘汰最久未用的一份（多窗格 × dual 变体轻松要 8 份）。 */
+   第二次打开秒出。LRU 上限 10 份，超出淘汰最久未用的一份（多窗格 × dual 变体轻松要 8 份）；
+   还被活窗格引用的 key 不淘汰——宁超限也不把打开着的文档销掉。 */
 const docCache = new Map()
+const docClaims = new Map()   // 实例令牌 → 它正用着的 key 集（见 getDoc 的逐出循环）
 </script>
 
 <script setup>
@@ -145,12 +147,17 @@ async function getDoc(kind) {
       })
     if (!doc) continue
     docCache.set(key, { doc, at: Date.now() })
-    while (docCache.size > 10) {              // LRU：多窗格 × dual 变体轻松要 8 份，6 会互相挤掉
-      let oldest = null, ot = Infinity
-      for (const [k, e] of docCache) if (e.at < ot) { ot = e.at; oldest = k }
-      const e = docCache.get(oldest)
-      try { e.doc.destroy() } catch { /* */ }
-      docCache.delete(oldest)
+    if (docCache.size > 10) {
+      const used = new Set()
+      for (const s of docClaims.values()) for (const k of s) used.add(k)
+      while (docCache.size > 10) {
+        let oldest = null, ot = Infinity
+        for (const [k, e] of docCache) if (e.at < ot && !used.has(k)) { ot = e.at; oldest = k }
+        if (oldest == null) break               // 全是活窗格在用的：别销，销了那格就白屏
+        const e = docCache.get(oldest)
+        try { e.doc.destroy() } catch { /* */ }
+        docCache.delete(oldest)
+      }
     }
     return doc
   }
@@ -160,6 +167,8 @@ async function meta(doc) {
   const vp = await (await doc.getPage(1)).getViewport({ scale: 1 })
   return { count: doc.numPages, w: vp.width, h: vp.height }
 }
+
+const claimTok = Symbol()   // 本实例在 docClaims 里的登记号
 
 async function buildSheets() {
   const v = store.viewer.variant
@@ -192,6 +201,9 @@ async function buildSheets() {
     }
   }
   sheets.value = rows
+  const keys = new Set()
+  for (const s of sheets.value) for (const it of s.items) keys.add(`${props.pid}:${it.doc}`)
+  docClaims.set(claimTok, keys)   // 这批 doc 本窗格在用：LRU 逐出时绕开（卸载时撤销登记）
 }
 
 function startCreep() {
@@ -669,7 +681,7 @@ async function translateParaAndPin(idx) {
       else if (ev.type === 'error') throw new Error(ev.message)
     }).done
     if (!zh.trim()) { toast(t('模型没返回内容，再试一次')); return }
-    const p = paraByIdx.value[idx]
+    const p = paras.value.find(x => x.idx === idx)   // 本窗格自持的段落表：全局 paraByIdx 可能已是别篇的
     await api.pin(pid, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
     await refreshM()
   } catch (e) { toast(t('翻译失败：{m}', { m: e.message })) }
@@ -705,6 +717,7 @@ function onMouseUp(e) {
   const r = range.getBoundingClientRect()
   const pageEl = node.closest('.page')
   const it = flatItems.value.find(x => pageEls.value[x.gi] === pageEl)
+  if (!it) { sel.visible = false; return }   // 选区在别的窗格的纸上：这边开气泡，钉下去就张冠李戴了
   let context = '', paraIdx = -1, page = it ? origPageOf(it) : 0
   if (it && it.origPage >= 0) {
     const localY = r.top - pageEl.getBoundingClientRect().top
@@ -1218,9 +1231,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopShot()   // 截图/框选模式中窗格被关掉：window 上的 capture 监听必须跟着摘，否则常驻泄漏
   if (store.viewerApi === viewerApiObj) store.viewerApi = null   // 活动窗格卸载了，快捷键别再打进来
+  docClaims.delete(claimTok)   // 不撤的话，这窗格用过的 doc 会被 LRU 逐出循环永久豁免
   selStream?.abort()
   clearTimeout(spyT); clearTimeout(saveT); clearTimeout(scheduleRender._t)
   clearTimeout(focusNote._t); clearTimeout(applyJump._t); clearTimeout(retryJump._t)
+  clearTimeout(reflowT)
   ro?.disconnect()
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('mousedown', onDocDown)
@@ -1283,6 +1298,7 @@ function startFrameDrag(e, it) {
     for (const p of parasByPage.value[it.origPage] || []) {
       if (y0 / s >= p.bbox.y0 - 3 && y0 / s <= p.bbox.y1 + 3) { paraIdx = p.idx; break }
     }
+    visSeq++    // 新选区顶掉旧的：在途的上一单答案别再写回来
     Object.assign(vis, { visible: true, x: Math.min(window.innerWidth - 410, ev.clientX + 12),
                          y: Math.min(window.innerHeight - 340, Math.max(64, ev.clientY - 60)),
                          img, question: t('解释选区里的内容。'), answer: '', busy: false, err: '',
@@ -1294,16 +1310,19 @@ function startFrameDrag(e, it) {
   window.addEventListener('blur', stop)
 }
 
-function closeVis() { vis.visible = false }
+let visSeq = 0   // 框选气泡的代次：旧选区的答案回来时人已换到新选区/气泡已关，写进去就是张冠李戴
+function closeVis() { visSeq++; vis.busy = false; vis.visible = false }
 
 async function askVisual() {
   if (!vis.question.trim() || vis.busy) return
+  const my = ++visSeq
   vis.busy = true; vis.err = ''
   try {
     const r = await api.askVisual({ image: vis.img, question: vis.question })
+    if (my !== visSeq) return            // 期间换过选区/关过气泡：答案别落错地方
     vis.answer = r.answer
-  } catch (e) { vis.err = e.message }
-  vis.busy = false
+  } catch (e) { if (my === visSeq) vis.err = e.message }
+  if (my === visSeq) vis.busy = false
 }
 
 /* 「分析此图/公式/表格」三个按钮只预填不发：用户多半要改两句再问（Enter 发送）。
@@ -1334,6 +1353,7 @@ async function pinVisual() {
 
 watch(() => store.visPrefill, pf => {
   if (!pf) return
+  visSeq++    // 同上：新气泡顶掉旧的
   Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(midX.value || window.innerWidth / 2) - 190), y: 90,
                        img: pf.img, question: pf.question || t('讲解这张图。'), answer: '', busy: false, err: '',
                        page: pf.page ?? 0, paraIdx: pf.paraIdx ?? 0, rect: pf.rect ?? null })

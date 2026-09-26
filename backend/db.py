@@ -82,21 +82,26 @@ _INDEXES = (
 def _get() -> sqlite3.Connection:
     global _conn
     if _conn is None:
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.executescript(SCHEMA)
-        _migrate(_conn)   # 必须先补列再建索引：idx_qa_msg_conv/idx_papers_hash 的列来自迁移，
-        for stmt in _INDEXES:   # 顺序反了会 OperationalError 被吞，索引从此再也建不上
-            try:
-                _conn.execute(stmt)
+        c = sqlite3.connect(DB_PATH, check_same_thread=False)
+        try:
+            c.row_factory = sqlite3.Row
+            c.executescript(SCHEMA)
+            _migrate(c)   # 必须先补列再建索引：idx_qa_msg_conv/idx_papers_hash 的列来自迁移，
+            for stmt in _INDEXES:   # 顺序反了会 OperationalError 被吞，索引从此再也建不上
+                try:
+                    c.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+            try:      # WAL：读写不再互斥全库 fsync；synchronous=NORMAL 够本地应用
+                c.execute("PRAGMA journal_mode=WAL")
+                c.execute("PRAGMA synchronous=NORMAL")
             except sqlite3.OperationalError:
                 pass
-        try:      # WAL：读写不再互斥全库 fsync；synchronous=NORMAL 够本地应用
-            _conn.execute("PRAGMA journal_mode=WAL")
-            _conn.execute("PRAGMA synchronous=NORMAL")
-        except sqlite3.OperationalError:
-            pass
-        _conn.commit()
+            c.commit()
+        except Exception:
+            c.close()   # 库文件损坏时别把半初始化的连接挂到全局上：那会让之后每个查询
+            raise       # 都死在"no such table"，而不是第一次就报清楚
+        _conn = c
     return _conn
 
 def _migrate(c: sqlite3.Connection):
@@ -268,11 +273,11 @@ def search_content(kw: str, limit: int = 30):
             elif raw:
                 out[r["paper_id"]] = {"where": where, "n": 1, "snippet": _snippet(raw, kw)}
 
-    add(q("SELECT id AS paper_id, summary AS text FROM papers WHERE summary LIKE ?", (pat,)), "glance", True)
-    add(q("SELECT paper_id, json AS text FROM answers WHERE json LIKE ?", (pat,)), "seven", True)
-    add(q("SELECT paper_id, text FROM claims WHERE text LIKE ?", (pat,)), "claims")
-    add(q("SELECT paper_id, content AS text FROM qa_messages WHERE content LIKE ?", (pat,)), "qa")
-    add(q("SELECT paper_id, text FROM paragraphs WHERE text LIKE ? LIMIT 400", (pat,)), "body")
+    add(q("SELECT id AS paper_id, summary AS text FROM papers WHERE summary LIKE ? ESCAPE '\\'", (pat,)), "glance", True)
+    add(q("SELECT paper_id, json AS text FROM answers WHERE json LIKE ? ESCAPE '\\'", (pat,)), "seven", True)
+    add(q("SELECT paper_id, text FROM claims WHERE text LIKE ? ESCAPE '\\'", (pat,)), "claims")
+    add(q("SELECT paper_id, content AS text FROM qa_messages WHERE content LIKE ? ESCAPE '\\'", (pat,)), "qa")
+    add(q("SELECT paper_id, text FROM paragraphs WHERE text LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "body")
     if not out:
         return []
     ids = list(out)[:limit]
@@ -428,8 +433,9 @@ def collection_rename(cid: int, name: str):
     q("UPDATE collections SET name=? WHERE id=?", (name[:60], cid), commit=True)
 
 def collection_delete(cid: int):
-    q("DELETE FROM paper_collections WHERE coll_id=?", (cid,), commit=True)
-    q("DELETE FROM collections WHERE id=?", (cid,), commit=True)
+    with _txn() as c:
+        c.execute("DELETE FROM paper_collections WHERE coll_id=?", (cid,))
+        c.execute("DELETE FROM collections WHERE id=?", (cid,))
 
 def collection_map():
     """paper_id -> [coll_id]：一次查完，左栏不用每篇再问一次。"""
@@ -555,8 +561,26 @@ def fig_caps(pid: str) -> dict:
     except Exception:
         return {}
 
-def set_fig_caps(pid: str, caps: dict):
-    q("UPDATE papers SET fig_caps=? WHERE id=?", (json.dumps(caps, ensure_ascii=False), pid), commit=True)
+def fig_caps_add(pid: str, entries: dict):
+    """往图注缓存里并进几条。读-合并-写必须同一把锁：灯箱两张图并发懒翻译，
+    各自整包覆写会把对方刚落的译文冲掉。"""
+    if not entries:
+        return
+    with _lock:
+        c = _get()
+        row = c.execute("SELECT fig_caps FROM papers WHERE id=?", (pid,)).fetchone()
+        if not row:
+            return
+        try:
+            cur = json.loads(row["fig_caps"]) if row["fig_caps"] else {}
+        except Exception:
+            cur = {}
+        if not isinstance(cur, dict):
+            cur = {}
+        cur.update(entries)
+        c.execute("UPDATE papers SET fig_caps=? WHERE id=?",
+                  (json.dumps(cur, ensure_ascii=False), pid))
+        c.commit()
 
 def fail_analysis(pid: str, error: str):
     """析读失败：**只记状态与原因，不动已经存在的 claims/annotations**。
@@ -630,22 +654,25 @@ def merge_abbrs(pid: str, abbrs: dict) -> int:
     """
     if not isinstance(abbrs, dict) or not abbrs:
         return 0
-    row = q("SELECT abbrs FROM papers WHERE id=?", (pid,))
-    if not row:
-        return 0
-    try:
-        cur = json.loads(row[0]["abbrs"] or "{}")
-    except Exception:
-        cur = {}
-    if not isinstance(cur, dict):
-        cur = {}
     added = 0
-    for k, v in abbrs.items():
-        k, v = str(k).strip(), str(v).strip()
-        if k and v and k not in cur:
-            cur[k], added = v, added + 1
-    if added:
-        update_paper(pid, abbrs=json.dumps(cur, ensure_ascii=False))
+    with _lock:     # 读-合并-写同锁：析读管线与术语管线并发补缩写时，后写不许覆盖前写
+        c = _get()
+        row = c.execute("SELECT abbrs FROM papers WHERE id=?", (pid,)).fetchone()
+        if not row:
+            return 0
+        try:
+            cur = json.loads(row["abbrs"] or "{}")
+        except Exception:
+            cur = {}
+        if not isinstance(cur, dict):
+            cur = {}
+        for k, v in abbrs.items():
+            k, v = str(k).strip(), str(v).strip()
+            if k and v and k not in cur:
+                cur[k], added = v, added + 1
+        if added:
+            c.execute("UPDATE papers SET abbrs=? WHERE id=?", (json.dumps(cur, ensure_ascii=False), pid))
+            c.commit()
     return added
 
 def glossary_hit(pid: str, text: str):
@@ -700,19 +727,32 @@ def conv_list(pid: str):
         "  (SELECT COUNT(*) FROM qa_messages m WHERE m.conv_id=c.id) AS n "
         "FROM conversations c WHERE c.paper_id=? ORDER BY c.updated_at DESC, c.id DESC", (pid,))]
 
+ORPHAN_CONV = "此前的提问"
+
 def _adopt_orphan_qa(pid: str):
-    """旧库的问答没有会话号：给它们单开一摊"此前的提问"，别让历史粘在新对话里。"""
-    if not q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id IS NULL", (pid,)):
-        return
-    cid = conv_create(pid, "此前的提问")
-    q("UPDATE qa_messages SET conv_id=? WHERE paper_id=? AND conv_id IS NULL", (cid, pid), commit=True)
+    """旧库的问答没有会话号：给它们单开一摊"此前的提问"，别让历史粘在新对话里。
+    查-建-挂同一个事务：拆开的话两个窗口同时首拉会各建一摊。"""
+    with _txn() as c:
+        if not c.execute("SELECT 1 FROM qa_messages WHERE paper_id=? AND conv_id IS NULL",
+                         (pid,)).fetchone():
+            return
+        row = c.execute("SELECT id FROM conversations WHERE paper_id=? AND title=? LIMIT 1",
+                        (pid, ORPHAN_CONV)).fetchone()
+        if row:
+            cid = row["id"]
+        else:
+            now = _now()
+            cid = c.execute("INSERT INTO conversations(paper_id, title, created_at, updated_at) "
+                            "VALUES(?,?,?,?)", (pid, ORPHAN_CONV, now, now)).lastrowid
+        c.execute("UPDATE qa_messages SET conv_id=? WHERE paper_id=? AND conv_id IS NULL", (cid, pid))
 
 def conv_rename(cid: int, title: str):
     q("UPDATE conversations SET title=? WHERE id=?", (title[:60], cid), commit=True)
 
 def conv_delete(cid: int):
-    q("DELETE FROM qa_messages WHERE conv_id=?", (cid,), commit=True)
-    q("DELETE FROM conversations WHERE id=?", (cid,), commit=True)
+    with _txn() as c:
+        c.execute("DELETE FROM qa_messages WHERE conv_id=?", (cid,))
+        c.execute("DELETE FROM conversations WHERE id=?", (cid,))
 
 def conv_set_summary(cid: int, summary: str, upto: int):
     q("UPDATE conversations SET summary=?, summary_upto=? WHERE id=?", (summary, int(upto), cid), commit=True)
@@ -733,14 +773,16 @@ def conv_touch(cid: int):
 
 def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: int = None) -> int:
     """写一条问答。会话已经被删掉时**不写**（返回 0）——否则会留下一条谁也看不到的孤儿，
-    用户流式提问到一半把会话删了就会踩到。"""
-    if conv_id and not q("SELECT id FROM conversations WHERE id=?", (conv_id,)):
-        return 0
-    mid = q_insert("INSERT INTO qa_messages(paper_id, role, content, citations, conv_id, created_at) VALUES(?,?,?,?,?,?)",
-                   (pid, role, content, json.dumps(citations or []), conv_id, _now()))
-    if conv_id:
-        conv_touch(conv_id)
-    return mid
+    用户流式提问到一半把会话删了就会踩到。校验与插入同事务：拆开的毫秒窗里删会话
+    还是能插进孤儿。"""
+    with _txn() as c:
+        if conv_id and not c.execute("SELECT 1 FROM conversations WHERE id=?", (conv_id,)).fetchone():
+            return 0
+        cur = c.execute("INSERT INTO qa_messages(paper_id, role, content, citations, conv_id, created_at) VALUES(?,?,?,?,?,?)",
+                        (pid, role, content, json.dumps(citations or []), conv_id, _now()))
+        if conv_id:
+            c.execute("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), conv_id))
+        return cur.lastrowid
 
 def qa_last_user_id(pid: str, conv_id: int):
     rows = q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id=? AND role='user' ORDER BY id DESC LIMIT 1",
@@ -783,8 +825,9 @@ def qa_delete(mid: int):
         _touch_summary_if_covering(rows[0]["conv_id"], mid)
 
 def qa_clear(pid: str):
-    q("DELETE FROM qa_messages WHERE paper_id=?", (pid,), commit=True)
-    q("DELETE FROM conversations WHERE paper_id=?", (pid,), commit=True)
+    with _txn() as c:
+        c.execute("DELETE FROM qa_messages WHERE paper_id=?", (pid,))
+        c.execute("DELETE FROM conversations WHERE paper_id=?", (pid,))
 
 # ---------- 眉批（句级人性化批注） ----------
 

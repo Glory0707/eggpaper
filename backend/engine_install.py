@@ -420,25 +420,32 @@ def start(url: str = "") -> dict:
     threading.Thread(target=_install, args=(urls,), daemon=True).start()
     return status()
 
-def start_from_zip(zip_path: str) -> dict:
+def start_from_zip(zip_path: str, cleanup: bool = False) -> dict:
     """从**本地已有的 zip** 装引擎。
 
     这条路是给"网络到不了任何源"准备的——自己下好一份引擎包拷给对方，
     对方在设置里选这个文件即可（零基础：不需要 Python、不需要能上外网）。
+    cleanup=True 表示这份 zip 是我们自己的临时拷贝（上传落盘的那份），装完就删；
+    用户自己挑的文件永远不碰。
     """
     with _lock:
         if _prog["state"] in ("downloading", "unpacking", "warming"):
             return dict(_prog)
         _prog.update(state="unpacking", pct=100, got=0, total=0, error="", url="(本地文件)",
                      path="", src="本地文件", tried=[])
-    threading.Thread(target=_from_zip, args=(zip_path,), daemon=True).start()
+    threading.Thread(target=_from_zip, args=(zip_path, cleanup), daemon=True).start()
     return status()
 
-def _from_zip(zip_path: str):
+def _from_zip(zip_path: str, cleanup: bool = False):
     try:
         if not os.path.isfile(zip_path):
             _set(state="error", error="文件不存在")
             return
         _unpack(zip_path)
+        if cleanup:
+            try:
+                os.remove(zip_path)     # ~600MB 的包：装完就收，别在 .upload 里常驻
+            except OSError:
+                pass
     except Exception as e:
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")

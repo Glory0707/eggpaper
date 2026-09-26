@@ -205,6 +205,8 @@ onMounted(async () => {
 })
 
 function save() {
+  // store.settings 没加载成（启动失败）就开的是一张空表：存回去会把后端的好配置抹空
+  if (!store.settings) { toast(t('设置还没加载好，稍后再试')); return }
   Object.assign(store.viewer.layers, f.layers)
   emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key,
                              vision_model: f.vision ? f.model : '' },

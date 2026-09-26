@@ -597,9 +597,11 @@ async function stopTranslate() {
    快轮询，跑完立刻停；其他功能照旧 3 秒，互不影响。 */
 function startMarginFast() {
   if (marginFastTimer) return
+  const t0 = Date.now()
   marginFastTimer = setInterval(async () => {
     await refreshMarginalia()
-    if (store.marginalia.status !== 'running') {
+    // 10 分钟硬上限：后端真卡死在 running 时轮询也得自己收，不能一秒一条永动机
+    if (store.marginalia.status !== 'running' || Date.now() - t0 > 600000) {
       clearInterval(marginFastTimer)
       marginFastTimer = null
     }
@@ -637,12 +639,20 @@ onEngineReady(() => {
   if (engResumeId && store.currentId === engResumeId) doTranslateFull()
   engResumeId = ''
 })
+/* 用户主动喊停下载：自动续翻的意图跟着撤销，否则很久之后手动装个引擎，
+   装完还会"冷不丁"替用户把翻译续上。 */
+async function stopEngineInstall() {
+  engResumeId = ''
+  await cancelEngineInstall()
+}
 
 /* 全文翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
    完成这一拍也在这里接——完成通知与「译文/双语」的解锁都看它。 */
 async function pollTranslate() {
   if (!store.currentId) return
-  const j = await api.translateStatus(store.currentId)
+  const pid = store.currentId
+  const j = await api.translateStatus(pid)
+  if (store.currentId !== pid) return      // 等待期间换了篇：旧篇的进度别写进新篇
   if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [], started: tranProg.value.started }
   if (j.status === 'done') {
     tranProg.value = { done: 0, total: 0, svc: '' }
@@ -658,22 +668,25 @@ async function pollTranslate() {
 
 /* 后台篇的全文翻译：人已经转到别的论文上，那条 3 秒轮询只看当前篇——译完悄无声息，
    用户只能反复切回去看。这里替"还在跑"的每篇问一次状态（顺带让后端把孤儿译文认领了），
-   完成时补一条通知；庆祝动画仍然只留给在场的这篇。 */
+   完成时补一条通知；庆祝动画仍然只留给在场的这篇。
+   集合记的是"正在盯"的篇：查询说还在跑就留着下拍接着问（查询完成后再决定去留，
+   先加后查的话第一拍之后每拍都被 continue 跳过，完成通知永远不来）。 */
 const _bgTran = new Set()
 async function bgTranslateTick() {
-  for (const p of store.papers.filter(x => x.translate_status === 'running')) {
-    if (_bgTran.has(p.id)) continue
-    _bgTran.add(p.id)
+  for (const p of store.papers.filter(x => x.translate_status === 'running')) _bgTran.add(p.id)
+  for (const pid of [..._bgTran]) {
     try {
-      const j = await api.translateStatus(p.id)
+      const j = await api.translateStatus(pid)
+      if (j.status === 'running') continue      // 还在跑：下一拍接着问
+      _bgTran.delete(pid)
       if (j.status === 'done') {
         await refreshPapers()
-        if (p.id !== store.currentId) {
-          toast(t('《{t}》翻译完成', { t: (p.title || p.filename || '').slice(0, 24) }))
+        if (pid !== store.currentId) {
+          const pp = store.papers.find(x => x.id === pid)
+          toast(t('《{t}》翻译完成', { t: ((pp?.title || pp?.filename) || '').slice(0, 24) }))
         }
       }
-      if (j.status !== 'running') _bgTran.delete(p.id)
-    } catch { _bgTran.delete(p.id) }
+    } catch { _bgTran.delete(pid) }
   }
 }
 
@@ -1056,7 +1069,7 @@ function onKey(e) {
             <button @click="closeEngineCard">{{ t('关闭') }}</button>
           </template>
           <template v-else>
-            <button @click="cancelEngineInstall">{{ t('停止下载') }}</button>
+            <button @click="stopEngineInstall">{{ t('停止下载') }}</button>
             <button style="margin-left:auto" @click="hideEngineCard">{{ t('收起') }}</button>
           </template>
         </div>

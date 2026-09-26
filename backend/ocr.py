@@ -137,31 +137,40 @@ def _rows_to_paras(page_no: int, rows: list, pw: float) -> list:
     return out
 
 
-def ocr_pdf(path: str, pages: list = None) -> list:
-    """整本识别，返回与 pdfparse.extract_paragraphs 同构的段落列表（含行级框）。"""
+class OcrStopped(Exception):
+    """should_stop 说停就停（删篇/取消析读）：半截结果不要了。"""
+
+
+def ocr_pdf(path: str, pages: list = None, should_stop=None) -> list:
+    """整本识别，返回与 pdfparse.extract_paragraphs 同构的段落列表（含行级框）。
+
+    should_stop 每页查一次：识别是分钟级的，删篇/取消不该等它跑完。
+    with 管住句柄：Windows 上 doc 不关，删这篇时 paper.pdf 就删不掉。"""
     import pymupdf
     engine = _get_engine()
-    doc = pymupdf.open(path)
-    out, idx = [], 0
-    for pno in (pages if pages is not None else range(len(doc))):
-        page = doc[pno]
-        pix = page.get_pixmap(dpi=_DPI, colorspace=pymupdf.csRGB)
-        img = pix.tobytes("png")
-        result, _el = engine(img)
-        items = []
-        for box, text, score in (result or []):
-            if score < _SCORE_MIN or not str(text).strip():
+    with pymupdf.open(path) as doc:
+        out, idx = [], 0
+        for pno in (pages if pages is not None else range(len(doc))):
+            if should_stop and should_stop():
+                raise OcrStopped()
+            page = doc[pno]
+            pix = page.get_pixmap(dpi=_DPI, colorspace=pymupdf.csRGB)
+            img = pix.tobytes("png")
+            result, _el = engine(img)
+            items = []
+            for box, text, score in (result or []):
+                if score < _SCORE_MIN or not str(text).strip():
+                    continue
+                xs = [pt[0] / _ZOOM for pt in box]
+                ys = [pt[1] / _ZOOM for pt in box]
+                t = str(text).strip()
+                if _PURE_NUM.match(t) or _WATERMARK.search(t):
+                    continue
+                items.append([min(xs), min(ys), max(xs), max(ys), t])
+            if not items:
                 continue
-            xs = [pt[0] / _ZOOM for pt in box]
-            ys = [pt[1] / _ZOOM for pt in box]
-            t = str(text).strip()
-            if _PURE_NUM.match(t) or _WATERMARK.search(t):
-                continue
-            items.append([min(xs), min(ys), max(xs), max(ys), t])
-        if not items:
-            continue
-        for p in _rows_to_paras(pno, _page_rows(items), page.rect.width):
-            idx += 1
-            p["idx"] = idx
-            out.append(p)
+            for p in _rows_to_paras(pno, _page_rows(items), page.rect.width):
+                idx += 1
+                p["idx"] = idx
+                out.append(p)
     return out

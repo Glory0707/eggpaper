@@ -26,7 +26,10 @@ import shutil
 
 VERSION_FALLBACK = "0.0.0"
 
-_MIGRATE_ITEMS = ("eggpaper.db", "config.yaml", "papers", "library", "translated", "home")
+# wal/shm 必须跟着主库一起搬：退出走 os._exit，没合页的最近提交还在 -wal 里，
+# 只搬主库等于把最后一段数据留在旧目录（papers 都搬过去了，库里却没有那几篇）
+_MIGRATE_ITEMS = ("eggpaper.db", "eggpaper.db-wal", "eggpaper.db-shm",
+                  "config.yaml", "papers", "library", "translated", "home")
 
 def is_frozen() -> bool:
     """是不是 PyInstaller 冻结出来的可执行文件。"""

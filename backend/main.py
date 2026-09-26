@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import traceback
+import uuid
 from urllib.parse import urlparse
 
 import uvicorn
@@ -399,13 +400,17 @@ def _apply_pending_restore():
 
 def _sweep_old_data_dirs():
     """恢复落地后的旧目录，若上个会话没删完（落地后马上退出，删除线程跟着死了），
-    启动时顺手清掉。"""
+    启动时顺手清掉。恢复的暂存目录（.restore）同理：标记写下去之前被杀的话它就一直
+    在盘上（几百 MB），标记还在（这次启动就要用它落地）时别碰。"""
     base = os.path.dirname(config.DATA_DIR)
-    name = os.path.basename(config.DATA_DIR) + ".old-"
+    name = os.path.basename(config.DATA_DIR)
     try:
-        leftovers = [d for d in os.listdir(base) if d.startswith(name)]
+        leftovers = [d for d in os.listdir(base) if d.startswith(name + ".old-")
+                     or d == name + ".restore"]
     except OSError:
         return
+    if os.path.isfile(os.path.join(config.DATA_DIR, "pending_restore.json")):
+        leftovers = [d for d in leftovers if not d.endswith(".restore")]
     for d in leftovers:
         shutil.rmtree(os.path.join(base, d), ignore_errors=True)
 
@@ -598,9 +603,13 @@ def set_data_location(body: dict):
 # ---------------- 全库备份（换机迁移：导出的 zip 就是一份数据目录） ----------------
 
 # 这些不进备份：home/ 是引擎的资产缓存（换机后引擎自己重新解包），db 的 wal/shm 陪跑文件
-# 用快照替代；zip 名单里出现即跳过——老版本备份文件里带着它们也恢复不进来。
+# 用快照替代；主库文件本身也由快照代表——walk 里再撞见同名条目会把活库盖到快照上头
+# （os._exit 退出不 checkpoint，WAL 里最近的提交只在快照里），所以一并跳过。
 _BACKUP_SKIP_DIRS = {"home"}
-_BACKUP_SKIP_FILES = {"eggpaper.db-wal", "eggpaper.db-shm", "pending_restore.json"}
+_BACKUP_SKIP_FILES = {"eggpaper.db", "eggpaper.db-wal", "eggpaper.db-shm", "pending_restore.json"}
+# 恢复解包的跳过名单：快照里的 eggpaper.db **必须**落地（跳过它落地就是个空库），
+# 只有陪跑文件不进位
+_RESTORE_SKIP_FILES = _BACKUP_SKIP_FILES - {"eggpaper.db"}
 
 def _backup_zip_stream():
     """整个数据目录打成一个 zip（STORED：PDF 本来就是压缩格式，再压一遍白烧 CPU）。
@@ -610,7 +619,8 @@ def _backup_zip_stream():
     import zipfile
     tmp = tempfile.TemporaryFile()
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
-        snap = os.path.join(tempfile.gettempdir(), f"eggpaper_db_snap_{os.getpid()}.tmp")
+        # 快照名带随机后缀：按 pid 命名的话同进程并发导出会用同一路径互拆
+        snap = os.path.join(tempfile.gettempdir(), f"eggpaper_db_snap_{os.getpid()}_{time.time_ns()}.tmp")
         src = sqlite3.connect(db.DB_PATH)
         try:
             dst = sqlite3.connect(snap)
@@ -631,7 +641,10 @@ def _backup_zip_stream():
                 rel = os.path.relpath(full, config.DATA_DIR).replace("\\", "/")
                 if rel in _BACKUP_SKIP_FILES or rel.endswith(".tmp") or rel.endswith(".part"):
                     continue
-                z.write(full, rel)
+                try:
+                    z.write(full, rel)
+                except OSError:
+                    pass     # 导出途中被删/被翻译收尾清掉的文件：跳过，别让整场导出 500
     tmp.seek(0)
     try:
         while True:
@@ -689,7 +702,7 @@ def backup_restore(body: dict):
             for info in z.infolist():
                 parts = info.filename.replace("\\", "/").split("/")
                 if not info.filename.endswith("/") and parts[0] not in _BACKUP_SKIP_DIRS \
-                        and ".." not in parts and "/".join(parts) not in _BACKUP_SKIP_FILES:
+                        and ".." not in parts and "/".join(parts) not in _RESTORE_SKIP_FILES:
                     target = os.path.join(staged, *parts)
                     os.makedirs(os.path.dirname(target), exist_ok=True)
                     with z.open(info) as fsrc, open(target, "wb") as fdst:
@@ -724,19 +737,25 @@ async def pdf2zh_install_from_file(file: UploadFile = File(...)):
     下好一份引擎包，和安装包一起发给别人，对方在这里选那个文件即可（零基础）。"""
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(400, "要选 .zip 文件")
-    tmp = os.path.join(engine_install.install_dir() + ".upload", "engine.zip")
-    os.makedirs(os.path.dirname(tmp), exist_ok=True)
+    updir = engine_install.install_dir() + ".upload"
+    os.makedirs(updir, exist_ok=True)
+    # 随机名：固定 engine.zip 的话，并发上传会当场截断正在解压的那一份
+    tmp = os.path.join(updir, f"engine-{uuid.uuid4().hex[:8]}.zip")
     size = 0
-    with open(tmp, "wb") as f:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > 2 * 1024 * 1024 * 1024:
-                raise HTTPException(400, "文件过大")
-            f.write(chunk)
-    return engine_install.start_from_zip(tmp)
+    try:
+        with open(tmp, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > 2 * 1024 * 1024 * 1024:
+                    raise HTTPException(400, "文件过大")
+                f.write(chunk)
+    except Exception:
+        _rm(tmp)        # 超限/写一半失败：两 GB 的残骸别一直躺在盘上
+        raise
+    return engine_install.start_from_zip(tmp, cleanup=True)
 
 @app.post("/api/settings/test")
 def test_settings():
@@ -950,30 +969,45 @@ def _ocr_then_analyze(pid: str, path: str):
     """扫描件的隐形后半段：OCR → 段落入库 → 排析读。失败落 analysis_error，说人话。
 
     登记成 ("analysis", pid) 的在跑任务：analysis 端点有"状态说 queued 但进程里没活 =
-    上次被中断"的惰性检测，OCR 这一段不登记的话刚导入的篇会被它误杀回 none。"""
+    上次被中断"的惰性检测，OCR 这一段不登记的话刚导入的篇会被它误杀回 none。
+    取消旗在 OCR 里**逐页**生效（识别是分钟级的，整本跑完才看旗等于没给取消）；
+    _job_done 挪到最后的 finally——先撤登记再排析读的话，惰性检测会在毫秒窗里
+    把刚排上的 queued 误归零。
+    """
+    def _stopped_midway():
+        """OCR 前后探到取消/删篇：旗子收掉别留给下一次误杀，状态回"没做过"。"""
+        if _pid_gone(pid):
+            return
+        _cancel_clear("analysis", pid)
+        db.update_paper(pid, analysis_status="none", analysis_error=None)
+
     with _q_lock:
         _live_jobs.add(("analysis", pid))
     t0 = time.time()
     try:
-        paras = ocr.ocr_pdf(path)
+        try:
+            paras = ocr.ocr_pdf(
+                path, should_stop=lambda: _pid_gone(pid) or _cancel_requested("analysis", pid))
+        except ocr.OcrStopped:
+            _stopped_midway()
+            return
         if not paras:
             raise ValueError("没认出文字")
+        _applog(f"OCR {pid}: {len(paras)} 段，{time.time() - t0:.1f}s")
+        if _pid_gone(pid) or _cancel_requested("analysis", pid):
+            _stopped_midway()
+            return
+        db.replace_paragraphs(pid, paras)
+        _ensure_paper_type(pid)
+        _enqueue_analysis(pid, paras)
     except ocr.OcrUnavailable as e:
         db.update_paper(pid, analysis_status="error", analysis_error=str(e))
-        return
     except Exception:
         _applog(f"OCR {pid} 失败：{traceback.format_exc(limit=3)}")
         db.update_paper(pid, analysis_status="error",
                         analysis_error="扫描件文字识别没成功，可能太糊")
-        return
     finally:
         _job_done("analysis", pid)
-    _applog(f"OCR {pid}: {len(paras)} 段，{time.time() - t0:.1f}s")
-    if _pid_gone(pid):
-        return
-    db.replace_paragraphs(pid, paras)
-    _ensure_paper_type(pid)
-    _enqueue_analysis(pid, paras)
 
 def _new_paper_dir(name: str):
     """给一篇新论文建库内目录并登记缓存，返回 (pid, pid_dir)。上传与路径导入共用。"""
@@ -991,9 +1025,21 @@ def _attach_same_title(out: dict, pid: str) -> dict:
         out["same_title"] = db.get_paper(same)
     return out
 
+_MAX_UPLOAD = 500 * 1024 * 1024   # 论文 PDF 的合理上限：防手滑上传整个硬盘，也防内存被顶穿
+
 @app.post("/api/papers")
 async def upload(file: UploadFile = File(...)):
-    raw = await file.read()
+    # 分块读 + 上限：整读不设防的话，几个并发大文件就能把内存顶穿（进程一崩，在跑的任务全没）
+    chunks, size = [], 0
+    while True:
+        chunk = await file.read(1 << 22)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > _MAX_UPLOAD:
+            raise HTTPException(400, "PDF 太大（超过 500MB），先拆分或压缩再导入")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
     if raw[:4] != b"%PDF":
         raise HTTPException(400, "不是 PDF 文件")
     if len(raw) < 256:
@@ -1011,8 +1057,14 @@ async def upload(file: UploadFile = File(...)):
                         "no_text": not paras, "duplicate": True}
             pid, pid_dir = _new_paper_dir(name)
             path = os.path.join(pid_dir, "paper.pdf")     # 库内自存一份：删原件、挪原件都不影响
-            with open(path, "wb") as f:
-                f.write(raw)
+            try:
+                with open(path, "wb") as f:
+                    f.write(raw)
+            except OSError:
+                shutil.rmtree(pid_dir, ignore_errors=True)   # 盘满写不下：别留空论文目录
+                with _dir_lock:
+                    _dir_cache.pop(pid, None)
+                raise HTTPException(500, "PDF 没写进库里（磁盘满了或被占用）")
             try:
                 out = _ingest(pid, name, path, pdf_hash)
             except Exception:
@@ -1043,6 +1095,9 @@ def import_path(body: dict):
         try:
             pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
         except OSError as e:
+            shutil.rmtree(pid_dir, ignore_errors=True)   # 复制不出来（盘满/源被锁）：别留半截目录
+            with _dir_lock:
+                _dir_cache.pop(pid, None)
             raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
         dup = db.find_duplicate(name, size, pdf_hash)
         if dup:
@@ -1759,7 +1814,8 @@ def translate_cancel(pid: str):
     """停全文翻译：掐掉 pdf2zh 进程；已译好的页留在 .pages/ 里，下次接着译。"""
     p = _paper_or_404(pid)
     stopped = translate_full.cancel(pid)
-    if stopped or p["translate_status"] == "running":
+    cur = db.get_paper(pid) or p     # 状态此刻可能刚好翻成 done：按最新值判，别把陈旧的 running 盖成 none
+    if stopped or cur["translate_status"] == "running":
         db.update_paper(pid, translate_status="none", translate_error="")
         _applog(f"全文翻译 {pid}: 已取消")
     return {"ok": True, "stopped": bool(stopped)}
@@ -1848,6 +1904,8 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
             return empty
     with _key_lock(lock + ":" + pid):
         p = db.get_paper(pid)
+        if not p:
+            _paper_or_404(pid)          # 排队等生成时论文被删：404，别 None 下标炸 500
         if p[field]:
             try:
                 return JSONResponse(json.loads(p[field]))
@@ -2065,7 +2123,10 @@ def _six_compute(pid: str, key: str) -> dict:
             cached = None
         if cached:
             return cached
-        data = _gen_six(db.get_paper(pid), key)
+        p = db.get_paper(pid)
+        if not p:
+            _paper_or_404(pid)          # 排队等生成时论文被删：404，别把 None 递进生成
+        data = _gen_six(p, key)
         if not (data.get("text") or data.get("items")):
             raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
         if _pid_gone(pid):      # 生成隔着一次 LLM 调用，期间论文可能已被删/被替换：只返回不落库
@@ -2151,15 +2212,18 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
     else:
       with _key_lock("cite:" + pid):
         p = db.get_paper(pid)
+        if not p:
+            _paper_or_404(pid)      # 排队等生成时论文被删：404，别 None 下标炸 500
         if p["citation"] and not refresh:
             meta = json.loads(p["citation"])
             return {"meta": meta, "groups": citation.groups(meta)}
         src = pdfparse.citation_source(_paper_src_or_404(pid, p))
         raw = llm.extract_citation(p["title"], src)
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
-    if not (meta.get("title") or meta.get("authors")):
-        raise HTTPException(503, "首页没认出文献信息，可能没印刊头")
-    db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
+        if not (meta.get("title") or meta.get("authors")):
+            raise HTTPException(503, "首页没认出文献信息，可能没印刊头")
+        # 落库必须在锁内：放在锁外的话，第二个等待者拿锁时还读不到，会再花一次调用
+        db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
     return {"meta": meta, "groups": citation.groups(meta)}
 
 @app.post("/api/cite-table")
@@ -2616,9 +2680,8 @@ def fig_caption(pid: str, idx: int = 0):
     msgs = llm.translate_caption_messages(cap, hits)
     zh = llm.chat(msgs, max_tokens=6000, temperature=0.2).strip()
     if zh:
-        caps[key] = zh
-        caps[str(idx)] = zh
-        db.set_fig_caps(pid, caps)
+        # 锁内读改写：灯箱两张图并发懒翻译时，后写覆盖前写会丢掉一条译文缓存
+        db.fig_caps_add(pid, {key: zh, str(idx): zh})
     return {"zh": zh or cap, "original": cap}
 
 
@@ -2824,13 +2887,14 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             raise RuntimeError("模型这次没返回内容")
         aid = db.qa_add(pid, "assistant", ans, conv_id=conv_id)
         _autotitle(pid, conv_id, question, not any(h["role"] == "user" for h in hist))
-        yield _sse({"type": "done", "user_id": uid, "assistant_id": aid})
+        # 会话在流式中途被删时 qa_add 返回 0：0 号行不存在，别把假 id 发给前端当真
+        yield _sse({"type": "done", "user_id": uid or None, "assistant_id": aid or None})
     except Exception as e:
         hint = _human_msg(e)
         ans = "".join(buf)
         aid = db.qa_add(pid, "assistant", (ans + "\n\n⚠ " + hint) if ans.strip() else "⚠ " + hint,
                         conv_id=conv_id)
-        yield _sse({"type": "error", "message": hint, "user_id": uid, "assistant_id": aid})
+        yield _sse({"type": "error", "message": hint, "user_id": uid or None, "assistant_id": aid or None})
 
 @app.get("/api/library/overview")
 def library_overview():

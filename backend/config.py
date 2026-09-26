@@ -1,9 +1,13 @@
 """eggpaper 配置：本地 yaml，永不入库。"""
 import os
+import threading
+import time
 
 import yaml
 
 import appinfo
+
+_save_lock = threading.Lock()   # 两个窗口同时保存：写盘段串行，别把 yaml 写成两半
 
 DATA_DIR = appinfo.data_dir()
 CONFIG_PATH = os.path.join(DATA_DIR, "config.yaml")
@@ -53,6 +57,12 @@ def load() -> dict:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
         except Exception:
+            # 解析不动（半截文件/被改坏）：把坏文件挪开留证，别无声回默认——
+            # 那样用户下次一保存，明文 key 就被空配置永久抹掉了
+            try:
+                os.replace(CONFIG_PATH, CONFIG_PATH + ".bad")
+            except OSError:
+                pass
             cfg = {}
     merged = DEFAULTS.copy()
     for k, v in cfg.items():
@@ -66,6 +76,23 @@ def load() -> dict:
 
 def save(cfg: dict):
     ensure_dirs()
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+    # 临时文件 + 原子换名：写到一半被杀/断电，盘上要么是旧配置要么是新配置，never 半截。
+    # 临时名带纳秒后缀（固定名会在并发下互截）；换名撞上 load() 正开着目标文件时
+    # Windows 会输 PermissionError——等一拍重试，别把 5xx 抛回设置页。
+    with _save_lock:
+        tmp = f"{CONFIG_PATH}.{time.time_ns()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+        for i in range(6):
+            try:
+                os.replace(tmp, CONFIG_PATH)
+                break
+            except OSError:
+                if i == 5:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                    raise
+                time.sleep(0.05)
     _cache["mtime"] = None          # 下次 load 强制重读，缓存不吞掉刚存的设置

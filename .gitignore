@@ -48,3 +48,4 @@ backend/engines/
 
 # ruff 本地缓存
 .ruff_cache/
+.git-msg.txt
