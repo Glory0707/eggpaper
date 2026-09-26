@@ -1140,7 +1140,7 @@ def supersede_paper(pid: str, body: dict):
     _cancel_request("analysis", old["id"])
     _cancel_request("marginalia", old["id"])
     with _key_lock("translate:" + old["id"]):
-        if translate_full.cancel(old["id"]):
+        if translate_full.cancel(old["id"], paper_dir(old["id"])):
             _applog(f"替换 {old['id']}：终止了还在跑的全文翻译")
         stats = db.supersede(pid, old["id"])
         with _dir_lock:
@@ -1331,9 +1331,14 @@ def delete_paper(pid: str):
         _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
         _cancel_request("marginalia", pid)
         db.purge_paper(pid)
-        if translate_full.cancel(pid):
+        if translate_full.cancel(pid, paper_dir(pid)):
             _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
         shutil.rmtree(paper_dir(pid), ignore_errors=True)
+        if os.path.exists(paper_dir(pid)):
+            # 刚 taskkill 完 Windows 松句柄要一拍（孤儿的 cwd 句柄）：等一拍再收一次，
+            # 还清不掉就留给下次启动的清扫
+            time.sleep(0.5)
+            shutil.rmtree(paper_dir(pid), ignore_errors=True)
     with _dir_lock:
         _dir_cache.pop(pid, None)
     _rm(p["path"])
@@ -1813,7 +1818,7 @@ def marginalia_cancel(pid: str):
 def translate_cancel(pid: str):
     """停全文翻译：掐掉 pdf2zh 进程；已译好的页留在 .pages/ 里，下次接着译。"""
     p = _paper_or_404(pid)
-    stopped = translate_full.cancel(pid)
+    stopped = translate_full.cancel(pid, paper_dir(pid))
     cur = db.get_paper(pid) or p     # 状态此刻可能刚好翻成 done：按最新值判，别把陈旧的 running 盖成 none
     if stopped or cur["translate_status"] == "running":
         db.update_paper(pid, translate_status="none", translate_error="")

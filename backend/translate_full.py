@@ -397,11 +397,16 @@ def _sweep_home_config():
     except Exception:
         pass
 
-def cancel(pid: str):
-    """删论文时用：把还在跑的 pdf2zh 掐掉。
+def cancel(pid: str, out_dir: str = ""):
+    """删论文/换版本/停止时用：把还在跑的 pdf2zh 掐掉。
 
     pdf2zh 是独立进程——不掐的话，"删掉这篇论文"之后它还会跑完、还会往
     已删掉的论文文件夹里写回 mono.pdf，用户以为删干净了、盘上却留下孤立的译文文件。
+
+    两层够得着的手：本进程起的子进程直接 kill；跨重启的孤儿（eggpaper 被杀后
+    pdf2zh 还在跑，_RUNNING 已空）凭它命令行里的本篇目录认出来再掐——
+    启动清扫不动它们（那是在等孤儿译文认领/断点续译），只有用户明确对着这篇
+    做删除/停止时才追杀。
     """
     j = job(pid)
     if j.get("status") in ("running", "queued"):
@@ -413,7 +418,83 @@ def cancel(pid: str):
             proc.kill()
         except Exception:
             pass
-    return bool(procs)
+    orphaned = kill_orphan_procs(out_dir)
+    return bool(procs) or orphaned > 0
+
+def kill_orphan_procs(out_dir: str) -> int:
+    """命令行里带着本篇输出目录的孤儿 pdf2zh 一律掐掉，返回掐掉几个。
+
+    为什么不持久化 PID：Windows 的 PID 复用很激进，重启后照单全杀会误杀无辜进程；
+    而每个 pdf2zh 的命令行里本来就有 `--output <本篇目录>`（_cmd 构造，cwd 也是它）
+    ——进程自己就是自己的注册表，按目录路径匹配，PID 复用者命令行不可能撞上。
+    PID 只从进程枚举来，永远不从 API 参数来（本机接口无鉴权，kill-by-pid 不许
+    变成外部可指定的原语）。
+
+    枚举用 PowerShell Get-CimInstance（wmic 在 Win11 24H2 已移除）；只在删论文/
+    换版本/停止这类用户动作里调用，一次几百毫秒，不在热路径上。枚举进程自己的
+    命令行里也带着 needle，解析时把自己和它排除。目录已不在（删完/清完）就没什么
+    好保护的了，直接不扫。
+    """
+    if os.name != "nt":
+        return _kill_orphan_posix(out_dir)
+    if not out_dir or not os.path.isdir(out_dir):
+        return 0
+    needle = out_dir.rstrip("\\/").lower().replace("'", "''")
+    # 双重判据：命令行含本篇目录 + 镜像名是引擎家族（pdf2zh/python）。单看命令行
+    # 会误杀"用户在别的阅读器里开着这份 PDF"的进程；单看镜像名会误伤无关 python。
+    script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine "
+              "-and ($_.Name -eq 'pdf2zh.exe' -or $_.Name -eq 'python.exe' "
+              "-or $_.Name -eq 'pythonw.exe') "
+              "-and $_.CommandLine.ToLower().Contains('" + needle + "') } | "
+              "ForEach-Object { $_.ProcessId }")
+    flags, si = _no_window()
+    try:
+        enum = subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=flags, startupinfo=si)
+        out, _ = enum.communicate(timeout=15)
+    except Exception:
+        return 0
+    me = os.getpid()
+    killed = 0
+    for line in out.split():
+        if not line.strip().isdigit():
+            continue
+        target = int(line)
+        if target in (me, enum.pid):
+            continue
+        try:
+            # /T 连树一起带走：pdf2zh 2.x 的 multiprocessing 子进程命令行不带目录
+            subprocess.run(["taskkill", "/PID", str(target), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            killed += 1
+        except Exception:
+            pass
+    return killed
+
+def _kill_orphan_posix(out_dir: str) -> int:
+    """mac/linux 侧的同款（pgrep -f 全命令行匹配）。"""
+    if not out_dir:
+        return 0
+    import re as _re
+    needle = _re.escape(out_dir.rstrip("/"))
+    try:
+        out = subprocess.run(["pgrep", "-f", needle], capture_output=True,
+                             text=True, timeout=10).stdout
+    except Exception:
+        return 0
+    me = os.getpid()
+    killed = 0
+    for line in out.split():
+        if line.strip().isdigit() and int(line) != me:
+            try:
+                os.kill(int(line), 9)
+                killed += 1
+            except Exception:
+                pass
+    return killed
 
 def adopt_existing(out_dir: str):
     """盘上已经有"看起来完整"的成品就认领，返回 {"dual","mono"}（缺的一方是空串）或 None。
