@@ -6,11 +6,13 @@
   「原文未提及」，绝不硬凑。
 - **可溯源**：每个格子带段落号（¶n），点得回原文。模型只允许用给出的材料，不许凭记忆补。
 - 未析读的篇照样能对比：抽取材料用段落原文就够了，骨架只是锦上添花。
+- **缓存命中**：system 用与析读/七问同一套「共享身份句 + 逐字节相同的全文块」开头
+  （llm._doc_system）——同一篇论文析读时写下的服务端缓存，对比抽取的输入大头直接命中。
 """
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from llm import chat_json, _lang_tail
+from llm import chat_json, _lang_tail, _doc_system, _kick
 
 # 行维度：键、界面名、给模型的一句话解释
 DIMS = [
@@ -23,27 +25,10 @@ DIMS = [
 ]
 KEYS = [k for k, _n, _h in DIMS]
 
-# 每篇的材料预算：段落长截一刀、总长封顶，防止超长论文把上下文吃穿
-_PARA_MAX, _TOTAL_MAX = 600, 26000
 
-
-def _corpus(paras: list) -> str:
-    out, used = [], 0
-    for p in paras:
-        if p.get("in_refs"):
-            continue
-        txt = (p.get("text") or "").strip()
-        if len(txt) > _PARA_MAX:
-            txt = txt[:_PARA_MAX] + "…"
-        out.append(f"¶{p['idx']} {txt}")
-        used += len(txt)
-        if used > _TOTAL_MAX:
-            out.append("（后文从略）")
-            break
-    return "\n".join(out)
-
-
-def _messages(title: str, corpus: str, claims: list, annos: dict, keys: list) -> list:
+def _messages(title: str, paras: list, claims: list, annos: dict, keys: list) -> list:
+    # 段角色与主张是**这一篇的常量**：跟在全文块之后、维度说明之前——
+    # 维度勾选组合每次可能不同，只能放在最后的 user 里
     role_note = ""
     anno_bits = [f"¶{idx} {a.get('role','')}" for idx, a in (annos or {}).items()
                  if a.get("role") and a.get("role") not in ("boilerplate",)]
@@ -54,16 +39,16 @@ def _messages(title: str, corpus: str, claims: list, annos: dict, keys: list) ->
         role_note += "\n【核心主张】\n" + "\n".join(claim_bits)
     schema = json.dumps({k: {"text": "…", "ref": 3} for k in keys}, ensure_ascii=False)
     return [
-        {"role": "system", "content":
-            "你是严谨的文献分析员。只依据给出的材料填表，绝不使用材料之外的知识；"
-            "论文没写到的维度如实填「原文未提及」，不许编。" + _lang_tail()},
+        {"role": "system", "content": _doc_system(title, paras,
+            "【任务：数据对比抽取】你是严谨的文献分析员。只依据给出的材料填表，绝不使用材料之外的知识；"
+            "论文没写到的维度如实填「原文未提及」，不许编。" + role_note + _lang_tail())},
         {"role": "user", "content":
-            f"论文《{title}》。为数据对比表抽取以下{'六个' if len(keys) == len(KEYS) else len(keys)}维度，每个维度给一段"
+            f"为数据对比表抽取以下{'六个' if len(keys) == len(KEYS) else len(keys)}维度，每个维度给一段"
             f"（≤60字，关键结果优先带数字），并给出依据所在的段落号——ref 必须是**整数**"
             f"（如 3 代表 ¶3；确实定位不到才写 null）。\n"
             f"维度说明：{'；'.join(f'{k}={hint}' for k, _n, hint in DIMS if k in keys)}。\n"
             f"输出 JSON：{schema}\n"
-            f"{role_note}\n\n【正文】\n{corpus}"},
+            + _kick("填好这些维度")},
     ]
 
 
@@ -102,7 +87,8 @@ def extract_all(papers: list, material_of, demo: bool = False, dims: list = None
 
     def one(p):
         paras, claims, annos = material_of(p["id"])
-        msgs = _messages(p.get("title") or p.get("filename") or "", _corpus(paras), claims, annos, keys)
+        # 标题回落用空串不用文件名：析读管线就是 title or ""，两边一致前缀才命中
+        msgs = _messages(p.get("title") or "", paras, claims, annos, keys)
         try:
             return p["id"], _norm(chat_json(msgs, max_tokens=1600), keys)
         except Exception:

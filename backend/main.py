@@ -1927,13 +1927,13 @@ def _gen_six(p: dict, key: str):
             return llm.answer_how_review(p["title"], claims, db.get_paragraphs(pid))
         raise HTTPException(400, "研究型论文的这一问由骨架的主张-证据链直接拼出，无需生成")
     if key == "motive":
-        return llm.answer_motive(p["title"],
+        return llm.answer_motive(p["title"], db.get_paragraphs(pid),
                                  _paras_of_role(pid, {"gap"}),
                                  _paras_of_role(pid, {"background"}, 6),
                                  claims)
     if key == "next":
         warns = [n["note"] for n in db.get_marginalia(pid) if _band(n) == "warn"][:6]
-        return llm.answer_next(p["title"],
+        return llm.answer_next(p["title"], db.get_paragraphs(pid),
                                _paras_of_role(pid, {"limitation"}),
                                _paras_of_role(pid, {"extension"}, 5),
                                claims, warns)
