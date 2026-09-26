@@ -310,7 +310,8 @@ function save() {
         </span>
         <button class="eng-check" style="margin-left:auto" @click="checkEngine" :disabled="eng.busy">
           {{ eng.busy ? '…' : t('检测') }}</button>
-        <button class="eng-check" style="margin-left:4px" v-if="eng.checked && !eng.ok && engInst.state !== 'error'"
+        <button class="eng-check" style="margin-left:4px"
+                v-if="eng.checked && !eng.ok && engInst.state !== 'error' && !['downloading', 'unpacking', 'warming'].includes(engInst.state)"
                 @click="installEngine">{{ t('安装') }}</button>
         <button class="eng-check" style="margin-left:4px" v-if="eng.upgrade && !['downloading', 'unpacking', 'warming'].includes(engInst.state)"
                 @click="installEngine">{{ t('升级') }}</button>

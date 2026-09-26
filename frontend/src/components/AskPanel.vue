@@ -94,6 +94,7 @@ function follow() { if (atBottom.value) { const el = scrollEl.value; if (el) el.
 async function send(q) {
   q = (q ?? text.value).trim()
   if (!q || busy.value || !pid.value) return
+  busy.value = true                   // 先占住：双击/快速问题连点只放行第一条，其余在入口被挡
   const reqPid = pid.value            // 钉住提问时的 pid：流式中途换篇，半截答案得存回原论文
   if (!convId.value) await loadConvs()
   text.value = ''
@@ -102,7 +103,6 @@ async function send(q) {
   msgs.value.push(um)
   const m = reactive({ role: 'assistant', content: '', streaming: true, error: '' })
   msgs.value.push(m)
-  busy.value = true
   gotDone = false
   await nextTick(); scrollBottom(false)
   const id = convId.value
@@ -167,15 +167,18 @@ function stop(silent = false) {
   if (!silent) loadConvs(true)
 }
 
+let regenBusy = false
 async function regen() {
-  if (busy.value) return
+  if (busy.value || regenBusy) return
+  regenBusy = true        // POST 在途时连点会重复 regenerate + 多弹一轮消息
   try {
     const r = await api.qaRegenerate(pid.value, convId.value)
     while (msgs.value.length && msgs.value[msgs.value.length - 1].role !== 'user') msgs.value.pop()
     msgs.value.pop()
     await nextTick()
-    send(r.question)
-  } catch (e) { toast(e.message) }
+    regenBusy = false
+    await send(r.question)
+  } catch (e) { toast(e.message) } finally { regenBusy = false }
 }
 async function delMsg(i) {
   const m = msgs.value[i]

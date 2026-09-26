@@ -255,11 +255,14 @@ async function maybeGenTerms(mine = paperEpoch()) {
     if (samePaper(mine)) toast(t('术语没生成：{m}', { m: e.message }))
   } finally { termsBusy.value = false }
 }
+let addingTerm = false
 async function addTerm() {
-  if (!termForm.value.term_en.trim() || !termForm.value.term_zh.trim()) return
+  if (!termForm.value.term_en.trim() || !termForm.value.term_zh.trim() || addingTerm) return
+  addingTerm = true       // await 期间表单还没清空，连点会收进两条同名词目
   try {
     await api.glossaryAdd(store.currentId, { ...termForm.value, source: 'manual' })
   } catch (e) { toast(e.message); return }
+  finally { addingTerm = false }
   termForm.value = { term_en: '', term_zh: '' }
   loadTerms()
 }
@@ -337,6 +340,7 @@ const stepsShown = computed(() => {
   return (mcMore.value ? all : all.slice(0, MC_STEPS)).map(split)
 })
 async function genMethodCard() {
+  if (mcBusy.value) return          // 生成在途时「方法卡 ↗」必再次触发（methodCard 还是 null）
   const mine = paperEpoch()
   mcBusy.value = true
   try {
@@ -354,10 +358,14 @@ const abbrList = computed(() => {
       .map(([en, zh]) => ({ en, zh }))
   } catch { return [] }
 })
+let savingAbbr = false
 async function saveAbbr(a) {
+  if (savingAbbr) return
+  savingAbbr = true
   try {
     await api.glossaryAdd(store.currentId, { term_en: a.en, term_zh: a.zh, source: 'abbr' })
   } catch (e) { toast(e.message); return }
+  finally { savingAbbr = false }
   loadTerms()                     // 列表里少一条、下面的术语表多一条，动作可见
 }
 function eqq(idx) {

@@ -557,22 +557,30 @@ watch(() => store.analysis.status, (n, o) => {
   }
 })
 
+let anaStarting = false
 async function doAnalyze() {
-  if (!store.currentId || anaBusy.value) return   // 快捷键和按钮同一条守卫，重复触发只会吃到 400
-  analyzeReq = { id: store.currentId, at: Date.now() }
-  await api.analyze(store.currentId)
-  await refreshAnalysis()
-  if (store.analysis.status === 'done') {
-    topPet.rollOnce(); reloadSummary()
-    store.viewer.railUser = true
-  }
+  if (!store.currentId || anaBusy.value || anaStarting) return
+  anaStarting = true        // POST 在途、状态还没翻成 running 的窗口里，双击不该再发一条
+  try {
+    analyzeReq = { id: store.currentId, at: Date.now() }
+    await api.analyze(store.currentId)
+    await refreshAnalysis()
+    if (store.analysis.status === 'done') {
+      topPet.rollOnce(); reloadSummary()
+      store.viewer.railUser = true
+    }
+  } finally { anaStarting = false }
 }
 
+let margStarting = false
 async function doMarginalia() {
-  if (!store.currentId || store.marginalia.status === 'running') return
-  await api.marginaliaStart(store.currentId)
-  await refreshMarginalia()
-  startMarginFast()
+  if (!store.currentId || store.marginalia.status === 'running' || margStarting) return
+  margStarting = true
+  try {
+    await api.marginaliaStart(store.currentId)
+    await refreshMarginalia()
+    startMarginFast()
+  } finally { margStarting = false }
 }
 
 /* 长任务的「停止」：后端是协作式取消，析读在阶段边界收手（已生成的部分保留），
@@ -599,9 +607,11 @@ function startMarginFast() {
 }
 onUnmounted(() => clearInterval(marginFastTimer))
 
+let tranStarting = false
 async function doTranslateFull() {
-  if (!store.currentId) return
+  if (!store.currentId || tranSt.value === 'running' || tranStarting) return
   const again = tranSt.value === 'done'
+  tranStarting = true
   try {
     const r = await api.translateFull(store.currentId, again)
     tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0, cur: [] }
@@ -617,7 +627,7 @@ async function doTranslateFull() {
     } else {
       toast(t('启动失败：{m}', { m: e.message }))
     }
-  }
+  } finally { tranStarting = false }
 }
 /* 引擎装好后的自动续翻：只续"因为等引擎而停下"的那一篇——设置页手动装的
  * （没记 engResumeId）只收 toast，不冷不丁替用户开翻译反而吓人。 */
@@ -680,9 +690,12 @@ function onAppFile(e) {
    每篇的解析在服务端是几秒钟的活，并发只会让服务端更忙、提示也更乱；
    逐篇还能说清"正在导入第 2/5 篇"，并且**第一篇一到就打开**，不用等全部传完。
    其余的在后台排队通读（服务端是一条串行队列），列表里能看到谁在排队、谁在读。 */
+let importing = false
 async function onImport(list) {
   const files = (Array.isArray(list) ? list : [list]).filter(f => f && f.name)
   if (!files.length) return
+  if (importing) { toast(t('正在导入上一批')) ; return }   // 批量导入是几十秒的串行循环，别让两批交错
+  importing = true
   const many = files.length > 1
   const ok = []
   for (let i = 0; i < files.length; i++) {
@@ -708,6 +721,7 @@ async function onImport(list) {
     }
   }
   const first = ok[0]
+  importing = false
   if (!first) return
   if (many && ok.length > 1) {
     toast(t('已导入 {n} 篇，其余在后台排队通读', { n: ok.length }))
@@ -907,7 +921,8 @@ function onKey(e) {
         </Transition>
                 <button class="toggle" :class="{ on: store.viewer.frame }" :title="t('框选问 AI')"
                 @click="store.viewer.frame = !store.viewer.frame">{{ t('框选') }}</button>
-                        <button v-if="!isEn()" @click="doTranslateFull" :disabled="tranSt === 'running'"
+                        <button v-if="!isEn()" @click="doTranslateFull"
+                :disabled="tranSt === 'running' || tranStarting"
                 :title="tranTip">
           {{ tranLabel }}
         </button>

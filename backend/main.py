@@ -361,17 +361,28 @@ def _apply_pending_restore():
     try:
         with open(mark, encoding="utf-8") as f:
             staged = (json.load(f) or {}).get("staged") or ""
-        os.remove(mark)
         if not staged or not os.path.isdir(staged):
+            os.remove(mark)
             return
         data = config.DATA_DIR
         old = data + ".old-" + time.strftime("%Y%m%d%H%M%S")
-        os.rename(data, old)
+        last = None
+        for _ in range(3):
+            try:
+                os.rename(data, old)
+                last = None
+                break
+            except OSError as e:
+                last = e               # 上一会话的 pdf2zh/杀毒可能还握着句柄：等一轮再试
+                time.sleep(3)
+        if last is not None:
+            raise last                 # 标记留在原地，下次启动重试
         try:
             os.rename(staged, data)
         except OSError:
             os.rename(old, data)      # 顶不上就回滚，库里还是原样
             raise
+        os.remove(mark)               # 落地成功才撕标记：中途失败留着，重启后重试
         home_old = os.path.join(old, "home")
         if os.path.isdir(home_old) and not os.path.exists(os.path.join(data, "home")):
             try:
@@ -618,7 +629,7 @@ def _backup_zip_stream():
             for fn in files:
                 full = os.path.join(root, fn)
                 rel = os.path.relpath(full, config.DATA_DIR).replace("\\", "/")
-                if rel in _BACKUP_SKIP_FILES or rel.endswith(".tmp"):
+                if rel in _BACKUP_SKIP_FILES or rel.endswith(".tmp") or rel.endswith(".part"):
                     continue
                 z.write(full, rel)
     tmp.seek(0)
@@ -1044,7 +1055,13 @@ def import_path(body: dict):
                 _dir_cache.pop(pid, None)
             _pending_open["pid"] = dup
             return {"paper": db.get_paper(dup), "duplicate": True}
-        out = _ingest(pid, name, dest, pdf_hash)
+        try:
+            out = _ingest(pid, name, dest, pdf_hash)
+        except Exception:
+            shutil.rmtree(pid_dir, ignore_errors=True)   # 坏文件别留空论文目录
+            with _dir_lock:
+                _dir_cache.pop(pid, None)
+            raise
         _attach_same_title(out, pid)
     _pending_open["pid"] = pid
     return out
@@ -1067,12 +1084,15 @@ def supersede_paper(pid: str, body: dict):
         _deleted_pids.add(old["id"])
     _cancel_request("analysis", old["id"])
     _cancel_request("marginalia", old["id"])
-    stats = db.supersede(pid, old["id"])
-    with _dir_lock:
-        d = _dir_cache.pop(old["id"], None)
-    if d:
-        _rm(os.path.join(PAPERS_DIR, d))
-    shutil.rmtree(paper_dir(old["id"]), ignore_errors=True)   # 缓存漏了也要兜底删
+    with _key_lock("translate:" + old["id"]):
+        if translate_full.cancel(old["id"]):
+            _applog(f"替换 {old['id']}：终止了还在跑的全文翻译")
+        stats = db.supersede(pid, old["id"])
+        with _dir_lock:
+            d = _dir_cache.pop(old["id"], None)
+        if d:
+            _rm(os.path.join(PAPERS_DIR, d))
+        shutil.rmtree(paper_dir(old["id"]), ignore_errors=True)   # 缓存漏了也要兜底删
     return stats
 
 @app.get("/api/open-request")
@@ -1252,12 +1272,13 @@ def delete_paper(pid: str):
     with _deleted_lock:
         _deleted_pids.add(pid)
     _lines_probe_done.discard(pid)
-    _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
-    _cancel_request("marginalia", pid)
-    db.purge_paper(pid)
-    if translate_full.cancel(pid):
-        _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
-    shutil.rmtree(paper_dir(pid), ignore_errors=True)
+    with _key_lock("translate:" + pid):
+        _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
+        _cancel_request("marginalia", pid)
+        db.purge_paper(pid)
+        if translate_full.cancel(pid):
+            _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
+        shutil.rmtree(paper_dir(pid), ignore_errors=True)
     with _dir_lock:
         _dir_cache.pop(pid, None)
     _rm(p["path"])
@@ -2823,6 +2844,7 @@ def ask(pid: str, body: dict):
     question = (body.get("question") or "").strip()
     if not question:
         raise HTTPException(400, "问题不能为空")
+    question = question[:20000]      # 天文数字的粘贴别原样进库进模型
     _require_paras(pid)
     conv_id = _valid_conv(pid, body.get("conv_id")) or db.conv_list(pid)[0]["id"]
     ref_pids = []
@@ -3082,11 +3104,18 @@ def translate_full_start(pid: str, force: bool = False):
             raise HTTPException(400, f"全文翻译引擎{'升级' if stale else '下载'}没成功"
                                      f"（{st.get('error') or '原因未知'}）")
         raise HTTPException(400, f"全文翻译引擎起不来（{why}）")
-    translate_full.start(pid, _paper_src_or_404(pid, p), paper_dir(pid), used,
-                         cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
-                         note=note, engine=engine,
-                         glossary_rows=db.glossary_list(pid), fresh=force)
-    db.update_paper(pid, translate_status="running", translate_error="")
+    src = _paper_src_or_404(pid, p)
+    with _key_lock("translate:" + pid):
+        # 删除/替换版本与这里抢同一把锁：要么任务先起（删除侧的 cancel 会掐掉它），
+        # 要么删除先走完（下面的复查看到论文已注销，404 收场）。否则服务预检的秒级
+        # 窗口里论文被删，run() 会把已删目录当"幽灵翻译"原样重建出来
+        if _pid_gone(pid):
+            raise HTTPException(404, "论文不存在")
+        translate_full.start(pid, src, paper_dir(pid), used,
+                             cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
+                             note=note, engine=engine,
+                             glossary_rows=db.glossary_list(pid), fresh=force)
+        db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 
 @app.get("/api/papers/{pid}/translate-status")
@@ -3099,7 +3128,9 @@ def translate_full_status(pid: str):
             _applog(f"全文翻译 {pid}: 运行中发现已写完的成品，直接认领")
             p = _paper_or_404(pid)
     if j["status"] == "done":
-        if (j["mono"] or "") != (p["mono_path"] or ""):
+        # mono 路径变了，或 db 还停在 running（重译同路径成品时路径不变）都要写；
+        # 顺带删掉旧 dual——它是按上一轮 mono 派生的缓存，内容已经过期
+        if (j["mono"] or "") != (p["mono_path"] or "") or p["translate_status"] != "done":
             old_dual = p.get("dual_path") or ""
             db.update_paper(pid, mono_path=j["mono"] or "", dual_path="",
                             translate_status="done", translate_error="")

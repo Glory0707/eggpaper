@@ -779,15 +779,20 @@ async function doTranslateSel() {
   sel.busy = false
 }
 
+let pinning = false
 async function pinSel() {
-  if (!sel.zh || sel.busy) await doTranslateSel()   // 流式版：busy 时也会把流等完
-  if (!sel.zh) return
+  if (pinning) return               // 双击会 abort 掉第一条流、拿半截译文钉出两张卡
+  pinning = true
   try {
-    await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
-  } catch (e) { toast(t('钉到页边没成功：{m}', { m: e.message })); return }
-  await refreshM()
-  closeSel()
-  toast(t('已钉在页边'))
+    if (!sel.zh || sel.busy) await doTranslateSel()   // 流式版：busy 时也会把流等完
+    if (!sel.zh) return
+    try {
+      await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
+    } catch (e) { toast(t('钉到页边没成功：{m}', { m: e.message })); return }
+    await refreshM()
+    closeSel()
+    toast(t('已钉在页边'))
+  } finally { pinning = false }
 }
 
 async function copySel() {
@@ -813,13 +818,16 @@ function openMine() {
   mine.text = ''
   nextTick(() => mineEl.value?.focus({ preventScroll: true }))
 }
+let savingMine = false
 async function saveMine() {
   const t = mine.text.trim()
-  if (!t) return
+  if (!t || savingMine) return      // api.pin 在途时文本还没清空，连点会钉两条一样的
+  savingMine = true
   try {
     await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: t, para_idx: sel.paraIdx,
                                page: sel.page, kind: 'note' })
   } catch (e) { toast(t('没写上：{m}', { m: e.message })); return }
+  finally { savingMine = false }
   mine.open = false; mine.text = ''
   await refreshM()
   closeSel()

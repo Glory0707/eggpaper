@@ -87,6 +87,7 @@ const EN = {
   '全文翻译完成': 'Full-paper translation finished',
   '全文翻译失败：{m}': 'Full-paper translation failed: {m}',
   '正在导入 {i}/{n}：{name}': 'Importing {i}/{n}: {name}',
+  '正在导入上一批': 'Still importing the previous batch',
   '已导入，正在后台通读…': 'Imported — reading in the background…',
   '《{name}》导入失败：{m}': 'Import failed for “{name}”: {m}',
   '已导入 {n} 篇，其余在后台排队通读': 'Imported {n} papers — the rest are reading in the background',

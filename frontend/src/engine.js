@@ -77,7 +77,10 @@ export async function cancelEngineInstall() {
 }
 
 /** 发起安装并接管轮询（设置页手动装、等待卡上的重试都走这里）。 */
+let installGoing = false
 export async function startEngineInstall() {
+  if (installGoing) return          // 下载中重复 POST 会打断断点续传重头下
+  installGoing = true
   engInst.error = ''
   try {
     const s = await api.pdf2zhInstall()
@@ -85,6 +88,7 @@ export async function startEngineInstall() {
       state: s.state, pct: s.pct || 0, got: s.got || 0, total: s.total || 0, src: s.src || '',
     })
   } catch { /* 起不动也进轮询，让状态接口说话 */ }
+  finally { installGoing = false }
   watchEngine()
 }
 
