@@ -23,12 +23,17 @@ def _cut_tail(text: str, limit: int) -> str:
     i = cut.rfind("\n\n")
     return cut[:i] if i > limit // 2 else cut
 
-def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
-         no_think: bool = False, timeout: int = 600) -> str:
-    """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。"""
+def _require_live() -> dict:
+    """非演示模式的配置；演示模式/没配 key 让上层走演示分支（约定信号 RuntimeError("MOCK")）。"""
     cfg = config.load()
     if cfg["mock"] or not cfg["provider"]["api_key"]:
         raise RuntimeError("MOCK")
+    return cfg
+
+def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
+         no_think: bool = False, timeout: int = 600) -> str:
+    """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。"""
+    cfg = _require_live()
     budget = max_tokens
     out = ""
     last_err = None
@@ -65,12 +70,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             data = {}
         choices = data.get("choices") or [{}]
         out = ((choices[0].get("message") or {}).get("content", "")) or ""
-        usage = data.get("usage") or {}
-        hit = usage.get("prompt_cache_hit_tokens")
-        miss = usage.get("prompt_cache_miss_tokens")
-        if hit is not None and miss is not None and (hit + miss) >= 1000:
-            pct = round(100 * hit / (hit + miss))
-            print(f"[eggpaper] 输入 {hit + miss} tokens，缓存命中 {pct}%")
+        _log_cache(data.get("usage") or {}, "")
         if out.strip():
             return out
         budget = int(budget * 1.6)
@@ -86,9 +86,7 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
     翻译/短问答这类任务要不了那个深度，带上 thinking={"type":"disabled"} 能把
     首字时间从 ~8s 压到 ~1.5s；不认识这个字段的端点会忽略它，所以坏了也不伤。
     """
-    cfg = config.load()
-    if cfg["mock"] or not cfg["provider"]["api_key"]:
-        raise RuntimeError("MOCK")
+    cfg = _require_live()
     payload = {"model": cfg["provider"]["model"], "messages": messages,
                "max_tokens": max_tokens, "temperature": temperature, "stream": True}
     if no_think:
@@ -117,10 +115,14 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
             if piece:
                 yield piece
             # 有的端点在最后一个 chunk 附带 usage：流式也把缓存命中打出来（没有就算了）
-            usage = j.get("usage") or {}
-            hit, miss = usage.get("prompt_cache_hit_tokens"), usage.get("prompt_cache_miss_tokens")
-            if hit is not None and miss is not None and (hit + miss) >= 1000:
-                print(f"[eggpaper] 流式输入 {hit + miss} tokens，缓存命中 {round(100 * hit / (hit + miss))}%")
+            _log_cache(j.get("usage") or {}, "流式")
+
+def _log_cache(usage: dict, label: str):
+    hit = usage.get("prompt_cache_hit_tokens")
+    miss = usage.get("prompt_cache_miss_tokens")
+    if hit is not None and miss is not None and (hit + miss) >= 1000:
+        pct = round(100 * hit / (hit + miss))
+        print(f"[eggpaper] {label}输入 {hit + miss} tokens，缓存命中 {pct}%")
 
 def _json_patch(raw: str) -> str:
     """一次扫表的廉价修复：字符串内的裸换行转义、掉右括号补齐、尾逗号去掉。"""
@@ -134,7 +136,7 @@ def _json_patch(raw: str) -> str:
             elif ch == '"':
                 in_str = False
             elif ch == '\n' or ch == '\r':
-                out.append('\\n')       # 字符串内的裸换行转义掉
+                out.append('\\n')
                 continue
             out.append(ch)
             continue
@@ -176,14 +178,15 @@ _JSON_RETRY_NOTE = ("你上一条输出不是合法 JSON。重新输出，只给
                     "不要在字符串里夹裸换行；键和值都用双引号。")
 
 def chat_json(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
-              no_think: bool = False, timeout: int = 600) -> dict:
-    """要 JSON 的调用统一走这里：坏 JSON 就地带错误说明重发一次，别让整条管线一击即溃。"""
+              no_think: bool = False, timeout: int = 600, tail: int = 2000) -> dict:
+    """要 JSON 的调用统一走这里：坏 JSON 就地带错误说明重发一次，别让整条管线一击即溃。
+    重试锚取上次输出尾部 tail 字（截断点在那头，比开头更能帮模型对上位置）。"""
     raw = chat(messages, max_tokens=max_tokens, temperature=temperature,
                no_think=no_think, timeout=timeout)
     try:
         return parse_json(raw)
     except Exception:
-        raw2 = chat(messages + [{"role": "assistant", "content": raw[:2000]},
+        raw2 = chat(messages + [{"role": "assistant", "content": raw[-tail:]},
                                 {"role": "user", "content": _JSON_RETRY_NOTE}],
                     max_tokens=max_tokens, temperature=temperature,
                     no_think=no_think, timeout=timeout)
@@ -448,24 +451,8 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    data = None
-    for attempt in range(2):
-        out = chat(msgs, max_tokens=16000, temperature=0.2)
-        try:
-            data = parse_json(out)
-            break
-        except ValueError as e:
-            if attempt == 0:
-                msgs = [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                    {"role": "assistant", "content": (out or "")[-400:]},
-                    {"role": "user", "content": "上面的输出不是合法的 JSON。重新输出一次，"
-                                                "只输出 JSON 本体，从 { 开始、到 } 结束，中间不要有任何解释。"},
-                ]
-            last = e
-    if data is None:
-        raise last
+    # 坏 JSON 的重试统一走 chat_json（锚尾 400 字足够对上截断点）
+    data = chat_json(msgs, max_tokens=16000, temperature=0.2, tail=400)
     valid = {p["idx"] for p in paras}
 
     claims_raw = data.get("claims") or []
@@ -524,7 +511,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
                 fig_caps_zh[str(k)] = v.strip()
 
     if not roles:
-        raise ValueError(f"骨架解析失败（roles 为空），原始输出: {out[:160]}")
+        raise ValueError("骨架解析失败（roles 为空）——模型没按约定给出各段的角色标注")
     return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs,
             "evidence_qs": eqs, "fig_caps": fig_caps_zh}
 
@@ -882,10 +869,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
 
 def _demo_txt(zh: str, en: str) -> str:
     """演示数据的语言跟界面走（ui_lang）：纯英文用户不该拿到一手中文假数据。"""
-    try:
-        return en if (config.load().get("ui_lang") or "zh") == "en" else zh
-    except Exception:
-        return zh
+    return en if _is_en() else zh
 
 _MOCK_PURPOSE = {
     "gap": "作者真正的出发点（演示）", "claim": "论文要证明的核心（演示）", "evidence": "核心数据段（演示）",

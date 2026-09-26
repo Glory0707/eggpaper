@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
-import { engInst, startEngineInstall, onEngineReady, watchEngine } from '../engine'
+import { engInst, startEngineInstall, onEngineReady } from '../engine'
 import { t, ui, setLang, setDark, isEn } from '../i18n'
 import { confirmBox } from '../dialog'
 import { vDrag } from '../drag'

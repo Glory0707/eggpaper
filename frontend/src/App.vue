@@ -633,7 +633,7 @@ onEngineReady(() => {
 async function pollTranslate() {
   if (!store.currentId) return
   const j = await api.translateStatus(store.currentId)
-  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [] }
+  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [], started: tranProg.value.started }
   if (j.status === 'done') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status

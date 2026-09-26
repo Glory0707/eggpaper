@@ -7,7 +7,6 @@ import pymupdf
 WATERMARK = re.compile(r"^arXiv:\S+\s")
 PURE_NUM = re.compile(r"^\d{1,4}$")
 CAPTION = re.compile(r"^(fig|figure|table|scheme|图|表)\.?\s*[0-9IVXS]+\.?", re.I)
-SECTION_HEAD = re.compile(r"^(I|II|III|IV|V|VI|VII|VIII|IX|X)+\.?\s+[A-Z]")
 
 HEAD_REFS = ("references", "bibliography", "参考文献")
 HEAD_STOP = ("supplementalmaterial", "supplementarymaterial", "supportinginformation", "appendixsupp")

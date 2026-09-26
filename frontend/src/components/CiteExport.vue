@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { api, toast } from '../store'
 import { t } from '../i18n'
+import { saveBlob } from '../save'
 import { modalFocus } from '../modalFocus'
 
 /* 批量引用表格导出：勾格式（带示例，用户不用懂格式名）→ 每篇一行出 CSV。
@@ -67,11 +68,7 @@ async function doExport() {
     }
     // BOM：Excel 打开中文不乱码
     const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `eggpaper-引用-${new Date().toISOString().slice(0, 10)}.csv`
-    a.click()
-    URL.revokeObjectURL(a.href)
+    saveBlob(blob, `eggpaper-引用-${new Date().toISOString().slice(0, 10)}.csv`)
     if (missing) toast(t('{n} 篇未识别过引用，引用列为空', { n: missing }))
     emit('update:open', false)
   } catch (e) {

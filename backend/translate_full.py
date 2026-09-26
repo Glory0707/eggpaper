@@ -349,6 +349,13 @@ def write_glossary_csv(path: str, rows: list) -> bool:
     except OSError:
         return False
 
+def _remove_quiet(path: str):
+    """清产物用：文件不在/被占用都无所谓，别让扫尾因它失败。"""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
 def _no_window():
     """(creationflags, startupinfo)：让子进程**不要**开出控制台窗口。
 
@@ -371,10 +378,7 @@ def sweep_key_copies(page_root: str):
     for dirpath, _dirs, files in os.walk(page_root):
         for fn in files:
             if fn.startswith(".pdf2zh-") and fn.endswith(".json"):
-                try:
-                    os.remove(os.path.join(dirpath, fn))
-                except OSError:
-                    pass
+                _remove_quiet(os.path.join(dirpath, fn))
 
 def _sweep_home_config():
     """pdf2zh_next 可能把这次运行收到的设置（含 key）自动落盘到 ~/.config/pdf2zh 的
@@ -389,10 +393,7 @@ def _sweep_home_config():
             low = fn.lower()
             if low.startswith("config.v") and (low.endswith(".toml") or low.endswith(".toml.temp")) \
                     and "default" not in low:
-                try:
-                    os.remove(os.path.join(cfg_dir, fn))
-                except OSError:
-                    pass
+                _remove_quiet(os.path.join(cfg_dir, fn))
     except Exception:
         pass
 
@@ -618,10 +619,7 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
         for stale in os.listdir(out_dir):
             if stale.endswith("-dual.pdf") or (
                     stale.endswith(".dual.pdf") and stale != os.path.basename(mono)):
-                try:
-                    os.remove(os.path.join(out_dir, stale))
-                except OSError:
-                    pass
+                _remove_quiet(os.path.join(out_dir, stale))
         return {"mono": mono}, list(tail)
     if not any("单页超时" in t for t in tail):
         tail.append(f"单页失败（退出码 {proc.poll()}）")
@@ -681,10 +679,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 # 重译 = 连缓存一起清：页级产物、成品、双语缓存都不要了
                 shutil.rmtree(page_root, ignore_errors=True)
                 for stale in ("mono.pdf", "dual.pdf"):
-                    try:
-                        os.remove(os.path.join(out_dir, stale))
-                    except OSError:
-                        pass
+                    _remove_quiet(os.path.join(out_dir, stale))
             try:
                 sig = json.dumps({"m": int(os.path.getmtime(pdf_path)),
                                   "s": os.path.getsize(pdf_path)})
@@ -861,10 +856,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 # 原子落盘：半截的成品不该被任何人读到（认领/GET 都看 %%EOF，临时名不冒充成品）
                 mono.save(mono_path + ".part", garbage=4, deflate=True)
                 os.replace(mono_path + ".part", mono_path)
-                try:
-                    os.remove(os.path.join(out_dir, "dual.pdf"))
-                except OSError:
-                    pass
+                _remove_quiet(os.path.join(out_dir, "dual.pdf"))
             finally:
                 src.close(); mono.close()
 

@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 
 from config import DATA_DIR
 
@@ -292,22 +293,26 @@ def search_content(kw: str, limit: int = 30):
 PAPER_TABLES = ("paragraphs", "annotations", "claims", "marginalia", "glossary",
                 "qa_messages", "conversations", "paper_collections", "answers", "reading_log")
 
-def purge_paper(pid: str):
-    """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
-    漏掉任何一张表都会留下读不出来的孤儿数据，所以一张一张点名列（见 PAPER_TABLES）；
-    全程一个事务——中途崩了就整体回滚，不留半删状态。"""
-    tables = PAPER_TABLES
+@contextmanager
+def _txn():
+    """多语句事务：中途崩了整体回滚，不留半删状态。yield 已 BEGIN 的连接。"""
     with _lock:
         c = _get()
+        c.execute("BEGIN")
         try:
-            c.execute("BEGIN")
-            for t in tables:
-                c.execute(f"DELETE FROM {t} WHERE paper_id=?", (pid,))
-            c.execute("DELETE FROM papers WHERE id=?", (pid,))
+            yield c
             c.commit()
         except Exception:
             c.rollback()
             raise
+
+def purge_paper(pid: str):
+    """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
+    漏掉任何一张表都会留下读不出来的孤儿数据，所以一张一张点名列（见 PAPER_TABLES）。"""
+    with _txn() as c:
+        for t in PAPER_TABLES:
+            c.execute(f"DELETE FROM {t} WHERE paper_id=?", (pid,))
+        c.execute("DELETE FROM papers WHERE id=?", (pid,))
 
 # ---------- 同论文识别与版本升级 ----------
 
@@ -340,38 +345,31 @@ def supersede(new_pid: str, old_pid: str) -> dict:
     中途崩了整体回滚。
     """
     stats = {"pins": 0, "pins_lost": 0}
-    with _lock:
-        c = _get()
-        try:
-            c.execute("BEGIN")
-            for t in ("conversations", "qa_messages", "glossary", "reading_log",
-                      "paper_collections"):
-                c.execute(f"UPDATE {t} SET paper_id=? WHERE paper_id=?", (new_pid, old_pid))
-            old = c.execute("SELECT authors, year FROM papers WHERE id=?", (old_pid,)).fetchone()
-            if old and (old["authors"] or old["year"]):
-                c.execute("UPDATE papers SET authors=COALESCE(?,authors), year=COALESCE(?,year) "
-                          "WHERE id=?", (old["authors"], old["year"], new_pid))
-            c.execute("DELETE FROM answers WHERE paper_id IN (?,?)", (new_pid, old_pid))
-            # 用户钉卡跟迁：引句去空白后在新段落里找（跨版本文本层的空格常有出入）
-            new_paras = [(_squash(r["text"]), r["idx"]) for r in
-                         c.execute("SELECT idx, text FROM paragraphs WHERE paper_id=?", (new_pid,))]
-            for m in c.execute("SELECT id, quote FROM marginalia WHERE paper_id=? "
-                               "AND kind IN ('lookup','region','note')", (old_pid,)).fetchall():
-                q_ = _squash(m["quote"])[:60]
-                hit = next((idx for sq, idx in new_paras if q_ and q_ in sq), None)
-                if hit is not None:
-                    c.execute("UPDATE marginalia SET paper_id=?, para_idx=?, rect=NULL WHERE id=?",
-                              (new_pid, hit, m["id"]))
-                    stats["pins"] += 1
-                else:
-                    stats["pins_lost"] += 1
-            for t in PAPER_TABLES:
-                c.execute(f"DELETE FROM {t} WHERE paper_id=?", (old_pid,))
-            c.execute("DELETE FROM papers WHERE id=?", (old_pid,))
-            c.commit()
-        except Exception:
-            c.rollback()
-            raise
+    with _txn() as c:
+        for t in ("conversations", "qa_messages", "glossary", "reading_log",
+                  "paper_collections"):
+            c.execute(f"UPDATE {t} SET paper_id=? WHERE paper_id=?", (new_pid, old_pid))
+        old = c.execute("SELECT authors, year FROM papers WHERE id=?", (old_pid,)).fetchone()
+        if old and (old["authors"] or old["year"]):
+            c.execute("UPDATE papers SET authors=COALESCE(?,authors), year=COALESCE(?,year) "
+                      "WHERE id=?", (old["authors"], old["year"], new_pid))
+        c.execute("DELETE FROM answers WHERE paper_id IN (?,?)", (new_pid, old_pid))
+        # 用户钉卡跟迁：引句去空白后在新段落里找（跨版本文本层的空格常有出入）
+        new_paras = [(_squash(r["text"]), r["idx"]) for r in
+                     c.execute("SELECT idx, text FROM paragraphs WHERE paper_id=?", (new_pid,))]
+        for m in c.execute("SELECT id, quote FROM marginalia WHERE paper_id=? "
+                           "AND kind IN ('lookup','region','note')", (old_pid,)).fetchall():
+            q_ = _squash(m["quote"])[:60]
+            hit = next((idx for sq, idx in new_paras if q_ and q_ in sq), None)
+            if hit is not None:
+                c.execute("UPDATE marginalia SET paper_id=?, para_idx=?, rect=NULL WHERE id=?",
+                          (new_pid, hit, m["id"]))
+                stats["pins"] += 1
+            else:
+                stats["pins_lost"] += 1
+        for t in PAPER_TABLES:
+            c.execute(f"DELETE FROM {t} WHERE paper_id=?", (old_pid,))
+        c.execute("DELETE FROM papers WHERE id=?", (old_pid,))
     return stats
 
 def _squash(s: str) -> str:
@@ -457,23 +455,16 @@ def replace_paragraphs(pid: str, paras: list):
     `GET /paragraphs` 的惰性回填、`_run_marginalia` 取语料都可能落进去，最坏是拿空语料
     算眉批并以"成功"把整页批注覆盖掉。
     """
-    with _lock:
-        c = _get()
-        try:
-            c.execute("BEGIN")
-            # 论文行已经不在（刚被删）就不插：惰性补解析的几秒里可能撞上 purge
-            if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
-                c.rollback()
-                return
-            c.execute("DELETE FROM paragraphs WHERE paper_id=?", (pid,))
-            c.executemany(
-                "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs, lines) VALUES(?,?,?,?,?,?,?)",
-                [(pid, p["idx"], p["page"], json.dumps(p["bbox"]), p["text"],
-                  1 if p.get("in_refs") else 0, json.dumps(p.get("lines") or [])) for p in paras])
-            c.commit()
-        except Exception:
+    with _txn() as c:
+        # 论文行已经不在（刚被删）就不插：惰性补解析的几秒里可能撞上 purge
+        if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
             c.rollback()
-            raise
+            return
+        c.execute("DELETE FROM paragraphs WHERE paper_id=?", (pid,))
+        c.executemany(
+            "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs, lines) VALUES(?,?,?,?,?,?,?)",
+            [(pid, p["idx"], p["page"], json.dumps(p["bbox"]), p["text"],
+              1 if p.get("in_refs") else 0, json.dumps(p.get("lines") or [])) for p in paras])
 
 def get_paragraphs(pid: str, with_lines: bool = True):
     """with_lines=False 给纯文本消费方（问答/析读语料）：行级坐标是段落里最重的一块，
@@ -776,18 +767,20 @@ def qa_drop_last_assistant(pid: str, conv_id: int):
     prev = next((r for r in rows if r["role"] == "user" and (not last or r["id"] < last["id"])), None)
     if prev:
         q("DELETE FROM qa_messages WHERE id=?", (prev["id"],), commit=True)
-    c = conv_get(conv_id)
-    if c and (c.get("summary_upto") or 0) >= (last["id"] if last else 0):
-        conv_touch_summary(conv_id)
+    _touch_summary_if_covering(conv_id, last["id"] if last else 0)
     return prev["content"] if prev else None
+
+def _touch_summary_if_covering(conv_id: int, upto: int):
+    """删掉的消息已在对话摘要覆盖范围内就作废摘要（摘要描述的消息少了一条）。"""
+    c = conv_get(conv_id)
+    if c and (c.get("summary_upto") or 0) >= upto:
+        conv_touch_summary(conv_id)
 
 def qa_delete(mid: int):
     rows = q("SELECT conv_id FROM qa_messages WHERE id=?", (mid,))
     q("DELETE FROM qa_messages WHERE id=?", (mid,), commit=True)
     if rows and rows[0]["conv_id"]:
-        c = conv_get(rows[0]["conv_id"])
-        if c and (c.get("summary_upto") or 0) >= mid:
-            conv_touch_summary(c["id"])
+        _touch_summary_if_covering(rows[0]["conv_id"], mid)
 
 def qa_clear(pid: str):
     q("DELETE FROM qa_messages WHERE paper_id=?", (pid,), commit=True)

@@ -167,7 +167,7 @@ function stop(silent = false) {
   if (!silent) loadConvs(true)
 }
 
-async function regen(i) {
+async function regen() {
   if (busy.value) return
   try {
     const r = await api.qaRegenerate(pid.value, convId.value)
@@ -417,7 +417,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         <span v-if="m.streaming" class="qa-caret"></span>
                 <div class="qa-acts" v-if="!m.streaming">
           <button @click="copy(m)">{{ t('复制') }}</button>
-          <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen(i)"
+          <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen()"
                   :disabled="busy">{{ t('重新生成') }}</button>
           <button @click="delMsg(i)">{{ t('删除') }}</button>
         </div>

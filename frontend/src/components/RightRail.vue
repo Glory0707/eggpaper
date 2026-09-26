@@ -296,7 +296,7 @@ watch(() => store.analysis.status, s => {
   loadSuggest(); loadCachedBlocks()
   termsTried.value = ''              // 重算析读 = 词表也重发了一批，允许再补一次空白
   loadTerms()
-  loadSix()          // 服务端重算析读时把七问的答案一并清了（answers_clear），
+  loadSix()          // 服务端重算析读时把七问的答案一并清了（answers_clear），这里重新拉
 })
 watch(() => store.marginalia.status, s => {
   if (s !== 'done') return

@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { api, store, openPaper, toast } from '../store'
 import { t, ui } from '../i18n'
+import { saveBlob } from '../save'
 
 const open = computed(() => store.viewer.calOpen)
 const y = ref(0), m = ref(0)          // 正在看的年/月
@@ -133,11 +134,7 @@ function exportMonth() {
     lines.push('')
   }
   const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `eggpaper-${y.value}-${pad(m.value)}.md`
-  a.click()
-  URL.revokeObjectURL(a.href)
+  saveBlob(blob, `eggpaper-${y.value}-${pad(m.value)}.md`)
 }
 
 /* 面板是 v-if 挂进来的：挂上来那刻 open 已经是 true，必须 immediate 才接得住首拍 */

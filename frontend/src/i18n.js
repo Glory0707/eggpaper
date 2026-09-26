@@ -176,7 +176,6 @@ const EN = {
   '方法卡 ↗': 'Method card ↗',
   '获取': 'Fetch',
   '获取中…': 'Fetching…',
-  '补全': 'Complete',
   '生成失败：{m}': 'Generation failed: {m}',
   '值得读': 'Worth reading',
   '要当心': 'Be careful',
@@ -211,7 +210,6 @@ const EN = {
   '导出 CSV': 'Export CSV',
   '收进术语表': 'Save to glossary',
   '添加': 'Add',
-  '依据': 'Evidence',
   '还没有术语。': 'No terms yet.',
   '没有词匹配这个筛选。': 'No terms match this filter.',
   '通读失败': 'Reading failed',
@@ -234,7 +232,6 @@ const EN = {
   '这段在说什么：「{t}」？': 'What does this say: “{t}”?',
   '引用 {n}': 'Cited {n}',
   '整个文库': 'Whole library',
-  '重发': 'Resend',
   '文库': 'Library',
   '彩蛋': 'Easter egg',
   '截图': 'Screenshot',
@@ -357,7 +354,6 @@ const EN = {
   '立即重启并安装': 'Restart & install now',
   '安装包下好了': 'Installer downloaded',
   '下载中 {p}%': 'Downloading {p}%',
-  '新版本 {v}': 'New version {v}',
   '使用指南': 'User guide',
   '模型': 'Model',
   '视觉': 'Vision',
@@ -382,9 +378,6 @@ const EN = {
   '大': 'L',
   '特大': 'XL',
   '暗色': 'Dark theme',
-  '开': 'On',
-  '关': 'Off',
-  '界面语言': 'Interface language',
   '全文翻译服务': 'Full-PDF translation service',
   'bing（免费）': 'bing (free)',
   '翻译引擎': 'Translation engine',
@@ -421,7 +414,6 @@ const EN = {
   '待读 {n} 篇': '{n} to read',
   '找一篇…': 'Find a paper…',
   '教程': 'Guide',
-  '分类已更新': 'Categories updated',
   '论文不存在': 'Paper not found',
   '上一张（←）': 'Previous (←)',
   '下一张（→）': 'Next (→)',
@@ -521,7 +513,6 @@ const EN = {
   '七问': 'Seven questions',
   '问答': 'Q&A',
   '正文': 'Body text',
-  '通读失败': 'Reading failed',
   '没有匹配「{q}」的文献': 'Nothing matches “{q}”',
   '每一篇都归类了': 'Everything is filed',
   '里面的文献不会被删。': 'The papers inside are kept.',
@@ -545,7 +536,6 @@ const EN = {
   '去回答': 'Answer it',
   '这是「导师三问」的第 {n} 问：「{q}」。请帮我组织一份口头回答提纲：先给结论，再给论据（标注依据段号 [¶n]），最后补一句最可能被追问的地方。':
     'This is advisor question {n}: “{q}”. Draft an outline for an oral answer: conclusion first, then arguments (cite paragraphs as [¶n]), and end with the most likely follow-up challenge.',
-  '复制 Markdown': 'Copy Markdown',
   '复制失败：{m}': 'Copy failed: {m}',
   '在文中查找': 'Find in paper',
   '跳到这一段': 'Jump to this paragraph',
@@ -558,8 +548,6 @@ const EN = {
   'PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。':
     'The PDF is gone from its original location. Drop it back in to re-import — your notes are safe.',
   '读取中…': 'Loading…',
-
-  // ---- 后端消息（f-string 插值后的形态，由 t() 的模板匹配兜住）----
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。

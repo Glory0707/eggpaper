@@ -481,8 +481,6 @@ def get_settings():
 
 @app.put("/api/settings")
 def put_settings(body: dict):
-    if not isinstance(body, dict):
-        raise HTTPException(400, "设置内容格式不对")
     # 在副本上改、存盘成功后才生效：否则 save 失败（盘满/被锁）时内存已被改掉，
     # 本会话用新值、重启回旧值，用户看到"没保存成功"却行为诡异
     cfg = copy.deepcopy(config.load())
@@ -749,7 +747,6 @@ def update_check(force: bool = False):
 
 @app.post("/api/update/download")
 def update_download(body: dict):
-    body = body if isinstance(body, dict) else {}
     url = body.get("url") or ""
     if not url:
         raise HTTPException(400, "没有下载地址")
@@ -965,6 +962,22 @@ def _ocr_then_analyze(pid: str, path: str):
     _ensure_paper_type(pid)
     _enqueue_analysis(pid, paras)
 
+def _new_paper_dir(name: str):
+    """给一篇新论文建库内目录并登记缓存，返回 (pid, pid_dir)。上传与路径导入共用。"""
+    pid = db.new_id()
+    pid_dir = os.path.join(PAPERS_DIR, _dir_name(pid, os.path.splitext(name)[0]))
+    os.makedirs(pid_dir, exist_ok=True)
+    with _dir_lock:
+        _dir_cache[pid] = os.path.basename(pid_dir)
+    return pid, pid_dir
+
+def _attach_same_title(out: dict, pid: str) -> dict:
+    """导入收尾：发现库里已有同题论文就附在响应里，前端提示用户。"""
+    same = db.find_same_title((out.get("paper") or {}).get("title") or "", exclude_pid=pid)
+    if same:
+        out["same_title"] = db.get_paper(same)
+    return out
+
 @app.post("/api/papers")
 async def upload(file: UploadFile = File(...)):
     raw = await file.read()
@@ -983,11 +996,7 @@ async def upload(file: UploadFile = File(...)):
                 return {"paper": db.get_paper(dup), "n_paragraphs": len(paras),
                         "n_captions": sum(1 for pp in paras if pp.get("caption")),
                         "no_text": not paras, "duplicate": True}
-            pid = db.new_id()
-            pid_dir = os.path.join(PAPERS_DIR, _dir_name(pid, os.path.splitext(name)[0]))
-            os.makedirs(pid_dir, exist_ok=True)
-            with _dir_lock:
-                _dir_cache[pid] = os.path.basename(pid_dir)
+            pid, pid_dir = _new_paper_dir(name)
             path = os.path.join(pid_dir, "paper.pdf")     # 库内自存一份：删原件、挪原件都不影响
             with open(path, "wb") as f:
                 f.write(raw)
@@ -998,10 +1007,7 @@ async def upload(file: UploadFile = File(...)):
                 with _dir_lock:
                     _dir_cache.pop(pid, None)
                 raise
-            same = db.find_same_title((out["paper"] or {}).get("title") or "", exclude_pid=pid)
-            if same:
-                out["same_title"] = db.get_paper(same)
-            return out
+            return _attach_same_title(out, pid)
 
     return await run_in_threadpool(_import)
 
@@ -1018,11 +1024,7 @@ def import_path(body: dict):
     if not src.lower().endswith(".pdf"):
         raise HTTPException(400, "eggpaper 只认 PDF")
     name, size = os.path.basename(src), os.path.getsize(src)
-    pid = db.new_id()
-    pid_dir = os.path.join(PAPERS_DIR, _dir_name(pid, os.path.splitext(name)[0]))
-    os.makedirs(pid_dir, exist_ok=True)
-    with _dir_lock:
-        _dir_cache[pid] = os.path.basename(pid_dir)
+    pid, pid_dir = _new_paper_dir(name)
     dest = os.path.join(pid_dir, "paper.pdf")
     with _import_lock:
         try:
@@ -1041,9 +1043,7 @@ def import_path(body: dict):
             _pending_open["pid"] = dup
             return {"paper": db.get_paper(dup), "duplicate": True}
         out = _ingest(pid, name, dest, pdf_hash)
-        same = db.find_same_title((out["paper"] or {}).get("title") or "", exclude_pid=pid)
-        if same:
-            out["same_title"] = db.get_paper(same)
+        _attach_same_title(out, pid)
     _pending_open["pid"] = pid
     return out
 
@@ -2331,7 +2331,7 @@ def _wide_flags(rects, colw_of, lm, rm):
         flags.append(f)
     return flags
 
-def _band_fill(up, cap_rect, cands, blockers, y_clip, table_kind):
+def _band_fill(up, cap_rect, cands, blockers, y_clip):
     """从题注往一个方向吸收紧邻的图元。cands: [(rect, 是图元, 是宽文字行)]；
     blockers: 正文块/别的题注（撞上就当没看见，整个填充到此为止）。
     返回 (吸收并集, 图形面积, 吸收的文字总高)。"""
@@ -2485,9 +2485,8 @@ def _figure_regions(path):
 
             entries = []
             for c in sorted(caps, key=lambda x: x["rect"].y0):
-                tkind = c["kind"] == "table"
-                up_R, up_g, up_t = _band_fill(True, c["rect"], cands, blockers, ytop, tkind)
-                dn_R, dn_g, dn_t = _band_fill(False, c["rect"], cands, blockers, ybot, tkind)
+                up_R, up_g, up_t = _band_fill(True, c["rect"], cands, blockers, ytop)
+                dn_R, dn_g, dn_t = _band_fill(False, c["rect"], cands, blockers, ybot)
                 if up_g or dn_g:
                     pick_up = (c["kind"] == "figure") if up_g == dn_g else up_g > dn_g
                 elif up_t != dn_t:
@@ -2606,11 +2605,7 @@ def paper_toc(pid: str):
     读取本身很便宜，不值得缓存；没有书签就返回空表，前端给一句空态。"""
     p = _paper_or_404(pid)
     src = _paper_src_or_404(pid, p)
-    import pymupdf
-    try:
-        doc = pymupdf.open(src)
-    except Exception as e:
-        raise HTTPException(400, f"这份 PDF 打不开：{str(e)[:120]}")
+    doc = _open_pdf(src)
     try:
         toc = [{"level": lv, "title": title.strip(), "page": page - 1}
                for lv, title, page in doc.get_toc() if page and 1 <= page <= len(doc)]
@@ -2623,10 +2618,7 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
     import pymupdf
     p = _paper_or_404(pid)
     src = _paper_src_or_404(pid, p)
-    try:
-        doc = pymupdf.open(src)
-    except Exception as e:
-        raise HTTPException(400, f"这份 PDF 打不开：{str(e)[:120]}")
+    doc = _open_pdf(src)
     try:
         if page < 0 or page >= len(doc):
             raise HTTPException(404, f"页码越界：这篇只有 {len(doc)} 页")
@@ -2643,8 +2635,32 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
 
 # ---------------- 问答（流式 + 多会话） ----------------
 
+def _valid_conv(pid: str, raw):
+    """body 里的 conv_id：给了就校验存在且属于这篇（否则 404），返回 int；没给返回 None。"""
+    if not raw:
+        return None
+    cid = _int_arg(raw, 404, "会话不存在")
+    c = db.conv_get(cid)
+    if not c or c["paper_id"] != pid:
+        raise HTTPException(404, "会话不存在")
+    return cid
+
 def _sse(obj: dict) -> str:
     return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
+
+def _sse_response(gen, keep_alive: bool = False):
+    """三条 SSE 端点共用的响应壳。"""
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    if keep_alive:
+        headers["Connection"] = "keep-alive"
+    return StreamingResponse(gen, media_type="text/event-stream", headers=headers)
+
+def _open_pdf(src: str):
+    import pymupdf
+    try:
+        return pymupdf.open(src)
+    except Exception as e:
+        raise HTTPException(400, f"这份 PDF 打不开：{str(e)[:120]}")
 
 def _type_out(text: str, step: int = 3, delay: float = 0.02):
     """演示流的假打字：每次吐 step 个字符，拖出真流式的手感。"""
@@ -2806,22 +2822,13 @@ def ask(pid: str, body: dict):
     if not question:
         raise HTTPException(400, "问题不能为空")
     _require_paras(pid)
-    conv_id = body.get("conv_id")
-    if conv_id:
-        conv_id = _int_arg(conv_id, 404, "会话不存在")
-        c = db.conv_get(conv_id)
-        if not c or c["paper_id"] != pid:
-            raise HTTPException(404, "会话不存在")
-    else:
-        conv_id = db.conv_list(pid)[0]["id"]
+    conv_id = _valid_conv(pid, body.get("conv_id")) or db.conv_list(pid)[0]["id"]
     ref_pids = []
     for t in (body.get("refs") or []):
         pid2 = _paper_by_title(t)
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
-    return StreamingResponse(_stream_answer(p, conv_id, question, ref_pids), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                                      "Connection": "keep-alive"})
+    return _sse_response(_stream_answer(p, conv_id, question, ref_pids), keep_alive=True)
 
 @app.get("/api/papers/{pid}/conversations")
 def conversations(pid: str):
@@ -2860,14 +2867,9 @@ def qa_save(pid: str, body: dict):
     返回两端 id，前端据此把"删除/重新生成"接回真实的行上。"""
     _paper_or_404(pid)
     content = (body.get("content") or "").strip()
-    conv_id = body.get("conv_id")
     if not content:
         return {"ok": False}
-    if conv_id:
-        conv_id = _int_arg(conv_id, 404, "会话不存在")
-        c = db.conv_get(conv_id)
-        if not c or c["paper_id"] != pid:
-            raise HTTPException(404, "会话不存在")
+    conv_id = _valid_conv(pid, body.get("conv_id"))
     aid = db.qa_add(pid, "assistant", content, conv_id=conv_id)
     return {"ok": True,
             "assistant_id": aid, "user_id": db.qa_last_user_id(pid, conv_id) if conv_id else None}
@@ -2946,7 +2948,7 @@ def _mock_translate(text: str):
     """演示模式的假译文也假装在打字：同一条前端代码路径。前缀随界面语言。"""
     yield from _type_out(_demo_txt("〔演示译文〕", "[demo translation] ") + text[:120])
 
-def _translate_sse(pid: str, text: str, context: str, hits: list):
+def _translate_sse(text: str, context: str, hits: list):
     """流式翻译。事件：delta（增量）/ done（术语命中）/ error（人话）。
 
     术语命中随 done 一起回——它在翻译开始前就查好了，不必等译文走完。
@@ -2975,8 +2977,7 @@ def translate_selection(pid: str, body: dict):
         raise HTTPException(400, "没有选中文本")
     hits = db.glossary_hit(pid, text)
     context = body.get("context", "")
-    return StreamingResponse(_translate_sse(pid, text, context, hits), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _sse_response(_translate_sse(text, context, hits))
 
 @app.post("/api/papers/{pid}/translate-para")
 def translate_para(pid: str, body: dict):
@@ -2988,8 +2989,7 @@ def translate_para(pid: str, body: dict):
     hits = db.glossary_hit(pid, para["text"])
     ctx_row = db.get_paragraph(pid, idx - 1)
     ctx = (ctx_row or {}).get("text", "")
-    return StreamingResponse(_translate_sse(pid, para["text"], ctx, hits), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _sse_response(_translate_sse(para["text"], ctx, hits))
 
 def _pdf2zh_env(service: str, cfg: dict):
     """全文翻译要的 key 从哪来：**用用户在「设置」里已经填的那一套**，不让他填第二遍。
