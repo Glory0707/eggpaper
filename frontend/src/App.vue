@@ -905,7 +905,7 @@ function onKey(e) {
             <button :class="{ on: store.viewer.spread === 'interleave' }" @click="store.viewer.spread = 'interleave'">{{ t('交替') }}</button>
           </div>
         </Transition>
-                <button class="toggle" :class="{ on: store.viewer.frame }" :title="t('框选问 AI（r）')"
+                <button class="toggle" :class="{ on: store.viewer.frame }" :title="t('框选问 AI')"
                 @click="store.viewer.frame = !store.viewer.frame">{{ t('框选') }}</button>
                         <button v-if="!isEn()" @click="doTranslateFull" :disabled="tranSt === 'running'"
                 :title="tranTip">
@@ -932,7 +932,7 @@ function onKey(e) {
 
     <div class="main">
             <div class="left-strip">
-        <button class="strip-btn" :class="{ on: store.viewer.libOpen }" :title="t('文库 · g l')"
+        <button class="strip-btn" :class="{ on: store.viewer.libOpen }" :title="t('文库')"
                 @click="toggleLib">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M4 4h6v16H4zM14 4h6v16h-6z" />
@@ -940,7 +940,7 @@ function onKey(e) {
           </svg>
           <span class="badge" v-if="store.papers.length">{{ store.papers.length }}</span>
         </button>
-        <button class="strip-btn" :class="{ on: store.viewer.calOpen }" :title="t('论文日历 · g c')"
+        <button class="strip-btn" :class="{ on: store.viewer.calOpen }" :title="t('论文日历')"
                 @click="toggleCal">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <rect x="4" y="5.5" width="16" height="14.5" rx="1.5" />
@@ -948,7 +948,7 @@ function onKey(e) {
           </svg>
           <i class="strip-dot" v-if="readToday && !store.viewer.calOpen"></i>
         </button>
-        <button class="strip-btn" :class="{ on: store.viewer.tocOpen }" :title="t('目录 · g o')"
+        <button class="strip-btn" :class="{ on: store.viewer.tocOpen }" :title="t('目录')"
                 @click="toggleToc">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <path d="M5 6h14M5 11.5h9M5 17h5M17.5 14.5v6M14.5 17.5h6" />
@@ -995,7 +995,7 @@ function onKey(e) {
       </main>
 
             <Transition name="fade">
-              <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏 · x')"
+              <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏')"
                 @click="store.viewer.railUser = true" aria-label="展开右栏"></button>
             </Transition>
             <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight, overlay: store.railOverlay }">

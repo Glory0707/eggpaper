@@ -535,7 +535,7 @@ watch(() => store.currentId, () => {
       <button class="rt" :class="{ on: tab === 'eye' }" @click="tab = 'eye'">{{ t('速览') }}</button>
       <button class="rt" :class="{ on: tab === 'ask' }" @click="tab = 'ask'">{{ t('提问') }}</button>
       <button v-if="!isEn()" class="rt" :class="{ on: tab === 'terms' }" @click="tab = 'terms'">{{ t('术语') }}</button>
-      <button class="rt-collapse" :title="t('收起右栏（x）')" @click="store.viewer.railUser = false">»</button>
+      <button class="rt-collapse" :title="t('收起右栏')" @click="store.viewer.railUser = false">»</button>
     </div>
     <div class="rbody" ref="rbodyEl" :class="{ flush: tab === 'ask' }">
             <Transition name="rt" mode="out-in">

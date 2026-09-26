@@ -115,7 +115,6 @@ async function menuDone() {
   try {
     await api.paperColls(pid, want)
     await refreshCollections()
-    toast(t('分类已更新'))
   } catch (e) { await collFail(e) }
 }
 /* 菜单挂在 body 上（防列表裁剪），点外面/按 Esc 收起 */

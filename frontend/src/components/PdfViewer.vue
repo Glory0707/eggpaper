@@ -1466,13 +1466,13 @@ watch(store.marginalia, m => {
         <Transition name="fade">
     <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px', maxWidth: floatMax }"
          v-drag="{ key: 'zoombar' }" data-drag>
-      <button :title="t('上一页（PageUp）')" @click="stepPage(-1)">‹</button>
+      <button :title="t('上一页')" @click="stepPage(-1)">‹</button>
       <span class="zb-page">
         <input type="text" ref="pageInputEl" v-model="pageIn" class="zb-input" :title="t('跳到第几页')"
                @keydown.enter="commitPage(); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
         <em>/ {{ paperMeta?.n_pages || 0 }}</em>
       </span>
-      <button :title="t('下一页（PageDown）')" @click="stepPage(1)">›</button>
+      <button :title="t('下一页')" @click="stepPage(1)">›</button>
       <span class="zb-sep"></span>
       <button :class="{ on: fit === 'width' }" @click="setFit('width')">{{ t('适宽') }}</button>
       <button :class="{ on: fit === 'page' }" @click="setFit('page')">{{ t('适页') }}</button>
@@ -1480,8 +1480,8 @@ watch(store.marginalia, m => {
       <button :title="t('缩小')" @click="stepZoom(-1)">－</button>
       <button :title="t('放大')" @click="stepZoom(1)">＋</button>
       <span class="zb-sep"></span>
-      <button :title="t('查找（Ctrl+F）')" :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">{{ t('查找') }}</button>
-      <button :title="t('截图')" :class="{ on: shotMode }" :disabled="shotBusy" @click="startShot">{{ t('截图') }}</button>
+      <button :class="{ on: searchOpen }" @click="searchOpen = !searchOpen">{{ t('查找') }}</button>
+      <button :class="{ on: shotMode }" :disabled="shotBusy" @click="startShot">{{ t('截图') }}</button>
     </div>
     </Transition>
 
@@ -1495,7 +1495,7 @@ watch(store.marginalia, m => {
       </span>
       <button :disabled="!searchHits.length" :title="t('上一个（Enter）')" @click="searchStep(-1)">‹</button>
       <button :disabled="!searchHits.length" :title="t('下一个（Enter）')" @click="searchStep(1)">›</button>
-      <button class="ghost" :title="t('关闭（Esc）')" @click="closeSearch">×</button>
+      <button class="ghost" :title="t('关闭')" @click="closeSearch">×</button>
     </div>
     </Transition>
 
@@ -1511,7 +1511,7 @@ watch(store.marginalia, m => {
       <div v-if="!sel.zh && !sel.busy && !sel.err" style="font-size:var(--fs-sm);color:var(--ink-3)">
         {{ t('已选 {n} 字符', { n: sel.text.length }) }}<span v-if="sel.paraIdx >= 0" class="mono-num"> · ¶{{ sel.paraIdx }}</span>
       </div>
-      <button class="ghost sp-x" :title="t('关闭（Esc）')" @click="closeSel()">×</button>
+      <button class="ghost sp-x" :title="t('关闭')" @click="closeSel()">×</button>
       <div v-if="sel.busy && !sel.zh" style="font-size:var(--fs-sm);color:var(--ink-3)">{{ t('翻译中…') }}</div>
       <div v-if="sel.err && !sel.zh" style="font-size:var(--fs-sm);color:var(--vermilion)">{{ sel.err }}</div>
       <div class="sp-zh" v-if="sel.zh">{{ sel.zh }}<span v-if="sel.busy" class="qa-caret"></span></div>
@@ -1549,7 +1549,7 @@ watch(store.marginalia, m => {
          v-drag="{ key: 'vispop' }" data-drag @mouseup.stop>
       <div class="vp-head">
         <span class="mono-label">{{ t('选区问 AI') }}</span>
-        <button class="vp-x" :title="t('关闭（Esc）')" @click="closeVis">×</button>
+        <button class="vp-x" :title="t('关闭')" @click="closeVis">×</button>
       </div>
       <img class="vis-img" :src="vis.img" />
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"

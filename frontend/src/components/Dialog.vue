@@ -25,7 +25,7 @@ watch(() => dlg.open, v => {
       <div class="modal dialog" v-drag>
         <div class="modal-head" data-drag>
           <h3>{{ dlg.title }}</h3>
-          <button class="modal-x" :title="t('关闭（Esc）')" @click="dlgCancel">×</button>
+          <button class="modal-x" :title="t('关闭')" @click="dlgCancel">×</button>
         </div>
         <div class="dlg-body" v-if="dlg.body">{{ dlg.body }}</div>
         <input v-if="dlg.kind === 'input'" ref="inputEl" class="dlg-input" v-model="dlg.value"

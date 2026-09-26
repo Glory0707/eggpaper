@@ -20,17 +20,17 @@
   <li><b>为什么要配</b>：析读、问答、翻译都要调用大模型，没配时是「演示模式」。需要填写<b>BASE URL</b>（接口地址）、<b>API KEY</b>（密钥）、<b>模型名</b>，都只存在本机。费用按用量算，读一篇论文的析读通常几分钱。</li>
   <li><b>以 DeepSeek 为例</b>：
     <br>① 打开 <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a> 注册，充值任意金额；
-    <br>② 左侧「API keys」→「创建 API key」，复制那串 <b>sk-…</b>（只显示这一次），请妥善保存，丢失可重新创建；
+    <br>② 左侧「API keys」→「创建 API key」，复制那串 <b>sk-…</b>（只显示这一次）；
     <br>③ 回 eggpaper 设置：<b>BASE URL</b> 填 <b>https://api.deepseek.com</b>、<b>API KEY</b> 粘贴、模型填 <b>deepseek-flash</b>，点「测试连接」见 ✓ 即可，勾选视觉。</li>
   <li>其他：
     <ul>
-      <li><b>智谱 GLM</b>（有免费模型，可零成本试用，效果有限）：<a href="https://open.bigmodel.cn" target="_blank">open.bigmodel.cn</a> 注册 → 控制台「API 密钥」创建。BASE URL 填 <b>https://open.bigmodel.cn/api/paas/v4</b>，模型填 <b>glm-4.7-flash</b>（免费）或 glm-4.7 等。</li>
-      <li><b>硅基流动</b>（聚合平台，有一批免费模型）：<a href="https://cloud.siliconflow.cn" target="_blank">cloud.siliconflow.cn</a> 注册 →「API 密钥」新建。BASE URL 填 <b>https://api.siliconflow.cn/v1</b>，模型在「模型广场」里选，模型名必须按其给定的。</li>
-      <li><b>阿里云百炼</b>（通义千问，新用户有免费额度）：<a href="https://bailian.console.aliyun.com" target="_blank">bailian.console.aliyun.com</a> 开通 →「API-KEY 管理」创建。BASE URL 填 <b>https://dashscope.aliyuncs.com/compatible-mode/v1</b>，模型填其给定的。</li>
+      <li><b>智谱 GLM</b>（有免费模型，效果有限）：<a href="https://open.bigmodel.cn" target="_blank">open.bigmodel.cn</a> 注册 → 控制台「API 密钥」创建。BASE URL 填 <b>https://open.bigmodel.cn/api/paas/v4</b>，模型填 <b>glm-4.7-flash</b>（免费）或 glm-4.7 等。</li>
+      <li><b>硅基流动</b>（聚合平台，有一批免费模型）：<a href="https://cloud.siliconflow.cn" target="_blank">cloud.siliconflow.cn</a> 注册 →「API 密钥」新建。BASE URL 填 <b>https://api.siliconflow.cn/v1</b>，模型在「模型广场」里选。</li>
+      <li><b>阿里云百炼</b>（通义千问，新用户有免费额度）：<a href="https://bailian.console.aliyun.com" target="_blank">bailian.console.aliyun.com</a> 开通 →「API-KEY 管理」创建。BASE URL 填 <b>https://dashscope.aliyuncs.com/compatible-mode/v1</b>。</li>
       <li>任意包含 OpenAI 接口的模型厂商均可使用，BASE URL 需填写 OpenAI <b>Chat/Completions</b> 接口。</li>
     </ul>
   </li>
-  <li>填完点「测试连接」；不通多半是模型名抄错、key 少了字符、模型名没有按厂商规范，且需确认该模型是否支持视觉（只影响框选问答功能）。API KEY 等同钱包钥匙，只填在这里，切勿发给别人。</li>
+  <li>填完点「测试连接」；不通多半是模型名或 key 抄错（模型名一律按厂商给的填）。API KEY 等同钱包钥匙，只填在这里，切勿发给别人。</li>
 </ul>
 </body>
 </html>

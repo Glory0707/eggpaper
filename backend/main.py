@@ -78,6 +78,8 @@ def _human_msg(exc: Exception) -> str:
         return "模型这次没按约定的格式回，重试一次通常就好"
     if isinstance(exc, HTTPException):
         return str(exc.detail)
+    if isinstance(exc, RuntimeError):
+        return msg[:160]      # RuntimeError 都是自带人话的主动抛出，别再拼类名
     return f"{exc.__class__.__name__}: {msg[:160]}"
 
 @app.exception_handler(Exception)
@@ -1898,7 +1900,7 @@ def ask_visual(body: dict):
         return {"answer": "〔演示模式〕视觉问答需要配置视觉模型。"}
     ans = llm.vision_ask(image, question)
     if not ans.strip():
-        raise HTTPException(503, "模型这次没返回内容，请重试")
+        raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
     return {"answer": ans}
 
 # ---------------- 七问里需要现场生成的那几问 ----------------
@@ -1920,12 +1922,12 @@ def _gen_six(p: dict, key: str):
                                     kind="review" if is_review else "research")
     if key == "method":
         if is_review:
-            raise HTTPException(400, "综述没有实验层，这一问是「它把文献怎么组织的」（how）")
+            raise HTTPException(400, "综述没有实验层，去看「它把文献怎么组织的」那一问")
         return llm.answer_method(p["title"], claims, db.get_paragraphs(pid))
     if key == "how":
         if is_review:
             return llm.answer_how_review(p["title"], claims, db.get_paragraphs(pid))
-        raise HTTPException(400, "研究型论文的这一问由骨架的主张-证据链直接拼出，无需生成")
+        raise HTTPException(400, "研究型论文不单独生成这一问")
     if key == "motive":
         return llm.answer_motive(p["title"], db.get_paragraphs(pid),
                                  _paras_of_role(pid, {"gap"}),
@@ -3146,7 +3148,7 @@ def glossary_generate(pid: str):
         got = _demo_terms(p["title"], []) if _demo_mode() else llm.extract_terms(
             p["title"], db.get_paragraphs(pid))
         if not _save_terms(pid, got):
-            raise HTTPException(503, "模型这次没给出术语，过一会儿再试一次")
+            raise HTTPException(503, "模型这次没给出术语，重试一次通常就好")
         return {"items": db.glossary_list(pid), "generated": True, "abbrs": _abbrs_of(pid)}
 
 def _abbrs_of(pid: str) -> dict:

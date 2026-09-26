@@ -94,7 +94,7 @@ async function copyMd() {
           <div class="cmp-actions">
             <button v-if="step === 'done'" class="cmp-ghost" @click="step = 'pick'">{{ t('换维度') }}</button>
             <button v-if="step === 'done'" @click="copyMd">{{ t('复制 Markdown') }}</button>
-            <button class="cmp-x" :title="t('关闭（Esc）')" @click="emit('close')">
+            <button class="cmp-x" :title="t('关闭')" @click="emit('close')">
               <svg viewBox="0 0 12 12" width="11" height="11"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </button>
           </div>

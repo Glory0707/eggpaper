@@ -54,7 +54,6 @@ async function recognize() {
   err.value = ''
   try {
     data.value = await api.citation(store.currentId, false, true)
-    toast(t('文献信息认好了'))
   } catch (e) { err.value = e.message } finally { busy.value = false }
 }
 
@@ -70,7 +69,7 @@ async function copy(row) {
       <div class="modal cite">
         <div class="modal-head">
           <h3>{{ t('引用这篇') }}</h3>
-          <button class="modal-x" :title="t('关闭（Esc）')" @click="store.cite.open = false">×</button>
+          <button class="modal-x" :title="t('关闭')" @click="store.cite.open = false">×</button>
         </div>
 
         <div class="cite-note" v-if="err">{{ err }}</div>

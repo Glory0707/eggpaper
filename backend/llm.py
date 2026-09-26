@@ -1066,7 +1066,7 @@ def vision_ask(image_dataurl: str, question: str) -> str:
             out = ((choices[0].get("message") or {}).get("content", "")) or ""
             if out.strip():
                 return out
-            last = RuntimeError("视觉模型返回了空内容，已重试过一次")
+            last = RuntimeError("模型这次没返回内容，重试一次通常就好")
         except (httpx.TransportError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
             last = e
     raise last

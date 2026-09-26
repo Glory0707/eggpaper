@@ -84,7 +84,7 @@ async function doExport() {
       <div class="modal cite-modal">
         <div class="modal-head">
           <h3>{{ t('导出引用表格') }}</h3>
-          <button class="modal-x" :title="t('关闭（Esc）')" @click="close">×</button>
+          <button class="modal-x" :title="t('关闭')" @click="close">×</button>
         </div>
         <div class="cite-body">
           <div v-for="g in GROUPS" :key="g.k" class="cite-grp">

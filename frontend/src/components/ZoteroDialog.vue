@@ -85,7 +85,7 @@ async function doImport() {
       <div class="modal zot-modal">
         <div class="modal-head">
           <h3>{{ t('从 Zotero 导入') }}</h3>
-          <button class="modal-x" :title="t('关闭（Esc）')" @click="close">×</button>
+          <button class="modal-x" :title="t('关闭')" @click="close">×</button>
         </div>
         <div class="zot-tools">
           <input ref="searchEl" type="text" v-model="q" :placeholder="t('搜标题 / 作者…')" class="lib-search" />

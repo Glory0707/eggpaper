@@ -122,7 +122,7 @@ def start_tray(url: str, port: int, log) -> bool:
             elif r.get("ok"):
                 icon.notify(f"已经是最新的（{r['current']}）", "eggpaper")
             else:
-                icon.notify("没读到更新源：设置里填一个地址", "eggpaper")
+                icon.notify("更新源没连上，稍后再试", "eggpaper")
         except Exception as e:
             log(f"查更新失败：{e}")
 

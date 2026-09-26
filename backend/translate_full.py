@@ -850,7 +850,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 if n and not results:
                     j.update(status="error",
                              error=f"所有页面都没译成（{service} 连不上或被限流）。"
-                                   "换一个翻译服务（设置 → 全文翻译）再试。")
+                                   "换一个翻译服务（设置 → 全文翻译服务）再试。")
                     say(f"全文翻译失败 {pid}：全部页面失败")
                     return
                 # 原子落盘：半截的成品不该被任何人读到（认领/GET 都看 %%EOF，临时名不冒充成品）
