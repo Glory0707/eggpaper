@@ -197,14 +197,17 @@ async function copy(m) {
   await copyWithToast(m.content || '', t('已复制'))
 }
 
+let convBusy = false
 async function newConv() {
+  if (convBusy) return          // 连点"+"会建出一排看不见的"新对话"
+  convBusy = true
   try {
     const r = await api.convNew(pid.value)
     await loadConvs(true)
     convId.value = r.id
     msgs.value = []
     await nextTick(); inputEl.value?.focus()
-  } catch (e) { toast(e.message) }
+  } catch (e) { toast(e.message) } finally { convBusy = false }
 }
 async function renameConv() {
   const c = curConv.value
