@@ -50,14 +50,14 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
                 timeout=timeout,
             )
             if r.status_code >= 500:
-                last_err = RuntimeError(f"模型服务开小差了（{r.status_code}），已自动重试过一次")
+                last_err = RuntimeError(f"模型服务暂时不可用（{r.status_code}），稍后再试")
                 continue
             if r.status_code == 400 and budget > 2048 and \
                     "max_tokens" in (r.text or ""):
                 # 有的供应商输出上限低于我们给的 16k，400 里点名 max_tokens——
                 # 折半重试，别让整篇析读/眉批一击即灭
                 budget = max(2048, budget // 2)
-                last_err = RuntimeError("模型端点不吃这个输出长度，已自动折半重试")
+                last_err = RuntimeError("这个模型的输出上限不够，换个模型或稍后再试")
                 continue
             r.raise_for_status()
         except (httpx.TransportError, httpx.TimeoutException) as e:
@@ -161,7 +161,7 @@ def parse_json(text: str) -> dict:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     i, j = text.find("{"), text.rfind("}")
     if i < 0:
-        raise ValueError("模型这次没有按约定的 JSON 格式回，重试一次通常就好")
+        raise ValueError("模型这次没按约定的格式回，重试一次通常就好")
     raw = text[i:j + 1] if j > i else text[i:]   # 截断的输出可能整个右括号都没了，交给 _json_patch 补
     no_curly = raw.replace("“", '"').replace("”", '"')
     patched = _json_patch(no_curly)
@@ -511,7 +511,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
                 fig_caps_zh[str(k)] = v.strip()
 
     if not roles:
-        raise ValueError("骨架解析失败（roles 为空）——模型没按约定给出各段的角色标注")
+        raise ValueError("模型没给出各段的角色标注，重新析读一次")
     return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs,
             "evidence_qs": eqs, "fig_caps": fig_caps_zh}
 
@@ -1043,7 +1043,7 @@ def vision_ask(image_dataurl: str, question: str) -> str:
         return ("[Demo mode] Visual Q&A needs a vision model." if _lang_tail()
                 else "〔演示模式〕视觉问答需要配置视觉模型。")
     if not vm:
-        raise RuntimeError("未配置视觉模型（设置 → 视觉模型）")
+        raise RuntimeError("未配置视觉模型（设置里勾选「视觉」）")
     sys = ("回答针对这张图的问题：只依据图里可见的信息和它在论文中的常规含义，"
            "图里没有的就明说『图中未显示』，不要脑补；两三句说完，先给结论。") + _lang_tail()
     msgs = [{"role": "system", "content": sys},

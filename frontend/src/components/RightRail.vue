@@ -841,12 +841,12 @@ watch(() => store.currentId, () => {
         </svg>
       </button>
       <div class="lb-stage" @click.stop>
-        <button class="lb-nav" :disabled="figures.length < 2" :title="t('上一张（←）')" @click="figStep(-1)">‹</button>
+        <button class="lb-nav" :disabled="figures.length < 2" :title="t('上一张')" @click="figStep(-1)">‹</button>
         <span class="lb-imgwrap" :class="{ loading: !lbLoaded }">
           <span class="lb-loading" v-if="!lbLoaded">{{ t('正在提取原图…') }}</span>
           <img :src="api.figureUrl(store.currentId, lightbox, 200)" @load="lbLoaded = true" />
         </span>
-        <button class="lb-nav" :disabled="figures.length < 2" :title="t('下一张（→）')" @click="figStep(1)">›</button>
+        <button class="lb-nav" :disabled="figures.length < 2" :title="t('下一张')" @click="figStep(1)">›</button>
       </div>
       <div class="lb-cap" v-if="lightbox.caption" @click.stop>
         <span>{{ capText }}</span>

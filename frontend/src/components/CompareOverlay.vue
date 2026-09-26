@@ -102,7 +102,6 @@ async function copyMd() {
 
         <!-- ① 选维度 -->
         <div class="cmp-pick" v-if="step === 'pick'">
-          <p class="cmp-hint">{{ t('勾选要对比的维度') }}</p>
           <div class="cmp-dims">
             <label v-for="d in DIMS_ALL" :key="d.k" class="cmp-dim" :class="{ on: picked.has(d.k) }">
               <input type="checkbox" :checked="picked.has(d.k)" @change="toggleDim(d.k)" />

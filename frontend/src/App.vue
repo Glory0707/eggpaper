@@ -589,7 +589,7 @@ async function stopAnalyze() {
   try { await api.analysisCancel(store.currentId); toast(t('正在停止…')) } catch { /* 不打扰 */ }
 }
 async function stopTranslate() {
-  try { await api.translateCancel(store.currentId); toast(t('已停止')); await refreshPapers() } catch { /* 同上 */ }
+  try { await api.translateCancel(store.currentId); await refreshPapers() } catch { /* 同上 */ }
 }
 
 /* 眉批是**唯一**会持续几十秒到几分钟的任务。全局那条 3 秒轮询在它跑完那一刻最多还要
@@ -713,8 +713,7 @@ async function onImport(list) {
   const ok = []
   for (let i = 0; i < files.length; i++) {
     const f = files[i]
-    toast(many ? t('正在导入 {i}/{n}：{name}', { i: i + 1, n: files.length, name: f.name.slice(0, 24) })
-                    : t('已导入，正在后台通读…'))
+    if (many) toast(t('正在导入 {i}/{n}：{name}', { i: i + 1, n: files.length, name: f.name.slice(0, 24) }))
     try {
       const r = await api.upload(f)
       ok.push(r)
@@ -950,7 +949,7 @@ function onKey(e) {
       </div>
       <div class="actions">
         <button class="demo-badge" v-if="demoOn" @click="showSettings = true"
-                :title="t('演示数据')">{{ t('演示模式') }}</button>
+                >{{ t('演示模式') }}</button>
         <button class="ghost" @click="showSettings = true" :title="t('设置')">⚙</button>
       </div>
             <div class="tran-line" v-if="tranSt === 'running' && !isEn()">

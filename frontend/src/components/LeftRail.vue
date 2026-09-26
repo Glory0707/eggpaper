@@ -189,11 +189,9 @@ async function dropOn(cid) {
   if (pid == null) return
   const cur = collOf(pid)
   if (cur.includes(cid)) return
-  const c = colls.value.find(x => x.id === cid)
   try {
     await api.paperColls(pid, [...cur, cid])
     await refreshCollections()
-    if (c) toast(t('已归入「{name}」', { name: c.name }))
   } catch (e) { await collFail(e) }
   menuFor.value = null
 }
@@ -310,7 +308,6 @@ async function selAddColl(cid) {
   }
   await refreshCollections()
   selMenu.value = false
-  toast(t('已把 {n} 篇归入该分类', { n: selN.value }))
 }
 /* 「未分类」= 从所有分类里移出（它本来就是"不属于任何分类"的别名） */
 async function selToUncategorized() {
@@ -320,7 +317,6 @@ async function selToUncategorized() {
   }
   await refreshCollections()
   selMenu.value = false
-  toast(t('已把 {n} 篇移出所有分类', { n: selN.value }))
 }
 
 /* ---------- 长按拖放区 = 从 Zotero 导入（点击仍是选文件） ---------- */
@@ -369,7 +365,7 @@ function onCmpGoto(c) {
         <option value="year">{{ t('发表时间') }}</option>
         <option value="title">{{ t('标题') }}</option>
       </select>
-      <button class="lib-multi" :class="{ on: selMode }" :title="t('多选')"
+      <button class="lib-multi" :class="{ on: selMode }"
               @click="toggleSelMode">{{ t('多选') }}</button>
     </div>
 

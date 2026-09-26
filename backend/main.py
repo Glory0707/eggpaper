@@ -690,7 +690,7 @@ def backup_restore(body: dict):
         with z:
             names = z.namelist()
             if "eggpaper.db" not in names:
-                raise HTTPException(400, "这不是 eggpaper 的备份文件（里面没有 eggpaper.db）")
+                raise HTTPException(400, "这不是 eggpaper 的备份文件")
             staged = config.DATA_DIR + ".restore"
             # 解包前先估总量：塞满磁盘会把正在运行的库一起拖死
             need = sum(i.file_size for i in z.infolist())
@@ -2001,7 +2001,7 @@ def _gen_six(p: dict, key: str):
                                     kind="review" if is_review else "research")
     if key == "method":
         if is_review:
-            raise HTTPException(400, "综述没有实验层，去看「它把文献怎么组织的」那一问")
+            raise HTTPException(400, "综述没有实验层，去看「它把文献怎么组织的？」那一问")
         return llm.answer_method(p["title"], claims, db.get_paragraphs(pid))
     if key == "how":
         if is_review:
@@ -2979,7 +2979,7 @@ def qa_regenerate(pid: str, body: dict):
 def qa_delete_one(cid: int, mid: int):
     row = db.q("SELECT conv_id FROM qa_messages WHERE id=?", (mid,))
     if not row:
-        raise HTTPException(404, "这条消息不存在（可能已被删过）")
+        raise HTTPException(404, "这条消息不存在")
     if row[0]["conv_id"] != cid:
         raise HTTPException(404, "这条消息不属于这个会话")
     db.qa_delete(mid)
@@ -3159,11 +3159,10 @@ def translate_full_start(pid: str, force: bool = False):
         stale = bool(ver) and ver < (2,)   # 1.9 在位（旧版安装或自填路径）：也要走重装换掉
         if (not exe_found or stale) and st["state"] not in ("downloading", "unpacking", "warming"):
             engine_install.start()
-            why2 = (f"，检测到旧版 {why}" if stale else f"（{why}）")
-            raise HTTPException(400, f"{'旧版全文翻译引擎，正在升级' if stale else '缺全文翻译引擎'}"
-                                     f"{why2}，正在后台自动下载 2.x（约 600MB）。")
+            raise HTTPException(400, f"{'旧版' if stale else '缺'}全文翻译引擎，"
+                                     f"正在后台自动安装，装好会自动继续")
         if st["state"] in ("downloading", "unpacking", "warming"):
-            raise HTTPException(400, "全文翻译引擎正在后台下载安装（约 600MB）。")
+            raise HTTPException(400, "全文翻译引擎正在后台安装。")
         if not exe_found or stale:
             raise HTTPException(400, f"全文翻译引擎{'升级' if stale else '下载'}没成功"
                                      f"（{st.get('error') or '原因未知'}）")

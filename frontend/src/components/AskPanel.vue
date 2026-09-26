@@ -414,7 +414,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
 
       <div v-if="empty" class="qa-empty">
         <div class="qa-quick">
-          <button v-for="q in props.quick" :key="q" :title="q" @click="send(q)">{{ t(q) }}</button>
+          <button v-for="q in props.quick" :key="q" @click="send(q)">{{ t(q) }}</button>
         </div>
       </div>
 
@@ -485,7 +485,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
                 :placeholder="t('基于这篇论文提问…')"
                 @keydown="onKey"></textarea>
       <button v-if="busy" class="qa-send stop" @click="stop()" :title="t('停止生成')">■</button>
-      <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" :title="t('发送（Enter）')">↑</button>
+      <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" :title="t('发送')">↑</button>
     </div>
     <CompareOverlay :open="cmpOpen" :ids="cmpIds" @close="cmpOpen = false" @goto="onCmpGoto" />
   </div>

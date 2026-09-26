@@ -1994,7 +1994,6 @@ html.dark .vis-img { background: #fff; }
 
 /* 对比弹窗第一步：选维度 */
 .cmp-pick { padding: 18px 22px 20px; overflow-y: auto; }
-.cmp-hint { margin: 0 0 14px; font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
 .cmp-dims { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .cmp-dim {
   display: inline-flex; align-items: center; gap: 7px; cursor: pointer;

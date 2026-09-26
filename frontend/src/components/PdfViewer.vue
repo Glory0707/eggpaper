@@ -804,7 +804,6 @@ async function pinSel() {
     } catch (e) { toast(t('钉到页边没成功：{m}', { m: e.message })); return }
     await refreshM()
     closeSel()
-    toast(t('已钉在页边'))
   } finally { pinning = false }
 }
 
@@ -844,7 +843,6 @@ async function saveMine() {
   mine.open = false; mine.text = ''
   await refreshM()
   closeSel()
-  toast(t('已写在页边'))
 }
 
 async function refreshM() {
@@ -1147,7 +1145,6 @@ function findInPaper(q) {
   if (!q) return
   if (store.viewer.variant !== 'original') {
     store.viewer.variant = 'original'
-    toast(t('已切回原文'))
     pendingFind = q          // 换模式要重新出图、重建文字层：等 load() 收尾再搜
     return
   }
@@ -1348,7 +1345,6 @@ async function pinVisual() {
   })
   await refreshM()
   closeVis()
-  toast(t('已钉在页边'))
 }
 
 watch(() => store.visPrefill, pf => {
@@ -1496,7 +1492,7 @@ watch(store.marginalia, m => {
          v-drag="{ key: 'zoombar' }" data-drag>
       <button :title="t('上一页')" @click="stepPage(-1)">‹</button>
       <span class="zb-page">
-        <input type="text" ref="pageInputEl" v-model="pageIn" class="zb-input" :title="t('跳到第几页')"
+        <input type="text" ref="pageInputEl" v-model="pageIn" class="zb-input"
                @keydown.enter="commitPage(); pageInputEl?.blur()" @blur="pageIn = String(pageNum)" />
         <em>/ {{ paperMeta?.n_pages || 0 }}</em>
       </span>
@@ -1521,8 +1517,8 @@ watch(store.marginalia, m => {
       <span class="fb-count">
         {{ searchHits.length ? (searchAt + 1) + ' / ' + searchHits.length : (searchBusy ? '…' : t('无结果')) }}
       </span>
-      <button :disabled="!searchHits.length" :title="t('上一个（Enter）')" @click="searchStep(-1)">‹</button>
-      <button :disabled="!searchHits.length" :title="t('下一个（Enter）')" @click="searchStep(1)">›</button>
+      <button :disabled="!searchHits.length" :title="t('上一个')" @click="searchStep(-1)">‹</button>
+      <button :disabled="!searchHits.length" :title="t('下一个')" @click="searchStep(1)">›</button>
       <button class="ghost" :title="t('关闭')" @click="closeSearch">×</button>
     </div>
     </Transition>
@@ -1547,7 +1543,7 @@ watch(store.marginalia, m => {
         <span class="chip" v-for="h in sel.hits" :key="h.en">📌 {{ h.en }} → {{ h.zh }}</span>
       </div>
             <div class="sp-mine" v-if="mine.open">
-        <textarea ref="mineEl" v-model="mine.text" rows="3" :placeholder="t('就这句写点什么…（Ctrl+Enter 保存）')"
+        <textarea ref="mineEl" v-model="mine.text" rows="3" :placeholder="t('就这句写点什么…')"
                   @mouseup.stop @keydown.enter.ctrl="saveMine"></textarea>
       </div>
       <div class="sp-actions">

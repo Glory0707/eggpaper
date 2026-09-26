@@ -114,11 +114,11 @@ def download(url: str, sha256: str = "", size: int = 0):
                     _set(got=got, total=total, pct=round(got * 100 / total) if total else 0)
         if not sha256:
             os.remove(out)
-            _set(state="error", error="更新源没给 sha256，无法校验完整性（发布方需要补上这一项）")
+            _set(state="error", error="更新源没给 sha256，无法校验完整性")
             return
         if h.hexdigest().lower() != sha256:
             os.remove(out)
-            _set(state="error", error="下下来的安装包校验不一致（可能没下完或被改过），已丢弃")
+            _set(state="error", error="安装包校验不一致，已丢弃，可重试")
             return
         _set(state="ready", path=out, pct=100)
     except Exception as e:

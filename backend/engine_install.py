@@ -185,7 +185,7 @@ def _unpack(zpath: str):
                 os.remove(zpath)
             except OSError:
                 pass
-            _set(state="error", error="下载校验不对（这个源的内容被动过？），已删除。可重试或用「选 zip 安装」")
+            _set(state="error", error="下载校验不对，已删除，可重试")
             return
         shutil.rmtree(tmp_root, ignore_errors=True)
         os.makedirs(tmp_root, exist_ok=True)
@@ -388,7 +388,7 @@ def _install(urls):
                 return
         else:
             _set(state="error", src="", url="",
-                 error="每个源都没下动——" + "；".join(tried[-3:]) + "。可稍后重试，或用「选 zip 安装」")
+                 error="每个源都没下动——" + "；".join(tried[-3:]) + "。可稍后重试")
             return
         _set(src="校验/解压")
         _unpack(zpath)
