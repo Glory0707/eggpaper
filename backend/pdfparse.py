@@ -71,6 +71,16 @@ def _page0_lines(path: str):
     finally:
         doc.close()
 
+# 刊头标签：投稿模板的脚手架行（ACS 系 "Main Manuscript for"、Elsevier 系
+# "Research Article" 这类），与真标题同字号、同在候选带，整行剔除后真标题在其后
+TITLE_LABEL = re.compile(
+    r"^(?:main\s+manuscript(?:\s+for)?|original\s+(?:research\s+)?(?:article|paper)|research\s+article"
+    r"|review\s+article|research\s+paper|regular\s+article|full\s+paper|brief\s+communication"
+    r"|conference\s+paper|article|review|abstract|摘要|综述|论著|研究论文|学术论文)\s*[:：.]?\s*$", re.I)
+# 拼合途中的止损行：撞见摘要/关键词行头，标题到这儿就结束了
+ABSTRACT_HEAD = re.compile(
+    r"^(?:abstract|keywords|摘要|关键词)\s*[:：.]?\s*$|^(?:abstract|keywords|摘要|关键词)\s*[:：]", re.I)
+
 def extract_title(path: str) -> str:
     lines, h = _page0_lines(path)
     if not lines:
@@ -78,11 +88,17 @@ def extract_title(path: str) -> str:
     top = [l for l in lines if l["y0"] < h * 0.45] or lines
     max_size = max(l["size"] for l in top)
     cand = sorted((l for l in top if l["size"] >= max_size - 0.8), key=lambda l: l["y0"])
-    # 只并**垂直相邻**的候选行：标题的行距在 1.5 倍字号以内，隔了空行就是别的块
-    # （摘要/作者行的字号常与标题只差零点几磅，光凭字号带会把整段开头并进来）
+    stripped = False
+    while len(cand) > 1 and TITLE_LABEL.match(cand[0]["text"]):
+        cand = cand[1:]
+        stripped = True
+    # 只并**垂直相邻**的候选行：隔了空行就是别的块（摘要/作者行的字号常与标题只差
+    # 零点几磅，光凭字号带会把整段开头并进来）。双倍行距的投稿模板（首页带刊头标签
+    # 的就是）标题行距可达 3 倍字号——剔除过标签的文档按 3.2 倍放宽，其余维持原状
     out = []
     for l in cand:
-        if out and l["y0"] - out[-1]["y0"] > max(out[-1]["size"], l["size"]) * 1.8:
+        if out and (l["y0"] - out[-1]["y0"] > max(out[-1]["size"], l["size"]) * (3.2 if stripped else 1.8)
+                    or ABSTRACT_HEAD.match(l["text"])):
             break
         out.append(l)
     return _clean(" ".join(l["text"] for l in out))[:150]
