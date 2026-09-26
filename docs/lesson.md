@@ -27,7 +27,8 @@
 
 ## 二、测试
 
-- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8482）。测试 python 用 hermes venv（httpx/playwright/fitz/rapidocr 齐）。
+- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8485）。测试 python 用 hermes venv（httpx/playwright/fitz/rapidocr 齐）。
+- **测试实例的引擎与缓存一个共享一个不共享**：引擎装在 `dirname(data_dir)/engines`（`_qa/engines`，全实例共用，别删）；babeldoc 资产缓存在各数据目录的 `home/.cache`（每实例 ~337MB，只增不减）——`_tmp_*` 目录定期清，只留手工夹具。
 - 打包版黄金验证：`EGGPAPER_DATA` 指临时目录后直接跑 `D:\eggpaper\eggpaper.exe`。打包版不认 PORT 环境变量（起在 PORTS[0]=8430），但数据目录重定向生效——正好验"别人装完第一次打开"的完整链路。
 - 端口格局：8430=打包实例（用户真库）兼源码默认端口（别同时开）；8431/8432 是 desktop.py PORTS 的后备。
 - 断言经验：异步的轮询着等；别抓第一条 toast（可能是上一个动作发的）；文件选择框用 `expect_file_chooser`；用 python 直接 POST 造的数据 UI 不认（store 不知道），走 UI 动作或显式刷新；判据写"到达终态"，别写"必须看到进度条"（本地下载半秒完，进度条一闪而过）。
@@ -97,3 +98,4 @@
 - **按属性清理 HTML 标签会把同行其他属性一起删掉**：sed 清 `:title="''"` 把同一标签的 `@click` 一并吃掉——按钮还在、点了没反应（P0，脚本回归没拦住，真实浏览器走查才抓到）。属性级批量替换后，受影响控件必须在浏览器里真实点一遍。
 - **overflow:hidden 的折叠容器可被程序化滚动**（scroll-into-view、拖选到边界都会触发）：内容被卷走后无法滚回，答案叠在标题上。折叠改用 `overflow:clip`（语义就是"裁剪且永不滚动"）；排查靠 `elementFromPoint` 实证命中元素。
 - **i18n 静态清扫会误杀动态拼接的 key**（`t(cond ? 'A' : 'B')` 扫不到）：动态拼接改成完整字面量的分支写法，让清扫工具可扫。
+- 中文提交信息用 `git commit -F <文件>` 传递。终端里 git 输出显示乱码先 `xxd` 验字节再下结论：仓库里存的是对的 UTF-8、只是终端拿 GBK 解码显示的情况占多数（本会话两次"乱码"惊吓都是显示假象）。
