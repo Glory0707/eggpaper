@@ -50,8 +50,9 @@ def _heading_kind(text: str):
         hit = max((h for h in heads if n.startswith(h)), key=len, default=None)
         if hit:
             rest = n[len(hit):]
-            if rest and text.rstrip().endswith((".", "。", "；", ";", "，", ",")):
-                return None        # 句子的一小半，不是标题
+            if rest in ("therein", "herein", "etal") or (
+                    rest and text.rstrip().endswith((".", "。", "；", ";", "，", ","))):
+                return None        # 句子的一小半（"references therein"连标点都没有），不是标题
             return kind if len(rest) <= 12 else None
     return None
 

@@ -447,11 +447,19 @@ def _clear_zombie_jobs():
     """
     _adopt_orphan_translation()
     _sweep_orphan_papers()
-    for col in ("analysis_status", "marginalia_status", "translate_status"):
-        n = db.q(f"SELECT COUNT(*) FROM papers WHERE {col} IN ('running','queued')")[0][0]
-        if n:
-            db.q(f"UPDATE papers SET {col}='none' WHERE {col} IN ('running','queued')", commit=True)
-            _applog(f"启动清理：{n} 篇的 {col} 卡在 running/queued，已归零")
+    for col, kind in (("analysis_status", "analysis"), ("marginalia_status", "marginalia"),
+                      ("translate_status", "translate")):
+        rows = db.q(f"SELECT id FROM papers WHERE {col} IN ('running','queued')")
+        # 晚启动清扫与本进程刚接的新任务有竞争窗：活着的任务（含本进程已在跑的翻译）
+        # 不能归零，否则界面状态闪回"没做过"，诱发重复点击
+        stale = [r["id"] for r in rows
+                 if not _job_live(kind, r["id"])
+                 and translate_full.job(r["id"])["status"] not in ("running", "queued")]
+        if not stale:
+            continue
+        qmarks = ",".join("?" * len(stale))
+        db.q(f"UPDATE papers SET {col}='none' WHERE id IN ({qmarks})", tuple(stale), commit=True)
+        _applog(f"启动清理：{len(stale)} 篇的 {col} 卡在 running/queued，已归零")
 
 def _adopt_orphan_translation():
     """收留"孤儿译文"。
@@ -1192,11 +1200,19 @@ def _require_paras(pid: str) -> None:
 
 
 def _int_arg(v, status: int, msg: str) -> int:
-    """请求参数里的裸 int：坏值回一句人话，别让 ValueError 冒成 500 被误译成模型错误。"""
+    """请求参数里的裸 int：坏值回一句人话，别让 ValueError 冒成 500 被误译成模型错误。
+    非整数一律拒绝：1.5 截成 1 是"悄悄译错段"，比 400 糟糕得多（bool 是 int 的子类，也拒）。"""
+    if isinstance(v, bool):
+        raise HTTPException(status, msg)
+    if isinstance(v, int):
+        return v
     try:
-        return int(v)
+        f = float(v)
     except (TypeError, ValueError):
         raise HTTPException(status, msg)
+    if not f.is_integer() or abs(f) >= 2 ** 53:   # 超 2^53 的 float 已丢精度，不能当序号用
+        raise HTTPException(status, msg)
+    return int(f)
 
 
 def _paper_needing_paras(pid: str) -> dict:

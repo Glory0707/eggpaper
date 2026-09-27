@@ -33,6 +33,7 @@ import appinfo
 _cache = {}
 _lock = threading.Lock()
 _progress = {"state": "idle", "pct": 0, "got": 0, "total": 0, "path": "", "error": ""}
+_installing = False     # 安装器已拉起：双击重入闸（见 install）
 
 def _ver_tuple(v: str):
     """版本号比较用：0.10.2 → (0,10,2)。非数字段一律当 0，不抛异常。"""
@@ -144,6 +145,9 @@ def install(path: str) -> bool:
     POST），把调用方给的 path 交给 Popen 等于"以 eggpaper 的名义执行任意本机程序"。开发模式
     （源码）只提示不自杀。
     """
+    global _installing
+    if _installing:
+        return True          # 「立即重启并安装」双击：进程马上自杀，第二发不再起第二个安装器
     if not path:
         return False
     real = os.path.realpath(path)
@@ -157,6 +161,7 @@ def install(path: str) -> bool:
         subprocess.Popen(args, close_fds=True)
     except Exception:
         return False
+    _installing = True
 
     if not is_packaged():
         return True

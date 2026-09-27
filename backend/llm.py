@@ -406,7 +406,9 @@ def human_error(exc: Exception) -> str:
     这一份，免得"哪里报错"决定"用户看到什么"（main._human_msg 是它的别名）。
     不认识的异常保留类名+短讯——那通常是没人见过的真 bug，不该伪装成人话。"""
     msg = str(exc) or exc.__class__.__name__
-    low = msg.lower()
+    # 类名必须参与匹配：httpx 的 ConnectError 消息体是"[WinError 10061] 目标计算机积极拒绝"
+    # 这类中文系统文案，"connect" 这个词只在类名里——漏了它连接类异常就会带着原文漏给用户
+    low = (exc.__class__.__name__ + " " + msg).lower()
     if "429" in msg or "too many requests" in low:
         return "模型服务限流了（429），等一会儿再试"
     if "401" in msg or "unauthorized" in low or "invalid api key" in low:
