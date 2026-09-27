@@ -7,6 +7,7 @@ venv/
 dist/
 build/
 .pytest_cache/
+.ruff_cache/
 
 # Node / frontend
 node_modules/
@@ -27,18 +28,16 @@ library/
 _qa/
 _*.log
 _pid.txt
+.git-msg.txt
 
 # 作者私人笔记（作者要求不上传）
 docs/作者手记.md
-_cmsg.txt
 
 # 打包产物（安装包与冻结目录不入库；release/ 里的 latest.json 是发布产物）
-build/
 release/
 .build-venv/
 installer/eggpaper.ico
 installer/eggpaper-256.png
-
 
 # 走查/审计的临时截图与 playwright 快照
 /audit-*.png
@@ -72,5 +71,3 @@ cdk.out/
 eggs/
 pip-wheel-metadata/
 wheels/
-# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
-# 自定义规则写在下方（本行提示可删除）
