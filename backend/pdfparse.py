@@ -38,13 +38,11 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z\u4e00-\u9fff]", "", text.lower())
 
 def _heading_kind(text: str):
-    """行文本 → 区域边界类型；None=普通行。
+    """行文本 → 区域边界类型；None=普通行。只认**光杆标题行**。
 
-    只认**光杆标题行**。正文里 "…references therein."、"Acknowledging these
-    limitations, we…"、"Funding was provided by…" 同样以触发词开头，一旦认领，
-    in_refs 从那一行起永不复位——论文后半整体被当成参考文献区静默丢掉，析读/
-    问答/术语全部失明还不报任何错（实测整篇只读到一半）。所以触发词命中还不够，
-    得像标题：触发词后面剩不下几个字，且不带句中的标点尾巴。"""
+    "references therein."、"Acknowledging these limitations, we…" 这类正文短语
+    同样以触发词开头，认了它 in_refs 就永不复位、论文后半被静默丢掉（实测）。
+    判据：触发词后面剩不下几个字，且不带句中的标点尾巴。"""
     if len(text) > 60:
         return None
     n = _norm(text)

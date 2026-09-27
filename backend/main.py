@@ -127,6 +127,12 @@ def paper_dir(pid: str) -> str:
         pass
     return d
 
+def _discard_paper_dir(pid: str, pid_dir: str):
+    """导入失败的收场：半截目录整个清掉，缓存别留悬空项（rmtree 对空目录就是 rmdir）。"""
+    shutil.rmtree(pid_dir, ignore_errors=True)
+    with _dir_lock:
+        _dir_cache.pop(pid, None)
+
 def _backfill_pdf_hashes():
     """给旧库论文慢慢补内容指纹（导入判重的第二把钥匙）。
 
@@ -434,12 +440,10 @@ def _sweep_orphan_papers():
 def _clear_zombie_jobs():
     """把"上一次进程留下的在跑状态"清掉。
 
-    析读/眉批/翻译都是**守护线程**在跑，而状态写在数据库里；进程一没（崩溃、taskkill、
-    装新版重启、托盘退出），那条 `running` 就永远留在库里：POST 看到 running 直接返回，
-    用户点多少次都没反应、界面永远停在"写批注中"。
-
-    刚启动的进程里不可能有任务在跑，所以这些状态全是僵尸，一律归零（回到"还没做过"，
-    按钮自然重新出现）。运行中途的判断看 `_live_jobs`——那是本进程的真实登记。
+    析读/眉批/翻译都是**守护线程**在跑，状态却写在数据库里：进程一没（崩溃、
+    装新版重启、托盘退出），那条 `running` 就永远留在库里——POST 看到 running
+    直接返回，用户点多少次都没反应。刚启动的进程里不可能有任务在跑，这些状态
+    全是僵尸，一律归零；运行中途的判断看 `_live_jobs`（本进程的真实登记）。
     """
     _adopt_orphan_translation()
     _sweep_orphan_papers()
@@ -1061,16 +1065,12 @@ async def upload(file: UploadFile = File(...)):
             try:
                 os.replace(tmp, path)                     # 同盘改名，瞬时完成
             except OSError:
-                shutil.rmtree(pid_dir, ignore_errors=True)   # 盘满写不下：别留空论文目录
-                with _dir_lock:
-                    _dir_cache.pop(pid, None)
+                _discard_paper_dir(pid, pid_dir)   # 盘满写不下：别留空论文目录
                 raise HTTPException(500, "PDF 没写进库里（磁盘满了或被占用）")
             try:
                 out = _ingest(pid, name, path, pdf_hash)
             except Exception:
-                shutil.rmtree(pid_dir, ignore_errors=True)   # 坏文件别留空论文目录
-                with _dir_lock:
-                    _dir_cache.pop(pid, None)
+                _discard_paper_dir(pid, pid_dir)   # 坏文件别留空论文目录
                 raise
             return _attach_same_title(out, pid)
 
@@ -1099,27 +1099,18 @@ def import_path(body: dict):
         try:
             pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
         except OSError as e:
-            shutil.rmtree(pid_dir, ignore_errors=True)   # 复制不出来（盘满/源被锁）：别留半截目录
-            with _dir_lock:
-                _dir_cache.pop(pid, None)
+            _discard_paper_dir(pid, pid_dir)   # 复制不出来（盘满/源被锁）：别留半截目录
             raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
         dup = db.find_duplicate(name, size, pdf_hash)
         if dup:
             _rm(dest)
-            try:
-                os.rmdir(pid_dir)    # 刚建的空文件夹顺手收掉
-            except OSError:
-                pass
-            with _dir_lock:
-                _dir_cache.pop(pid, None)
+            _discard_paper_dir(pid, pid_dir)   # 刚建的空文件夹顺手收掉
             _pending_open["pid"] = dup
             return {"paper": db.get_paper(dup), "duplicate": True}
         try:
             out = _ingest(pid, name, dest, pdf_hash)
         except Exception:
-            shutil.rmtree(pid_dir, ignore_errors=True)   # 坏文件别留空论文目录
-            with _dir_lock:
-                _dir_cache.pop(pid, None)
+            _discard_paper_dir(pid, pid_dir)   # 坏文件别留空论文目录
             raise
         _attach_same_title(out, pid)
     _pending_open["pid"] = pid
@@ -1592,15 +1583,12 @@ def _band(n: dict) -> str:
     return n.get("band") or llm.BAND_OF.get(n["kind"], "")
 
 def _resolve_rects(pid: str):
-    """把 quote 定位成页面矩形。
-
-    只作为**退路**：这里的搜索会跨不过换行和连字符，所以只能拿引文开头的一小段去搜，
-    搜到的也只是那一行。真正的逐行精确划线在前端做（引文对回字符 → 取字符矩形）。
-    框选钉子（kind=region）自带矩形，不参与。
+    """把 quote 定位成页面矩形（**退路**：这里的搜索跨不过换行和连字符，真正的
+    逐行精确划线在前端做；框选钉子 kind=region 自带矩形，不参与）。
 
     每条钉子只试一次（`_rect_tried`）：搜不到的钉子（引文跨栏、被截断、模型抄错了）
-    永远搜不到，而每试一次就要开一次 PDF。原来 GET /marginalia 每次都把所有没 rect 的
-    钉子重试一遍——页边留一条搜不到的钉子，之后每次打开这篇论文都白开一次 PDF。
+    永远搜不到，而每试一次就要开一次 PDF——原来 GET /marginalia 每次都把没 rect 的
+    钉子重试一遍，页边留一条搜不到的钉子，之后每次打开这篇都白开一次 PDF。
     """
     import pymupdf
     p = db.get_paper(pid)
@@ -1949,6 +1937,12 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
     return data
 
 
+def _summary_material(pid: str):
+    """一眼卡的两份输入：全文段落 + 按全文命中的锁定术语（管线与端点共用同一口径）。"""
+    paras = db.get_paragraphs(pid)
+    hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
+    return paras, hits
+
 def _summary_compute(pid: str) -> dict:
     """一眼卡的生成+落库：析读管线的预生成与 /summary 端点**共用同一把锁**——
     析读一完成用户就打开速览页时，谁先拿到锁谁生成，后到的命中刚写回的缓存。
@@ -1962,8 +1956,7 @@ def _summary_compute(pid: str) -> dict:
                 return json.loads(p["summary"])
             except ValueError:
                 pass                    # 坏缓存当没有，走重生成
-        paras = db.get_paragraphs(pid)
-        hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
+        paras, hits = _summary_material(pid)
         data = llm.summarize(p["title"], paras, hits)
         _require_shape(data, ("one_line", "novelty", "findings", "keywords"), "一眼卡")
         if not _pid_gone(pid):          # 生成隔着一次模型调用，论文可能已被删
@@ -1991,8 +1984,7 @@ def _suggest_compute(pid: str) -> dict:
 @app.get("/api/papers/{pid}/summary")
 def summary(pid: str):
     def real(p):
-        paras = db.get_paragraphs(pid)
-        hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
+        paras, hits = _summary_material(pid)
         return llm.summarize(p["title"], paras, hits)
     return _gen_card(pid, "summary", "summary", what="一眼卡", shape=("one_line", "novelty", "findings", "keywords"),
                      demo_fn=lambda: {"one_line": _demo_txt("〔演示模式〕这是一篇测试论文的一眼卡摘要。",
@@ -2049,44 +2041,46 @@ def ask_visual(body: dict):
 
 SIX_KEYS = ("motive", "principle", "method", "how", "next", "lens")
 
-def _paras_of_role(pid: str, roles: set, cap: int = 8):
-    _, _, annos = db.get_analysis(pid)
-    paras = {x["idx"]: x for x in db.get_paragraphs(pid)}
-    out = [paras[int(k)] for k, v in annos.items() if v["role"] in roles and int(k) in paras]
+def _paras_of_role(annos: dict, by_idx: dict, roles: set, cap: int = 8):
+    out = [by_idx[int(k)] for k, v in annos.items() if v["role"] in roles and int(k) in by_idx]
     return sorted(out, key=lambda p: p["idx"])[:cap]
 
 def _gen_six(p: dict, key: str):
     pid = p["id"]
     is_review = p.get("paper_type") == "review"
     _, claims, annos = db.get_analysis(pid)
+    paras = db.get_paragraphs(pid)                 # 全程一份快照：别为角色过滤反复整载
+    by_idx = {x["idx"]: x for x in paras}
+    def role(roles: set, cap: int = 8):
+        return _paras_of_role(annos, by_idx, roles, cap)
     if key == "principle":
-        return llm.answer_principle(p["title"], claims, db.get_paragraphs(pid),
+        return llm.answer_principle(p["title"], claims, paras,
                                     kind="review" if is_review else "research")
     if key == "method":
         if is_review:
             raise HTTPException(400, "综述没有实验层，去看「它把文献怎么组织的？」那一问")
-        return llm.answer_method(p["title"], claims, db.get_paragraphs(pid))
+        return llm.answer_method(p["title"], claims, paras)
     if key == "how":
         if is_review:
-            return llm.answer_how_review(p["title"], claims, db.get_paragraphs(pid))
+            return llm.answer_how_review(p["title"], claims, paras)
         raise HTTPException(400, "研究型论文不单独生成这一问")
     if key == "motive":
-        return llm.answer_motive(p["title"], db.get_paragraphs(pid),
-                                 _paras_of_role(pid, {"gap"}),
-                                 _paras_of_role(pid, {"background"}, 6),
+        return llm.answer_motive(p["title"], paras,
+                                 role({"gap"}),
+                                 role({"background"}, 6),
                                  claims)
     if key == "next":
         warns = [n["note"] for n in db.get_marginalia(pid) if _band(n) == "warn"][:6]
-        return llm.answer_next(p["title"], db.get_paragraphs(pid),
-                               _paras_of_role(pid, {"limitation"}),
-                               _paras_of_role(pid, {"extension"}, 5),
+        return llm.answer_next(p["title"], paras,
+                               role({"limitation"}),
+                               role({"extension"}, 5),
                                claims, warns)
     if key == "lens":
         # 管线期 lens 与 summary 并行生成，调用方传入的快照里 summary 还是 None——
         # 照抄快照会让「换个学科」永远拿不到那句话，还被 v=2 缓存固化。现场重读一次。
         p = db.get_paper(pid) or p
     s = json.loads(p["summary"]) if p.get("summary") else {}
-    return llm.answer_lens(p["title"], s.get("one_line", ""), claims, db.get_paragraphs(pid))
+    return llm.answer_lens(p["title"], s.get("one_line", ""), claims, paras)
 
 def _demo_terms(title, paras) -> dict:
     return {"terms": [{"en": "demo term", "zh": "演示术语", "kind": "method"}], "abbrs": {}}

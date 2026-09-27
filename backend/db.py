@@ -788,9 +788,6 @@ def conv_get(cid: int):
     rows = q("SELECT * FROM conversations WHERE id=?", (cid,))
     return dict(rows[0]) if rows else None
 
-def conv_touch(cid: int):
-    q("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), cid), commit=True)
-
 def qa_add(pid: str, role: str, content: str, citations: list = None, conv_id: int = None) -> int:
     """写一条问答。会话已经被删掉时**不写**（返回 0）——否则会留下一条谁也看不到的孤儿，
     用户流式提问到一半把会话删了就会踩到。校验与插入同事务：拆开的毫秒窗里删会话
