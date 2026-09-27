@@ -588,8 +588,10 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 .sheet-stage { display: flex; flex-direction: column; align-items: center; gap: 26px; }
 
 .hatch {
-  display: flex; flex-direction: column; align-items: center; gap: 18px;
-  margin: 96px auto 0;
+  /* 纯覆盖层：纸面元素无条件挂载，hatch 浮在上面遮住装载过程（见 PdfViewer 模板注） */
+  position: fixed; inset: 0; z-index: 70; background: var(--paper);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px;
 }
 .hatch-mark { width: 68px; height: 68px; color: var(--accent); opacity: 0.9; animation: hatchIn 420ms var(--ease-out) both; }
 @keyframes hatchIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 0.9; transform: none; } }

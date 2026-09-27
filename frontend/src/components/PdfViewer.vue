@@ -1467,14 +1467,18 @@ watch(store.marginalia, m => {
 
 <template>
   <div class="desk-inner" ref="deskEl">
-    <Transition name="desk" mode="out-in">
-    <div class="hatch" v-if="!ready">
-      <EggMark class="hatch-mark" />
-      <div class="hatch-line"><i :style="{ width: Math.round(loadPct * 100) + '%' }" /></div>
-      <div class="hatch-word">{{ t('正在破壳') }}</div>
-    </div>
+    <Transition name="desk">
+      <div class="hatch" v-if="!ready">
+        <EggMark class="hatch-mark" />
+        <div class="hatch-line"><i :style="{ width: Math.round(loadPct * 100) + '%' }" /></div>
+        <div class="hatch-word">{{ t('正在破壳') }}</div>
+      </div>
+    </Transition>
 
-    <div v-else class="sheet-stage">
+    <!-- 纸面不跟 ready 走（旧结构是 v-else）：渲染管线要在画布元素**存在**的前提下跑，
+         否则整轮空转、靠 hatch 过渡结束 + ResizeObserver 才自愈——后台标签页里
+         合成帧暂停、过渡永不结束，纸面就一直是空的。hatch 改成纯覆盖层盖在上面。 -->
+    <div class="sheet-stage">
       <div class="spread-row" v-for="(s, si) in sheets" :key="si">
         <div class="page-wrap" v-for="it in s.items" :key="it.key">
             <div class="page" :ref="el => (pageEls[it.gi] = el)"
@@ -1551,7 +1555,6 @@ watch(store.marginalia, m => {
         </div>
       </div>
     </div>
-    </Transition>
 
         <div class="stage-line" v-if="ready && rendering"><i /></div>
 
