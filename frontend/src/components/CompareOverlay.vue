@@ -118,8 +118,7 @@ async function copyMd() {
 
         <!-- ② 抽取中 -->
         <div v-else-if="step === 'run'" class="cmp-wait">
-          <span>{{ t('正在逐篇抽取要点') }}</span><span class="r-dots">…</span><br />
-          <span class="cmp-wait-sub">{{ t('通常十几秒') }}</span>
+          <span>{{ t('正在逐篇抽取要点') }}</span><span class="r-dots">…</span>
         </div>
         <div v-else-if="step === 'fail'" class="cmp-wait">{{ failed }}</div>
 

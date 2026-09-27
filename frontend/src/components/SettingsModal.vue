@@ -45,7 +45,7 @@ async function moveData() {
   if (target.replace(/[\\/]+$/, '') === f.data_dir.replace(/[\\/]+$/, '')) return
   const yes = await confirmBox({
     title: t('迁移数据目录'), ok: t('迁移'), danger: false,
-    body: t('文库、批注与配置将迁到：{p}。重启后生效。', { p: target }),
+    body: t('文库、批注与配置将迁到 {p}，重启后生效', { p: target }),
   })
   if (!yes) return
   savingData.value = true

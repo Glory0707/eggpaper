@@ -162,10 +162,7 @@ async function doRename(c) {
   try { await api.collRename(c.id, n); await refreshCollections() } catch (e) { toast(e.message) }
 }
 async function delColl(c) {
-  const yes = await confirmBox({
-    title: t('删除分类'), ok: t('删除'), danger: true,
-    body: t('里面的文献不会被删。'),
-  })
+  const yes = await confirmBox({ title: t('删除分类'), ok: t('删除'), danger: true })
   if (!yes) return
   try {
     await api.collDelete(c.id)

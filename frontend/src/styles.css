@@ -1703,7 +1703,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .upd-pct { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); margin-top: 5px; }
 .upd-note { font-size: var(--fs-sm); line-height: 1.7; color: var(--ink-2); margin-bottom: 10px; }
 .upd-note.err { color: var(--vermilion); }
-.upd-note.ok { color: var(--accent-deep); }
 
 /* 全文翻译引擎的等待卡：右下角小卡，长任务可停（停止保留断点，收起不拦安装）。 */
 .eng-card {
@@ -1990,7 +1989,6 @@ html.dark .vis-img { background: #fff; }
 }
 .cmp-ref:hover { border-color: var(--accent-line); transform: none; box-shadow: none; }
 .cmp-wait { padding: 52px 20px; text-align: center; color: var(--ink-3); font-size: var(--fs-sm); line-height: 2.1; }
-.cmp-wait-sub { font-size: var(--fs-xs); }
 
 /* 对比弹窗第一步：选维度 */
 .cmp-pick { padding: 18px 22px 20px; overflow-y: auto; }

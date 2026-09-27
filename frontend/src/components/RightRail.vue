@@ -141,7 +141,7 @@ function askIt(q) {
    组会前一晚最想要的那个按钮。 */
 function askAdvisor(q, i) {
   store.askPrefill = {
-    question: t('这是「导师三问」的第 {n} 问：「{q}」。请帮我组织一份口头回答提纲：先给结论，再给论据（标注依据段号 [¶n]），最后补一句最可能被追问的地方。',
+    question: t('导师三问第 {n} 问「{q}」：给我口头回答提纲——先结论，再论据（标 [¶n]），最后是最可能被追问的点。',
                 { n: i + 1, q: q.q }),
     send: true,
   }
@@ -470,7 +470,7 @@ async function askFigure(f) {
     figIdx.value = -1
     const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
     store.visPrefill = {
-      img, question: t('讲解这张图：画了什么、支持论文的哪个结论、有什么可疑之处。'),
+      img, question: t('讲这张图：画了什么、支持哪个结论、有何可疑。'),
       page: f.page, paraIdx: para?.idx ?? 0, rect: { x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y1 },
     }
   } catch (e) { toast(t('取图失败：{m}', { m: e.message })) }
@@ -569,7 +569,7 @@ watch(() => store.currentId, () => {
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">{{ t('扫描件：能读能框选，七问答不了') }}<span v-if="figures.length">{{ t(' 速览页有 {n} 张图表。', { n: figures.length }) }}</span></div>
+          <div class="r-note">{{ t('扫描件：能读能框选，七问答不了') }}<span v-if="figures.length">{{ t(' · 速览 {n} 张图', { n: figures.length }) }}</span></div>
         </template>
 
         <template v-else>
@@ -809,8 +809,8 @@ watch(() => store.currentId, () => {
         </div>
         <input type="text" v-model="termFilter" :placeholder="t('筛选…')" class="term-filter" />
         <div style="margin-bottom:10px"><a class="exp-btn" :href="api.glossaryCsvUrl(store.currentId)" download>{{ t('导出 CSV') }}</a></div>
-        <p class="t-empty" v-if="!termsBusy && !terms.length">{{ t('还没有术语。') }}</p>
-        <p class="t-empty" v-else-if="!termsBusy && terms.length && !termsFiltered.length">{{ t('没有词匹配这个筛选。') }}</p>
+        <p class="t-empty" v-if="!termsBusy && !terms.length">{{ t('还没有术语') }}</p>
+        <p class="t-empty" v-else-if="!termsBusy && terms.length && !termsFiltered.length">{{ t('没有匹配的词') }}</p>
         <TransitionGroup name="plist" tag="div">
           <div v-for="term in termsFiltered" :key="term.id" class="term-row">
             <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>

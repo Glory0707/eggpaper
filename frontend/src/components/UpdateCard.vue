@@ -76,9 +76,6 @@ const mb = n => (n / 1048576).toFixed(1)
         </div>
       </div>
       <div class="upd-note err" v-if="state === 'error'">{{ t(d.prog.error) }}</div>
-      <div class="upd-note ok" v-if="state === 'ready' && !d.installing">
-        {{ t('装好后自动重启，数据不动') }}
-      </div>
       <div class="upd-note" v-if="d.installing">{{ t('安装器已拉起，可以关了') }}</div>
 
       <div class="f-actions">
