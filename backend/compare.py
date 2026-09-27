@@ -90,7 +90,7 @@ def extract_all(papers: list, material_of, demo: bool = False, dims: list = None
         # 标题回落用空串不用文件名：析读管线就是 title or ""，两边一致前缀才命中
         msgs = _messages(p.get("title") or "", paras, claims, annos, keys)
         try:
-            return p["id"], _norm(chat_json(msgs, max_tokens=1600), keys)
+            return p["id"], _norm(chat_json(msgs, max_tokens=1600, scene="数据对比"), keys)
         except Exception:
             return p["id"], {k: {"text": "抽取失败——这篇没能读出结果，可单独打开重试",
                                  "ref": None} for k in keys}

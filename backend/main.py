@@ -59,29 +59,9 @@ def _demo_mode(cfg: dict = None) -> bool:
 _demo_txt = llm._demo_txt          # 演示文案双语：与 llm 共用同一份实现
 
 def _human_msg(exc: Exception) -> str:
-    """把模型服务最常见的几种失败翻成人话。异常处理器与新加的流式问答共用这一份，
+    """人话映射统一在 llm.human_error：「测试连接」、流式问答、这里的异常处理器共用一份，
     免得"哪里报错"决定"用户看到什么"。"""
-    msg = str(exc) or exc.__class__.__name__
-    low = msg.lower()
-    if "429" in msg or "too many requests" in low:
-        return "模型服务限流了（429），等一会儿再试"
-    if "401" in msg or "unauthorized" in low or "invalid api key" in low:
-        return "API KEY 无效或过期（401），去设置里检查"
-    if "402" in msg or "insufficient" in low or "quota" in low:
-        return "账户余额/额度不足，模型服务拒绝了请求"
-    if "timeout" in low or "timed out" in low:
-        return "模型服务超时了，重试一次通常就好"
-    if "connect" in low or "connection" in low:
-        return "连不上模型服务，检查网络与 base_url"
-    if "404" in msg and "model" in low:
-        return "模型名不对（404），去设置里核对"
-    if isinstance(exc, (json.JSONDecodeError, ValueError)):
-        return "模型这次没按约定的格式回，重试一次通常就好"
-    if isinstance(exc, HTTPException):
-        return str(exc.detail)
-    if isinstance(exc, RuntimeError):
-        return msg[:160]      # RuntimeError 都是自带人话的主动抛出，别再拼类名
-    return f"{exc.__class__.__name__}: {msg[:160]}"
+    return llm.human_error(exc)
 
 @app.exception_handler(Exception)
 async def _any_error(request, exc):
@@ -1464,18 +1444,24 @@ def _run_analysis(pid: str, paras: list):
         db.update_paper(pid, **upd)
         if _analysis_cancelled(pid, "已取消（骨架完成后，骨架保留）"):
             return
-        p2 = db.get_paper(pid)
+        futs = {}
+        if not demo:
+            # 一眼卡先发、歇 4 秒再放其余六个并发：带着全文前缀的请求要让服务端把
+            # 公共前缀落盘（实测几秒后才可命中）。不错峰时六个并发的首拍会各吃一次
+            # 全文未命中——20 页真论文实测第一拍 0% 命中、白付 11k tokens。
+            # 一眼卡/推荐问题走 *_compute（与各自端点共锁）：用户在析读完成瞬间
+            # 打开速览页也不会把同一张卡生成两遍。
+            futs[ex.submit(_summary_compute, pid)] = "summary"
+            time.sleep(4)
         # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
         todo = (["motive", "principle", "method"] if kind == "research"
                 else ["motive", "principle", "how"]) + ["next", "lens"]
         # 真实模式走 _six_compute（与端点同锁同缓存）：前端在析读一完成就会来要答案，
         # 两边必须串到同一把锁上，否则同一问生成两遍
-        futs = {ex.submit(_mock_six, k) if demo else ex.submit(_six_compute, pid, k): k
-                for k in todo}
+        futs.update({ex.submit(_mock_six, k) if demo else ex.submit(_six_compute, pid, k): k
+                     for k in todo})
         if not demo:
-            futs[ex.submit(llm.summarize, p2["title"], paras)] = "summary"
-            _, claims2, annos2 = db.get_analysis(pid)
-            futs[ex.submit(llm.suggest_questions, p2["title"], claims2, annos2)] = "suggest"
+            futs[ex.submit(_suggest_compute, pid)] = "suggest"
         futs[tfut] = "terms"
         _analysis_progress[pid] = {"done": 1, "total": 1 + len(futs)}   # 骨架算已完成的 1 项
         for fut in as_completed(futs):
@@ -1488,16 +1474,11 @@ def _run_analysis(pid: str, paras: list):
                     n = _save_terms(pid, got)
                     _applog(f"析读 {pid}: 本篇术语 {n} 条" if n else f"析读 {pid}: 术语这次是空的")
                 elif k == "summary":
-                    if isinstance(got, dict) and got.get("one_line"):
-                        db.update_paper(pid, summary=json.dumps(got, ensure_ascii=False))
-                    else:
+                    # _summary_compute 已锁内落库；这里只剩"真没生成出来"的记一句
+                    if not (isinstance(got, dict) and got.get("one_line")):
                         _applog(f"析读 {pid}: 一眼卡这次是空的（速览页会再试一次）")
                 elif k == "suggest":
-                    if _pid_gone(pid):
-                        return
-                    if isinstance(got, dict) and got.get("questions"):
-                        db.update_paper(pid, suggest=json.dumps(got, ensure_ascii=False))
-                    else:
+                    if not (isinstance(got, dict) and got.get("questions")):
                         _applog(f"析读 {pid}: 推荐问题这次是空的（提问页会再试一次）")
                 elif got.get("text") or got.get("items"):
                     if _pid_gone(pid):
@@ -1929,6 +1910,45 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
         db.update_paper(pid, **{field: json.dumps(data, ensure_ascii=False)})
     return data
 
+
+def _summary_compute(pid: str) -> dict:
+    """一眼卡的生成+落库：析读管线的预生成与 /summary 端点**共用同一把锁**——
+    析读一完成用户就打开速览页时，谁先拿到锁谁生成，后到的命中刚写回的缓存。
+    （与 _six_compute 同一个道理：不共锁，同一张卡就会生成两遍、两倍钱。）"""
+    with _key_lock("summary:" + pid):
+        p = db.get_paper(pid)
+        if not p:
+            _paper_or_404(pid)          # 排队等生成时论文被删：404，别 None 下标炸 500
+        if p.get("summary"):
+            try:
+                return json.loads(p["summary"])
+            except ValueError:
+                pass                    # 坏缓存当没有，走重生成
+        paras = db.get_paragraphs(pid)
+        hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
+        data = llm.summarize(p["title"], paras, hits)
+        _require_shape(data, ("one_line", "novelty", "findings", "keywords"), "一眼卡")
+        if not _pid_gone(pid):          # 生成隔着一次模型调用，论文可能已被删
+            db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
+        return data
+
+def _suggest_compute(pid: str) -> dict:
+    """推荐问题的生成+落库：与 /suggest 端点共锁，道理同 _summary_compute。"""
+    with _key_lock("suggest:" + pid):
+        p = db.get_paper(pid)
+        if not p:
+            _paper_or_404(pid)
+        if p.get("suggest"):
+            try:
+                return json.loads(p["suggest"])
+            except ValueError:
+                pass
+        _, claims, annos = db.get_analysis(pid)
+        data = llm.suggest_questions(p["title"], claims, annos)
+        _require_shape(data, ("questions",), "提问建议")
+        if not _pid_gone(pid):
+            db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
+        return data
 
 @app.get("/api/papers/{pid}/summary")
 def summary(pid: str):
@@ -2683,7 +2703,7 @@ def fig_caption(pid: str, idx: int = 0):
         return {"zh": hit, "original": cap}
     hits = db.glossary_hit(pid, cap)
     msgs = llm.translate_caption_messages(cap, hits)
-    zh = llm.chat(msgs, max_tokens=6000, temperature=0.2).strip()
+    zh = llm.chat(msgs, max_tokens=6000, temperature=0.2, scene="图注").strip()
     if zh:
         # 锁内读改写：灯箱两张图并发懒翻译时，后写覆盖前写会丢掉一条译文缓存
         db.fig_caps_add(pid, {key: zh, str(idx): zh})
@@ -2841,7 +2861,7 @@ def _recon_pick(question: str, papers: list):
     try:
         out = llm.chat([{"role": "system", "content": RECON_SYSTEM},
                         {"role": "user", "content": f"文献清单：\n{lines}\n\n问题：{question}"}],
-                       max_tokens=150, temperature=0, no_think=True)
+                       max_tokens=150, temperature=0, no_think=True, scene="跨文献侦察")
         nums = [int(n) for n in re.findall(r"\d+", out)]
         picked = []
         for n in nums:
@@ -2883,7 +2903,7 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
                     others.append({"title": o.get("title") or o.get("filename") or "未命名",
                                    "paras": db.get_paragraphs(x, with_lines=False)})
             gen = llm.chat_stream(llm.ask_messages(p["title"], paras, ctx, question,
-                                                   hits, summary, others))
+                                                   hits, summary, others), scene="问答")
         for piece in gen:
             buf.append(piece)
             yield _sse({"type": "delta", "text": piece})

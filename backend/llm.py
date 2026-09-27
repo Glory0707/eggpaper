@@ -31,8 +31,9 @@ def _require_live() -> dict:
     return cfg
 
 def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
-         no_think: bool = False, timeout: int = 600) -> str:
-    """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。"""
+         no_think: bool = False, timeout: int = 600, scene: str = "") -> str:
+    """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。
+    scene：这笔调用是干什么的（术语/骨架/问答…），只进 token 账，模型看不见。"""
     cfg = _require_live()
     budget = max_tokens
     out = ""
@@ -70,7 +71,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             data = {}
         choices = data.get("choices") or [{}]
         out = ((choices[0].get("message") or {}).get("content", "")) or ""
-        _log_cache(data.get("usage") or {}, "")
+        _log_cache(data.get("usage") or {}, scene)
         if out.strip():
             return out
         budget = int(budget * 1.6)
@@ -79,50 +80,79 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
     return out
 
 def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3,
-                no_think: bool = False):
+                no_think: bool = False, scene: str = ""):
     """逐字吐内容。前端要的是"字一个个出来"的手感，而不是转圈 20 秒再砸一大段。
 
     no_think：推理模型（GLM 系）输出正文前会先"思考"5–10 秒，期间一个字都不吐。
     翻译/短问答这类任务要不了那个深度，带上 thinking={"type":"disabled"} 能把
     首字时间从 ~8s 压到 ~1.5s；不认识这个字段的端点会忽略它，所以坏了也不伤。
+    stream_options：让末块带回 usage——没有它，问答/划词这些流式调用永远没有
+    token 账（钱花了不知道花在哪）；个别端点不认这个参数时降级重开一次。
     """
     cfg = _require_live()
     payload = {"model": cfg["provider"]["model"], "messages": messages,
-               "max_tokens": max_tokens, "temperature": temperature, "stream": True}
+               "max_tokens": max_tokens, "temperature": temperature, "stream": True,
+               "stream_options": {"include_usage": True}}
     if no_think:
         payload["thinking"] = {"type": "disabled"}
-    with _http.stream(
-        "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
-        json=payload, timeout=httpx.Timeout(600, connect=20),
-    ) as r:
-        r.raise_for_status()
-        for raw in r.iter_lines():
-            if not raw:
+    for with_usage in (True, False):
+        if not with_usage:
+            payload.pop("stream_options", None)
+        with _http.stream(
+            "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
+            json=payload, timeout=httpx.Timeout(600, connect=20),
+        ) as r:
+            if with_usage and r.status_code == 400 and \
+                    "stream_options" in r.read().decode("utf-8", "replace"):
                 continue
-            line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
-            if line == "[DONE]":
-                break
-            if not line:
-                continue
-            try:
-                j = json.loads(line)
-            except ValueError:
-                continue
-            choices = j.get("choices") or [{}]
-            delta = choices[0].get("delta") or {}
-            piece = delta.get("content") or ""
-            if piece:
-                yield piece
-            # 有的端点在最后一个 chunk 附带 usage：流式也把缓存命中打出来（没有就算了）
-            _log_cache(j.get("usage") or {}, "流式")
+            r.raise_for_status()
+            for raw in r.iter_lines():
+                if not raw:
+                    continue
+                line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
+                if line == "[DONE]":
+                    break
+                if not line:
+                    continue
+                try:
+                    j = json.loads(line)
+                except ValueError:
+                    continue
+                choices = j.get("choices") or [{}]
+                delta = choices[0].get("delta") or {}
+                piece = delta.get("content") or ""
+                if piece:
+                    yield piece
+                # include_usage 时末块带 usage：流式调用也有 token 账（没带的端点就没了）
+                _log_cache(j.get("usage") or {}, scene)
+            break
 
-def _log_cache(usage: dict, label: str):
+def _log_cache(usage: dict, scene: str):
+    """每次模型调用记一行 token 账（stdout → app.log，grep「tokens」全在）：
+    输入多少、缓存命中多少、输出多少。省钱的全部杠杆就是命中率——
+    DeepSeek flash 档命中 ¥0.02/M、未命中 ¥1/M（1/50）、输出 ¥2/M，
+    输出才是大头，输入能命中就别让它按未命中计费。
+    没报 usage 的端点按 prompt_tokens-命中 反推，再没有就打一行空账。"""
+    if not usage:
+        return
     hit = usage.get("prompt_cache_hit_tokens")
+    if hit is None:
+        det = usage.get("prompt_tokens_details")
+        hit = det.get("cached_tokens") if isinstance(det, dict) else None
+    hit = hit or 0
     miss = usage.get("prompt_cache_miss_tokens")
-    if hit is not None and miss is not None and (hit + miss) >= 1000:
-        pct = round(100 * hit / (hit + miss))
-        print(f"[eggpaper] {label}输入 {hit + miss} tokens，缓存命中 {pct}%")
+    if miss is None:
+        miss = max((usage.get("prompt_tokens") or 0) - hit, 0)
+    out = usage.get("completion_tokens") or 0
+    think = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") \
+        if isinstance(usage.get("completion_tokens_details"), dict) else None
+    tot = hit + miss
+    if not tot and not out:
+        return
+    pct = f"，命中 {round(100 * hit / tot)}%" if tot else ""
+    think_s = f"（思考 {think}）" if think else ""
+    print(f"[eggpaper] tokens [{scene or '-'}] 输入 {tot}（缓存 {hit}{pct}）输出 {out}{think_s}")
 
 def _json_patch(raw: str) -> str:
     """一次扫表的廉价修复：字符串内的裸换行转义、掉右括号补齐、尾逗号去掉。"""
@@ -178,18 +208,18 @@ _JSON_RETRY_NOTE = ("你上一条输出不是合法 JSON。重新输出，只给
                     "不要在字符串里夹裸换行；键和值都用双引号。")
 
 def chat_json(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
-              no_think: bool = False, timeout: int = 600, tail: int = 2000) -> dict:
+              no_think: bool = False, timeout: int = 600, tail: int = 2000, scene: str = "") -> dict:
     """要 JSON 的调用统一走这里：坏 JSON 就地带错误说明重发一次，别让整条管线一击即溃。
     重试锚取上次输出尾部 tail 字（截断点在那头，比开头更能帮模型对上位置）。"""
     raw = chat(messages, max_tokens=max_tokens, temperature=temperature,
-               no_think=no_think, timeout=timeout)
+               no_think=no_think, timeout=timeout, scene=scene)
     try:
         return parse_json(raw)
     except Exception:
         raw2 = chat(messages + [{"role": "assistant", "content": raw[-tail:]},
                                 {"role": "user", "content": _JSON_RETRY_NOTE}],
                     max_tokens=max_tokens, temperature=temperature,
-                    no_think=no_think, timeout=timeout)
+                    no_think=no_think, timeout=timeout, scene=scene)
         return parse_json(raw2)
 
 def _is_en() -> bool:
@@ -274,8 +304,10 @@ def extract_terms(title: str, paras: list) -> dict:
     ]
     # 坏 JSON 交给 chat_json 带纠错说明重发——原来的自建循环是原样重发 48k 全文，
     # 三次全挂就白烧三遍整本上下文；chat_json 的重试成功率更高且次数有顶。
+    # no_think：术语是抽取活不是推理活，思考只会烧输出（实测真论文一次 3.7k 输出
+    # 大半是思考）；看走眼的词由 _only_in_text 兜底（正文里找不到的不要）。
     try:
-        data = chat_json(msgs, max_tokens=8000, temperature=0.2)
+        data = chat_json(msgs, max_tokens=8000, temperature=0.2, scene="术语", no_think=True)
     except Exception:
         return {"terms": [], "abbrs": {}}
     if not isinstance(data, dict):
@@ -347,14 +379,42 @@ def _clean_abbrs(abbrs) -> dict:
         out[k] = v
     return out
 
+def human_error(exc: Exception) -> str:
+    """把模型服务最常见的几种失败翻成人话。异常处理器、流式问答、「测试连接」共用
+    这一份，免得"哪里报错"决定"用户看到什么"（main._human_msg 是它的别名）。
+    不认识的异常保留类名+短讯——那通常是没人见过的真 bug，不该伪装成人话。"""
+    msg = str(exc) or exc.__class__.__name__
+    low = msg.lower()
+    if "429" in msg or "too many requests" in low:
+        return "模型服务限流了（429），等一会儿再试"
+    if "401" in msg or "unauthorized" in low or "invalid api key" in low:
+        return "API KEY 无效或过期（401），去设置里检查"
+    if "402" in msg or "insufficient" in low or "quota" in low:
+        return "账户余额/额度不足，模型服务拒绝了请求"
+    if "timeout" in low or "timed out" in low:
+        return "模型服务超时了，重试一次通常就好"
+    if "connect" in low or "connection" in low:
+        return "连不上模型服务，检查网络与 base_url"
+    if "404" in msg and "model" in low:
+        return "模型名不对（404），去设置里核对"
+    if isinstance(exc, (json.JSONDecodeError, ValueError)):
+        return "模型这次没按约定的格式回，重试一次通常就好"
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, str) and detail:
+        return detail             # FastAPI 的 HTTPException：detail 本来就是人话
+    if isinstance(exc, RuntimeError):
+        return msg[:160]          # RuntimeError 都是自带人话的主动抛出，别再拼类名
+    return f"{exc.__class__.__name__}: {msg[:160]}"
+
 def test_connection() -> dict:
     try:
-        out = chat([{"role": "user", "content": "只回复两个字：可用"}], max_tokens=2048)
+        out = chat([{"role": "user", "content": "只回复两个字：可用"}], max_tokens=2048,
+                   scene="连接测试")
         return {"ok": bool(out.strip()), "reply": out.strip()[:20]}
     except RuntimeError:
         return {"ok": False, "reply": "演示模式（未配置 API key）"}
     except Exception as e:
-        return {"ok": False, "reply": f"{type(e).__name__}: {str(e)[:150]}"}
+        return {"ok": False, "reply": human_error(e)}
 
 # ---------------- 骨架分析 ----------------
 
@@ -452,7 +512,7 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
         {"role": "user", "content": user},
     ]
     # 坏 JSON 的重试统一走 chat_json（锚尾 400 字足够对上截断点）
-    data = chat_json(msgs, max_tokens=16000, temperature=0.2, tail=400)
+    data = chat_json(msgs, max_tokens=16000, temperature=0.2, tail=400, scene="骨架")
     valid = {p["idx"] for p in paras}
 
     claims_raw = data.get("claims") or []
@@ -535,7 +595,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
             "（面板里是竖排按钮，长句读着累）。"
             "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
-    ], max_tokens=4000, temperature=0.5, no_think=True)
+    ], max_tokens=4000, temperature=0.5, no_think=True, scene="推荐问题")
     qs = [_clip_q(str(q)) for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
     return {"questions": qs[:4]}
 
@@ -568,7 +628,7 @@ def summarize(title: str, paras: list, hits=None) -> dict:
             '"keywords":["<3~5个关键词>"]}'
             "不要 markdown 代码块，不要解释。" + _gloss_block(hits) + _lang_tail())},
         {"role": "user", "content": _kick("生成这张一眼卡")},
-    ], max_tokens=4000, temperature=0.3)
+    ], max_tokens=4000, temperature=0.3, scene="一眼卡")
 
 # ---------------- 问答 ----------------
 
@@ -636,7 +696,8 @@ def summarize_dialog(prev: str, messages: list) -> str:
     user += "[需要并入的新对话]\n" + "\n".join(lines)
     try:
         out = chat([{"role": "system", "content": DIALOG_SUMMARY_SYSTEM},
-                    {"role": "user", "content": user}], max_tokens=3000, temperature=0.2)
+                    {"role": "user", "content": user}], max_tokens=3000, temperature=0.2,
+                   scene="对话摘要")
         return out.strip()[:2000] or prev
     except Exception:
         return prev
@@ -676,7 +737,7 @@ def translate_stream(text: str, context: str = "", hits: list = None):
     """逐字翻译。划词等场景等不了 10 秒的整段——首字 1 秒内就该出现。
     翻译不需要模型先思考：关掉能把首字从 ~8s 压到 ~1.5s。"""
     return chat_stream(translate_messages(text, context, hits),
-                       max_tokens=4000, temperature=0.1, no_think=True)
+                       max_tokens=4000, temperature=0.1, no_think=True, scene="划词")
 
 # ---------------- 眉批（句级人性化批注） ----------------
 
@@ -794,7 +855,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
         ]
         # 要 JSON 的统一走 chat_json：坏 JSON 带纠错说明重发，成功率高于原样重滚；
         # 块级失败由 wave 的二遍补跑兜底，这里抛出去是对的
-        data = chat_json(msgs, max_tokens=16000, temperature=0.3)
+        data = chat_json(msgs, max_tokens=16000, temperature=0.3, scene="眉批")
         return data.get("notes", []) if isinstance(data, dict) else []
 
     total = len(chunks)
@@ -950,7 +1011,7 @@ def method_card(title: str, paras: list) -> dict:
             "（Sc₂O₃、10⁻⁷、Oₛ），不要 LaTeX、不要 $…$、不要用下划线代替下标。"
             "不要 markdown 代码块，不要解释。" + _lang_tail())},
         {"role": "user", "content": _kick("整理这张方法卡")},
-    ], max_tokens=6000, temperature=0.3)
+    ], max_tokens=6000, temperature=0.3, scene="方法卡")
 
 def survey_card(title: str, paras: list) -> dict:
     """谱系卡：综述版的方法卡。字段与 method_card 同一套 key（前端同一块渲染），
@@ -971,7 +1032,7 @@ def survey_card(title: str, paras: list) -> dict:
             "没提到的东西不要编。化学式与上下标用 Unicode 字符（Sc₂O₃、10⁻⁷），不要 LaTeX。"
             "不要 markdown 代码块，不要解释。" + _lang_tail())},
         {"role": "user", "content": _kick("整理这张谱系卡")},
-    ], max_tokens=6000, temperature=0.3)
+    ], max_tokens=6000, temperature=0.3, scene="谱系卡")
 
 # ---------------- 引用信息 ----------------
 
@@ -1000,7 +1061,7 @@ def extract_citation(title: str, src: str) -> dict:
     return chat_json([
         {"role": "system", "content": CITATION_SYSTEM},
         {"role": "user", "content": f"[论文标题（版面分析抽的，可能不全）]\n{title or '（无）'}\n\n{src}"},
-    ], max_tokens=2000, temperature=0, no_think=True, timeout=90)
+    ], max_tokens=2000, temperature=0, no_think=True, timeout=90, scene="引用抄写")
 
 # ---------------- 导师三问 ----------------
 
@@ -1027,7 +1088,7 @@ def advisor_questions(title: str, claims: list, warnings: list, kind: str = "res
     data = chat_json([
         {"role": "system", "content": sys},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n已承认的薄弱点（已知前提）：\n{warn_txt}"},
-    ], max_tokens=6000, temperature=0.5, no_think=True)
+    ], max_tokens=6000, temperature=0.5, no_think=True, scene="导师三问")
     qs = []
     for q in data.get("questions", []):
         if isinstance(q, dict) and q.get("q"):
@@ -1062,8 +1123,10 @@ def vision_ask(image_dataurl: str, question: str) -> str:
                 timeout=180,
             )
             r.raise_for_status()
-            choices = r.json().get("choices") or [{}]
+            data = r.json()
+            choices = data.get("choices") or [{}]
             out = ((choices[0].get("message") or {}).get("content", "")) or ""
+            _log_cache(data.get("usage") or {}, "视觉")
             if out.strip():
                 return out
             last = RuntimeError("模型这次没返回内容，重试一次通常就好")
@@ -1106,7 +1169,7 @@ def _short_answer(title: str, paras: list, ask: str, payload: str) -> dict:
     data = chat_json([
         {"role": "system", "content": _doc_system(title, paras, ask + _CITE_TAIL + _lang_tail())},
         {"role": "user", "content": payload + "\n\n" + _kick("回答这一问题")},
-    ], max_tokens=3000, temperature=0.3, no_think=True)
+    ], max_tokens=3000, temperature=0.3, no_think=True, scene="七问")
     return {"text": str(data.get("text") or "").strip()[:500]}
 
 def answer_motive(title: str, paras: list, gaps: list, backgrounds: list, claims: list) -> dict:
@@ -1190,7 +1253,7 @@ def answer_next(title: str, paras: list, limits: list, exts: list, claims: list,
             '"text":"<做什么、为什么，句尾带依据段落号 ¶n，有依据就标>",'
             '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。' + _lang_tail())},
         {"role": "user", "content": payload + "\n\n" + _kick("给出接下来的方向")},
-    ], max_tokens=4000, temperature=0.45, no_think=True)
+    ], max_tokens=4000, temperature=0.45, no_think=True, scene="七问")
     out = _items(data.get("items"))
     out["v"] = 3
     return out
@@ -1217,7 +1280,7 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
         {"role": "user", "content":
             f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
             "[主张]\n" + _claims_lines(claims) + "\n\n" + _kick("给出三个学科视角")},
-    ], max_tokens=4000, temperature=0.6, no_think=True)
+    ], max_tokens=4000, temperature=0.6, no_think=True, scene="七问")
     items = _items(data.get("items"))
     items["v"] = 3
     return items
