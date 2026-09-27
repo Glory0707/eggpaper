@@ -913,18 +913,26 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             failed = []
             src = pymupdf.open(pdf_path)
             mono = pymupdf.open()
-            try:
+            prods: dict = {}     # 批产物路径 → 已打开的文档：8 页一批时同一文件要取 8 页，
+            try:                 # 逐页重开一遍是纯浪费（doc.open 顺带解析 xref，几十毫秒/次）
+                def _prod_of(p):
+                    d = prods.get(p)
+                    if d is None:
+                        d = pymupdf.open(p)
+                        prods[p] = d
+                    return d
                 for pno in range(n):
                     got = results.get(pno)
                     ok = False
                     if got:
                         try:
-                            with pymupdf.open(got["mono"]) as m:
-                                at = got.get("at")
-                                at = min(pno, len(m) - 1) if at is None else max(0, min(int(at), len(m) - 1))
-                                mono.insert_pdf(m, from_page=at, to_page=at)
+                            m = _prod_of(got["mono"])
+                            at = got.get("at")
+                            at = min(pno, len(m) - 1) if at is None else max(0, min(int(at), len(m) - 1))
+                            mono.insert_pdf(m, from_page=at, to_page=at)
                             ok = True
                         except Exception:
+                            prods.pop(got["mono"], None)   # 坏产物别留在缓存里反复炸
                             pass
                     if not ok:
                         failed.append(pno + 1)
@@ -951,6 +959,11 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 _remove_quiet(os.path.join(out_dir, "dual.pdf"))
             finally:
                 src.close(); mono.close()
+                for d in prods.values():
+                    try:
+                        d.close()
+                    except Exception:
+                        pass
 
             done_note = (note or "") + (f"（第 {', '.join(map(str, failed))} 页没译成，保留原文）"
                                         if failed else "")

@@ -401,42 +401,43 @@ function reflow() {
   }, 200)
 }
 
-async function renderAll({ early = null } = {}) {
+async function renderAll({ early = null, near = false } = {}) {
   const seq = ++passToken
-  rendering.value = true
+  rendering.value = !near        // 近距补画是滚动跟手的一部分，别让顶部细线闪个不停
   await nextTick()
   // 渲染顺序 = 离视口中心由近到远：缩放/换排版时眼前几页先回来，首开时锚点页先回来，
   // 远页后台补（顶上那条细进度条跑到头为止）。整本从第 1 页串行画起的话，
   // 翻到 200 页的人要干等 199 页画完才见着字。
   const items = flatItems.value.slice()
-  const sc = scroller()
-  let centerGi = 0
-  if (sc && items.length) {
-    const mid = sc.scrollTop + sc.clientHeight / 2
-    for (const it of items) {
-      const el = pageEls.value[it.gi]
-      if (el && el.offsetTop <= mid) centerGi = it.gi
-      else break
-    }
-  }
+  const centerGi = _centerGi()
   items.sort((a, b) => Math.abs(a.gi - centerGi) - Math.abs(b.gi - centerGi))
+  // near=true：滚动停稳后的补画——只画视口附近缺着的页，不重排整本
+  const todo = near
+    ? items.filter(it => Math.abs(it.gi - centerGi) <= KEEP_NEAR + 2 && !doneKeys.has(doneKeyOf(it)))
+    : items
+  const skipKeys = near ? null : new Set(todo.map(doneKeyOf))
   let kicked = false
-  for (let i = 0; i < items.length; i++) {
+  for (let i = 0; i < todo.length; i++) {
     if (seq !== passToken) return
-    await renderItem(items[i])
-    if (!kicked && early && (i >= 2 || i === items.length - 1)) {
+    await renderItem(todo[i], seq)
+    if (skipKeys) skipKeys.delete(doneKeyOf(todo[i]))   // 画过的页可以被逐出：本轮不会再回头看它
+    if (!kicked && early && (i >= 2 || i === todo.length - 1)) {
       kicked = true
       early()                      // 视口那几页落地就掀壳（首开）/落位（换排版），不等整本
     }
+    if (!near && (i & 7) === 7) evictFar(skipKeys)   // 大部头边画边收，位图不攒到 GB 级
   }
   if (seq === passToken) {
     rendering.value = false
-    await measureNotes()
-    if (searchOpen.value && searchQ.value.trim().length >= 2) runSearch()
+    if (!near) {
+      evictFar(skipKeys)
+      await measureNotes()
+      if (searchOpen.value && searchQ.value.trim().length >= 2) runSearch()
+    }
   }
 }
 
-function doRenderItem(it) {
+function doRenderItem(it, seq) {
   const key = it.key + ':' + scale.value.toFixed(3)
   if (doneKeys.has(key)) return
   if (!flatItems.value.includes(it)) return          // 这一项已被新布局替换
@@ -444,9 +445,11 @@ function doRenderItem(it) {
   if (!canvas || !el) return
   const doc = getDoc(it.doc)
   // 渲染看门狗 45s：单页假死时让出串行队列（不标记 doneKeys，下一轮渲染会重试该页），
-  // 别让一页卡死把整条渲染链和 ready 落位永远堵死
-  return Promise.race([
-    doc.then(async d => {
+  // 别让一页卡死把整条渲染链和 ready 落位永远堵死。定时器在 race 出结果后要清掉——
+  // 不然 600 页的书每轮渲染留下 600 个 45s 的空转定时器。
+  let wd = 0
+  const work = doc.then(async d => {
+      if (seq !== passToken) return        // pass 已过期：这一页的缩放/布局已经换了，别再画
       const page = await d.getPage(it.page + 1)
       const viewport = page.getViewport({ scale: scale.value })
       const dpr = Math.min(2.5, window.devicePixelRatio || 1)
@@ -458,8 +461,14 @@ function doRenderItem(it) {
       const ctx = canvas.getContext('2d', { alpha: false })
       ctx.fillStyle = '#fff'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
+      const task = page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null })
+      if (seq !== passToken) {             // 起跑前再验一次 pass：连续缩放时旧任务的 CPU 不白烧
+        task.cancel()
+        task.promise.catch(() => {})       // 取消后的拒绝已经没人等了，必须有人接住
+        return
+      }
       try {
-        await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise
+        await task.promise
         if (tlEl && it.text) {
           tlEl.innerHTML = ''
           clearTextIndex(tlEl)          // 节点全换了，旧的引文索引作废
@@ -472,23 +481,76 @@ function doRenderItem(it) {
         }
         doneKeys.add(key)
       } catch (err) {
+        if (String(err?.name || err?.message || '').toLowerCase().includes('cancel')) return
         console.error('[eggpaper] render fail', it.key, err)
       }
-    }),
-    new Promise(resolve => setTimeout(resolve, 45000)),
-  ])
+  }).catch(err => console.error('[eggpaper] render fail', it.key, err))
+  return Promise.race([
+    work,
+    new Promise(resolve => { wd = setTimeout(resolve, 45000) }),
+  ]).finally(() => clearTimeout(wd))
 }
 
-function renderItem(it) {
+function renderItem(it, seq) {
   const prev = renderQueues.get(it.gi) || Promise.resolve()
-  const task = prev.then(() => doRenderItem(it))
+  const task = prev.then(() => doRenderItem(it, seq))
   renderQueues.set(it.gi, task.catch(() => {}))
   return task
 }
 
-function scheduleRender() {
+function scheduleRender(near = false) {
   clearTimeout(scheduleRender._t)
-  scheduleRender._t = setTimeout(renderAll, 160)
+  scheduleRender._t = setTimeout(() => renderAll(near ? { near: true } : {}), 160)
+}
+
+/* ---------------- 位图记账：常驻上限 + 视口补画 ----------------
+   600 页的大部头全画完时，每页一张满分辨率位图常驻，内存以 GB 计（缩放 300% 时
+   单页就能上百 MB）。文字层是搜索/划词的地基，永远保留；只收位图——被收掉的页
+   滚回来时 ensureNear 补画。小文档（≤36 页）完全不进这条路，行为与从前一致。 */
+const KEEP_NEAR = 6
+const KEEP_CANVASES = 36
+const doneKeyOf = it => it.key + ':' + scale.value.toFixed(3)
+
+function _centerGi() {
+  const sc = scroller()
+  const items = flatItems.value
+  if (!sc || !items.length) return 0
+  const mid = sc.scrollTop + sc.clientHeight / 2
+  let c = 0
+  for (const it of items) {
+    const el = pageEls.value[it.gi]
+    if (el && el.offsetTop <= mid) c = it.gi
+    else break
+  }
+  return c
+}
+
+function evictFar(skipKeys = null) {
+  const items = flatItems.value
+  if (items.length <= KEEP_CANVASES) return
+  const c = _centerGi()
+  const done = items.filter(it => doneKeys.has(doneKeyOf(it)))
+  if (done.length <= KEEP_CANVASES) return
+  done.sort((a, b) => Math.abs(b.gi - c) - Math.abs(a.gi - c))     // 离视口最远的先收
+  for (let i = 0; i < done.length - KEEP_CANVASES; i++) {
+    const it = done[i]
+    const k = doneKeyOf(it)
+    if (skipKeys && skipKeys.has(k)) continue     // 这一轮还没画到它：收了它马上又会重画
+    if (Math.abs(it.gi - c) <= KEEP_NEAR) continue
+    const canvas = canvases.value[it.gi]
+    if (canvas && canvas.width > 1) { canvas.width = 1; canvas.height = 1 }
+    doneKeys.delete(k)
+  }
+}
+
+function ensureNear() {
+  if (rendering.value) return    // 整本 pass 在跑：它由近到远自己会画到这一页，别打断它
+  if (!sheets.value.length || !scroller()) return
+  const c = _centerGi()
+  for (const it of flatItems.value) {
+    if (Math.abs(it.gi - c) > KEEP_NEAR + 2) continue
+    if (!doneKeys.has(doneKeyOf(it))) { scheduleRender(true); return }
+  }
 }
 
 /* ---------------- 标注几何 ---------------- */
@@ -781,9 +843,13 @@ async function doTranslateSel() {
   selStream?.abort()
   sel.busy = true; sel.err = ''; sel.zh = ''; sel.hits = []
   try {
+    // 字先攒进缓冲、按帧合并上屏（照抄 AskPanel 的做法）：每个 SSE 块都直写状态的话，
+    // watch 会跟着每个块强制 refitPop 读一次布局，长译文流式时气泡抖、全页掉帧
+    let buf = '', raf = 0
+    const flush = () => { raf = 0; if (buf) { sel.zh += buf; buf = '' } }
     await translateStream(props.pid, 'selection', { text: sel.text, context: sel.context }, ev => {
-      if (ev.type === 'delta') sel.zh += ev.text          // 字一到就显示，不等整段
-      else if (ev.type === 'done') sel.hits = ev.hits || []
+      if (ev.type === 'delta') { buf += ev.text; if (!raf) raf = requestAnimationFrame(flush) }
+      else if (ev.type === 'done') { if (raf) cancelAnimationFrame(raf); flush(); sel.hits = ev.hits || [] }
       else if (ev.type === 'error') { sel.err = ev.message; if (!sel.zh) sel.zh = '⚠ ' + ev.message }
     }).done
   } catch (e) {
@@ -908,11 +974,14 @@ async function runSearch() {
   searchBusy.value = true
   const prev = lastSearchQ === q && searchAt.value >= 0 ? searchHits.value[searchAt.value] : null
   const hits = []
-  for (const it of flatItems.value) {
+  const items = flatItems.value
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx]
     if (it.origPage < 0) continue
     const el = pageEls.value[it.gi]
     if (!el?.querySelector('.textLayer')) continue
     for (const h of findAllRects(el, q)) hits.push({ ...h, page: it.origPage, gi: it.gi, k: scale.value })
+    if ((idx & 15) === 15) await new Promise(r => setTimeout(r, 0))   // 大部头分片扫描：每 16 页让出主线程，别把输入卡死
   }
   hits.sort((a, b) => (a.page - b.page) || (a.y - b.y))
   searchHits.value = hits
@@ -1177,6 +1246,7 @@ function onScroll() {
   }
   clearTimeout(spyT)
   spyT = setTimeout(() => {
+    ensureNear()             // 位图被收掉的页滚回来了：视口附近的先补上（小文档这步是空转）
     const focusY = sc.scrollTop + sc.clientHeight * 0.4
     let best = null, bestD = 1e9
     for (const p of paras.value) {

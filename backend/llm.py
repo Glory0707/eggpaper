@@ -14,14 +14,17 @@ import config
 _http = httpx.Client(timeout=httpx.Timeout(600, connect=20),
                      limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
 
-def _cut_tail(text: str, limit: int) -> str:
-    """长文防爆上下文的截断：字符刀会把最后一整段腰斩，模型拿着半截 ¶ 还一本正经引用。
-    超限时回退到最后一个段落边界；实在找不到边界（一大坨无换行）才硬切。"""
+_SENT_ENDS = (". ", "。", ".\n", "! ", "? ", "！","？")
+
+def _clip_para(text: str, limit: int = 1200) -> str:
+    """单段截断断在句子上。方法/实验段的参数、条件、样本数常住在后半段，
+    一刀 1200 恰好把它们切掉——问答引着 ¶n 却只能看见半截，答案自然支离破碎。
+    超限时回退到最近的句号（中英都认）；找不到句界（公式/表格压平的怪段）才硬切。"""
     if len(text) <= limit:
         return text
     cut = text[:limit]
-    i = cut.rfind("\n\n")
-    return cut[:i] if i > limit // 2 else cut
+    m = max(cut.rfind(s) for s in _SENT_ENDS)
+    return cut[:m + 1] if m > limit // 2 else cut
 
 def _require_live() -> dict:
     """非演示模式的配置；演示模式/没配 key 让上层走演示分支（约定信号 RuntimeError("MOCK")）。"""
@@ -246,14 +249,37 @@ def _lang_tail() -> str:
 SHARED_SYSTEM = ("你是学术深度阅读工具 eggpaper 的分析引擎，读者是正在精读这篇论文的研究者。"
                  "下面的论文全文以 ¶编号 标出每一段，回答时引用依据就写对应的 ¶n。")
 
+DOC_CAP = 90000          # 全文块的字数上限（约 20-25 页双栏正文）
+
 def paper_doc(title: str, paras: list) -> str:
     """整文任务的共享全文块：同一篇论文在所有任务里逐字节相同。
 
     这是跨任务缓存命中的前提——历史上 terms/skeleton/summarize/ask 各自用不同的
     每段截断（600/1200/800/1000 字）和总量上限，前缀从第 1 个 token 就分叉，命中为零。
-    现在统一一份：每段截 1200 字、全文 90000 字封顶（与析读一致），滤参考文献段。"""
-    body = "\n\n".join(f"¶{p['idx']} {p['text'][:1200]}" for p in paras if not p.get("in_refs"))
-    return f"论文标题：{title or ''}\n\n{_cut_tail(body, 90000)}"
+    现在统一一份：每段截到句界、全文封顶 DOC_CAP，滤参考文献段。
+
+    超限时**保头也保尾**（6:4）：Discussion/Conclusion 住在论文尾部，"局限/下一步"
+    两类问题全指着它们；只保头的老做法让 30 页以上的论文对这些任务集体失明，模型
+    只会如实答"原文未提及"，用户无从察觉。中间以一行省略标记明示是节选。"""
+    lines = [f"¶{p['idx']} {_clip_para(p['text'])}" for p in paras if not p.get("in_refs")]
+    body = "\n\n".join(lines)
+    if len(body) <= DOC_CAP:
+        return f"论文标题：{title or ''}\n\n{body}"
+    used, i = 0, 0
+    head = []
+    while i < len(lines) and used + len(lines[i]) + 2 <= int(DOC_CAP * 0.56):
+        head.append(lines[i])
+        used += len(lines[i]) + 2
+        i += 1
+    tail, used2, k = [], 0, len(lines) - 1
+    while k >= i and used2 + len(lines[k]) + 2 <= int(DOC_CAP * 0.38):
+        tail.append(lines[k])
+        used2 += len(lines[k]) + 2
+        k -= 1
+    tail.reverse()
+    skipped = k - i + 1
+    middle = f"\n\n〔……中间略去 {skipped} 段，未收入本文材料……〕\n\n" if skipped > 0 else "\n\n"
+    return f"论文标题：{title or ''}\n\n" + "\n\n".join(head) + middle + "\n\n".join(tail)
 
 def _kick(what: str) -> str:
     """共享前缀结构里最后一条 user 消息：任务指令已在 system（全文之后），这里只管开跑。"""
@@ -494,22 +520,16 @@ def _skeleton_system(kind: str) -> str:
               .replace("该实验/数据直接回答的问题，≤22字", "the question this experiment/data directly answers, ≤22 words"))
     return s + _lang_tail()
 
-def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: list = None) -> dict:
+def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。
-    fig_caps：图表注列表（[编号, 图注全文] 对，编号与图表列表的下标一致）——
-    给了就顺手把图注翻成中文，析读一次全带出来，灯箱打开即得、不再现翻。"""
+    图注翻译不在这里做（translate_captions 单独一次调用）：图多的论文把它俩挤在
+    同一次输出里，16k 输出上限被图注顶爆 → 坏 JSON 重试再烧一整遍 → 最后整个
+    析读被判失败，图注一张都拿不到（实测）。"""
     system = _doc_system(title, paras, _skeleton_system(kind))
-    user = _kick("分析这篇论文的论证结构")
-    if fig_caps:
-        listing = "\n".join(f"[{i}] {cap}" for i, cap in fig_caps)
-        user += (f"\n\n【图表注】这篇论文有 {len(fig_caps)} 张带图注的图表（方括号是编号）：\n" + listing +
-                 "\n\n输出 JSON 里增加一个键 \"fig_caps\"：把每条图注**完整**翻译成中文——"
-                 "子图 (a)(b) 的说明逐条译出，不省略、不截断、不保留英文原句"
-                 "（方法名/专名/统计量缩写可照抄）。键就是方括号里的编号。")
     msgs = [
         {"role": "system", "content": system},
-        {"role": "user", "content": user},
+        {"role": "user", "content": _kick("分析这篇论文的论证结构")},
     ]
     # 坏 JSON 的重试统一走 chat_json（锚尾 400 字足够对上截断点）
     data = chat_json(msgs, max_tokens=16000, temperature=0.2, tail=400, scene="骨架")
@@ -562,18 +582,45 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research", fig_caps: 
             num = _key_num(k)
             if num in valid and isinstance(v, str) and v.strip():
                 eqs[str(num)] = v.strip()[:36]
-    caps_raw = data.get("fig_caps") or {}
+    caps_raw = data.get("fig_caps") or {}   # 兼容：旧缓存/旧模型顺手带出来的仍收下
     fig_caps_zh = {}
-    if isinstance(caps_raw, dict) and fig_caps:
-        want = {str(i) for i, _ in fig_caps}
+    if isinstance(caps_raw, dict):
         for k, v in caps_raw.items():
-            if str(k) in want and isinstance(v, str) and v.strip():
-                fig_caps_zh[str(k)] = v.strip()
+            if isinstance(v, str) and v.strip():
+                fig_caps_zh[str(k)] = v.strip()[:4000]
 
     if not roles:
         raise ValueError("模型没给出各段的角色标注，重新析读一次")
     return {"claims": claims, "roles": roles, "purposes": purposes, "abbrs": abbrs,
             "evidence_qs": eqs, "fig_caps": fig_caps_zh}
+
+def translate_captions(caps: list) -> dict:
+    """图表注整批翻译（析读时与骨架并行的独立调用）。
+
+    键与图表列表的下标一致。单独成一次调用是刻意的：它不需要共享全文前缀
+    （图注自带上下文），拆开既便宜又不会把骨架输出顶截断。"""
+    caps = [(i, c) for i, c in caps if (c or "").strip()][:30]
+    if not caps:
+        return {}
+    listing = "\n".join(f"[{i}] {c}" for i, c in caps)
+    try:
+        data = chat_json([
+            {"role": "system", "content":
+                "你是论文图表注的译者。把给出的每条图注**完整**翻译成中文——"
+                "子图 (a)(b) 的说明逐条译出，不省略、不截断、不保留英文原句"
+                "（方法名/专名/统计量缩写可照抄）。"
+                "只输出 JSON：{\"<编号>\":\"<该条图注的完整译文>\"}，键就是方括号里的编号，"
+                "不要 markdown 代码块，不要解释。" + _lang_tail()},
+            {"role": "user", "content": listing},
+        ], max_tokens=16000, temperature=0.2, no_think=True, scene="图注")
+    except Exception:
+        return {}
+    want = {str(i) for i, _ in caps}
+    out = {}
+    for k, v in (data if isinstance(data, dict) else {}).items():
+        if str(k) in want and isinstance(v, str) and v.strip():
+            out[str(k)] = v.strip()
+    return out
 
 # ---------------- 论文专属推荐问题 ----------------
 
@@ -652,10 +699,19 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
         blocks = []
         for o in others:
             t = (o.get("title") or o.get("filename") or "未命名").strip()
-            lines = "\n".join(f"¶{p['idx']} {(p['text'] or '')[:1000]}"
-                              for p in o.get("paras") or [] if not p.get("in_refs"))
-            if lines:
-                blocks.append(("《" + t + "》\n" + lines)[:per])
+            # 按段落装到预算为止：字符刀会把最后一段拦腰截断（"《某论文》¶12 之后全是半句"），
+            # 模型引半截段比少引一段更糟
+            out_lines, used = [], 0
+            for p in o.get("paras") or []:
+                if p.get("in_refs"):
+                    continue
+                line = f"¶{p['idx']} {_clip_para(p['text'] or '', 1000)}"
+                if used + len(line) > per - len(t) - 8:
+                    break
+                out_lines.append(line)
+                used += len(line)
+            if out_lines:
+                blocks.append("《" + t + "》\n" + "\n".join(out_lines))
         others_txt = ("\n\n【用户同时引用的其他论文全文——每篇的 ¶ 编号是它自己的段落。"
                       "提到这些论文时先写《标题》再写 ¶ 编号（如《某论文》¶3）】\n" + "\n\n".join(blocks)) if blocks else ""
     else:

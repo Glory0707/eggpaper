@@ -20,6 +20,20 @@ async function req(method, url, body) {
   return r.json()
 }
 
+/* 短时去重：同一个 GET 在 1.2s 内的并发/连发请求共用第一发的结果。
+   打开一篇论文时 store.activatePaper 与 PdfViewer.loadPaperData 各拉一遍
+   paper+paragraphs（后者可达数 MB），纯重复传输；1.2s 过后自动失效，
+   不影响轮询类调用的时效。 */
+const _recent = new Map()
+function onceGet(key, fn) {
+  const hit = _recent.get(key)
+  if (hit && Date.now() - hit.at < 1200) return hit.p
+  const p = fn()
+  _recent.set(key, { p, at: Date.now() })
+  p.catch(() => {}).finally(() => { const h = _recent.get(key); if (h?.p === p) _recent.delete(key) })
+  return p
+}
+
 export const api = {
   papers: () => req('GET', '/api/papers'),
   search: (q) => req('GET', '/api/search?q=' + encodeURIComponent(q)),
@@ -29,13 +43,13 @@ export const api = {
   zoteroItems: () => req('GET', '/api/zotero/items'),
   paperMeta: (pid, body) => req('POST', `/api/papers/${pid}/meta`, body),
   compare: (ids, dims) => req('POST', '/api/compare', { ids, dims }),
-  paper: (pid) => req('GET', `/api/papers/${pid}`),
+  paper: (pid) => onceGet('p:' + pid, () => req('GET', `/api/papers/${pid}`)),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
   supersede: (newPid, oldPid) => req('POST', `/api/papers/${newPid}/supersede`, { old_pid: oldPid }),
   citeTable: (ids) => req('POST', '/api/cite-table', { ids }),
   touchPaper: (pid) => req('POST', `/api/papers/${pid}/touch`),
   openRequest: () => req('GET', '/api/open-request'),
-  paragraphs: (pid) => req('GET', `/api/papers/${pid}/paragraphs`),
+  paragraphs: (pid) => onceGet('g:' + pid, () => req('GET', `/api/papers/${pid}/paragraphs`)),
   analyze: (pid) => req('POST', `/api/papers/${pid}/analyze`),
   analysis: (pid) => req('GET', `/api/papers/${pid}/analysis`),
   analysisCancel: (pid) => req('POST', `/api/papers/${pid}/analysis/cancel`),

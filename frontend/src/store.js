@@ -148,6 +148,7 @@ export async function refreshPapers() {
 let _libV = ''
 export function startLibraryWatch() {
   setInterval(async () => {
+    if (document.hidden) return       // 挂后台不刷；回来那一拍 v 对不上会自动补一次刷新
     try {
       const { v } = await api.libraryVersion()
       if (v && _libV && v !== _libV) await refreshPapers()

@@ -10,7 +10,8 @@ CAPTION = re.compile(r"^(fig|figure|table|scheme|图|表)\.?\s*[0-9IVXS]+\.?", r
 
 HEAD_REFS = ("references", "bibliography", "参考文献")
 HEAD_STOP = ("supplementalmaterial", "supplementarymaterial", "supportinginformation", "appendixsupp")
-HEAD_NONBODY = ("acknowledg", "funding", "authorcontrib", "conflictofinterest", "dataavailab", "citedata",
+HEAD_NONBODY = ("acknowledg", "funding", "authorcontributions", "authorcontrib",
+                "conflictofinterest", "dataavailabilitystatement", "dataavailab", "citedata",
                 "致谢", "作者贡献", "利益冲突")
 AFFIL = re.compile(r"(University|Laboratory|Institute|Department|College|Academy|School of"
                    r"|大学|学院|研究院|研究所|实验室|研究中心)")
@@ -37,21 +38,30 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z\u4e00-\u9fff]", "", text.lower())
 
 def _heading_kind(text: str):
-    """行文本 → 区域边界类型；None=普通行。"""
+    """行文本 → 区域边界类型；None=普通行。
+
+    只认**光杆标题行**。正文里 "…references therein."、"Acknowledging these
+    limitations, we…"、"Funding was provided by…" 同样以触发词开头，一旦认领，
+    in_refs 从那一行起永不复位——论文后半整体被当成参考文献区静默丢掉，析读/
+    问答/术语全部失明还不报任何错（实测整篇只读到一半）。所以触发词命中还不够，
+    得像标题：触发词后面剩不下几个字，且不带句中的标点尾巴。"""
     if len(text) > 60:
         return None
     n = _norm(text)
-    if n.startswith(HEAD_REFS):
-        return "refs"
-    if n.startswith(HEAD_STOP):
-        return "stop"
-    if n.startswith(HEAD_NONBODY):
-        return "nonbody"
+    for heads, kind in ((HEAD_REFS, "refs"), (HEAD_STOP, "stop"), (HEAD_NONBODY, "nonbody")):
+        hit = max((h for h in heads if n.startswith(h)), key=len, default=None)
+        if hit:
+            rest = n[len(hit):]
+            if rest and text.rstrip().endswith((".", "。", "；", ";", "，", ",")):
+                return None        # 句子的一小半，不是标题
+            return kind if len(rest) <= 12 else None
     return None
 
-def _page0_lines(path: str):
+def page0_lines(path: str):
     """首页的干净行列表（text/size/y0/y1，水印行已滤）与页高。
-    标题、作者两个提取器共用这一趟扫描——不然一篇 PDF 光元数据就要开两遍文档。"""
+    标题、作者两个提取器共用这一趟扫描——不然一篇 PDF 光元数据就要开两遍文档。
+    导入方（main._ingest）把这一次扫描的结果同时喂给两个提取器，整个元数据
+    环节只开一遍文档。"""
     doc = pymupdf.open(path)
     try:
         page = doc[0]
@@ -80,8 +90,8 @@ TITLE_LABEL = re.compile(
 ABSTRACT_HEAD = re.compile(
     r"^(?:abstract|keywords|摘要|关键词)\s*[:：.]?\s*$|^(?:abstract|keywords|摘要|关键词)\s*[:：]", re.I)
 
-def extract_title(path: str) -> str:
-    lines, h = _page0_lines(path)
+def extract_title(path: str, page0=None) -> str:
+    lines, h = page0 if page0 is not None else page0_lines(path)
     if not lines:
         return ""
     top = [l for l in lines if l["y0"] < h * 0.45] or lines
@@ -106,12 +116,12 @@ SUP = re.compile(r"[\d*†‡§¶#{}\[\]]+")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+")
 DATEISH = re.compile(r"\b(19|20)\d{2}\b|received|accepted|published|doi|preprint", re.I)
 
-def extract_authors(path: str) -> str:
+def extract_authors(path: str, page0=None) -> str:
     """第一作者。只认"标题正下方那一两行里的第一个名字"——够用就行，不做完整作者解析。
 
     刻意保守：认不出来就返回空串（界面上就不显示），绝不拿机构名或日期凑数。
     """
-    lines, h = _page0_lines(path)
+    lines, h = page0 if page0 is not None else page0_lines(path)
     top = [l for l in lines if l["y0"] < h * 0.5]
     if not top:
         return ""

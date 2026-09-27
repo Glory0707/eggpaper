@@ -381,6 +381,9 @@ async function poll() {
       await openPaper(r.pid)
     }
   } catch { /* 轮询里的失败不打扰用户 */ }
+  // 挂后台（最小化/切走）就别替用户刷翻译/析读进度了——回来那一拍自动跟上；
+  // openRequest 必须继续收（静默升级的 pageQuit 不看页面可见性）
+  if (document.hidden) return
   try { if (store.papers.some(p => p.translate_status === 'running')) await bgTranslateTick() } catch { /* 同上 */ }
   if (bootVersion && !verHintShown && ++verTick % 5 === 0) {
     try {

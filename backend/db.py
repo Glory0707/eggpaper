@@ -13,6 +13,7 @@ from config import DATA_DIR
 DB_PATH = os.path.join(DATA_DIR, "eggpaper.db")
 _lock = threading.Lock()
 _conn = None
+_local = threading.local()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers(
@@ -77,6 +78,8 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_gloss_paper ON glossary(paper_id)",
     "CREATE INDEX IF NOT EXISTS idx_conv_paper ON conversations(paper_id)",
     "CREATE INDEX IF NOT EXISTS idx_papers_hash ON papers(pdf_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_papers_created ON papers(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_papers_filename ON papers(filename)",
 )
 
 def _get() -> sqlite3.Connection:
@@ -139,13 +142,30 @@ def _migrate(c: sqlite3.Connection):
     except sqlite3.OperationalError:
         pass
 
+def _get_read() -> sqlite3.Connection:
+    """线程自己的只读连接。WAL 允许任意多读者与写者并行——过去一把全局锁把
+    execute+fetchall 整个串起来，全库搜索（几万行 LIKE 扫几遍）一跑，
+    别的窗口连论文列表都刷不动。每线程一条、首次用前先让写连接把 schema 建好。"""
+    c = getattr(_local, "conn", None)
+    if c is None:
+        _get()               # schema/迁移必须先就位：读连接建早了会"no such table"
+        c = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=5.0)
+        c.row_factory = sqlite3.Row
+        try:
+            c.execute("PRAGMA busy_timeout=5000")
+        except sqlite3.OperationalError:
+            pass
+        _local.conn = c
+    return c
+
 def q(sql: str, params=(), commit: bool = False):
-    with _lock:
-        cur = _get().execute(sql, params)
-        rows = cur.fetchall()
-        if commit:
+    if commit:
+        with _lock:
+            cur = _get().execute(sql, params)
+            rows = cur.fetchall()
             _get().commit()
-        return rows
+            return rows
+    return _get_read().execute(sql, params).fetchall()
 
 def q_insert(sql: str, params=()) -> int:
     """INSERT 并取自增 id——两步必须同锁：分开写会拿到别人那行的 rowid。"""

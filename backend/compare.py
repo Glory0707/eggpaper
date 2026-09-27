@@ -9,6 +9,7 @@
 - **缓存命中**：system 用与析读/七问同一套「共享身份句 + 逐字节相同的全文块」开头
   （llm._doc_system）——同一篇论文析读时写下的服务端缓存，对比抽取的输入大头直接命中。
 """
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -34,7 +35,7 @@ def _messages(title: str, paras: list, claims: list, annos: dict, keys: list) ->
                  if a.get("role") and a.get("role") not in ("boilerplate",)]
     if anno_bits:
         role_note = "\n【段角色（后台推断，供定位用）】\n" + "、".join(anno_bits[:40])
-    claim_bits = [f"{c['id']} {c['text'][:80]}" for c in (claims or [])][:8]
+    claim_bits = [f"{c['id']} {c['text'][:120]}" for c in (claims or [])][:8]
     if claim_bits:
         role_note += "\n【核心主张】\n" + "\n".join(claim_bits)
     schema = json.dumps({k: {"text": "…", "ref": 3} for k in keys}, ensure_ascii=False)
@@ -52,7 +53,7 @@ def _messages(title: str, paras: list, claims: list, annos: dict, keys: list) ->
     ]
 
 
-def _norm(data: dict, keys: list = None) -> dict:
+def _norm(data: dict, keys: list = None, n_paras: int = 0) -> dict:
     out = {}
     for k in (keys or KEYS):
         cell = data.get(k) if isinstance(data, dict) else None
@@ -60,8 +61,8 @@ def _norm(data: dict, keys: list = None) -> dict:
             cell = {}
         text = str(cell.get("text") or "").strip() or "原文未提及"
         ref = cell.get("ref")
-        if not isinstance(ref, int) or ref < 1:
-            ref = None
+        if not isinstance(ref, int) or ref < 1 or (n_paras and ref > n_paras):
+            ref = None          # 越界的 ¶n 点过去会静默落空，不如当作没定位到
         out[k] = {"text": text[:200], "ref": ref}
     return out
 
@@ -76,10 +77,23 @@ def _mock(paper: dict, keys: list = None) -> dict:
     return cells
 
 
+# 逐篇格子缓存：键 = (pid, 维度, 材料指纹)。对比表没有它，某篇失败想补一格
+# 只能整表重跑——其余 N-1 篇重新计费（一篇 3~8 分钱，五篇反复点就是真金白银）。
+# 材料指纹盖住"重新析读后内容变了"的情况：主张文本或段数一变，缓存自动失效。
+_CACHE: dict = {}
+
+def _material_sig(claims: list, n_paras: int) -> str:
+    h = hashlib.md5()
+    for c in (claims or []):
+        h.update(str(c.get("text") or "").encode("utf-8", "replace"))
+    h.update(str(n_paras).encode())
+    return h.hexdigest()[:12]
+
 def extract_all(papers: list, material_of, demo: bool = False, dims: list = None) -> dict:
     """papers: [{id,title,...}]；material_of(pid) -> (paras, claims, annos)。
     dims 限定要抽的维度（用户在界面上勾过的）——少抽一个省一份模型调用。
-    返回 {pid: {dim: {text, ref}}}。每篇一线程并行，谁失败谁一格降级，不拖垮整张表。"""
+    返回 {pid: {dim: {text, ref}}}。每篇一线程并行，谁失败谁一格降级，不拖垮整张表。
+    成功的篇进缓存：下次打开只重抽**失败的**和换了材料的，其余零成本。"""
     keys = [k for k in KEYS if not dims or k in dims]
     out = {}
     if demo:
@@ -87,12 +101,21 @@ def extract_all(papers: list, material_of, demo: bool = False, dims: list = None
 
     def one(p):
         paras, claims, annos = material_of(p["id"])
+        sig = _material_sig(claims, len(paras))
+        ckey = (p["id"], tuple(keys), sig)
+        hit = _CACHE.get(ckey)
+        if hit is not None:
+            return p["id"], hit
         # 标题回落用空串不用文件名：析读管线就是 title or ""，两边一致前缀才命中
         msgs = _messages(p.get("title") or "", paras, claims, annos, keys)
         try:
-            return p["id"], _norm(chat_json(msgs, max_tokens=1600, scene="数据对比"), keys)
+            cells = _norm(chat_json(msgs, max_tokens=1600, scene="数据对比"), keys, n_paras=len(paras))
+            if len(_CACHE) > 400:
+                _CACHE.clear()
+            _CACHE[ckey] = cells
+            return p["id"], cells
         except Exception:
-            return p["id"], {k: {"text": "抽取失败——这篇没能读出结果，可单独打开重试",
+            return p["id"], {k: {"text": "抽取失败——这篇没能读出结果，可再次打开对比重试",
                                  "ref": None} for k in keys}
 
     with ThreadPoolExecutor(max_workers=min(3, max(1, len(papers)))) as ex:

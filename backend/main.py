@@ -309,15 +309,24 @@ def _startup():
     os.makedirs(PAPERS_DIR, exist_ok=True)
     _migrate_paper_layout()
     _rename_paper_dirs()
-    _repair_paper_paths()
-    try:
-        for pid in os.listdir(PAPERS_DIR):
-            translate_full.sweep_key_copies(os.path.join(PAPERS_DIR, pid, ".pages"))
-    except OSError:
-        pass
-    translate_full.sweep_page_dirs(PAPERS_DIR)
-    _clear_zombie_jobs()
-    _backfill_pdf_hashes()
+
+    def _late_boot():
+        # 修路径（可能整本拷 PDF）、孤儿清扫（可能删几个 GB）、认领孤儿译文、
+        # 指纹回填都是分钟级的大库重活——留在 startup 里，用户看到的就是
+        # 白屏干等几分钟。搬去后台：界面先起来，这些活几秒内默默跟上。
+        try:
+            _repair_paper_paths()
+            try:
+                for pid in os.listdir(PAPERS_DIR):
+                    translate_full.sweep_key_copies(os.path.join(PAPERS_DIR, pid, ".pages"))
+            except OSError:
+                pass
+            translate_full.sweep_page_dirs(PAPERS_DIR)
+            _clear_zombie_jobs()
+            _backfill_pdf_hashes()
+        except Exception:
+            _applog("启动收尾失败：" + traceback.format_exc(limit=3))
+    threading.Thread(target=_late_boot, daemon=True).start()
 
     def _warm_engine():
         time.sleep(3)
@@ -892,10 +901,6 @@ def _pdf_hash_file(path: str) -> str:
     except OSError:
         return ""
 
-def _pdf_hash_bytes(raw: bytes) -> str:
-    import hashlib
-    return hashlib.sha256(raw).hexdigest()
-
 def _copy_with_hash(src: str, dest: str) -> str:
     """边复制边喂 sha256：原来的「整读算哈希 + copyfile 整读整写」把源文件读了两遍。"""
     import hashlib
@@ -912,8 +917,9 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     解析失败要收拾干净：留着半篇没有段落的"论文"，用户点开只能看见一个空书架。
     """
     try:
-        title = pdfparse.extract_title(path)
-        authors = pdfparse.extract_authors(path)
+        page0 = pdfparse.page0_lines(path)     # 一趟扫描喂两个提取器：元数据只开一遍文档
+        title = pdfparse.extract_title(path, page0)
+        authors = pdfparse.extract_authors(path, page0)
         paras = pdfparse.extract_paragraphs(path)
         import pymupdf
         with pymupdf.open(path) as d:      # 用完就关：裸开会让 Windows 短暂锁着文件
@@ -1009,28 +1015,43 @@ _MAX_UPLOAD = 500 * 1024 * 1024   # 论文 PDF 的合理上限：防手滑上传
 
 @app.post("/api/papers")
 async def upload(file: UploadFile = File(...)):
-    # 分块读 + 上限：整读不设防的话，几个并发大文件就能把内存顶穿（进程一崩，在跑的任务全没）
-    chunks, size = [], 0
-    while True:
-        chunk = await file.read(1 << 22)
-        if not chunk:
-            break
-        size += len(chunk)
-        if size > _MAX_UPLOAD:
-            raise HTTPException(400, "PDF 太大（超过 500MB），先拆分或压缩再导入")
-        chunks.append(chunk)
-    raw = b"".join(chunks)
-    if raw[:4] != b"%PDF":
+    # 分块落盘：以前 chunks 攒满再 b"".join，峰值两份 500MB 驻留在**事件循环线程**上，
+    # 攒的那一拍整个服务（含正在流的问答）一起停摆。现在 4MB 一块边收边写临时文件。
+    import uuid as _uuid
+    tmp = os.path.join(config.DATA_DIR, f".upload-{_uuid.uuid4().hex}.tmp")
+    size, head = 0, b""
+    try:
+        with open(tmp, "wb") as f:
+            while True:
+                chunk = await file.read(1 << 22)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > _MAX_UPLOAD:
+                    raise HTTPException(400, "PDF 太大（超过 500MB），先拆分或压缩再导入")
+                if not head:
+                    head = chunk[:16]
+                f.write(chunk)
+    except HTTPException:
+        _rm(tmp)
+        raise
+    except OSError:
+        _rm(tmp)
+        raise HTTPException(500, "PDF 没写进库里（磁盘满了或被占用）")
+    if head[:4] != b"%PDF":
+        _rm(tmp)
         raise HTTPException(400, "不是 PDF 文件")
-    if len(raw) < 256:
+    if size < 256:
+        _rm(tmp)
         raise HTTPException(400, "文件太小，不像完整的 PDF")
     name = (file.filename or "paper.pdf").split("/")[-1].split("\\")[-1]
 
     def _import():
         with _import_lock:
-            pdf_hash = _pdf_hash_bytes(raw)      # 几百 MB 的整文件哈希，一遍就够
-            dup = db.find_duplicate(name, len(raw), pdf_hash)
+            pdf_hash = _pdf_hash_file(tmp)       # 流式算哈希：内存只占一块 1MB 缓冲
+            dup = db.find_duplicate(name, size, pdf_hash)
             if dup:
+                _rm(tmp)
                 paras = db.get_paragraphs(dup)
                 return {"paper": db.get_paper(dup), "n_paragraphs": len(paras),
                         "n_captions": sum(1 for pp in paras if pp.get("caption")),
@@ -1038,8 +1059,7 @@ async def upload(file: UploadFile = File(...)):
             pid, pid_dir = _new_paper_dir(name)
             path = os.path.join(pid_dir, "paper.pdf")     # 库内自存一份：删原件、挪原件都不影响
             try:
-                with open(path, "wb") as f:
-                    f.write(raw)
+                os.replace(tmp, path)                     # 同盘改名，瞬时完成
             except OSError:
                 shutil.rmtree(pid_dir, ignore_errors=True)   # 盘满写不下：别留空论文目录
                 with _dir_lock:
@@ -1054,7 +1074,11 @@ async def upload(file: UploadFile = File(...)):
                 raise
             return _attach_same_title(out, pid)
 
-    return await run_in_threadpool(_import)
+    try:
+        return await run_in_threadpool(_import)
+    except Exception:
+        _rm(tmp)      # _import 没接住的失败（判重前的异常等）：临时文件别留在数据目录
+        raise
 
 @app.post("/api/papers/import-path")
 def import_path(body: dict):
@@ -1405,6 +1429,13 @@ def _analysis_cancelled(pid: str, where: str) -> bool:
     _applog(f"析读 {pid}: {where}")
     return True
 
+def _caps_job(pid: str) -> dict:
+    """析读支线：扫出全部图表注并整批翻译。图表区域是纯函数（路径+mtime 缓存），
+    这里算过一遍，灯箱/图层面板就直接命中。"""
+    pdir = db.get_paper(pid) or {}
+    pairs = [(i, f["caption"]) for i, f in enumerate(_figures_for(pid, pdir)) if f.get("caption")]
+    return llm.translate_captions(pairs)
+
 def _run_analysis(pid: str, paras: list):
     ex = None
     try:
@@ -1416,18 +1447,16 @@ def _run_analysis(pid: str, paras: list):
             return
         ex = ThreadPoolExecutor(max_workers=5)
         tfut = ex.submit(_demo_terms if demo else llm.extract_terms, title, paras)
+        cap_fut = None
         if demo:
             data = llm.mock_analyze(paras)
         else:
-            # 图表注顺手在析读里翻成中文（键=图表列表下标）：灯箱打开即得，不用每次现翻
-            cap_pairs = []
-            try:
-                pdir = db.get_paper(pid)
-                cap_pairs = [(i, f["caption"]) for i, f in enumerate(_figures_for(pid, pdir)) if f.get("caption")]
-            except Exception as e:
-                _applog(f"析读 {pid}: 图表提取失败，这次不带图注翻译（{str(e)[:80]}）")
-            data = llm.analyze_skeleton(title, use, kind=kind,
-                                        fig_caps=None if (llm._is_en() or not cap_pairs) else cap_pairs)
+            # 图注翻译独立成一次调用，与骨架**并行**（图表扫描 O(n²) 也不再挡在骨架前面）：
+            # 以前挤在骨架同一次输出里，图多的论文把 16k 输出顶截断 → 坏 JSON 重试再烧
+            # 一整遍 → 最后整个析读被判失败，图注一张都拿不到
+            if not llm._is_en():
+                cap_fut = ex.submit(_caps_job, pid)
+            data = llm.analyze_skeleton(title, use, kind=kind)
         for p in paras:
             if p["in_refs"]:
                 data["roles"][str(p["idx"])] = "boilerplate"
@@ -1462,6 +1491,8 @@ def _run_analysis(pid: str, paras: list):
                      for k in todo})
         if not demo:
             futs[ex.submit(_suggest_compute, pid)] = "suggest"
+        if cap_fut is not None:
+            futs[cap_fut] = "figcaps"
         futs[tfut] = "terms"
         _analysis_progress[pid] = {"done": 1, "total": 1 + len(futs)}   # 骨架算已完成的 1 项
         for fut in as_completed(futs):
@@ -1480,6 +1511,13 @@ def _run_analysis(pid: str, paras: list):
                 elif k == "suggest":
                     if not (isinstance(got, dict) and got.get("questions")):
                         _applog(f"析读 {pid}: 推荐问题这次是空的（提问页会再试一次）")
+                elif k == "figcaps":
+                    if got:
+                        if _pid_gone(pid):
+                            return
+                        # 锁内读改写合并落库：懒翻译按坐标存的旧键不被整包覆写抹掉
+                        db.fig_caps_add(pid, got)
+                        _applog(f"析读 {pid}: 图注中文 {len(got)} 条")
                 elif got.get("text") or got.get("items"):
                     if _pid_gone(pid):
                         _applog(f"析读 {pid}: 论文已删除，丢弃七问·{k}")
@@ -3153,6 +3191,10 @@ def _claim_existing_translation(pid: str) -> dict:
 def translate_full_start(pid: str, force: bool = False):
     p = _paper_or_404(pid)
     cfg = config.load()
+    if force and translate_full.job(pid)["status"] in ("running", "queued"):
+        # 「重新全文翻译」按在在跑的任务上要明说，别静默空转——用户以为重译开始了，
+        # 界面却一直停在旧任务上（start() 的在途去重会原样退回旧 job）
+        raise HTTPException(400, "这篇已经在翻译中了，等它跑完再重新翻译")
     svc = (cfg["pdf2zh"].get("service") or "bing").strip()
     envs, host = _pdf2zh_env(svc, cfg)
     if not force:
@@ -3312,6 +3354,18 @@ if os.path.isdir(DIST):
                             headers={"Cache-Control": "no-cache, must-revalidate"})
 
     app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
+
+@app.on_event("startup")
+async def _boost_pool():
+    """线程池扩容（默认 40）。所有端点都是同步 def，跑在这个池上；LLM 调用一次
+    数百秒、流式问答整场占一条，锁的等待者也在池里干等——并发一上来 40 个令牌
+    被生成任务占满，文库列表、PDF 取流全在排队（uvicorn 单 worker，没有第二条车道）。
+    扩到 128 让"几个任务在生成"不再演成"全站一起卡"。"""
+    try:
+        from anyio import to_thread
+        to_thread.current_default_thread_limiter().total_tokens = 128
+    except Exception:
+        pass
 
 @app.on_event("startup")
 def _mark_ready():
