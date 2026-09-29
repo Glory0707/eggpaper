@@ -12,6 +12,7 @@
 - **`.build-venv` 不自动装依赖**：改了 `backend/requirements.txt` 必须手动 `uv pip install --python .build-venv/Scripts/python.exe -r backend/requirements.txt pyinstaller pillow`。OCR 引擎就这么漏过一次：包 34MB、模型没进去，装到别人机器才炸。
 - 本机重装验证：先 `taskkill //IM eggpaper.exe //F` → `powershell Start-Process <setup.exe> '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon'` ——**不要 `-Wait`**（运行中的 exe 锁着文件，安装器收尾不退，永远等不完）→ 轮询 tasklist 等退出 → 启动。
 - 装完核两条：`GET /api/version` 的 version/packaged；首页引用的 `index-*.js` 哈希与 `frontend/dist` 一致（确认装的是新前端，不是浏览器缓存）。
+- **安装器自拉起偶发「服务报告已启动但端口空」自退**（实测一次，重开即好，根因未定位）：READY 是 startup 事件（绑定后置位），按理探测不会空——失败模式安全：进程自退、日志留「重开一次即可」，重开正常。静默安装后轮询 /api/version 为空就再 start 一次。
 
 ## 一·二、全文翻译引擎（pdf2zh_next 2.x）
 
