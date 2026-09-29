@@ -115,7 +115,7 @@ Source: "..\build\pyi\eggpaper\*"; DestDir: "{app}"; Flags: ignoreversion recurs
 
 [InstallDelete]
 ; 升级前先清空整个 _internal 再装新的。**必须整目录清**：升级只覆盖同名文件，
-; 旧版本里"改了名就永远留在盘上"的文件会无限累积——实测一台从 0.1.8 一路升上来的
+; 旧版本里"改了名就永远留在盘上"的文件会无限累积——实测一台从很老的版本一路升上来的
 ; 机器，_internal 里攒了 154 个化石文件共 21 MB（25 代前端带哈希的旧 chunk、
 ; pywebview 实验时代被撤掉的 pythonnet/webview……），没有任何机制会再去删它们。
 ; 先删后装，安装目录永远等于这次构建的准确内容。

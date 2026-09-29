@@ -5,14 +5,15 @@
 ## 一、构建 · 发布 · 重装验证
 
 - 发布一条龙：改 `VERSION` → `/d/hermes/uv-python/cpython-3.11.14-windows-x86_64-none/python.exe tools/build_installer.py --notes "…"`（前端构建→图标→冻结→Inno→latest.json 一条命令）。
-- **Gitee 更新源发布三步**（0.1.41 实测闭环；0.1.42 起全程 API 化）：① 推 `release/latest.json` 到仓库 `update/latest.json`（浅克隆 + 令牌推送，**推完删克隆**——令牌明文留在 .git/config 里）；② 建 release 走 API：`POST /api/v5/repos/zhouao1207/eggpaper/releases`（tag_name=v<版本>、target_commitish=master）→ `PATCH …/releases/{id}` 补中文说明（POST 时 curl 命令行会把中文搅成 GBK 乱码，body 一律用 python requests/httpx 发）→ `POST …/releases/{id}/attach_files` multipart 传 exe（201 即成，92MB 约两分钟）；③ 闭环验证：匿名 curl raw 清单 → 匿名下载附件比 sha256 → `GET /api/update/check?force=true` 看 has_update。
-- **Gitee 的 raw 地址现在会 302 到 raw.giteeusercontent.com**（0.1.42 实测变了）：curl 验证要加 `-L`；客户端 update.py 跟随重定向所以无感。
+- **Gitee 更新源发布三步**（实测闭环，全程 API 化）：① 推 `release/latest.json` 到仓库 `update/latest.json`（浅克隆 + 令牌推送，**推完删克隆**——令牌明文留在 .git/config 里）；② 建 release 走 API：`POST /api/v5/repos/zhouao1207/eggpaper/releases`（tag_name=v<版本>、target_commitish=master）→ `PATCH …/releases/{id}` 补中文说明（POST 时 curl 命令行会把中文搅成 GBK 乱码，body 一律用 python requests/httpx 发）→ `POST …/releases/{id}/attach_files` multipart 传 exe（201 即成，92MB 约两分钟）；③ 闭环验证：匿名 curl raw 清单 → 匿名下载附件比 sha256 → `GET /api/update/check?force=true` 看 has_update。
+- **Gitee 的 raw 地址现在会 302 到 raw.giteeusercontent.com**：curl 验证要加 `-L`；客户端 update.py 跟随重定向所以无感。
+- **feed 版本与本地版本可能倒挂**：版本基线重开为 0.1.0 后，Gitee feed 还挂着旧基线的 0.1.56——本机装 0.1.0 会收到「更新到 0.1.56」的降级提示（update.check 的 has_update 是纯元组比较，无降级防护）。下次发版推 feed 覆盖即除；期间本机测试忽略该提示。
 - **Gitee 网页编辑器把整串路径当文件名会建出嵌套目录**（"raw/master/update/latest.json" 变三层文件夹）；且路径里含分支名（master）时 Gitee 的 tree/blob/delete 路由 404/405、?path= 只救得回 blob——网页 UI 删不掉，只能 git push 修。2FA 账号 HTTPS 推送必须用私人令牌当密码。
 - **`.build-venv` 不自动装依赖**：改了 `backend/requirements.txt` 必须手动 `uv pip install --python .build-venv/Scripts/python.exe -r backend/requirements.txt pyinstaller pillow`。OCR 引擎就这么漏过一次：包 34MB、模型没进去，装到别人机器才炸。
 - 本机重装验证：先 `taskkill //IM eggpaper.exe //F` → `powershell Start-Process <setup.exe> '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon'` ——**不要 `-Wait`**（运行中的 exe 锁着文件，安装器收尾不退，永远等不完）→ 轮询 tasklist 等退出 → 启动。
 - 装完核两条：`GET /api/version` 的 version/packaged；首页引用的 `index-*.js` 哈希与 `frontend/dist` 一致（确认装的是新前端，不是浏览器缓存）。
 
-## 一·二、全文翻译引擎（pdf2zh_next 2.x，0.1.42 实测换装）
+## 一·二、全文翻译引擎（pdf2zh_next 2.x）
 
 - **发行形态只有 with-assets win64 zip 靠谱**（~620MB，官方 sha256 钉在 engine_install）：普通包首译要在线下版面模型/字体，上游竞速含 huggingface——国内超时就死在预热里，整个翻译起不来（实测两次）。with-assets 内置资产，启动器首启自动 restore 到 `~/.cache/babeldoc`（HOME 已重定向到数据目录），装完离线可用。
 - **装完把包里的 `offline_assets_*.zip` 改名 `.installed` 收起**：2.x 启动器每次进程启动见到它就把全部资产重新哈希一遍（~220MB），每批翻译白等 10-20 秒。engine_install._warmup 校验通过后做这件事。
@@ -23,7 +24,7 @@
 - **预扫描续译必须按批映射**：批目录名是批首页（p9 = 第 9-16 页的批）。老代码逐页探测，把 p9 里的 8 页产物当成"第 9 页"，组装 at=None 取到产物最后一页——重启续译把第 16 页插到第 9 页的位置（实测"复用 3/24"暴露）。修法见 translate_full.start 的预扫描段。
 - 2.x 首译质量比 1.9 好一截（BabelDOC 版面模型 + 跨页上下文），bing 24 页实测 161-202s，3 批并行无锁；鉴权失败（401）会被 AUTH_FAILS 当场认出，rich 的 80 列换行没挤断关键词。
 - **调优先测量**：`--pool-max-workers 4`（批内并行）实测 69s→63s（~9%），要成倍放大 bing 请求并发，反爬风险不值——不采用。真正的大头是引擎下载：Range 分段并行（4 连接）实测 3.9x，镜像按单连接限速是常态；ghfast 支持 206，gh-proxy 只回 200（自动退单流）。
-- **「重新全文翻译」必须 fresh**：force 路径不清 .pages 时，预扫描复用全部旧页，按钮等于没按（0.1.47 修）。两篇同时翻译会叠出 6~8 个引擎进程，全库共享的 ENGINE_PROCS_CAP=4 信号量兜底。
+- **「重新全文翻译」必须 fresh**：force 路径不清 .pages 时，预扫描复用全部旧页，按钮等于没按（已修）。两篇同时翻译会叠出 6~8 个引擎进程，全库共享的 ENGINE_PROCS_CAP=4 信号量兜底。
 
 ## 二、测试
 
@@ -50,10 +51,11 @@
 
 - 代码签名在正式版本发布前不做（2026-09-22 定）："未知发布者"提示由使用指南兜着，等有真实用户量和收入再买证书。
 - mac 仓不定期跟随（2026-09-22 定）：Windows 是唯一主仓，`D:\tools\eggpaper-macos` 不再逐版本同步——攒一批再跟，或用户点名时才跟；mac 自己的 VERSION 独立走，不追 Windows 版本号。
+- **版本号只听用户指令**（2026-09-29 定）：历史版本记录已清场，`VERSION`=0.1.0 重开；此后版本号变更必须用户明示，构建/安装一律沿用 `VERSION` 现值，不自动递增；Gitee feed 发布同样等指令。
 - 界面减法：不放解释性小字；一条信息只住一个房间，别处只给指针（细则见 [visual.md](visual.md)）。判据：删掉这行字，用户会损失什么？
 - 文档同口径：简洁、删陈旧、不留版本流水账；持久经验进本文件。
 - 提交信息：中文、`type(scope): 说人话`，把"为什么"写进去，结尾带版本号。
-- **新功能动手前先盘已有功能**：0.1.43 的「综述矩阵」与既有「数据对比」重叠 1:1（同为多篇对照表；对比还更成熟——维度可选、逐篇抽取抗幻觉、格子带锚点），发版当天即撤，改成提问面板引用后一键唤起对比；同批的「组会月报」0.1.45 也撤了——原材料就是日历导出清单，LLM 那步只是强行解释一遍（数据薄时硬凑主线，数据厚时复述一眼卡），想让它解释什么，提问面板引用几篇随时能问，不需要常驻功能。AI 直接产出文章的三宗罪（幻觉/上下文/AI 味）靠"整理而非代笔"规避：结构化输出 + 材料进上下文 + ¶ 溯源；纯生成类交付物（related work 草稿）没被真实用户要过就不做。
+- **新功能动手前先盘已有功能**：「综述矩阵」与既有「数据对比」重叠 1:1（同为多篇对照表；对比还更成熟——维度可选、逐篇抽取抗幻觉、格子带锚点），发版当天即撤，改成提问面板引用后一键唤起对比；同批的「组会月报」也撤了——原材料就是日历导出清单，LLM 那步只是强行解释一遍（数据薄时硬凑主线，数据厚时复述一眼卡），想让它解释什么，提问面板引用几篇随时能问，不需要常驻功能。AI 直接产出文章的三宗罪（幻觉/上下文/AI 味）靠"整理而非代笔"规避：结构化输出 + 材料进上下文 + ¶ 溯源；纯生成类交付物（related work 草稿）没被真实用户要过就不做。
 - 先测量再动手："糊/慢/卡"先变成数字（对比度脚本、分阶段耗时、墨段数）再谈改。眉批提速是范本：墙钟时间 ≈ 波数 × 单块时间，单块是模型的地板（带思考 ~36s/块），能压的只有波数——实测数字就写在 `CHUNK_WORKERS` 常量旁，别凭感觉调。
 - 删功能连根删：测量代码、设置项、样式、导出小节、i18n 键一起删，再用审计脚本数引用，不靠印象。
 - 闭环习惯：改码 → 回归 E2E → 构建 → 静默重装 → 8430 验证 → 提交，缺一步不算完。
@@ -62,7 +64,7 @@
 
 四条链路一个真源 `backend/mark.py` 的几何：桌面/exe=多尺寸 ICO、浏览器标签=favicon、独立窗口=运行时注入、托盘=pystray 现画。生成物（`installer/eggpaper.ico`、`frontend/public/icons/*`）构建时会重新生成，**不要手改**。
 
-标准动作：改 mark.py → `python tools/check_icon.py`（闸门：白缝/三段墨/圆角透明，非零退出就别往下走）→ `python tools/make_icon.py` → **VERSION 加一**（图标 URL 的 `?v=` 由构建从 VERSION 替换，版本不变=浏览器继续吃旧图）→ 打包。
+标准动作：改 mark.py → `python tools/check_icon.py`（闸门：白缝/三段墨/圆角透明，非零退出就别往下走）→ `python tools/make_icon.py` → **VERSION 加一**（版本号变更须用户指令——图标一改就得同批升版本，`?v=` 由构建从 VERSION 替换，版本不变=浏览器继续吃旧图）→ 打包。
 
 坑（每条付出过时间）：
 
@@ -86,7 +88,7 @@
 - 推理型模型 max_tokens 要留思考额度（骨架 16k、眉批 12k 量级）；等外部响应的地方必须有"在动"的东西（首字 30–60s，空气泡和坏了长得一样）；提问面板常驻（`v-show`），切页签不能 abort 掉正在生成的流。
 - 演示模式文案双语成对（`_demo_txt`），改一处两处都改；演示数据要具体，不要摆拍腔。
 - **AI 上下文缓存吃的是「从第 0 个 token 起逐字节相同」的前缀**：同篇论文的整文任务共用 SHARED_SYSTEM + paper_doc（每段截到句界、全文 90k 保头也保尾），任务规则放全文之后——命中输入按约 1/50 计费。任何随任务/调用变化的字段（图表注、术语表、问题、历史）进了前缀就前功尽弃。
-- **错误话术映射必须把异常类名并进匹配串**：httpx ConnectError 的消息体是「[WinError 10061] 目标计算机积极拒绝」，"connect" 只在类名里——只匹配消息体的话，连接类错误就带着原文漏给用户（0.1.60 实测）。
+- **错误话术映射必须把异常类名并进匹配串**：httpx ConnectError 的消息体是「[WinError 10061] 目标计算机积极拒绝」，"connect" 只在类名里——只匹配消息体的话，连接类错误就带着原文漏给用户（实测）。
 - **请求参数的整数要严格收**：`int(1.5)` 静默截成 1，对"译第几段"是悄悄译错段——非整数（含 bool、超 2^53 的浮点）一律 400。
 
 ## 七、杂
