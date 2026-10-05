@@ -79,6 +79,10 @@ def _auth(c: dict) -> dict:
     token = base64.b64encode(f"{c['username']}:{c['password']}".encode("utf-8")).decode("ascii")
     return {"Authorization": "Basic " + token}
 
+def _auth_why(code: int) -> str:
+    return (f"用户名或密码不对（{code}）——坚果云要用「应用密码」，"
+            f"不是网页登录密码")
+
 def test(url: str, username: str, password: str) -> tuple:
     """连通性检查。探活用 PROPFIND（Depth 0）而不是 OPTIONS——Joplin 多年兼容几十种
     服务器的结论：OPTIONS 的 DAV 头各家实现不可靠；PROPFIND 只看状态码不解析 body
@@ -93,8 +97,7 @@ def test(url: str, username: str, password: str) -> tuple:
         if r.status_code in (200, 207):
             return True, ""
         if r.status_code in (401, 403):
-            return False, ("用户名或密码不对（{}）——坚果云要用「应用密码」，"
-                           "不是网页登录密码".format(r.status_code))
+            return False, _auth_why(r.status_code)
         if r.status_code == 404:
             return True, ""      # 服务器通、目录还没建；PUT 时再报真错
         # 个别实现不认 PROPFIND：退回 OPTIONS 再试一发
@@ -103,8 +106,7 @@ def test(url: str, username: str, password: str) -> tuple:
         if r2.status_code in (200, 204, 404):
             return True, ""
         if r2.status_code in (401, 403):
-            return False, ("用户名或密码不对（{}）——坚果云要用「应用密码」，"
-                           "不是网页登录密码".format(r2.status_code))
+            return False, _auth_why(r2.status_code)
         return False, f"服务回了 {r.status_code}"
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:120]}"
@@ -131,9 +133,6 @@ def build_lite_zip(dest: str):
             os.remove(snap)
         except OSError:
             pass
-
-def _db_path() -> str:
-    return db.DB_PATH
 
 def _file_md5(path: str) -> str:
     import hashlib
@@ -174,9 +173,10 @@ def run_backup(reason: str = "manual") -> dict:
                          error="", last_size=size, last_hash=digest)
             print(f"[eggpaper] WebDAV 备份（{reason}）：内容未变，跳过上传")
             return status()
-        r = httpx.put(f"{c['url']}/{FILENAME}", headers=_auth(c),
-                      content=open(tmp, "rb"), timeout=httpx.Timeout(600, connect=12),
-                      follow_redirects=True)
+        with open(tmp, "rb") as f:
+            r = httpx.put(f"{c['url']}/{FILENAME}", headers=_auth(c),
+                          content=f, timeout=httpx.Timeout(600, connect=12),
+                          follow_redirects=True)
         if r.status_code in (200, 201, 204):
             _write_state(last_ok=time.time(), last_at=time.strftime("%Y-%m-%d %H:%M"),
                          error="", last_size=size, last_hash=digest)

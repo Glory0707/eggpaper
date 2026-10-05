@@ -781,9 +781,6 @@ def cite_ctx_put(pid: str, citing_id: str, hits):
     q("INSERT OR REPLACE INTO cite_ctx(paper_id, citing_id, hits) VALUES(?,?,?)",
       (pid, citing_id, json.dumps(hits, ensure_ascii=False)), commit=True)
 
-def cite_ctx_clear(pid: str):
-    q("DELETE FROM cite_ctx WHERE paper_id=?", (pid,), commit=True)
-
 # ---------- QA ----------
 
 def _now() -> str:

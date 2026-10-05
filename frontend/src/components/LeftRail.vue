@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper, jumpPara, goHome, lsRemove } from '../store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, jumpPara, goHome, lsRemove, gotoPaperPara } from '../store'
 import { confirmBox } from '../dialog'
 import { t } from '../i18n'
 import { useEdgeResize } from '../edgeResize'
@@ -362,7 +362,7 @@ function onZotImported() {
   refreshCollections()
 }
 function onCmpGoto(c) {
-  openPaper(c.pid).then(() => jumpPara(c.n))
+  gotoPaperPara(c.pid, c.n)
 }
 </script>
 

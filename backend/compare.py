@@ -45,9 +45,6 @@ def dims_meta(dims: list = None, cols: list = None) -> list:
         out.append((f"c{i + 1}", label, hint))
     return out
 
-def keys_of(meta: list) -> list:
-    return [k for k, _l, _h in meta]
-
 
 def _messages(title: str, paras: list, claims: list, annos: dict, meta: list) -> list:
     # 段角色与主张是**这一篇的常量**：跟在全文块之后、维度说明之前——
@@ -140,7 +137,7 @@ def extract_all(papers: list, material_of, demo: bool = False, meta: list = None
     def one(p):
         paras, claims, annos = material_of(p["id"])
         sig = _material_sig(claims, len(paras))
-        ckey = (p["id"], tuple((k, l) for k, l, _h in meta), sig)
+        ckey = (p["id"], tuple((k, lab) for k, lab, _h in meta), sig)
         hit = _CACHE.get(ckey)
         if hit is not None:
             return p["id"], hit

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, jumpPara, askNotePrefill, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, bandOf,
-         paperEpoch, samePaper, reloadSummary, openPaper } from '../store'
+         paperEpoch, samePaper, reloadSummary, gotoPaperPara } from '../store'
 import { useEdgeResize } from '../edgeResize'
 import { lineSpanOf, sentenceAround, normText } from '../find'
 import { prettyChem } from '../chem'
@@ -421,7 +421,7 @@ async function classifyCited() {
   finally { cbBusy.value = false }
 }
 function gotoCiting(pid2, para) {
-  openPaper(pid2).then(() => { if (para) jumpPara(para) })
+  gotoPaperPara(pid2, para)
 }
 async function loadCachedBlocks() {
   if (!store.currentId) return

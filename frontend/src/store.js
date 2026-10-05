@@ -345,6 +345,14 @@ export function jumpPara(idx) {
   if (p) jumpTo(p.page, p.bbox.y0, p.bbox.y1)
 }
 
+/* 跨篇落段：异篇先 openPaper 再按 ¶n 落位（位置记忆管回来），同篇直接跳。
+   三个组件（提问引用/对比表/互引列表）原本各写一份 openPaper().then()。 */
+export function gotoPaperPara(pid, n) {
+  if (!pid) return
+  if (pid === store.currentId) { if (n) jumpPara(n); return }
+  openPaper(pid).then(() => { if (n) jumpPara(n) })
+}
+
 export function jumpTo(page, y0, y1) {
   store.jump = { pid: store.currentId, page, y0, y1, at: Date.now() }
 }

@@ -17,8 +17,8 @@ import threading
 
 import httpx
 
-import appinfo
 import config
+import db
 
 # 与前端 find.js 的 DOI_RE 同口径：结构上就不会认错的 10. 前后缀；尾随标点剥掉
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"'<>]+")
@@ -91,8 +91,6 @@ def backfill(pid: str):
     try:
         if not enabled():
             return
-        import db
-        import pdfparse
         p = db.get_paper(pid)
         if not p:
             return
@@ -130,7 +128,6 @@ def backfill(pid: str):
 def _pid_gone_guard(pid: str) -> bool:
     """回填隔着一次网络调用，期间论文可能已被删/被替换。"""
     try:
-        import db
         return db.get_paper(pid) is None
     except Exception:
         return True

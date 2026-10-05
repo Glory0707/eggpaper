@@ -3542,16 +3542,18 @@ def glossary_list(pid: str):
     _paper_or_404(pid)
     return db.glossary_list(pid)
 
+def _term_clean(s):
+    """术语入表的统一清洗（单篇/学科库两个端点共用）：控制字符剥掉（复制粘贴会带
+    \x00/\x1f，SQLite 存得下、界面显示不出来），非字符串收编成文本；钳长在调用处做
+    ——这是词表不是文本库。"""
+    s = s if isinstance(s, str) else ("" if s is None else str(s))
+    return "".join(ch for ch in s if ord(ch) >= 32).strip()
+
 @app.post("/api/papers/{pid}/glossary")
 def glossary_add(pid: str, body: dict):
     _paper_or_404(pid)
-    # 控制字符剥掉（复制粘贴会带 \x00/\x1f，SQLite 存得下、界面显示不出来），
-    # 长度钳到术语的合理上限——这是词表不是文本库；非字符串一律收编成文本
-    def clean(s):
-        s = s if isinstance(s, str) else ("" if s is None else str(s))
-        return "".join(ch for ch in s if ord(ch) >= 32).strip()
-    en = clean((body.get("term_en") or ""))[:120]
-    zh = clean((body.get("term_zh") or ""))[:120]
+    en = _term_clean(body.get("term_en"))[:120]
+    zh = _term_clean(body.get("term_zh"))[:120]
     if not en or not zh:
         raise HTTPException(400, "中英文都要填")
     gid = db.glossary_add(pid, en, zh, body.get("source", "manual"))
@@ -3591,10 +3593,6 @@ def glossary_delete(gid: int):
     return {"ok": True}
 
 # ---------------- 全局学科术语库（跨篇复用的公共层） ----------------
-
-def _term_clean(s):
-    s = s if isinstance(s, str) else ("" if s is None else str(s))
-    return "".join(ch for ch in s if ord(ch) >= 32).strip()
 
 @app.get("/api/glossary-global")
 def glossary_global_list():

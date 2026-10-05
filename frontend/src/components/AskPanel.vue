@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, store, toast, jumpPara, openPaper } from '../store'
+import { api, askStream, store, toast, jumpPara, openPaper, gotoPaperPara } from '../store'
 import { confirmBox, inputBox } from '../dialog'
 import { copyWithToast } from '../clip'
 import { t } from '../i18n'
@@ -309,7 +309,7 @@ function openCompare() {
   if (cmpIds.value.length >= 2) cmpOpen.value = true
 }
 function onCmpGoto(c) {
-  openPaper(c.pid).then(() => jumpPara(c.n))
+  gotoPaperPara(c.pid, c.n)
 }
 function pickFromPop(p) {
   toggleTitle((p.title || p.filename || '').trim())
