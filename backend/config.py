@@ -1,5 +1,6 @@
 """eggpaper 配置：本地 yaml，永不入库。"""
 import os
+import re
 import threading
 import time
 
@@ -11,6 +12,14 @@ _save_lock = threading.Lock()   # 两个窗口同时保存：写盘段串行，�
 
 DATA_DIR = appinfo.data_dir()
 CONFIG_PATH = os.path.join(DATA_DIR, "config.yaml")
+
+# config.yaml 进任何导出/备份前把 key 置空：备份 zip 常被拿去网盘/求人排查，明文 key
+# 跟着走就是泄漏。逐行做文本替换，注释与顺序保持原样（恢复后重填一次 key）。
+_SECRET_KEY_RE = re.compile(r"(?m)^(\s*(?:api_key|deepl_key|password)\s*:\s*).+$")
+
+def strip_secrets(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return _SECRET_KEY_RE.sub(lambda m: m.group(1) + '""', f.read())
 
 DEFAULTS = {
     "provider": {
@@ -34,6 +43,14 @@ DEFAULTS = {
         "feed_url": "https://gitee.com/zhouao1207/eggpaper/raw/master/update",
         "auto_check": True,
         "cache_hours": 6,
+    },
+    "metadata": {
+        "crossref": False,     # 导入时按首页 DOI 联网查 Crossref 补元数据；默认关（出网要显式）
+    },
+    "webdav": {
+        "url": "", "username": "", "password": "",
+        "auto": False,         # 每天自动传一份轻备份（db 快照 + 脱敏配置，不含 PDF 原件）
+        "days": 1,
     },
 }
 

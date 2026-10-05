@@ -2024,3 +2024,55 @@ html.dark .vis-img { background: #fff; }
   background: none; text-align: left; color: var(--ink-3);
 }
 .coll-menu .cm-row.cm-uncat:hover { color: var(--vermilion); background: none; }
+
+/* 批量抽取（Elicit 式）的自定义列编辑器：列名必填、说明选填，最多六列 */
+.cmp-cols { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.cmp-col { display: flex; gap: 6px; align-items: center; }
+.cmp-col input { font-size: var(--fs-sm); min-width: 0; }
+.cmp-col input:first-child { flex: 0 0 38%; }
+.cmp-col input:nth-child(2) { flex: 1 1 auto; }
+.cmp-col-x {
+  flex: 0 0 auto; border: none; background: none; color: var(--ink-3);
+  font-size: var(--fs-md); padding: 0 4px;
+}
+.cmp-col-x:hover { color: var(--vermilion); box-shadow: none; transform: none; }
+.cmp-col-add {
+  align-self: flex-start; border: 1px dashed var(--hairline); background: none;
+  color: var(--ink-2); font-size: var(--fs-sm); padding: 5px 12px; border-radius: 14px;
+}
+.cmp-col-add:hover { border-color: var(--accent-line); color: var(--accent-deep); box-shadow: none; transform: none; }
+
+/* 库内互引（scite 式）：谁引了这篇、哪句、什么立场。三色沿用全站档位语义——
+   支持=靛青（值得读）/ 质疑=朱红（要当心）/ 提及=中灰（外围） */
+.cc-paper { margin-bottom: 10px; }
+.cc-title {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  font-size: var(--fs-sm); font-weight: 650; color: var(--ink); padding: 2px 0;
+  line-height: 1.5; cursor: pointer;
+}
+.cc-title:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
+.cc-title span { font-weight: 400; color: var(--ink-3); }
+.cc-hit {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  padding: 3px 0 3px 2px; font-size: var(--fs-sm); line-height: 1.6;
+}
+.cc-hit:hover .cc-quote { color: var(--ink); }
+.cc-quote { color: var(--ink-2); flex: 1 1 auto; min-width: 0; }
+.cc-stance {
+  flex: 0 0 auto; font-size: var(--fs-xs); padding: 0 6px; border-radius: 9px; line-height: 1.7;
+}
+.cc-stance.support { color: var(--accent-deep); background: var(--accent-soft); }
+.cc-stance.contrast { color: var(--vermilion-deep); background: rgba(184, 70, 46, .08); }
+.cc-stance.mention { color: var(--ink-3); background: var(--paper-deep); }
+
+/* 术语行里「收进学科库」的 ☆：只有第一个 auto 边距元素吃空隙，后面跟死间距 */
+.term-row .t-go + .t-add, .term-row .t-no + .t-add { margin-left: 6px; }
+.term-row .t-add + .t-del { margin-left: 0; }
+
+/* 设置里的 WebDAV 备份：两行紧凑排布 */
+.wv-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.wv-row input { font-size: var(--fs-sm); min-width: 0; flex: 1 1 0; }
+/* 全局 .modal .f-row input 的 width:100% 会把复选框也拉成一行宽，把文字顶出弹窗 */
+.wv-row .ck input[type="checkbox"] { width: auto; flex: none; }
+.wv-row .ck { flex: 0 0 auto; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
+.wv-note { font-weight: 400; color: var(--ink-3); margin-left: 6px; }

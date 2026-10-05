@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, jumpPara, askNotePrefill, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, bandOf,
-         paperEpoch, samePaper, reloadSummary } from '../store'
+         paperEpoch, samePaper, reloadSummary, openPaper } from '../store'
 import { useEdgeResize } from '../edgeResize'
 import { lineSpanOf, sentenceAround, normText } from '../find'
 import { prettyChem } from '../chem'
@@ -290,9 +290,9 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onFigKey)
 })
 watch(tab, t => {
-  if (t === 'terms') loadTerms()      // 点进术语页：空表就补一次发掘（见 maybeGenTerms）
+  if (t === 'terms') { loadTerms(); loadGterms() }   // 点进术语页：空表就补一次发掘（见 maybeGenTerms）
   if (t === 'ask') loadSuggest()
-  if (t === 'eye') { loadFigures(); loadCachedBlocks() }
+  if (t === 'eye') { loadFigures(); loadCachedBlocks(); loadCited() }
 })
 watch(() => store.analysis.status, s => {
   if (s !== 'done') return
@@ -385,6 +385,43 @@ async function loadAdvisor() {
     if (!samePaper(mine)) return
     advisor.value = r.questions || []
   } catch (e) { toast(t('生成失败：{m}', { m: e.message })) } finally { advBusy.value = false }
+}
+
+/* ---------- 库内互引（scite 式）：库里谁引了这篇、引的哪句、什么立场 ----------
+   扫描是本地的（子串 + 归一化，不花钱），进速览页自动扫一次；
+   立场判定是一次模型调用，按篇对缓存——「判定立场」按钮才花钱。 */
+const STANCE_ZH = { support: '支持', contrast: '质疑', mention: '提及' }
+const cited = ref([])
+const citedN = ref(0)
+const cbBusy = ref(false)
+const cbTried = ref('')          // 已替哪一篇扫过
+const hasUnstanced = computed(() =>
+  cited.value.some(c => (c.hits || []).some(h => !h.stance)))
+async function loadCited() {
+  if (!store.currentId || cbTried.value === store.currentId) return
+  cbTried.value = store.currentId
+  cited.value = []
+  citedN.value = 0
+  const mine = paperEpoch()
+  try {
+    const r = await api.citedby(store.currentId)
+    if (!samePaper(mine)) return
+    cited.value = r.items || []
+    citedN.value = r.n || 0
+  } catch { /* 扫描失败静默：这是锦上添花的块 */ }
+}
+async function classifyCited() {
+  if (cbBusy.value) return
+  cbBusy.value = true
+  const mine = paperEpoch()
+  try {
+    const r = await api.citedbyClassify(store.currentId)
+    if (samePaper(mine)) { cited.value = r.items || []; citedN.value = r.n || 0 }
+  } catch (e) { toast(t('立场没判成：{m}', { m: e.message })) }
+  finally { cbBusy.value = false }
+}
+function gotoCiting(pid2, para) {
+  openPaper(pid2).then(() => { if (para) jumpPara(para) })
 }
 async function loadCachedBlocks() {
   if (!store.currentId) return
@@ -528,9 +565,43 @@ watch(() => store.currentId, () => {
   advisor.value = []
   figures.value = []
   suggest.value = []
+  cited.value = []
+  citedN.value = 0
+  cbTried.value = ''
   loadTerms()          // 术语按篇：换一篇就换一份词表
   loadSix()
 }, { immediate: true })
+
+/* ---------- 学科库（全局术语）：跨篇复用的公共层 ----------
+   一篇一份的术语表之外，还有一批跟着学科走、篇篇都认的译法。它们自动并入
+   本篇的翻译与问答链路（本篇的词优先），在这里手工增删。 */
+const gterms = ref([])
+const gform = ref({ term_en: '', term_zh: '' })
+async function loadGterms() {
+  try { gterms.value = await api.glossaryGlobal() } catch { gterms.value = [] }
+}
+let addingG = false
+async function addGterm() {
+  if (!gform.value.term_en.trim() || !gform.value.term_zh.trim() || addingG) return
+  addingG = true
+  try {
+    await api.glossaryGlobalAdd({ ...gform.value })
+  } catch (e) { toast(e.message); return }
+  finally { addingG = false }
+  gform.value = { term_en: '', term_zh: '' }
+  loadGterms()
+}
+async function delGterm(id) {
+  try { await api.glossaryGlobalDelete(id) } catch (e) { toast(e.message); return }
+  loadGterms()
+}
+async function saveToGlobal(term) {
+  try {
+    await api.glossaryGlobalAdd({ term_en: term.term_en, term_zh: term.term_zh })
+    toast(t('已收进学科库'))
+    loadGterms()
+  } catch (e) { toast(e.message) }
+}
 </script>
 
 <template>
@@ -781,7 +852,25 @@ watch(() => store.currentId, () => {
           </div>
         </div>
 
-                <div class="blk" style="display:flex;gap:8px;flex-wrap:wrap">
+                <div class="blk" v-if="cited.length">
+          <div class="blk-head">
+            <span class="mono-label">{{ t('库内互引') }}<span v-if="citedN"> · {{ citedN }}</span></span>
+            <button v-if="hasUnstanced && !cbBusy" class="blk-get" @click="classifyCited">{{ t('判定立场') }}</button>
+            <span v-else-if="cbBusy" class="blk-busy">{{ t('判定中…') }}</span>
+          </div>
+          <div class="cc-paper" v-for="c in cited" :key="c.citing.id">
+            <button class="cc-title" @click="gotoCiting(c.citing.id)">
+              {{ c.citing.title || t('(无标题)') }}<span v-if="c.citing.year"> · {{ c.citing.year }}</span>
+            </button>
+            <div class="cc-hit" v-for="(h, i) in c.hits" :key="i"
+                 :title="t('打开这篇、跳到那一段')" @click="gotoCiting(c.citing.id, h.para)">
+              <span v-if="h.stance" class="cc-stance" :class="h.stance">{{ t(STANCE_ZH[h.stance] || '') }}</span>
+              <span class="cc-quote">{{ h.quote }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="blk" style="display:flex;gap:8px;flex-wrap:wrap">
           <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>{{ t('导出笔记 .md') }}</a>
           <button class="exp-btn" @click="copyExport">{{ exportCopied ? t('已复制') : t('复制 Markdown') }}</button>
         </div>
@@ -819,9 +908,27 @@ watch(() => store.currentId, () => {
             <button v-if="inPaper(term)" class="t-go" :title="t('在文中查找')"
                     @click="findTerm(term.term_en)">↗</button>
             <span v-else class="t-no" :title="t('本文正文没有这个词')">—</span>
+            <button class="t-add" :title="t('收进学科库（跨篇复用）')" @click="saveToGlobal(term)">☆</button>
             <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
           </div>
         </TransitionGroup>
+
+        <div class="mono-label" style="margin:20px 0 6px;display:flex;align-items:center">
+          {{ t('学科库') }} · {{ gterms.length }}
+          <a class="exp-btn" style="margin-left:auto" :href="api.glossaryGlobalCsvUrl()" download>{{ t('导出 CSV') }}</a>
+        </div>
+        <div class="term-form">
+          <input type="text" v-model="gform.term_en" :placeholder="t('英文')" />
+          <input type="text" v-model="gform.term_zh" :placeholder="t('中文')" />
+          <button :title="t('添加')" @click="addGterm">＋</button>
+        </div>
+        <p class="t-empty" v-if="!gterms.length">{{ t('学科库是空的') }}</p>
+        <div v-for="term in gterms" :key="'g' + term.id" class="term-row">
+          <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>
+          <span class="t-arrow">→</span>
+          <span class="t-zh">{{ term.term_zh }}</span>
+          <button class="t-del" @click="delGterm(term.id)" :title="t('删除')">×</button>
+        </div>
       </template>
       </div>
       </Transition>

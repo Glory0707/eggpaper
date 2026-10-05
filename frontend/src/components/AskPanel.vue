@@ -135,6 +135,7 @@ async function send(q, pidArg) {
   store.egg.nod++                      // 蛋注意到你在提问，歪头看一眼
   const h = askStream(reqPid, body, ev => {
     if (ev.type === 'delta') queue(ev.text)
+    else if (ev.type === 'status') m.hint = t('正在翻 {n} 篇找相关段落…', { n: ev.n || '' })
     else if (ev.type === 'done') { flush(); gotDone = true; applyIds(ev) }
     else if (ev.type === 'error') {
       flush()
@@ -424,7 +425,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
       <div v-for="(m, i) in msgs" :key="m.id || 'm' + i" class="qa-msg" :class="m.role">
         <div class="q-role">{{ m.role === 'user' ? t('你') : 'EGGPAPER' }}</div>
         <template v-if="m.role === 'assistant'">
-                    <div v-if="m.streaming && !m.content" class="q-body md qa-wait">{{ t('正在想…') }}</div>
+                    <div v-if="m.streaming && !m.content" class="q-body md qa-wait">{{ m.hint || t('正在想…') }}</div>
           <MdLite v-else class="q-body md" :text="m.content || ' '" :cite-ok="citeOk" @cite="onCite" />
         </template>
         <div class="q-body" v-else>{{ m.content }}</div>

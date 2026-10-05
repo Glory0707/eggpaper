@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 import uuid
+import zipfile
 from urllib.parse import urlparse
 
 import uvicorn
@@ -29,6 +30,7 @@ import compare
 appinfo.migrate_if_needed()
 
 import config
+import crossref
 import db
 import engine_install
 import llm
@@ -37,6 +39,7 @@ import pdfparse
 import picker
 import translate_full
 import update
+import webdav
 import zotero
 
 app = FastAPI(title="eggpaper", version="0.1.0")
@@ -344,6 +347,10 @@ def _startup():
         # 指纹回填都是分钟级的大库重活——留在 startup 里，用户看到的就是
         # 白屏干等几分钟。搬去后台：界面先起来，这些活几秒内默默跟上。
         try:
+            webdav.kick_auto()     # 网盘自动备份的节拍线程（自带 90s 起步延迟）
+        except Exception:
+            pass
+        try:
             _repair_paper_paths()
             try:
                 for pid in os.listdir(PAPERS_DIR):
@@ -547,6 +554,7 @@ def get_settings():
                          # 保存端（PUT）对带 "…" 的回传不落盘，打码链路残留也写不坏。
                          "api_key": p["api_key"] or ""},
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
+            "metadata": cfg.get("metadata", {}), "webdav": cfg.get("webdav", {}),
             "ui_lang": cfg.get("ui_lang", "zh"),
             "shot_save": cfg.get("shot_save", True),
             "data_dir": appinfo.data_dir()}
@@ -586,6 +594,25 @@ def put_settings(body: dict):
             cfg["update"]["feed_url"] = u["feed_url"].strip()
         if "auto_check" in u:
             cfg["update"]["auto_check"] = bool(u["auto_check"])
+    if "metadata" in body:
+        m = body["metadata"]
+        if not isinstance(m, dict):
+            raise HTTPException(400, "元数据那一栏格式不对")
+        if "crossref" in m:
+            cfg["metadata"]["crossref"] = bool(m["crossref"])
+    if "webdav" in body:
+        w = body["webdav"]
+        if not isinstance(w, dict):
+            raise HTTPException(400, "WebDAV 那一栏格式不对")
+        cur = cfg.setdefault("webdav", {})
+        for k in ("url", "username"):
+            if isinstance(w.get(k), str):
+                cur[k] = w[k].strip()
+        pwd = w.get("password")
+        if isinstance(pwd, str) and "…" not in pwd:
+            cur["password"] = pwd
+        if "auto" in w:
+            cur["auto"] = bool(w["auto"])
     was_demo = _demo_mode(cfg)
     if cfg["provider"]["api_key"] and "mock" not in body and "provider" in body:
         cfg["mock"] = False
@@ -680,13 +707,8 @@ _BACKUP_SKIP_FILES = {"eggpaper.db", "eggpaper.db-wal", "eggpaper.db-shm", "pend
 # 只有陪跑文件不进位
 _RESTORE_SKIP_FILES = _BACKUP_SKIP_FILES - {"eggpaper.db"}
 
-_SECRET_KEY_RE = re.compile(r"(?m)^(\s*(?:api_key|deepl_key)\s*:\s*).+$")
-
-def _strip_secrets(path: str) -> str:
-    """config.yaml 进备份前把 key 置空：备份 zip 常被拿去网盘/求人排查，明文 key
-    跟着走就是泄漏。逐行做文本替换，注释与顺序保持原样（恢复后重填一次 key）。"""
-    with open(path, "r", encoding="utf-8") as f:
-        return _SECRET_KEY_RE.sub(lambda m: m.group(1) + '""', f.read())
+# key 脱敏在 config.strip_secrets（webdav 轻备份共用一份；password 键一并置空）
+_strip_secrets = config.strip_secrets
 
 def _backup_zip_stream():
     """整个数据目录打成一个 zip（STORED：PDF 本来就是压缩格式，再压一遍白烧 CPU）。
@@ -758,9 +780,14 @@ def backup_restore(body: dict):
     解包时跳过 zip slip（路径里带 .. 的条目）和排除名单。
     全程持锁：并发恢复会互相拆掉对方正在写的暂存目录。
     """
+    src = str((body or {}).get("path") or "").strip().strip('"')
+    _stage_restore(src)
+    return {"ok": True, "restart": True}
+
+def _stage_restore(src: str):
+    """备份恢复的落地准备（本地文件与 WebDAV 拉下来的共用这一段）。
+    校验 + 解包到暂存 + 写标记；失败抛 HTTPException。"""
     with _restore_lock:
-        import zipfile
-        src = str((body or {}).get("path") or "").strip().strip('"')
         if not src or not os.path.isfile(src):
             raise HTTPException(404, "找不到这个文件")
         if not src.lower().endswith(".zip"):
@@ -789,12 +816,83 @@ def backup_restore(body: dict):
                     os.makedirs(os.path.dirname(target), exist_ok=True)
                     with z.open(info) as fsrc, open(target, "wb") as fdst:
                         shutil.copyfileobj(fsrc, fdst, 1 << 20)
+    try:
+        with open(os.path.join(config.DATA_DIR, "pending_restore.json"), "w", encoding="utf-8") as f:
+            json.dump({"staged": staged}, f)
+    except OSError as e:
+        raise HTTPException(500, f"写恢复标记失败：{_human_msg(e)}")
+
+# ---------------- WebDAV 网盘自动备份 ----------------
+
+@app.get("/api/webdav/status")
+def webdav_status():
+    return webdav.status()
+
+@app.post("/api/webdav/save")
+def webdav_save(body: dict):
+    """存 WebDAV 配置。password 带「…」视为打码回传不落盘（与 api_key 同一约定），
+    只为改「自动」开关时不把密码抹掉。"""
+    w = body or {}
+    if not isinstance(w, dict):
+        raise HTTPException(400, "WebDAV 配置格式不对")
+    cfg = copy.deepcopy(config.load())
+    cur = cfg.setdefault("webdav", {})
+    for k in ("url", "username"):
+        if isinstance(w.get(k), str):
+            cur[k] = w[k].strip()
+    pwd = w.get("password")
+    if isinstance(pwd, str) and "…" not in pwd:
+        cur["password"] = pwd
+    if "auto" in w:
+        cur["auto"] = bool(w["auto"])
+    if "days" in w:
         try:
-            with open(os.path.join(config.DATA_DIR, "pending_restore.json"), "w", encoding="utf-8") as f:
-                json.dump({"staged": staged}, f)
-        except OSError as e:
-            raise HTTPException(500, f"写恢复标记失败：{_human_msg(e)}")
-        return {"ok": True, "restart": True}
+            cur["days"] = max(1, int(w["days"]))
+        except (TypeError, ValueError):
+            pass
+    config.save(cfg)
+    return webdav.status()
+
+@app.post("/api/webdav/test")
+def webdav_test(body: dict):
+    """测连通。密码框打码（带…）时用已存的密码测。"""
+    w = body or {}
+    cfg = config.load().get("webdav", {})
+    url = (w.get("url") if isinstance(w.get("url"), str) else "") or cfg.get("url") or ""
+    user = (w.get("username") if isinstance(w.get("username"), str) else "") or cfg.get("username") or ""
+    pwd = w.get("password") if isinstance(w.get("password"), str) else ""
+    if not pwd or "…" in pwd:
+        pwd = cfg.get("password") or ""
+    ok, why = webdav.test(url, user, pwd)
+    return {"ok": ok, "why": why}
+
+@app.post("/api/webdav/backup-now")
+def webdav_backup_now():
+    def run():
+        webdav.run_backup("manual")
+    threading.Thread(target=run, daemon=True).start()
+    return webdav.status()
+
+@app.post("/api/webdav/restore")
+def webdav_restore():
+    """从网盘拉回备份并走本地恢复流程（重启后生效）。"""
+    fd, tmp = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    ok, why = webdav.fetch_latest(tmp)
+    if not ok:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise HTTPException(400, why or "没拉下来")
+    try:
+        _stage_restore(tmp)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    return {"ok": True, "restart": True}
 
 @app.post("/api/pdf2zh/install")
 def pdf2zh_install(body: dict = None):
@@ -1030,6 +1128,7 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
         db.update_paper(pid, pdf_hash=pdf_hash)
     db.replace_paragraphs(pid, paras)
     _ensure_paper_type(pid)
+    crossref.kick(pid)     # 可选开关：按首页 DOI 联网补元数据（后台线程，失败安静）
     row = db.get_paper(pid)
     db.update_paper(pid, last_read_at=db._now())
     if paras:
@@ -2039,8 +2138,17 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
 def _summary_material(pid: str):
     """一眼卡的两份输入：全文段落 + 按全文命中的锁定术语（管线与端点共用同一口径）。"""
     paras = db.get_paragraphs(pid)
-    hits = db.glossary_hit(pid, " ".join(pp["text"] for pp in paras)[:60000])
-    return paras, hits
+    corpus = " ".join(pp["text"] for pp in paras)[:60000]
+    return paras, _hits_merged(db.glossary_hit(pid, corpus), corpus)
+
+def _hits_merged(hits: list, text: str) -> list:
+    """单篇/跨篇命中的术语 + 全局学科库命中（功能④）。本篇的词优先：同一个词在
+    本篇词表和学科库里译法打架时，锁本篇的——这篇正文语境里的写法比通用译法可信。"""
+    have = {str(h.get("en", "")).lower() for h in (hits or [])}
+    for g in db.glossary_global_hits(text or ""):
+        if str(g.get("en", "")).lower() not in have:
+            hits.append(g)
+    return hits
 
 def _summary_compute(pid: str) -> dict:
     """一眼卡的生成+落库：析读管线的预生成与 /summary 端点**共用同一把锁**——
@@ -2302,10 +2410,22 @@ def six_answer(pid: str, key: str):
 
 @app.post("/api/compare")
 def compare_papers(body: dict):
-    """数据对比表：勾选的几篇各抽一次、按同一 schema 拼成一张表（格子带 ¶ 锚点）。"""
-    ids = [str(x) for x in ((body or {}).get("ids") or [])][:5]
-    if len(ids) < 2:
-        raise HTTPException(400, "至少选两篇才能对比")
+    """数据对比表：勾选的几篇各抽一次、按同一 schema 拼成一张表（格子带 ¶ 锚点）。
+
+    cols（Elicit 式批量抽取）：用户自定义列 [{label, hint?}]，给了它就抽「固定维度
+    （dims 里勾的）+ 自定义列」的合集，篇数上限放宽到 12——批量过表时每篇仍是一次
+    调用，只是列由用户定义。"""
+    ids = [str(x) for x in ((body or {}).get("ids") or [])][:12]
+    cols = [c for c in ((body or {}).get("cols") or [])
+            if isinstance(c, dict) and str(c.get("label") or "").strip()]
+    dims = [str(k) for k in ((body or {}).get("dims") or []) if str(k) in compare.KEYS]
+    if cols:
+        if len(ids) < 2:
+            raise HTTPException(400, "至少选两篇才能对比")
+    else:
+        ids = ids[:5]
+        if len(ids) < 2:
+            raise HTTPException(400, "至少选两篇才能对比")
     papers = []
     for pid in ids:
         p = db.get_paper(pid)
@@ -2320,12 +2440,13 @@ def compare_papers(body: dict):
         return db.get_paragraphs(xpid, with_lines=False), claims, annos
 
     demo = _demo_mode()
-    dims = [str(k) for k in ((body or {}).get("dims") or []) if str(k) in compare.KEYS]
-    cells = compare.extract_all(papers, material_of, demo=demo, dims=dims or None)
+    # cols 在场 = 批量抽取模式：纯用户自定义列（dims=[]），不掺固定维度；没有 cols 照旧六维勾选
+    meta = compare.dims_meta(dims=[] if cols else (dims or None), cols=cols or None)
+    cells = compare.extract_all(papers, material_of, demo=demo, meta=meta)
     return {"papers": [{k: p.get(k) for k in ("id", "title", "filename", "authors", "year")}
                        for p in papers],
-            "cells": cells, "dims": [{"k": k, "label": label} for k, label, _h in compare.DIMS
-                                     if not dims or k in dims],
+            "cells": cells,
+            "dims": [{"k": k, "label": label} for k, label, _h in meta],
             "demo": demo}
 
 @app.get("/api/papers/{pid}/method-card")
@@ -2832,7 +2953,7 @@ def fig_caption(pid: str, idx: int = 0):
     hit = caps.get(str(idx)) or caps.get(key)   # 析读时按编号存；旧版懒翻译按坐标存——两把钥匙都认
     if hit:
         return {"zh": hit, "original": cap}
-    hits = db.glossary_hit(pid, cap)
+    hits = _hits_merged(db.glossary_hit(pid, cap), cap)
     msgs = llm.translate_caption_messages(cap, hits)
     zh = llm.chat(msgs, max_tokens=6000, temperature=0.2, scene="图注").strip()
     if zh:
@@ -2961,8 +3082,8 @@ def _context(pid: str, conv_id: int, history: list):
     return prev, short + rest
 
 RECON_SYSTEM = """你在为一次跨论文的提问挑选相关文献。给你一份编号清单（标题、有没有析读摘要）。
-从中挑出与问题最相关的 2~4 篇。只输出一个 JSON 数组（元素是编号整数），不要输出任何别的文字；
-一篇都不相关就输出 []。"""
+挑出与问题最相关的篇目（最多 8 篇，按相关度从高到低）。只输出一个 JSON 数组（元素是编号整数），
+不要输出任何别的文字；一篇都不相关就输出 []。"""
 
 def _paper_by_title(title: str):
     """按标题找论文（大小写不敏感）。全等优先；其次唯一包含；都不中返回 None。
@@ -2977,10 +3098,11 @@ def _paper_by_title(title: str):
     contains = [r for r, rt in norm if (t in rt or rt in t) and rt]
     return contains[0]["id"] if contains else None
 
-def _recon_pick(question: str, papers: list):
+def _recon_pick(question: str, papers: list, cap: int = 8):
     """范围是全库/分类时的第一拍"侦察"：只喂标题清单（几十篇也才几千字），
-    让模型挑出最相关的 2~4 篇，第二拍再按摘要级上下文作答——库再大也不会把全文塞爆。
-    失败/演示模式返回演示性挑选，绝不抛错：侦察失败顶多选得不准，不该把提问打断。"""
+    让模型挑出最相关的篇目（cap 上限），第二拍再取材或按摘要级上下文作答——
+    库再大也不会把全文塞爆。失败/演示模式返回演示性挑选，绝不抛错：侦察失败
+    顶多选得不准，不该把提问打断。"""
     if not papers:
         return []
     if _demo_mode():
@@ -3000,10 +3122,30 @@ def _recon_pick(question: str, papers: list):
                 picked.append(papers[n]["id"])
         if not picked:
             _applog(f"跨文献侦察没挑出篇目（输出：{out[:60]!r}），退回前 3 篇")
-        return picked[:4]
+        return picked[:cap]
     except Exception as e:
         _applog(f"跨文献侦察失败，退回前 3 篇: {_human_msg(e)}")
         return [p["id"] for p in papers[:3]]
+
+def _gather_others(question: str, cand: list) -> list:
+    """全库分层问答的取材拍（PaperQA2 方向）：候选多于 4 篇时不搬全文（上下文装不下），
+    逐篇调一次取材（共享前缀吃服务端缓存，输入按约 1/50 计费），并行 3 路。
+    取不到材料的篇就缺席——单篇失败不拖垮整场回答。"""
+    papers = [p for p in (db.get_paper(x) for x in cand[:8]) if p]
+    def one(o):
+        paras = db.get_paragraphs(o["id"], with_lines=False)
+        if not paras:
+            return None
+        picks = llm.gather(o.get("title") or "", paras, question)
+        if not picks:
+            return None
+        return {"title": o.get("title") or o.get("filename") or "未命名", "paras": picks}
+    out = []
+    with ThreadPoolExecutor(max_workers=min(3, max(1, len(papers)))) as ex:
+        for r in ex.map(one, papers):
+            if r:
+                out.append(r)
+    return out
 
 def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
@@ -3022,17 +3164,24 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             summary, ctx = _context(pid, conv_id, hist)
             pids = [pid] + [x for x in (ref_pids or []) if x != pid]
             paras = db.get_paragraphs(pid, with_lines=False)   # 一问只取一遍：下面三处全用它
-            hits = db.glossary_hits_all(pids, " ".join(pp["text"] for pp in paras)[:60000])
+            corpus = " ".join(pp["text"] for pp in paras)[:60000]
+            hits = _hits_merged(db.glossary_hits_all(pids, corpus), corpus)
             others = []
             cand = [x for x in (ref_pids or []) if x != pid]
             if len(cand) > 3:
                 # 引用可能带着已删除的 pid：get_paper 回 None，先滤掉再侦察
                 cand = _recon_pick(question, [p for p in map(db.get_paper, cand) if p]) or cand[:3]
-            for x in cand[:3]:
-                o = db.get_paper(x)
-                if o:
-                    others.append({"title": o.get("title") or o.get("filename") or "未命名",
-                                   "paras": db.get_paragraphs(x, with_lines=False)})
+            if len(cand) > 4:
+                # 分层取材：候选多于 4 篇，全文装不下——先逐篇抽相关段落，作答只见摘录。
+                # 取材是分钟内但可感的等待，先发一条状态让"在等"看得见
+                yield _sse({"type": "status", "mode": "gather", "n": min(len(cand), 8)})
+                others = _gather_others(question, cand)
+            else:
+                for x in cand[:3]:
+                    o = db.get_paper(x)
+                    if o:
+                        others.append({"title": o.get("title") or o.get("filename") or "未命名",
+                                       "paras": db.get_paragraphs(x, with_lines=False)})
             gen = llm.chat_stream(llm.ask_messages(p["title"], paras, ctx, question,
                                                    hits, summary, others), scene="问答")
         for piece in gen:
@@ -3219,7 +3368,7 @@ def translate_selection(pid: str, body: dict):
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "没有选中文本")
-    hits = db.glossary_hit(pid, text)
+    hits = _hits_merged(db.glossary_hit(pid, text), text)
     context = body.get("context", "")
     return _sse_response(_translate_sse(text, context, hits))
 
@@ -3230,7 +3379,7 @@ def translate_para(pid: str, body: dict):
     para = db.get_paragraph(pid, idx)
     if not para:
         raise HTTPException(404, "段落不存在")
-    hits = db.glossary_hit(pid, para["text"])
+    hits = _hits_merged(db.glossary_hit(pid, para["text"]), para["text"])
     ctx_row = db.get_paragraph(pid, idx - 1)
     ctx = (ctx_row or {}).get("text", "")
     return _sse_response(_translate_sse(para["text"], ctx, hits))
@@ -3417,6 +3566,172 @@ def _abbrs_of(pid: str) -> dict:
 def glossary_delete(gid: int):
     db.glossary_delete(gid)
     return {"ok": True}
+
+# ---------------- 全局学科术语库（跨篇复用的公共层） ----------------
+
+def _term_clean(s):
+    s = s if isinstance(s, str) else ("" if s is None else str(s))
+    return "".join(ch for ch in s if ord(ch) >= 32).strip()
+
+@app.get("/api/glossary-global")
+def glossary_global_list():
+    return db.glossary_global_list()
+
+@app.post("/api/glossary-global")
+def glossary_global_add(body: dict):
+    en = _term_clean((body or {}).get("term_en"))[:120]
+    zh = _term_clean((body or {}).get("term_zh"))[:120]
+    note = _term_clean((body or {}).get("note"))[:200]
+    if not en or not zh:
+        raise HTTPException(400, "中英文都要填")
+    return {"id": db.glossary_global_add(en, zh, note)}
+
+@app.delete("/api/glossary-global/{gid}")
+def glossary_global_delete(gid: int):
+    db.glossary_global_delete(gid)
+    return {"ok": True}
+
+@app.get("/api/glossary-global/export.csv")
+def glossary_global_csv():
+    """学科库导出：与单篇词表同一套 CSV 口径（同样的公式注入防护）。"""
+    import csv
+    import io
+    buf = io.StringIO()
+    buf.write("﻿")
+    w = csv.writer(buf)
+    w.writerow(["term_en", "term_zh"])
+    formula_leads = ("=", "+", "-", "@", "\t", "\r")
+    def _safe_cell(v):
+        v = str(v)
+        return "'" + v if v[:1] in formula_leads else v
+    for r in db.glossary_global_list():
+        w.writerow([_safe_cell(r["term_en"]), _safe_cell(r["term_zh"])])
+    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
+
+# ---------------- 库内互引（scite 式）：库里谁引了这篇、引的哪句、什么立场 ----------------
+
+_CITE_STANCE_ZH = {"support": "支持", "contrast": "质疑", "mention": "提及"}
+
+def _sentence_around(text: str, at: int, span: int = 220) -> str:
+    """命中位置 → 完整句子（前后扩到句界）。找不到句界就按窗口切。"""
+    s, e = max(0, at - span), min(len(text), at + span)
+    left = max(text.rfind(x, s, at) for x in (". ", "。", "! ", "? ", "；", "; "))
+    right = min((i for i in (text.find(x, at, e) for x in (". ", "。", "! ", "? ")) if i >= 0),
+                default=e)
+    if left >= s:
+        s = left + (2 if text[left:left + 2] in (". ", "! ", "? ") else 1)
+    return " ".join(text[s:right + 1].split())[:300]
+
+def _citedby_scan(p: dict) -> list:
+    """本地免费扫描：库内其他论文的正文里，哪些句子提到了这篇（标题或 DOI）。
+    SQL LIKE 粗筛 + 归一化精筛（连字/换行 hyphen 与前端划线同一套折叠规则），
+    一篇最多留 3 句——互引要看的是"谁引了、怎么引"，不是逐句清单。"""
+    title = (p.get("title") or "").strip()
+    doi = ""
+    try:
+        doi = (json.loads(p.get("citation") or "{}") or {}).get("doi") or ""
+    except Exception:
+        pass
+    if len(title) < 12 and not doi:
+        return []                      # 标题太短匹配必炸误报；什么钥匙都没有就别扫
+    tlow = title.lower()
+    tnorm = llm.norm_text(title)
+    rows = db.q("SELECT paper_id, idx, page, text FROM paragraphs "
+                "WHERE in_refs=0 AND paper_id != ?", (p["id"],))
+    by_paper = {}
+    for r in rows:
+        text = r["text"] or ""
+        at = -1
+        if tlow and tlow in text.lower():
+            at = text.lower().find(tlow)
+        elif tnorm and len(tnorm) >= 8 and tnorm in llm.norm_text(text):
+            at = -2                    # 归一化才对得上（跨行连字符/连字）：句子提不出来，用段落摘录
+        elif doi and doi.lower() in text.lower():
+            at = text.lower().find(doi.lower())
+        if at == -1:
+            continue
+        quote = _sentence_around(text, at) if at >= 0 else " ".join(text.split())[:200]
+        by_paper.setdefault(r["paper_id"], []).append(
+            {"para": r["idx"], "page": r["page"], "quote": quote})
+    out = []
+    for citing_id, hits in by_paper.items():
+        o = db.get_paper(citing_id)
+        if not o:
+            continue
+        out.append({"citing": {"id": citing_id, "title": o.get("title") or o.get("filename") or "",
+                               "authors": o.get("authors") or "", "year": o.get("year") or ""},
+                    "hits": hits[:3]})
+    out.sort(key=lambda x: (x["citing"]["title"] or "").lower())
+    return out
+
+CITE_SYSTEM = """你在为研究者整理"库内互引"：另一篇论文的正文里出现了当前这篇的标题/DOI，
+下面是从 citing 论文正文里抽出的命中句子。逐句判断引用立场：
+support = 引用它来支撑自己的论点/方法；contrast = 引它同时指出分歧、局限或反驳；
+mention = 中性提及（背景、相关工作罗列）。
+只输出 JSON，不要解释：{"stances":[{"i":<序号>,"s":"support|contrast|mention"}]}"""
+
+def _citedby_classify(pid: str, scan: list) -> list:
+    """立场判定：只对没缓存过的（被引篇, 引用篇）对花钱，一次调用判完，结果落缓存。
+    失败回退 mention——立场缺失不该把整个互引列表藏起来。"""
+    cached = db.cite_ctx_all(pid)
+    todo = [x for x in scan if x["citing"]["id"] not in cached]
+    todo_ids = {x["citing"]["id"] for x in todo}
+    for x in todo:                    # 默认 mention：判定不出/演示模式都回退到它
+        for h in x["hits"]:
+            h["stance"] = "mention"
+    if todo and not _demo_mode():
+        flat = []                       # 序号 → (citing_id, 句子)：模型只回序号，按它对回去
+        for x in todo:
+            for h in x["hits"]:
+                flat.append((x["citing"]["id"], h))
+        lines = [f"{i}. 《{x['citing']['title'][:60]}》说：{h['quote'][:200]}"
+                 for i, (_cid, h) in enumerate(flat)]
+        stances = {}
+        try:
+            data = llm.chat_json(
+                [{"role": "system", "content": CITE_SYSTEM + llm._lang_tail()},
+                 {"role": "user", "content": "\n".join(lines)[:12000]}],
+                max_tokens=2000, temperature=0, no_think=True, scene="互引立场")
+            for it in (data.get("stances") or []):
+                if isinstance(it, dict) and str(it.get("s")) in _CITE_STANCE_ZH:
+                    try:
+                        stances[int(it["i"])] = str(it["s"])
+                    except (TypeError, ValueError):
+                        pass
+        except Exception as e:
+            _applog(f"互引立场判定失败（回退 mention）：{_human_msg(e)}")
+        for i, (cid, h) in enumerate(flat):
+            h["stance"] = stances.get(i, "mention")
+        for x in todo:
+            cid = x["citing"]["id"]
+            if not _pid_gone(pid) and not _pid_gone(cid):
+                db.cite_ctx_put(pid, cid, x["hits"])
+    out = []
+    for x in scan:
+        cid = x["citing"]["id"]
+        hits = x["hits"] if cid in todo_ids else (cached.get(cid) or x["hits"])
+        out.append({"citing": x["citing"], "hits": hits[:3]})
+    return out
+
+@app.get("/api/papers/{pid}/citedby")
+def citedby(pid: str):
+    """扫描免费（本地子串 + 归一化），立场只读缓存——花钱的判定走 classify。"""
+    p = _paper_or_404(pid)
+    scan = _citedby_scan(p)
+    cached = db.cite_ctx_all(pid)
+    items = [{"citing": x["citing"], "hits": (cached.get(x["citing"]["id"]) or x["hits"])[:3]}
+             for x in scan]
+    return {"items": items, "n": sum(len(x["hits"]) for x in items)}
+
+@app.post("/api/papers/{pid}/citedby/classify")
+def citedby_classify(pid: str):
+    p = _paper_or_404(pid)
+    scan = _citedby_scan(p)
+    if not scan:
+        return {"items": [], "n": 0}
+    items = _citedby_classify(pid, scan)
+    return {"items": items, "n": sum(len(x["hits"]) for x in items)}
 
 # ---------------- 前端静态托管（构建后） ----------------
 

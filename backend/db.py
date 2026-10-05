@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS paper_collections(
 CREATE TABLE IF NOT EXISTS reading_log(
   day TEXT, paper_id TEXT, PRIMARY KEY(day, paper_id)
 );
+-- 全局学科术语库：跨篇复用的译法（一篇一份的术语表之外的公共层）。
+-- 必须是独立的表——glossary 的旧迁移会把 paper_id 为空的行当脏数据删掉（_migrate），
+-- 全局词混进那张表活不过一次升级。
+CREATE TABLE IF NOT EXISTS glossary_global(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, term_en TEXT, term_zh TEXT,
+  note TEXT DEFAULT '', created_at TEXT
+);
+-- 库内互引的立场判定缓存（scite 式）：谁引用了这篇、哪句、支持还是质疑。
+-- 判定是一次模型调用，按（被引篇, 引用篇）缓存；本地扫描本身免费，不进这张表。
+CREATE TABLE IF NOT EXISTS cite_ctx(
+  paper_id TEXT, citing_id TEXT, hits TEXT, PRIMARY KEY(paper_id, citing_id)
+);
 """
 
 _INDEXES = (
@@ -714,6 +726,60 @@ def glossary_hits_all(pids: list, text: str):
         if (r["term_en"] or "").lower() in low:
             hits.append({"paper_id": r["paper_id"], "en": r["term_en"], "zh": r["term_zh"]})
     return hits
+
+# ---------- 全局学科术语库（跨篇复用的公共层） ----------
+
+def glossary_global_list():
+    return [dict(r) for r in q(
+        "SELECT * FROM glossary_global ORDER BY term_en COLLATE NOCASE")]
+
+def glossary_global_add(term_en: str, term_zh: str, note: str = "") -> int:
+    """同词再收 = 改译法，不是插出两行（与单篇 glossary_add 同一判重口径，同锁防 TOCTOU）。"""
+    with _lock:
+        c = _get()
+        row = c.execute("SELECT id FROM glossary_global WHERE term_en=? COLLATE NOCASE",
+                        (term_en,)).fetchone()
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        if row:
+            c.execute("UPDATE glossary_global SET term_zh=? WHERE id=?", (term_zh, row["id"]))
+            c.commit()
+            return row["id"]
+        cur = c.execute("INSERT INTO glossary_global(term_en, term_zh, note, created_at) VALUES(?,?,?,?)",
+                        (term_en, term_zh, note, now))
+        rowid = cur.lastrowid
+        c.commit()
+        return rowid
+
+def glossary_global_delete(gid: int):
+    q("DELETE FROM glossary_global WHERE id=?", (gid,), commit=True)
+
+def glossary_global_hits(text: str):
+    """全局词里有哪些出现在给定文本里（大小写不敏感子串）。供翻译/问答与单篇词表合并。"""
+    if not (text or "").strip():
+        return []
+    low = text.lower()
+    return [{"en": r["term_en"], "zh": r["term_zh"]}
+            for r in q("SELECT term_en, term_zh FROM glossary_global")
+            if (r["term_en"] or "").lower() in low]
+
+# ---------- 库内互引（scite 式）的立场缓存 ----------
+
+def cite_ctx_all(pid: str) -> dict:
+    """{citing_id: hits}——hits 是含 stance 的语境列表。"""
+    out = {}
+    for r in q("SELECT citing_id, hits FROM cite_ctx WHERE paper_id=?", (pid,)):
+        try:
+            out[r["citing_id"]] = json.loads(r["hits"])
+        except ValueError:
+            pass
+    return out
+
+def cite_ctx_put(pid: str, citing_id: str, hits):
+    q("INSERT OR REPLACE INTO cite_ctx(paper_id, citing_id, hits) VALUES(?,?,?)",
+      (pid, citing_id, json.dumps(hits, ensure_ascii=False)), commit=True)
+
+def cite_ctx_clear(pid: str):
+    q("DELETE FROM cite_ctx WHERE paper_id=?", (pid,), commit=True)
 
 # ---------- QA ----------
 

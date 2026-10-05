@@ -42,7 +42,9 @@ export const api = {
   importPath: (path) => req('POST', '/api/papers/import-path', { path }),
   zoteroItems: () => req('GET', '/api/zotero/items'),
   paperMeta: (pid, body) => req('POST', `/api/papers/${pid}/meta`, body),
-  compare: (ids, dims) => req('POST', '/api/compare', { ids, dims }),
+  compare: (ids, dims, cols) => req('POST', '/api/compare', { ids, dims, cols }),
+  citedby: (pid) => req('GET', `/api/papers/${pid}/citedby`),
+  citedbyClassify: (pid) => req('POST', `/api/papers/${pid}/citedby/classify`),
   paper: (pid) => onceGet('p:' + pid, () => req('GET', `/api/papers/${pid}`)),
   deletePaper: (pid) => req('DELETE', `/api/papers/${pid}`),
   supersede: (newPid, oldPid) => req('POST', `/api/papers/${newPid}/supersede`, { old_pid: oldPid }),
@@ -101,6 +103,10 @@ export const api = {
   glossaryGen: (pid) => req('POST', `/api/papers/${pid}/glossary/generate`),
   glossaryAdd: (pid, item) => req('POST', `/api/papers/${pid}/glossary`, item),
   glossaryDelete: (id) => req('DELETE', `/api/glossary/${id}`),
+  glossaryGlobal: () => req('GET', '/api/glossary-global'),
+  glossaryGlobalAdd: (item) => req('POST', '/api/glossary-global', item),
+  glossaryGlobalDelete: (id) => req('DELETE', `/api/glossary-global/${id}`),
+  glossaryGlobalCsvUrl: () => '/api/glossary-global/export.csv',
   settings: () => req('GET', '/api/settings'),
   version: () => req('GET', '/api/version'),
   updateCheck: (force = false) => req('GET', `/api/update/check${force ? '?force=1' : ''}`),
@@ -125,6 +131,11 @@ export const api = {
   backupExportUrl: () => '/api/backup/export',
   backupPick: () => req('POST', '/api/backup/pick', {}),
   backupRestore: (path) => req('POST', '/api/backup/restore', { path }),
+  webdavStatus: () => req('GET', '/api/webdav/status'),
+  webdavSave: (body) => req('POST', '/api/webdav/save', body),
+  webdavTest: (body) => req('POST', '/api/webdav/test', body),
+  webdavBackupNow: () => req('POST', '/api/webdav/backup-now', {}),
+  webdavRestore: () => req('POST', '/api/webdav/restore', {}),
 }
 
 /* SSE 流式回答。EventSource 不能 POST，所以用 fetch + ReadableStream 自己拆帧。

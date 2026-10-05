@@ -530,6 +530,56 @@ const EN = {
   'PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。':
     'The PDF is gone from its original location. Drop it back in to re-import — your notes are safe.',
   '读取中…': 'Loading…',
+
+  // ---- 批量抽取（Elicit 式对比表） ----
+  '批量抽取': 'Batch extract',
+  '批量抽取要选 2~12 篇': 'Pick 2–12 papers for batch extract',
+  '批量抽取 · {n} 篇': 'Batch extract · {n} papers',
+  '列名，如：样本量': 'Column, e.g. sample size',
+  '给模型的说明（可空）': 'Hint for the model (optional)',
+  '删掉这列': 'Remove this column',
+  '加一列': 'Add column',
+  '开始抽取（{n} 列）': 'Extract ({n} columns)',
+  '下载 CSV': 'Download CSV',
+
+  // ---- 库内互引（scite 式） ----
+  '库内互引': 'In-library citations',
+  '判定立场': 'Classify stance',
+  '判定中…': 'Classifying…',
+  '立场没判成：{m}': 'Stance classification failed: {m}',
+  '支持': 'Supporting',
+  '质疑': 'Contrasting',
+  '提及': 'Mentioning',
+  '打开这篇、跳到那一段': 'Open this paper at that passage',
+
+  // ---- 学科库（全局术语） ----
+  '学科库': 'Subject glossary',
+  '学科库是空的': 'Subject glossary is empty',
+  '收进学科库（跨篇复用）': 'Save to subject glossary (reused across papers)',
+  '已收进学科库': 'Saved to subject glossary',
+
+  // ---- 全库分层问答 ----
+  '正在翻 {n} 篇找相关段落…': 'Scanning {n} papers for relevant passages…',
+
+  // ---- Crossref 元数据回填 ----
+  '元数据': 'Metadata',
+  '导入时联网补全（Crossref）': 'Fill missing metadata online at import (Crossref)',
+
+  // ---- WebDAV 备份 ----
+  'WebDAV 备份': 'WebDAV backup',
+  '轻包：文库与配置，不含 PDF 原件': 'light archive: library & settings, no PDF files',
+  '账号': 'Account',
+  '密码': 'Password',
+  '测试': 'Test',
+  '每天自动': 'Daily auto',
+  '立即备份': 'Back up now',
+  '从网盘恢复': 'Restore from drive',
+  '当前文库将被网盘上的备份替换，重启后生效。':
+    'Your library will be replaced by the backup on the drive. Takes effect after restart.',
+  '备份中…': 'Backing up…',
+  '上次 {t} · {kb} KB': 'Last {t} · {kb} KB',
+  '连得上': 'Connected',
+  '连不上': 'Cannot connect',
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。

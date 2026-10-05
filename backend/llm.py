@@ -728,6 +728,49 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
     msgs.append({"role": "user", "content": question})
     return msgs
 
+# ---------------- 全库分层问答：侦察之后、作答之前的「取材」拍 ----------------
+# 全库提问的分层：先侦察挑篇（main._recon_pick），候选多于 4 篇时不搬全文——
+# 上下文装不下，逐篇先「取材」：每篇一次调用挑出与问题最相关的段落，
+# 作答那拍只见摘录。取材的开头与析读/七问/对比共用同一套逐字节相同的前缀，
+# 同一篇论文谁先跑过整文任务，这里输入大头按缓存价（约 1/50）计费。
+
+GATHER_SYSTEM = """【任务：跨论文取材】你在为一次跨论文提问准备材料。这篇论文的全文已在上面
+（¶编号 段落）。从全文里挑出与问题最相关的段落：每段给一个 ¶编号，并**逐字抄出**该段里
+最关键的句子（一到两句，合计 ≤160 字，抄原文不许改写）。最多 6 段，按相关度排序；
+真没有相关内容就给空列表，不要硬凑。
+只输出 JSON，不要解释：{"picks":[{"n":<段落号>,"quote":"<原文关键句>"}]}"""
+
+def gather_messages(title: str, paras: list, question: str) -> list:
+    """取材一拍的消息体。问题永远在 user——它随每次提问变，进了前缀就前功尽弃。"""
+    return [
+        {"role": "system", "content": _doc_system(title, paras, GATHER_SYSTEM + _lang_tail())},
+        {"role": "user", "content": _kick(f"围绕问题「{question[:500]}」取出材")},
+    ]
+
+def gather(title: str, paras: list, question: str) -> list:
+    """→ [{idx, text}]（≤6 条摘录）。失败返回空——这篇缺席，不拖垮整场回答。"""
+    try:
+        data = chat_json(gather_messages(title, paras, question),
+                         max_tokens=2000, temperature=0.2, no_think=True, scene="跨库取材")
+    except Exception:
+        return []
+    picks = data.get("picks") if isinstance(data, dict) else None
+    idx_set = {p["idx"] for p in paras}
+    out = []
+    for it in (picks or [])[:6]:
+        if not isinstance(it, dict):
+            continue
+        try:
+            n = int(it.get("n"))
+        except (TypeError, ValueError):
+            continue
+        if n not in idx_set:
+            continue
+        q = str(it.get("quote") or "").strip()[:200]
+        if q:
+            out.append({"idx": n, "text": q})
+    return out
+
 # ---------- 长对话的上下文压缩 ----------
 DIALOG_SUMMARY_SYSTEM = """你在为一次论文研读对话做上下文压缩。把给出的较早对话压成一份摘要，只输出摘要正文。
 
