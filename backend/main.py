@@ -2146,12 +2146,13 @@ def _summary_material(pid: str):
 
 def _hits_merged(hits: list, text: str) -> list:
     """单篇/跨篇命中的术语 + 全局学科库命中（功能④）。本篇的词优先：同一个词在
-    本篇词表和学科库里译法打架时，锁本篇的——这篇正文语境里的写法比通用译法可信。"""
+    本篇词表和学科库里译法打架时，锁本篇的——这篇正文语境里的写法比通用译法可信。
+    封顶 30 条（Lokalise 的实践：命中注入的表过长就是噪音；超出按本篇优先截断）。"""
     have = {str(h.get("en", "")).lower() for h in (hits or [])}
     for g in db.glossary_global_hits(text or ""):
         if str(g.get("en", "")).lower() not in have:
             hits.append(g)
-    return hits
+    return hits[:30]
 
 def _summary_compute(pid: str) -> dict:
     """一眼卡的生成+落库：析读管线的预生成与 /summary 端点**共用同一把锁**——
@@ -3650,8 +3651,13 @@ def _sentence_around(text: str, at: int, span: int = 220) -> str:
 
 def _citedby_scan(p: dict) -> list:
     """本地免费扫描：库内其他论文的正文里，哪些句子提到了这篇（标题或 DOI）。
-    SQL LIKE 粗筛 + 归一化精筛（连字/换行 hyphen 与前端划线同一套折叠规则），
-    一篇最多留 3 句——互引要看的是"谁引了、怎么引"，不是逐句清单。"""
+    SQL 子串粗筛 + 归一化精筛（连字/换行 hyphen 与前端划线同一套折叠规则），
+    一篇最多留 3 句——互引要看的是"谁引了、怎么引"，不是逐句清单。
+
+    已知召回边界：常规引用标记是 (Author, year)，全标题只在**实质讨论**这篇的
+    正文句里出现（related work / 引言综述句）——匹配不到数字式顺带引用，但这正是
+    "谁认真引了这篇"的高价值子集。参考文献表本来就不入库（pdfparse 丢弃 refs 段，
+    存了会动整条解析语义），扫不了。"""
     title = (p.get("title") or "").strip()
     doi = ""
     try:
@@ -3689,7 +3695,8 @@ def _citedby_scan(p: dict) -> list:
         o = db.get_paper(citing_id)
         if not o:
             continue
-        out.append({"citing": {"id": citing_id, "title": o.get("title") or o.get("filename") or "",
+        out.append({"citing": {"id": citing_id,
+                               "title": o.get("title") or o.get("filename") or "",
                                "authors": o.get("authors") or "", "year": o.get("year") or ""},
                     "hits": hits[:3]})
     out.sort(key=lambda x: (x["citing"]["title"] or "").lower())

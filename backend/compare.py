@@ -134,7 +134,10 @@ def extract_all(papers: list, material_of, demo: bool = False, meta: list = None
         # 标题回落用空串不用文件名：析读管线就是 title or ""，两边一致前缀才命中
         msgs = _messages(p.get("title") or "", paras, claims, annos, meta)
         try:
-            cells = _norm(chat_json(msgs, max_tokens=1600, scene="数据对比"), keys, n_paras=len(paras))
+            # 输出预算随维度数走：12 个维度一格约百 token，1600 的死数会在大表上
+            # 静默截断 JSON（格变成"抽取失败"）；封顶防跑飞
+            budget = min(4000, 600 + 160 * len(keys))
+            cells = _norm(chat_json(msgs, max_tokens=budget, scene="数据对比"), keys, n_paras=len(paras))
             if len(_CACHE) > 400:
                 _CACHE.clear()
             _CACHE[ckey] = cells

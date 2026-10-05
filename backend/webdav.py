@@ -80,21 +80,31 @@ def _auth(c: dict) -> dict:
     return {"Authorization": "Basic " + token}
 
 def test(url: str, username: str, password: str) -> tuple:
-    """连通性检查：OPTIONS 一发（最轻、各家都支持）。目录不存在不算失败——
-    有些网盘要求先在网页端建好目录，PUT 时报错话术里说明。"""
+    """连通性检查。探活用 PROPFIND（Depth 0）而不是 OPTIONS——Joplin 多年兼容几十种
+    服务器的结论：OPTIONS 的 DAV 头各家实现不可靠；PROPFIND 只看状态码不解析 body
+    （各家响应格式不一）。404 = 服务器通、路径还没有（真正见分晓在 PUT）。"""
     url = (url or "").strip().rstrip("/")
     if not url.lower().startswith(("http://", "https://")):
         return False, "要填 http(s) 开头的 WebDAV 地址"
     c = {"username": username or "", "password": password or ""}
     try:
-        r = httpx.options(url, headers=_auth(c), timeout=httpx.Timeout(12, connect=8),
-                          follow_redirects=True)
-        if r.status_code in (200, 204):
+        r = httpx.request("PROPFIND", url, headers={**_auth(c), "Depth": "0"},
+                          timeout=httpx.Timeout(12, connect=8), follow_redirects=True)
+        if r.status_code in (200, 207):
             return True, ""
         if r.status_code in (401, 403):
-            return False, "用户名或密码不对（{}）".format(r.status_code)
+            return False, ("用户名或密码不对（{}）——坚果云要用「应用密码」，"
+                           "不是网页登录密码".format(r.status_code))
         if r.status_code == 404:
-            return True, ""      # 有的实现 OPTIONS 任意路径都 404；真正见分晓在 PUT
+            return True, ""      # 服务器通、目录还没建；PUT 时再报真错
+        # 个别实现不认 PROPFIND：退回 OPTIONS 再试一发
+        r2 = httpx.options(url, headers=_auth(c), timeout=httpx.Timeout(12, connect=8),
+                           follow_redirects=True)
+        if r2.status_code in (200, 204, 404):
+            return True, ""
+        if r2.status_code in (401, 403):
+            return False, ("用户名或密码不对（{}）——坚果云要用「应用密码」，"
+                           "不是网页登录密码".format(r2.status_code))
         return False, f"服务回了 {r.status_code}"
     except Exception as e:
         return False, f"{type(e).__name__}: {str(e)[:120]}"
@@ -125,8 +135,18 @@ def build_lite_zip(dest: str):
 def _db_path() -> str:
     return db.DB_PATH
 
+def _file_md5(path: str) -> str:
+    import hashlib
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for blk in iter(lambda: f.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
 def run_backup(reason: str = "manual") -> dict:
-    """打轻包 → PUT 上传。同一个时刻只跑一份（自动与手动撞车时后者直接返回现状）。"""
+    """打轻包 → PUT 上传。同一个时刻只跑一份（自动与手动撞车时后者直接返回现状）。
+    内容没变不传：库一整天没动时重传同一份 zip 白烧网盘配额（坚果云按流量计）——
+    哈希相同就只刷新「上次成功」时间。手动点「立即备份」同样受益。"""
     global _running
     c = conf()
     if not configured(c):
@@ -142,12 +162,24 @@ def run_backup(reason: str = "manual") -> dict:
         os.close(fd)
         build_lite_zip(tmp)
         size = os.path.getsize(tmp)
+        if size > 450 * 1024 * 1024:
+            # 坚果云等网盘单文件上传上限 500MB：轻包（db+配置）正常远够不着，
+            # 真超了说明库已经巨大——与其传一半失败，不如明说
+            _write_state(error=f"备份包 {size // (1 << 20)} MB，超过网盘单文件上传上限")
+            return status()
+        digest = _file_md5(tmp)
+        prev = _read_state()
+        if prev.get("last_hash") == digest and prev.get("last_ok"):
+            _write_state(last_ok=time.time(), last_at=time.strftime("%Y-%m-%d %H:%M"),
+                         error="", last_size=size, last_hash=digest)
+            print(f"[eggpaper] WebDAV 备份（{reason}）：内容未变，跳过上传")
+            return status()
         r = httpx.put(f"{c['url']}/{FILENAME}", headers=_auth(c),
                       content=open(tmp, "rb"), timeout=httpx.Timeout(600, connect=12),
                       follow_redirects=True)
         if r.status_code in (200, 201, 204):
             _write_state(last_ok=time.time(), last_at=time.strftime("%Y-%m-%d %H:%M"),
-                         error="", last_size=size)
+                         error="", last_size=size, last_hash=digest)
             print(f"[eggpaper] WebDAV 备份完成（{reason}）：{size // 1024} KB → {c['url']}/{FILENAME}")
         else:
             why = f"上传被拒（{r.status_code}）"
