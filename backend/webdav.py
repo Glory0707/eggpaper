@@ -36,10 +36,16 @@ def _state_path() -> str:
     return os.path.join(config.DATA_DIR, "webdav.json")
 
 def conf() -> dict:
+    """配置读出口：days 手改坏（非数字）不炸——所有 webdav 端点都过这里，
+    一个坏值不能把整个备份页拖成 500。"""
     w = config.load().get("webdav", {})
+    try:
+        days = max(1, int(w.get("days") or 1))
+    except (TypeError, ValueError):
+        days = 1
     return {"url": (w.get("url") or "").strip().rstrip("/"),
             "username": w.get("username") or "", "password": w.get("password") or "",
-            "auto": bool(w.get("auto")), "days": max(1, int(w.get("days") or 1))}
+            "auto": bool(w.get("auto")), "days": days}
 
 def configured(c: dict = None) -> bool:
     c = c or conf()
@@ -134,12 +140,27 @@ def build_lite_zip(dest: str):
         except OSError:
             pass
 
-def _file_md5(path: str) -> str:
+def _logical_digest(tmp_zip: str) -> str:
+    """备份包的**逻辑内容**指纹：db 按 iterdump 的行序哈希（活库的文件字节会被
+    WAL checkpoint 翻动，逻辑相同的两次备份在文件级哈希不同——文件级对比天生
+    误报「变了」），config 取脱敏后的文本。"""
     import hashlib
+    import sqlite3
+    import zipfile
     h = hashlib.md5()
-    with open(path, "rb") as f:
-        for blk in iter(lambda: f.read(1 << 20), b""):
-            h.update(blk)
+    with zipfile.ZipFile(tmp_zip) as z, \
+            tempfile.TemporaryDirectory() as td:
+        z.extract("eggpaper.db", td)
+        con = sqlite3.connect(os.path.join(td, "eggpaper.db"))
+        try:
+            for line in con.iterdump():
+                h.update(line.encode("utf-8"))
+        finally:
+            con.close()
+        try:
+            h.update(z.read("config.yaml"))
+        except KeyError:
+            pass
     return h.hexdigest()
 
 def run_backup(reason: str = "manual") -> dict:
@@ -166,7 +187,7 @@ def run_backup(reason: str = "manual") -> dict:
             # 真超了说明库已经巨大——与其传一半失败，不如明说
             _write_state(error=f"备份包 {size // (1 << 20)} MB，超过网盘单文件上传上限")
             return status()
-        digest = _file_md5(tmp)
+        digest = _logical_digest(tmp)
         prev = _read_state()
         if prev.get("last_hash") == digest and prev.get("last_ok"):
             _write_state(last_ok=time.time(), last_at=time.strftime("%Y-%m-%d %H:%M"),

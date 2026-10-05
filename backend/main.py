@@ -2421,7 +2421,9 @@ def compare_papers(body: dict):
     cols（Elicit 式批量抽取）：用户自定义列 [{label, hint?}]，给了它就抽「固定维度
     （dims 里勾的）+ 自定义列」的合集，篇数上限放宽到 12——批量过表时每篇仍是一次
     调用，只是列由用户定义。"""
-    ids = [str(x) for x in ((body or {}).get("ids") or [])][:12]
+    ids = [str(x) for x in ((body or {}).get("ids") or [])]
+    ids = list(dict.fromkeys(ids))       # 重复 id 去重保序：同一篇抽两次 = 重复列 + 白花的缓存键
+    ids = ids[:12]
     cols = [c for c in ((body or {}).get("cols") or [])
             if isinstance(c, dict) and str(c.get("label") or "").strip()]
     dims = [str(k) for k in ((body or {}).get("dims") or []) if str(k) in compare.KEYS]
@@ -3141,13 +3143,17 @@ def _gather_others(question: str, cand: list) -> list:
     取不到材料的篇就缺席——单篇失败不拖垮整场回答。"""
     papers = [p for p in (db.get_paper(x) for x in cand[:8]) if p]
     def one(o):
-        paras = db.get_paragraphs(o["id"], with_lines=False)
-        if not paras:
+        try:
+            paras = db.get_paragraphs(o["id"], with_lines=False)
+            if not paras:
+                return None
+            picks = llm.gather(o.get("title") or "", paras, question)
+            if not picks:
+                return None
+            return {"title": o.get("title") or o.get("filename") or "未命名", "paras": picks}
+        except Exception as e:
+            _applog(f"取材 {o['id']} 失败（这篇缺席）：{_human_msg(e)}")
             return None
-        picks = llm.gather(o.get("title") or "", paras, question)
-        if not picks:
-            return None
-        return {"title": o.get("title") or o.get("filename") or "未命名", "paras": picks}
     out = []
     with ThreadPoolExecutor(max_workers=min(3, max(1, len(papers)))) as ex:
         for r in ex.map(one, papers):
@@ -3722,7 +3728,9 @@ mention = 中性提及（背景、相关工作罗列）。
 
 def _citedby_classify(pid: str, scan: list) -> list:
     """立场判定：只对没缓存过的（被引篇, 引用篇）对花钱，一次调用判完，结果落缓存。
-    失败回退 mention——立场缺失不该把整个互引列表藏起来。"""
+    调用方持 per-key 锁：双击「判定立场」的两个请求串行过锁，后到的看到刚落的
+    缓存就不再花钱（与 _six_compute 同款套路）。失败回退 mention——立场缺失
+    不该把整个互引列表藏起来。"""
     cached = db.cite_ctx_all(pid)
     todo = [x for x in scan if x["citing"]["id"] not in cached]
     todo_ids = {x["citing"]["id"] for x in todo}
@@ -3779,7 +3787,9 @@ def citedby_classify(pid: str):
     scan = _citedby_scan(p)
     if not scan:
         return {"items": [], "n": 0}
-    items = _citedby_classify(pid, scan)
+    # 判定+落缓存同锁：双击的两个请求在这里串行，后到的命中刚写的缓存不再花一次调用
+    with _key_lock("citedby:" + pid):
+        items = _citedby_classify(pid, scan)
     return {"items": items, "n": sum(len(x["hits"]) for x in items)}
 
 # ---------------- 前端静态托管（构建后） ----------------

@@ -54,6 +54,7 @@ function colsReady() {
                    .filter(c => c.label)
 }
 async function run() {
+  if (step.value !== 'pick') return          // 双击/连点只放行第一发，其余在入口挡掉
   if (props.mode === 'extract') {
     const payload = colsReady()
     if (!payload.length) return

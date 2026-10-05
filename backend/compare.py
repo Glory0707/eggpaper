@@ -137,7 +137,8 @@ def extract_all(papers: list, material_of, demo: bool = False, meta: list = None
     def one(p):
         paras, claims, annos = material_of(p["id"])
         sig = _material_sig(claims, len(paras))
-        ckey = (p["id"], tuple((k, lab) for k, lab, _h in meta), sig)
+        # 缓存键含 label+hint：改了列的说明文字，抽取口径就变了，旧格子不能再当命中
+        ckey = (p["id"], tuple((k, lab, h) for k, lab, h in meta), sig)
         hit = _CACHE.get(ckey)
         if hit is not None:
             return p["id"], hit
