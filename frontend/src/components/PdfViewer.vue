@@ -1085,9 +1085,18 @@ function jumpQuote(n) {
 
 function jumpBack() {
   const t = backStack.pop()
-  if (t == null) return
-  scroller()?.scrollTo({ top: t, behavior: 'smooth' })   // 卸载后迟到的调用：没有滚动容器就作罢
-  backChip.value = false
+  if (t != null) {
+    scroller()?.scrollTo({ top: t, behavior: 'smooth' })   // 卸载后迟到的调用：没有滚动容器就作罢
+    backChip.value = false
+    return
+  }
+  // 同篇栈空：看有没有跨篇跳转的迁出点（引用卡/提问引用/互引列表跳过来的）——
+  // 开回原篇，位置记忆自动落回离开时的那一行
+  const home = store.crossPaperBack
+  if (home && home !== props.pid) {
+    store.crossPaperBack = null
+    store.activatePaper(home)
+  }
 }
 
 function paraAbsY(idx) {

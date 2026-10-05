@@ -50,6 +50,8 @@ export const store = reactive({
   glossaryPrefill: null,
   shortcutCard: false,
   askFocusTick: 0,
+  crossPaperBack: null,  // 跨篇跳转的迁出点（pid）：Alt+← 开回原篇；手动换篇即失效
+  crossJumping: false,   // gotoPaperPara 的 openPaper 正在进行：这次的换篇不算手动
   escTick: 0,            // 按 Esc 递增：PDF 侧的浮层（划词/框选/查找）据此全部收起
   readingPara: null,     // 当前视口中心附近段落（scroll-spy）
   reflowTick: 0,          // 栏宽拖完递增一次：论文据此重新定标（拖的过程中不重排）
@@ -247,6 +249,8 @@ export async function closePane(i) {
 }
 
 export async function activatePaper(pid, applyVariant = true) {
+  if (store.crossJumping) store.crossJumping = false
+  else store.crossPaperBack = null          // 手动换篇：跨篇返回点失效
   const mine = ++store.epoch
   lsSet('lastPaper', pid)
   store.currentId = pid
@@ -346,10 +350,14 @@ export function jumpPara(idx) {
 }
 
 /* 跨篇落段：异篇先 openPaper 再按 ¶n 落位（位置记忆管回来），同篇直接跳。
-   三个组件（提问引用/对比表/互引列表）原本各写一份 openPaper().then()。 */
+   三个组件（提问引用/对比表/互引列表）原本各写一份 openPaper().then()。
+   迁出点记进 crossPaperBack：Alt+← 开回原篇（§4 原则 1「任何跳转入栈，回到迁出点」
+   的跨篇版）。手动换篇即失效——只在跳转链上有效。 */
 export function gotoPaperPara(pid, n) {
   if (!pid) return
   if (pid === store.currentId) { if (n) jumpPara(n); return }
+  store.crossPaperBack = store.currentId || null
+  store.crossJumping = true
   openPaper(pid).then(() => { if (n) jumpPara(n) })
 }
 
