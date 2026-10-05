@@ -62,8 +62,8 @@ async def _local_only(request: Request, call_next):
     if host and host not in _LOCAL_HOSTS:
         return JSONResponse({"detail": "非本机访问已拒绝"}, status_code=403)
     origin = (request.headers.get("origin") or "").strip()
-    if origin and origin.lower() != "null":
-        if _host_only(urlparse(origin).netloc) not in _LOCAL_HOSTS:
+    if origin:   # "null" 也拦：sandbox iframe 可伪造 Origin: null，同属跨站
+        if origin.lower() == "null" or _host_only(urlparse(origin).netloc) not in _LOCAL_HOSTS:
             return JSONResponse({"detail": "非本机来源已拒绝"}, status_code=403)
     return await call_next(request)
 
@@ -689,7 +689,8 @@ def _backup_zip_stream():
                 if rel in _BACKUP_SKIP_FILES or rel.endswith(".tmp") or rel.endswith(".part"):
                     continue
                 try:
-                    if rel == "config.yaml":
+                    if rel == "config.yaml" or rel.startswith("config.yaml."):
+                        # .bad/.bak 等残副本同样可能带 key，一并脱敏
                         z.writestr(rel, _strip_secrets(full))
                     else:
                         z.write(full, rel)
