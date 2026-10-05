@@ -158,7 +158,7 @@ function downloadCsv() {
           <div class="cmp-cols" v-else>
             <div class="cmp-col" v-for="(c, i) in cols" :key="i">
               <input type="text" v-model="c.label" :placeholder="t('列名，如：样本量')" />
-              <input type="text" v-model="c.hint" :placeholder="t('给模型的说明（可空）')" />
+              <input type="text" v-model="c.hint" :placeholder="t('抽取说明（可空）')" />
               <button class="cmp-col-x" :title="t('删掉这列')" @click="cols.splice(i, 1)">×</button>
             </div>
             <button v-if="cols.length < MAX_COLS" class="cmp-col-add" @click="cols.push({ label: '', hint: '' })">＋ {{ t('加一列') }}</button>

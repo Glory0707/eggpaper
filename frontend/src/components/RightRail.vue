@@ -863,7 +863,7 @@ async function saveToGlobal(term) {
               {{ c.citing.title || t('(无标题)') }}<span v-if="c.citing.year"> · {{ c.citing.year }}</span>
             </button>
             <div class="cc-hit" v-for="(h, i) in c.hits" :key="i"
-                 :title="t('打开这篇、跳到那一段')" @click="gotoCiting(c.citing.id, h.para)">
+                 :title="t('打开这篇')" @click="gotoCiting(c.citing.id, h.para)">
               <span v-if="h.stance" class="cc-stance" :class="h.stance">{{ t(STANCE_ZH[h.stance] || '') }}</span>
               <span class="cc-quote">{{ h.quote }}</span>
             </div>
@@ -908,7 +908,7 @@ async function saveToGlobal(term) {
             <button v-if="inPaper(term)" class="t-go" :title="t('在文中查找')"
                     @click="findTerm(term.term_en)">↗</button>
             <span v-else class="t-no" :title="t('本文正文没有这个词')">—</span>
-            <button class="t-add" :title="t('收进学科库（跨篇复用）')" @click="saveToGlobal(term)">☆</button>
+            <button class="t-add" :title="t('收进学科库')" @click="saveToGlobal(term)">☆</button>
             <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
           </div>
         </TransitionGroup>

@@ -536,7 +536,7 @@ const EN = {
   '批量抽取要选 2~12 篇': 'Pick 2–12 papers for batch extract',
   '批量抽取 · {n} 篇': 'Batch extract · {n} papers',
   '列名，如：样本量': 'Column, e.g. sample size',
-  '给模型的说明（可空）': 'Hint for the model (optional)',
+  '抽取说明（可空）': 'Extraction hint (optional)',
   '删掉这列': 'Remove this column',
   '加一列': 'Add column',
   '开始抽取（{n} 列）': 'Extract ({n} columns)',
@@ -550,12 +550,12 @@ const EN = {
   '支持': 'Supporting',
   '质疑': 'Contrasting',
   '提及': 'Mentioning',
-  '打开这篇、跳到那一段': 'Open this paper at that passage',
 
   // ---- 学科库（全局术语） ----
   '学科库': 'Subject glossary',
   '学科库是空的': 'Subject glossary is empty',
-  '收进学科库（跨篇复用）': 'Save to subject glossary (reused across papers)',
+  '收进学科库': 'Save to subject glossary',
+  '打开这篇': 'Open this paper',
   '已收进学科库': 'Saved to subject glossary',
 
   // ---- 全库分层问答 ----
