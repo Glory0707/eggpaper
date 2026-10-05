@@ -35,6 +35,10 @@ _lock = threading.Lock()
 _progress = {"state": "idle", "pct": 0, "got": 0, "total": 0, "path": "", "error": ""}
 _installing = False     # 安装器已拉起：双击重入闸（见 install）
 
+# 查更新失败的缓存时长：成功的"没有更新"才值得缓存 6h；失败（开机瞬时断网等）
+# 只缓 10 分钟——不然一次没网，"有新版"的提示最长要等 6h 才肯出现
+_FAIL_TTL_H = 10 / 60
+
 def _ver_tuple(v: str):
     """版本号比较用：0.10.2 → (0,10,2)。非数字段一律当 0，不抛异常。"""
     out = []
@@ -48,14 +52,16 @@ def newer(latest: str, current: str) -> bool:
 
 def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
     """读更新源，回答"有没有新版本"。网络只是"查一下"，失败一律当"没有更新"处理——
-    这是打开软件时的一次安静探测，不该让任何人看到一个报错弹窗。"""
+    这是打开软件时的一次安静探测，不该让任何人看到一个报错弹窗。
+    缓存分长短：成功的结果（含"没有更新"）按 cache_hours 缓存；失败只缓
+    _FAIL_TTL_H——瞬时断网不该把"有新版"压住半天。"""
     cur = appinfo.version()
     feed_url = (feed_url or "").strip().rstrip("/")
     if not feed_url:
         return {"ok": False, "reason": "nofeed", "current": cur, "has_update": False}
     with _lock:
         hit = _cache.get(feed_url)
-        if hit and not force and time.time() - hit["at"] < cache_hours * 3600:
+        if hit and not force and time.time() - hit["at"] < hit.get("ttl", cache_hours) * 3600:
             return hit["data"]
     try:
         r = httpx.get(f"{feed_url}/latest.json", timeout=6, follow_redirects=True,
@@ -66,7 +72,7 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
         out = {"ok": False, "reason": f"{type(e).__name__}: {str(e)[:120]}", "current": cur,
                "has_update": False}
         with _lock:
-            _cache[feed_url] = {"at": time.time(), "data": out}
+            _cache[feed_url] = {"at": time.time(), "data": out, "ttl": _FAIL_TTL_H}
         return out
     latest = str(info.get("version") or "")
     url = str(info.get("url") or "")
@@ -80,7 +86,7 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
         "feed": feed_url,
     }
     with _lock:
-        _cache[feed_url] = {"at": time.time(), "data": data}
+        _cache[feed_url] = {"at": time.time(), "data": data, "ttl": cache_hours}
     return data
 
 def progress() -> dict:
@@ -95,32 +101,51 @@ def download_dir() -> str:
     return os.path.join(tempfile.gettempdir(), "eggpaper-update")
 
 def download(url: str, sha256: str = "", size: int = 0):
-    """把安装包下到临时目录，校验哈希。后台线程里跑，进度用 progress() 轮。"""
+    """把安装包下到临时目录，校验哈希。后台线程里跑，进度用 progress() 轮。
+
+    断点续传：半截文件躺在 out + ".part"，重试带着 Range 从断点接着下——
+    92MB 断在 90% 不再从头来。服务器不支持 Range（回 200）就当没有断点整段重来；
+    断点拼出来的字节不对（源上换了包）也逃不过末尾的 sha256 校验。
+    校验过了才 os.replace 成 .exe：install 的目录/扩展名护栏只认它。"""
     _set(state="downloading", pct=0, got=0, total=size, path="", error="")
+    part = ""
     try:
         out_dir = download_dir()
         os.makedirs(out_dir, exist_ok=True)
         name = os.path.basename(url.split("?")[0]) or "eggpaper-setup.exe"
         out = os.path.join(out_dir, name)
+        part = out + ".part"
         h = hashlib.sha256()
-        with httpx.stream("GET", url, timeout=httpx.Timeout(600, connect=15), follow_redirects=True) as r:
+        got = 0
+        if os.path.isfile(part):
+            got = os.path.getsize(part)
+            if got:                      # 断点字节先喂哈希：拼完整才能校验得过
+                with open(part, "rb") as f:
+                    for blk in iter(lambda: f.read(1 << 20), b""):
+                        h.update(blk)
+        headers = {"Range": f"bytes={got}-"} if got else {}
+        with httpx.stream("GET", url, headers=headers, timeout=httpx.Timeout(600, connect=15),
+                          follow_redirects=True) as r:
             r.raise_for_status()
-            total = int(r.headers.get("content-length") or size or 0)
-            got = 0
-            with open(out, "wb") as f:
+            if got and r.status_code != 206:
+                got = 0                  # 不认 Range：断点作废，整段重来
+                h = hashlib.sha256()
+            total = int(r.headers.get("content-length") or 0) + got
+            with open(part, "ab" if got else "wb") as f:
                 for chunk in r.iter_bytes(256 * 1024):
                     f.write(chunk)
                     h.update(chunk)
                     got += len(chunk)
                     _set(got=got, total=total, pct=round(got * 100 / total) if total else 0)
         if not sha256:
-            os.remove(out)
+            os.remove(part)
             _set(state="error", error="更新源没给 sha256，无法校验完整性")
             return
         if h.hexdigest().lower() != sha256:
-            os.remove(out)
+            os.remove(part)              # 断点与源上的包对不上：残件留着只会永远校验失败
             _set(state="error", error="安装包校验不一致，已丢弃，可重试")
             return
+        os.replace(part, out)
         _set(state="ready", path=out, pct=100)
     except Exception as e:
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:160]}")

@@ -432,12 +432,18 @@ def _sweep_old_data_dirs():
     for d in leftovers:
         shutil.rmtree(os.path.join(base, d), ignore_errors=True)
 
-def _sweep_orphan_papers():
-    """清掉 papers/ 里没有论文指向的文件夹。
+_TRASH_PREFIX = ".trash-"
 
-    什么时候会有：导入写了一半进程被杀（PDF 落了盘、库记录没写上），
-    或者旧平铺布局迁移前留下的残骸。不清的话它们会一直占着几十 MB，
-    而且"删过了"的东西还在盘上。
+def _sweep_orphan_papers():
+    """papers/ 里没有论文指向的文件夹：改名进 .trash-<本场时间戳>-<原名>/ 观察一场，
+    下一场启动才删。
+
+    什么时候会有孤儿：导入写了一半进程被杀（PDF 落了盘、库记录没写上），
+    或者旧平铺布局迁移前留下的残骸。曾经的对孤儿直接 rmtree 有个致命口子：
+    **db 被换空/损坏而 papers/ 完好时，整个文库会被当成孤儿一次删光**。
+    改进 trash 后留了一场启动的窗口——db 修回来了，下一场启动按 id 把文件夹
+    **从 trash 抢回来**；修不回来，那时才真删。改名失败（句柄被占）就留在原地，
+    下一场再判一次，这里绝没有就地删除这条路。
     目录认两代名：裸 `<id>/` 和可读名 `<id> <短名>/`——判 owner 取空格前的
     那段 id；**这步绝不能比 rename pass 先跑**，否则刚改完名的目录会被当孤儿删光。
     """
@@ -451,14 +457,38 @@ def _sweep_orphan_papers():
         i = name.find(" ")
         return (name if i < 0 else name[:i]) in known
 
-    n = 0
+    stamp = time.strftime("%Y%m%d%H%M%S")
+    rescued = deleted = trashed = 0
     for d in dirs:
-        if owned(d):
+        if not d.startswith(_TRASH_PREFIX):
             continue
+        rest = d[len(_TRASH_PREFIX):]
+        # 与下方改名格式互逆：.trash-<14位时间戳>-<原名>；认不出时间戳就整个当原名
+        orig = rest[15:] if (len(rest) > 15 and rest[:14].isdigit() and rest[14] == "-") else rest
+        if owned(orig):
+            if not os.path.exists(os.path.join(PAPERS_DIR, orig)):
+                try:
+                    os.rename(os.path.join(PAPERS_DIR, d), os.path.join(PAPERS_DIR, orig))
+                    rescued += 1
+                except OSError:
+                    pass
+            continue
+        if rest[:14].isdigit() and rest[:14] >= stamp:
+            continue                      # 本场刚进观察的：留到下一场启动再处置
         shutil.rmtree(os.path.join(PAPERS_DIR, d), ignore_errors=True)
-        n += 1
-    if n:
-        _applog(f"启动清理：删掉 {n} 个没有论文指向的文件夹")
+        deleted += 1
+    for d in dirs:
+        if d.startswith(_TRASH_PREFIX) or owned(d):
+            continue
+        try:
+            os.rename(os.path.join(PAPERS_DIR, d),
+                      os.path.join(PAPERS_DIR, f"{_TRASH_PREFIX}{stamp}-{d}"))
+            trashed += 1
+        except OSError:
+            continue
+    if trashed or rescued or deleted:
+        _applog(f"启动清理：孤儿文件夹 {trashed} 个进 .trash 观察一场，"
+                f"从 trash 抢回 {rescued} 个，删掉上一场留下的 {deleted} 个")
 
 def _clear_zombie_jobs():
     """把"上一次进程留下的在跑状态"清掉。
