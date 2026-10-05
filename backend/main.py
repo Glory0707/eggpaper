@@ -2130,7 +2130,7 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
         if empty is not None:
             return empty
         if _demo_mode():
-            data = demo_fn()
+            data = demo_fn(p)
         else:
             data = real_fn(p)
             _require_shape(data, shape, what)
@@ -2198,11 +2198,13 @@ def summary(pid: str):
         paras, hits = _summary_material(pid)
         return llm.summarize(p["title"], paras, hits)
     return _gen_card(pid, "summary", "summary", what="一眼卡", shape=("one_line", "novelty", "findings", "keywords"),
-                     demo_fn=lambda: {"one_line": _demo_txt("〔演示模式〕这是一篇测试论文的一眼卡摘要。",
-                                                            "[demo mode] A one-glance summary of a test paper."),
+                     demo_fn=lambda p: {"one_line": _demo_txt(
+                                         f"〔演示〕《{(p.get('title') or '未命名')[:30]}》用一套可复现的流程回答了它的核心问题。",
+                                                            f"[demo] '{(p.get('title') or 'untitled')[:30]}' answers its core question."),
                                       "novelty": _demo_txt("演示创新点：换了一类可设计的对象，别的还在用老办法",
                                                            "[demo] Novelty: a new designable subject, the rest is standard"),
-                                      "findings": _demo_txt("演示发现", "demo findings"),
+                                      "findings": _demo_txt("演示发现：关键指标 4.2% → 11.8%（p < 0.001）",
+                                             "[demo] Findings: key metric 4.2% → 11.8% (p < 0.001)"),
                                       "keywords": [_demo_txt("演示", "demo")]},
                      real_fn=real)
 
@@ -2212,7 +2214,7 @@ def suggest(pid: str):
         _, claims, annos = db.get_analysis(pid)
         return llm.suggest_questions(p["title"], claims, annos)
     return _gen_card(pid, "suggest", "suggest", what="提问建议", shape=("questions",),
-                     demo_fn=lambda: {"questions": [_demo_txt("〔演示〕核心证据的强度如何？", "[demo] How strong is the core evidence?"),
+                     demo_fn=lambda p: {"questions": [_demo_txt("〔演示〕核心证据的强度如何？", "[demo] How strong is the core evidence?"),
                                                     _demo_txt("〔演示〕方法上有什么可挑剔的？", "[demo] What is methodologically questionable?")]},
                      real_fn=real,
                      precond=lambda p: {"questions": []} if p["analysis_status"] != "done" else None)
@@ -2230,7 +2232,7 @@ def advisor(pid: str, cached: bool = False):
         return llm.advisor_questions(p["title"], claims, warns, kind=_ensure_paper_type(pid))
     empty = {"questions": []}
     return _gen_card(pid, "advisor", "advisor", what="导师三问", shape=("questions",),
-                     demo_fn=lambda: {"questions": [{"q": _demo_txt("〔演示〕证据够硬吗？", "[demo] Is the evidence solid enough?"),
+                     demo_fn=lambda p: {"questions": [{"q": _demo_txt("〔演示〕证据够硬吗？", "[demo] Is the evidence solid enough?"),
                                                      "outline": [_demo_txt("演示要点", "demo outline")]}]},
                      real_fn=real, cached=cached, cached_value=empty,
                      precond=lambda p: empty if p["analysis_status"] != "done" else None)
@@ -2462,7 +2464,7 @@ def method_card(pid: str, cached: bool = False):
         _require_shape(data, ("goal", "steps"), what)
         return data
     return _gen_card(pid, "method_card", "mcard", what="方法卡", shape=("goal", "steps"),
-                     demo_fn=lambda: {"goal": _demo_txt("〔演示〕可复现 protocol", "[demo] Reproducible protocol"),
+                     demo_fn=lambda p: {"goal": _demo_txt("〔演示〕可复现 protocol", "[demo] Reproducible protocol"),
                                       "system": _demo_txt("演示体系", "demo system"),
                                       "conditions": _demo_txt("演示条件", "demo conditions"),
                                       "steps": [_demo_txt("步骤一", "Step one"), _demo_txt("步骤二", "Step two")],
@@ -3668,8 +3670,20 @@ def _citedby_scan(p: dict) -> list:
         return []                      # 标题太短匹配必炸误报；什么钥匙都没有就别扫
     tlow = title.lower()
     tnorm = llm.norm_text(title)
-    rows = db.q("SELECT paper_id, idx, page, text FROM paragraphs "
-                "WHERE in_refs=0 AND paper_id != ?", (p["id"],))
+    # SQL LIKE 先把候选缩到命中标题片段/DOI 的那几篇（几百篇的库不再全表拉进 Python）；
+    # 精筛（大小写、归一化折叠）仍在 Python 侧做。片段取标题前 24 字——跨行连字符
+    # 断在这段里的极少数会漏，属于已知召回边界（见 docstring）。
+    like_clauses, like_params = [], []
+    if len(title) >= 12:
+        frag = title[:24].translate(db._LIKE_ESC)
+        like_clauses.append("text LIKE ? ESCAPE '\\'")
+        like_params.append(f"%{frag}%")
+    if doi:
+        like_clauses.append("text LIKE ? ESCAPE '\\'")
+        like_params.append(f"%{doi.translate(db._LIKE_ESC)}%")
+    rows = db.q(f"SELECT paper_id, idx, page, text FROM paragraphs "
+                f"WHERE in_refs=0 AND paper_id != ? AND ({' OR '.join(like_clauses)})",
+                (p["id"], *like_params))
     # 同一篇的另一版本（导入时选了"两篇都保留"）标题归一化相同，会把对方当引用——排除
     twins = {r["id"] for r in db.q("SELECT id, title FROM papers")
              if _norm_title_same(r["title"], title)} - {p["id"]}

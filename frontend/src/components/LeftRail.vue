@@ -222,10 +222,22 @@ async function _removePids(pids) {
   await refreshPapers()
   await refreshCollections()
 }
+/* 长标题进确认框按词界截断：字数硬切会把 "Scientific》" 切成 "Scientifi…"
+   （与列表项的 CSS 省略号截断风格对不齐，视觉验收抓到过） */
+function wclip(s, n) {
+  s = String(s || '')
+  if (s.length <= n) return s
+  let cut = s.slice(0, n)
+  if (s[n] !== ' ') {
+    const sp = cut.lastIndexOf(' ')
+    if (sp > n * 0.6) cut = cut.slice(0, sp)
+  }
+  return cut.replace(/\s+$/, '') + '…'
+}
 async function del(pid, name) {
   const yes = await confirmBox({
     title: t('删除文献'), ok: t('删除'), danger: true,
-    body: t('《{name}》及其批注、析读、问答将一并删除。', { name: name.slice(0, 40) }),
+    body: t('《{name}》及其批注、析读、问答将一并删除。', { name: wclip(name, 40) }),
   })
   if (!yes) return
   await _removePids([pid])

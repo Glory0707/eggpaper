@@ -90,9 +90,22 @@ def _norm(data: dict, keys: list = None, n_paras: int = 0) -> dict:
     return out
 
 
+def _wclip(s: str, n: int) -> str:
+    """按词界截断（演示文案不带半个词）：切点落在词中就回退到最近的空格。"""
+    s = (s or "").strip()
+    if len(s) <= n:
+        return s
+    cut = s[:n]
+    if s[n] != " ":
+        sp = cut.rfind(" ")
+        if sp > n * 0.6:
+            cut = cut[:sp]
+    return cut.rstrip() + "…"
+
+
 def _mock(paper: dict, meta: list) -> dict:
     """演示模式：一眼假但结构完整的格子，别让演示用户等一场真实的模型调用。"""
-    t = (paper.get("title") or paper.get("filename") or "这篇文献")[:18]
+    t = _wclip(paper.get("title") or paper.get("filename") or "这篇文献", 18)
     cells = {}
     for i, (k, label, _h) in enumerate(meta):
         cells[k] = {"text": f"（演示）《{t}》的{label}示意内容",

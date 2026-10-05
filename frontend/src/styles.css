@@ -1063,6 +1063,11 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .primary.danger:hover { background: var(--vermilion-deep); }
 
 .modal.cite { width: 640px; max-height: 80vh; overflow-y: auto; }
+/* 底部常驻一道渐隐：RIS/BibTeX 长条目被裁在底边时，给“下面还有”一个看得见的提示 */
+.modal.cite::after {
+  content: ""; position: sticky; bottom: -18px; display: block; height: 26px; margin-top: -26px;
+  background: linear-gradient(rgba(255, 255, 255, 0), #fff 78%); pointer-events: none;
+}
 .cite-note { font-size: var(--fs-md); color: var(--vermilion); line-height: 1.7; margin-bottom: 12px; }
 .cite-empty { font-size: var(--fs-md); color: var(--ink-2); line-height: 1.75; }
 

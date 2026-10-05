@@ -328,7 +328,8 @@ def search_content(kw: str, limit: int = 30):
 
 # 删库清单唯一正本：删一篇文献要扫的全部从表（purge 与 supersede 共用，加表只改这里）
 PAPER_TABLES = ("paragraphs", "annotations", "claims", "marginalia", "glossary",
-                "qa_messages", "conversations", "paper_collections", "answers", "reading_log")
+                "qa_messages", "conversations", "paper_collections", "answers", "reading_log",
+                "cite_ctx")
 
 @contextmanager
 def _txn():
@@ -344,11 +345,13 @@ def _txn():
             raise
 
 def purge_paper(pid: str):
-    """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属。
+    """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属，
+    以及互引缓存里**它作为引用方**的那一半（作为被引方的行走 PAPER_TABLES 清单）。
     漏掉任何一张表都会留下读不出来的孤儿数据，所以一张一张点名列（见 PAPER_TABLES）。"""
     with _txn() as c:
         for t in PAPER_TABLES:
             c.execute(f"DELETE FROM {t} WHERE paper_id=?", (pid,))
+        c.execute("DELETE FROM cite_ctx WHERE citing_id=?", (pid,))
         c.execute("DELETE FROM papers WHERE id=?", (pid,))
 
 # ---------- 同论文识别与版本升级 ----------
@@ -384,7 +387,7 @@ def supersede(new_pid: str, old_pid: str) -> dict:
     stats = {"pins": 0, "pins_lost": 0}
     with _txn() as c:
         for t in ("conversations", "qa_messages", "glossary", "reading_log",
-                  "paper_collections"):
+                  "paper_collections", "cite_ctx"):
             c.execute(f"UPDATE {t} SET paper_id=? WHERE paper_id=?", (new_pid, old_pid))
         old = c.execute("SELECT authors, year FROM papers WHERE id=?", (old_pid,)).fetchone()
         if old and (old["authors"] or old["year"]):
