@@ -59,8 +59,9 @@ def _host_only(h: str) -> str:
 @app.middleware("http")
 async def _local_only(request: Request, call_next):
     """本机服务再拦一道来源。浏览器不受 CORS 约束，任意网页都能跨站打 127.0.0.1
-    （CSRF）；DNS rebinding 还能把 Host 换成攻击者的域名。Host 非本机、或带非本机
-    Origin 的一律 403——本机 UI（Origin 同为 127.0.0.1）和 curl（无 Origin）不受影响。"""
+    （CSRF）；DNS rebinding 还能把 Host 换成攻击者的域名。三道信号（OWASP CSRF
+    备忘录与 CERT VU#652514 的标准做法）：Host 非本机、非本机或 null Origin、
+    Sec-Fetch-Site: cross-site 一律 403——本机 UI 与 curl（无这些头）不受影响。"""
     host = _host_only(request.headers.get("host", ""))
     if host and host not in _LOCAL_HOSTS:
         return JSONResponse({"detail": "非本机访问已拒绝"}, status_code=403)
@@ -68,6 +69,8 @@ async def _local_only(request: Request, call_next):
     if origin:   # "null" 也拦：sandbox iframe 可伪造 Origin: null，同属跨站
         if origin.lower() == "null" or _host_only(urlparse(origin).netloc) not in _LOCAL_HOSTS:
             return JSONResponse({"detail": "非本机来源已拒绝"}, status_code=403)
+    if (request.headers.get("sec-fetch-site") or "").lower() == "cross-site":
+        return JSONResponse({"detail": "非本机来源已拒绝"}, status_code=403)   # 兜住无 Origin 的跨站导航 GET
     return await call_next(request)
 
 READY = threading.Event()
@@ -3102,7 +3105,9 @@ def _recon_pick(question: str, papers: list, cap: int = 8):
     """范围是全库/分类时的第一拍"侦察"：只喂标题清单（几十篇也才几千字），
     让模型挑出最相关的篇目（cap 上限），第二拍再取材或按摘要级上下文作答——
     库再大也不会把全文塞爆。失败/演示模式返回演示性挑选，绝不抛错：侦察失败
-    顶多选得不准，不该把提问打断。"""
+    顶多选得不准，不该把提问打断。
+    「整个文库」勾选会把几百篇全列进来：清单封顶 120 篇（按导入时间最新优先，
+    侦察选的是"最相关"，新库大概率比三年前的存档相关），超出的不进清单。"""
     if not papers:
         return []
     if _demo_mode():
@@ -3110,7 +3115,7 @@ def _recon_pick(question: str, papers: list, cap: int = 8):
     lines = "\n".join(
         f"{i}. {(p['title'] or p['filename'] or '').strip()}"
         f"（{'已析读' if p['analysis_status'] == 'done' else '未析读'}）"
-        for i, p in enumerate(papers))
+        for i, p in enumerate(papers[:120]))
     try:
         out = llm.chat([{"role": "system", "content": RECON_SYSTEM},
                         {"role": "user", "content": f"文献清单：\n{lines}\n\n问题：{question}"}],
@@ -3483,10 +3488,25 @@ def translate_full_start(pid: str, force: bool = False):
         # 窗口里论文被删，run() 会把已删目录当"幽灵翻译"原样重建出来
         if _pid_gone(pid):
             raise HTTPException(404, "论文不存在")
+        # 全文链的术语注入同样合并学科库（本篇优先、学科库补缺、封顶 200 条）：
+        # 全文翻译是术语一致性最贵的一条链，划词/段落/问答都合并了，唯独这里漏掉的话，
+        # 学科库在最该生效的地方失效。词表是手工策展的，并集不会爆炸，封顶只是护栏
+        gseen = set()
+        glossary_rows = []
+        for r in db.glossary_list(pid):
+            en = (r.get("term_en") or "").strip()
+            if en and en.lower() not in gseen:
+                gseen.add(en.lower())
+                glossary_rows.append({"term_en": en, "term_zh": (r.get("term_zh") or "").strip()})
+        for g in db.glossary_global_list():
+            en = (g.get("term_en") or "").strip()
+            if en and en.lower() not in gseen and len(glossary_rows) < 200:
+                gseen.add(en.lower())
+                glossary_rows.append({"term_en": en, "term_zh": (g.get("term_zh") or "").strip()})
         translate_full.start(pid, src, paper_dir(pid), used,
                              cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                              note=note, engine=engine,
-                             glossary_rows=db.glossary_list(pid), fresh=force)
+                             glossary_rows=glossary_rows, fresh=force)
         db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 
@@ -3613,6 +3633,11 @@ def glossary_global_csv():
 
 _CITE_STANCE_ZH = {"support": "支持", "contrast": "质疑", "mention": "提及"}
 
+def _norm_title_same(a: str, b: str) -> bool:
+    """归一化标题相同（找同篇多版本用）：空/过短的标题不判同，免得两篇短名论文互伤。"""
+    na, nb = db._norm_title(a or ""), db._norm_title(b or "")
+    return len(na) >= 8 and na == nb
+
 def _sentence_around(text: str, at: int, span: int = 220) -> str:
     """命中位置 → 完整句子（前后扩到句界）。找不到句界就按窗口切。"""
     s, e = max(0, at - span), min(len(text), at + span)
@@ -3639,6 +3664,9 @@ def _citedby_scan(p: dict) -> list:
     tnorm = llm.norm_text(title)
     rows = db.q("SELECT paper_id, idx, page, text FROM paragraphs "
                 "WHERE in_refs=0 AND paper_id != ?", (p["id"],))
+    # 同一篇的另一版本（导入时选了"两篇都保留"）标题归一化相同，会把对方当引用——排除
+    twins = {r["id"] for r in db.q("SELECT id, title FROM papers")
+             if _norm_title_same(r["title"], title)} - {p["id"]}
     by_paper = {}
     for r in rows:
         text = r["text"] or ""
@@ -3656,6 +3684,8 @@ def _citedby_scan(p: dict) -> list:
             {"para": r["idx"], "page": r["page"], "quote": quote})
     out = []
     for citing_id, hits in by_paper.items():
+        if citing_id in twins:
+            continue
         o = db.get_paper(citing_id)
         if not o:
             continue
