@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import uvicorn
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -43,6 +43,29 @@ app = FastAPI(title="eggpaper", version="0.1.0")
 app.add_middleware(CORSMiddleware,
                    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost)(:\d+)?$",
                    allow_methods=["*"], allow_headers=["*"])
+
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+def _host_only(h: str) -> str:
+    """Host/Origin 头去掉端口（IPv6 字面量带方括号）。"""
+    h = (h or "").strip().lower()
+    if h.startswith("["):
+        return h[1:h.index("]")] if "]" in h else h
+    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+
+@app.middleware("http")
+async def _local_only(request: Request, call_next):
+    """本机服务再拦一道来源。浏览器不受 CORS 约束，任意网页都能跨站打 127.0.0.1
+    （CSRF）；DNS rebinding 还能把 Host 换成攻击者的域名。Host 非本机、或带非本机
+    Origin 的一律 403——本机 UI（Origin 同为 127.0.0.1）和 curl（无 Origin）不受影响。"""
+    host = _host_only(request.headers.get("host", ""))
+    if host and host not in _LOCAL_HOSTS:
+        return JSONResponse({"detail": "非本机访问已拒绝"}, status_code=403)
+    origin = (request.headers.get("origin") or "").strip()
+    if origin and origin.lower() != "null":
+        if _host_only(urlparse(origin).netloc) not in _LOCAL_HOSTS:
+            return JSONResponse({"detail": "非本机来源已拒绝"}, status_code=403)
+    return await call_next(request)
 
 READY = threading.Event()
 DEFAULT_PORT = 8430          # 与 desktop.py 的 PORTS[0] 一致：改默认端口时两处一起动
@@ -568,9 +591,24 @@ def pdf2zh_engine(path: str = ""):
             "version": ".".join(map(str, ver)) if ver else "",
             "pinned": pinned, "upgrade": upgrade}
 
+_dialog_times: list[float] = []
+_dialog_gate = threading.Lock()
+
+def _dialog_throttle():
+    """原生对话框是模态的：本机接口无鉴权，恶意页面高频 POST 能把桌面糊满弹窗
+    （用户点什么都是在替攻击者选路径）。1 秒最多 1 次、1 分钟最多 6 次。"""
+    with _dialog_gate:
+        now = time.monotonic()
+        while _dialog_times and now - _dialog_times[0] > 60.0:
+            _dialog_times.pop(0)
+        if (_dialog_times and now - _dialog_times[-1] < 1.0) or len(_dialog_times) >= 6:
+            raise HTTPException(429, "对话框打开太频繁，稍等一两秒再试")
+        _dialog_times.append(now)
+
 @app.post("/api/data/pick")
 def data_pick():
     """弹原生目录选择框，返回选中的路径（取消返回空串）。"""
+    _dialog_throttle()
     return {"path": picker.pick_folder("选择数据目录")}
 
 @app.post("/api/data/location")
@@ -612,6 +650,14 @@ _BACKUP_SKIP_FILES = {"eggpaper.db", "eggpaper.db-wal", "eggpaper.db-shm", "pend
 # 只有陪跑文件不进位
 _RESTORE_SKIP_FILES = _BACKUP_SKIP_FILES - {"eggpaper.db"}
 
+_SECRET_KEY_RE = re.compile(r"(?m)^(\s*(?:api_key|deepl_key)\s*:\s*).+$")
+
+def _strip_secrets(path: str) -> str:
+    """config.yaml 进备份前把 key 置空：备份 zip 常被拿去网盘/求人排查，明文 key
+    跟着走就是泄漏。逐行做文本替换，注释与顺序保持原样（恢复后重填一次 key）。"""
+    with open(path, "r", encoding="utf-8") as f:
+        return _SECRET_KEY_RE.sub(lambda m: m.group(1) + '""', f.read())
+
 def _backup_zip_stream():
     """整个数据目录打成一个 zip（STORED：PDF 本来就是压缩格式，再压一遍白烧 CPU）。
     db 不能直接读文件——写入进行中 WAL 里还有没合页的账，用 SQLite 的 backup API
@@ -643,7 +689,10 @@ def _backup_zip_stream():
                 if rel in _BACKUP_SKIP_FILES or rel.endswith(".tmp") or rel.endswith(".part"):
                     continue
                 try:
-                    z.write(full, rel)
+                    if rel == "config.yaml":
+                        z.writestr(rel, _strip_secrets(full))
+                    else:
+                        z.write(full, rel)
                 except OSError:
                     pass     # 导出途中被删/被翻译收尾清掉的文件：跳过，别让整场导出 500
     tmp.seek(0)
@@ -665,6 +714,7 @@ def backup_export():
 @app.post("/api/backup/pick")
 def backup_pick():
     """弹原生文件框选备份 zip（本地服务代劳浏览器拿不到的路径），取消返回空串。"""
+    _dialog_throttle()
     return {"path": picker.pick_file(
         "选择 eggpaper 备份文件", "eggpaper 备份\0*.zip\0所有文件\0*.*\0")}
 
@@ -780,14 +830,16 @@ def update_check(force: bool = False):
 
 @app.post("/api/update/download")
 def update_download(body: dict):
-    url = body.get("url") or ""
-    if not url:
-        raise HTTPException(400, "没有下载地址")
-    try:
-        size = int(body.get("size") or 0)
-    except (TypeError, ValueError):
-        size = 0
-    update.start_download(url, (body.get("sha256") or "").lower(), size)
+    """下载安装包。url 只认更新源 check() 给出的那条：本机接口无鉴权（任意网页可
+    POST），收调用方自给的 url 等于"引导下载任意 exe"——install 有目录护栏，
+    在 download 这头把链截断。sha256/size 同样以更新源为准，不信任调用方。"""
+    cfg = config.load().get("update", {})
+    feed = cfg.get("feed_url") or config.DEFAULTS["update"]["feed_url"]
+    info = update.check(feed, force=False, cache_hours=float(cfg.get("cache_hours") or 6))
+    url = (body or {}).get("url") or ""
+    if not (info.get("ok") and info.get("url")) or url != info["url"]:
+        raise HTTPException(400, "下载地址与更新源不符，请先检查更新")
+    update.start_download(info["url"], (info.get("sha256") or "").lower(), int(info.get("size") or 0))
     return update.progress()
 
 @app.get("/api/update/progress")
