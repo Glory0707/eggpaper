@@ -154,7 +154,7 @@ def extract_all(papers: list, material_of, demo: bool = False, meta: list = None
             _CACHE[ckey] = cells
             return p["id"], cells
         except Exception:
-            return p["id"], {k: {"text": "抽取失败——这篇没能读出结果，可再次打开对比重试",
+            return p["id"], {k: {"text": "抽取失败，可重试",
                                  "ref": None} for k in keys}
 
     with ThreadPoolExecutor(max_workers=min(3, max(1, len(papers)))) as ex:
