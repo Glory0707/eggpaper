@@ -181,7 +181,7 @@ function anchorsOf(claim) {
     .filter(x => x.anno)
 }
 
-const GENERIC = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？', '作者承认了哪些局限？']
+const GENERIC = ['这篇论文解决什么问题？', '核心结论和最硬的证据是什么？', '方法上有什么可挑剔的地方？']
 const suggest = ref([])
 async function loadSuggest() {
   if (!store.currentId || suggest.value.length) return
