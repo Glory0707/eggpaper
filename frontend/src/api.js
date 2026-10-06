@@ -131,11 +131,6 @@ export const api = {
   backupExportUrl: () => '/api/backup/export',
   backupPick: () => req('POST', '/api/backup/pick', {}),
   backupRestore: (path) => req('POST', '/api/backup/restore', { path }),
-  webdavStatus: () => req('GET', '/api/webdav/status'),
-  webdavSave: (body) => req('POST', '/api/webdav/save', body),
-  webdavTest: (body) => req('POST', '/api/webdav/test', body),
-  webdavBackupNow: () => req('POST', '/api/webdav/backup-now', {}),
-  webdavRestore: () => req('POST', '/api/webdav/restore', {}),
 }
 
 /* SSE 流式回答。EventSource 不能 POST，所以用 fetch + ReadableStream 自己拆帧。

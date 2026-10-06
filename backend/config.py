@@ -44,14 +44,6 @@ DEFAULTS = {
         "auto_check": True,
         "cache_hours": 6,
     },
-    "metadata": {
-        "crossref": False,     # 导入时按首页 DOI 联网查 Crossref 补元数据；默认关（出网要显式）
-    },
-    "webdav": {
-        "url": "", "username": "", "password": "",
-        "auto": False,         # 每天自动传一份轻备份（db 快照 + 脱敏配置，不含 PDF 原件）
-        "days": 1,
-    },
 }
 
 def ensure_dirs():

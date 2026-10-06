@@ -1063,11 +1063,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .modal .primary.danger:hover { background: var(--vermilion-deep); }
 
 .modal.cite { width: 640px; max-height: 80vh; overflow-y: auto; }
-/* 底部常驻一道渐隐：RIS/BibTeX 长条目被裁在底边时，给“下面还有”一个看得见的提示 */
-.modal.cite::after {
-  content: ""; position: sticky; bottom: -18px; display: block; height: 26px; margin-top: -26px;
-  background: linear-gradient(rgba(255, 255, 255, 0), #fff 78%); pointer-events: none;
-}
 .cite-note { font-size: var(--fs-md); color: var(--vermilion); line-height: 1.7; margin-bottom: 12px; }
 .cite-empty { font-size: var(--fs-md); color: var(--ink-2); line-height: 1.75; }
 
@@ -2073,11 +2068,3 @@ html.dark .vis-img { background: #fff; }
 /* 术语行里「收进学科库」的 ☆：只有第一个 auto 边距元素吃空隙，后面跟死间距 */
 .term-row .t-go + .t-add, .term-row .t-no + .t-add { margin-left: 6px; }
 .term-row .t-add + .t-del { margin-left: 0; }
-
-/* 设置里的 WebDAV 备份：两行紧凑排布 */
-.wv-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
-.wv-row input { font-size: var(--fs-sm); min-width: 0; flex: 1 1 0; }
-/* 全局 .modal .f-row input 的 width:100% 会把复选框也拉成一行宽，把文字顶出弹窗 */
-.wv-row .ck input[type="checkbox"] { width: auto; flex: none; }
-.wv-row .ck { flex: 0 0 auto; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
-.wv-note { font-weight: 400; color: var(--ink-3); margin-left: 6px; }

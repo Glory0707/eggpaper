@@ -1,6 +1,5 @@
-"""Crossref 元数据回填：导入一篇 PDF 后，按首页上的 DOI 去Crossref 查官方记录，
-把解析/抄写缺的字段补上（可选开关，默认关——这是唯一出网到 LLM/翻译服务之外的口子，
-必须用户显式打开）。
+"""Crossref 元数据回填：导入一篇 PDF 后，按首页上的 DOI 去 Crossref 查官方记录，
+把解析/抄写缺的字段补上（默认开启；匿名查询，无账号无 key）。
 
 口径（"不猜"原则不动摇）：
 - 只查 DOI 命中的记录；查不到、超时、网络不通——全部安静跳过，绝不妨碍导入。
@@ -17,20 +16,12 @@ import threading
 
 import httpx
 
-import config
 import db
 
 # 与前端 find.js 的 DOI_RE 同口径：结构上就不会认错的 10. 前后缀；尾随标点剥掉
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"'<>]+")
 
 _API = os.environ.get("EGGPAPER_CROSSREF_API", "https://api.crossref.org")
-
-
-def enabled() -> bool:
-    try:
-        return bool(config.load().get("metadata", {}).get("crossref"))
-    except Exception:
-        return False
 
 
 def first_doi(text: str) -> str:
@@ -87,10 +78,8 @@ def lookup(doi: str) -> dict:
 
 
 def backfill(pid: str):
-    """导入后的后台回填（不挡导入返回）。开关没开、DOI 没找到、字段都齐——都不动手。"""
+    """导入后的后台回填（不挡导入返回）。DOI 没找到、字段都齐——都不动手。"""
     try:
-        if not enabled():
-            return
         p = db.get_paper(pid)
         if not p:
             return
@@ -134,7 +123,5 @@ def _pid_gone_guard(pid: str) -> bool:
 
 
 def kick(pid: str):
-    """导入管线调用：开关开着就开一条后台线程，立刻返回。"""
-    if not enabled():
-        return
+    """导入管线调用：开一条后台线程，立刻返回。"""
     threading.Thread(target=backfill, args=(pid,), daemon=True).start()

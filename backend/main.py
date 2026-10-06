@@ -39,7 +39,6 @@ import pdfparse
 import picker
 import translate_full
 import update
-import webdav
 import zotero
 
 app = FastAPI(title="eggpaper", version="0.1.0")
@@ -350,10 +349,6 @@ def _startup():
         # 指纹回填都是分钟级的大库重活——留在 startup 里，用户看到的就是
         # 白屏干等几分钟。搬去后台：界面先起来，这些活几秒内默默跟上。
         try:
-            webdav.kick_auto()     # 网盘自动备份的节拍线程（自带 90s 起步延迟）
-        except Exception:
-            pass
-        try:
             _repair_paper_paths()
             try:
                 for pid in os.listdir(PAPERS_DIR):
@@ -557,7 +552,6 @@ def get_settings():
                          # 保存端（PUT）对带 "…" 的回传不落盘，打码链路残留也写不坏。
                          "api_key": p["api_key"] or ""},
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
-            "metadata": cfg.get("metadata", {}), "webdav": cfg.get("webdav", {}),
             "ui_lang": cfg.get("ui_lang", "zh"),
             "shot_save": cfg.get("shot_save", True),
             "data_dir": appinfo.data_dir()}
@@ -597,25 +591,6 @@ def put_settings(body: dict):
             cfg["update"]["feed_url"] = u["feed_url"].strip()
         if "auto_check" in u:
             cfg["update"]["auto_check"] = bool(u["auto_check"])
-    if "metadata" in body:
-        m = body["metadata"]
-        if not isinstance(m, dict):
-            raise HTTPException(400, "元数据那一栏格式不对")
-        if "crossref" in m:
-            cfg["metadata"]["crossref"] = bool(m["crossref"])
-    if "webdav" in body:
-        w = body["webdav"]
-        if not isinstance(w, dict):
-            raise HTTPException(400, "WebDAV 那一栏格式不对")
-        cur = cfg.setdefault("webdav", {})
-        for k in ("url", "username"):
-            if isinstance(w.get(k), str):
-                cur[k] = w[k].strip()
-        pwd = w.get("password")
-        if isinstance(pwd, str) and "…" not in pwd:
-            cur["password"] = pwd
-        if "auto" in w:
-            cur["auto"] = bool(w["auto"])
     was_demo = _demo_mode(cfg)
     if cfg["provider"]["api_key"] and "mock" not in body and "provider" in body:
         cfg["mock"] = False
@@ -710,7 +685,7 @@ _BACKUP_SKIP_FILES = {"eggpaper.db", "eggpaper.db-wal", "eggpaper.db-shm", "pend
 # 只有陪跑文件不进位
 _RESTORE_SKIP_FILES = _BACKUP_SKIP_FILES - {"eggpaper.db"}
 
-# key 脱敏在 config.strip_secrets（webdav 轻备份共用一份；password 键一并置空）
+# key 脱敏在 config.strip_secrets（password 键一并置空）
 _strip_secrets = config.strip_secrets
 
 def _backup_zip_stream():
@@ -788,8 +763,7 @@ def backup_restore(body: dict):
     return {"ok": True, "restart": True}
 
 def _stage_restore(src: str):
-    """备份恢复的落地准备（本地文件与 WebDAV 拉下来的共用这一段）。
-    校验 + 解包到暂存 + 写标记；失败抛 HTTPException。"""
+    """备份恢复的落地准备：校验 + 解包到暂存 + 写标记；失败抛 HTTPException。"""
     with _restore_lock:
         if not src or not os.path.isfile(src):
             raise HTTPException(404, "找不到这个文件")
@@ -824,78 +798,6 @@ def _stage_restore(src: str):
             json.dump({"staged": staged}, f)
     except OSError as e:
         raise HTTPException(500, f"写恢复标记失败：{_human_msg(e)}")
-
-# ---------------- WebDAV 网盘自动备份 ----------------
-
-@app.get("/api/webdav/status")
-def webdav_status():
-    return webdav.status()
-
-@app.post("/api/webdav/save")
-def webdav_save(body: dict):
-    """存 WebDAV 配置。password 带「…」视为打码回传不落盘（与 api_key 同一约定），
-    只为改「自动」开关时不把密码抹掉。"""
-    w = body or {}
-    if not isinstance(w, dict):
-        raise HTTPException(400, "WebDAV 配置格式不对")
-    cfg = copy.deepcopy(config.load())
-    cur = cfg.setdefault("webdav", {})
-    for k in ("url", "username"):
-        if isinstance(w.get(k), str):
-            cur[k] = w[k].strip()
-    pwd = w.get("password")
-    if isinstance(pwd, str) and "…" not in pwd:
-        cur["password"] = pwd
-    if "auto" in w:
-        cur["auto"] = bool(w["auto"])
-    if "days" in w:
-        try:
-            cur["days"] = max(1, int(w["days"]))
-        except (TypeError, ValueError):
-            pass
-    config.save(cfg)
-    return webdav.status()
-
-@app.post("/api/webdav/test")
-def webdav_test(body: dict):
-    """测连通。密码框打码（带…）时用已存的密码测。"""
-    w = body or {}
-    cfg = config.load().get("webdav", {})
-    url = (w.get("url") if isinstance(w.get("url"), str) else "") or cfg.get("url") or ""
-    user = (w.get("username") if isinstance(w.get("username"), str) else "") or cfg.get("username") or ""
-    pwd = w.get("password") if isinstance(w.get("password"), str) else ""
-    if not pwd or "…" in pwd:
-        pwd = cfg.get("password") or ""
-    ok, why = webdav.test(url, user, pwd)
-    return {"ok": ok, "why": why}
-
-@app.post("/api/webdav/backup-now")
-def webdav_backup_now():
-    def run():
-        webdav.run_backup("manual")
-    threading.Thread(target=run, daemon=True).start()
-    return webdav.status()
-
-@app.post("/api/webdav/restore")
-def webdav_restore():
-    """从网盘拉回备份并走本地恢复流程（重启后生效）。"""
-    fd, tmp = tempfile.mkstemp(suffix=".zip")
-    os.close(fd)
-    ok, why = webdav.fetch_latest(tmp)
-    if not ok:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise HTTPException(400, why or "没拉下来")
-    try:
-        _stage_restore(tmp)
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    return {"ok": True, "restart": True}
 
 @app.post("/api/pdf2zh/install")
 def pdf2zh_install(body: dict = None):
@@ -1131,7 +1033,7 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
         db.update_paper(pid, pdf_hash=pdf_hash)
     db.replace_paragraphs(pid, paras)
     _ensure_paper_type(pid)
-    crossref.kick(pid)     # 可选开关：按首页 DOI 联网补元数据（后台线程，失败安静）
+    crossref.kick(pid)     # 按首页 DOI 联网补元数据（后台线程，失败安静）
     row = db.get_paper(pid)
     db.update_paper(pid, last_read_at=db._now())
     if paras:

@@ -560,26 +560,6 @@ const EN = {
 
   // ---- 全库分层问答 ----
   '正在翻 {n} 篇找相关段落…': 'Scanning {n} papers for relevant passages…',
-
-  // ---- Crossref 元数据回填 ----
-  '元数据': 'Metadata',
-  '导入时联网补全（Crossref）': 'Fill missing metadata online at import (Crossref)',
-
-  // ---- WebDAV 备份 ----
-  'WebDAV 备份': 'WebDAV backup',
-  '轻包：文库与配置，不含 PDF 原件': 'light archive: library & settings, no PDF files',
-  '账号': 'Account',
-  '密码': 'Password',
-  '测试': 'Test',
-  '每天自动': 'Daily auto',
-  '立即备份': 'Back up now',
-  '从网盘恢复': 'Restore from drive',
-  '当前文库将被网盘上的备份替换，重启后生效。':
-    'Your library will be replaced by the backup on the drive. Takes effect after restart.',
-  '备份中…': 'Backing up…',
-  '上次 {t} · {kb} KB': 'Last {t} · {kb} KB',
-  '连得上': 'Connected',
-  '连不上': 'Cannot connect',
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。

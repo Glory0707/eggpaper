@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
 import { engInst, startEngineInstall, onEngineReady } from '../engine'
 import { t, ui, setLang, setDark, isEn } from '../i18n'
@@ -26,66 +26,11 @@ const f = reactive({
   engine_path: (S.pdf2zh || {}).path || '',
   deepl_key: (S.pdf2zh || {}).deepl_key || '',
   auto_check: (S.update || {}).auto_check !== false,
-  crossref: !!((S.metadata || {}).crossref),
-  wurl: (S.webdav || {}).url || '',
-  wuser: (S.webdav || {}).username || '',
-  wpass: (S.webdav || {}).password || '',
-  wauto: !!((S.webdav || {}).auto),
   shot_save: S.shot_save !== false,
   layers: { ...store.viewer.layers },
   data_dir: (S.data_dir || '').replace(/\$/, ''),
 })
 
-/* ---------- WebDAV 备份：测连通 / 立即备份 / 从网盘恢复 ----------
-   状态行三态：备份中（轮询）、上次成功（时间+大小）、失败原因。动作前先把表单存下去
-   （跟「检查更新」同一手法：测的必须是刚改过的设置）。 */
-const wv = reactive({ busy: false, state: '', poll: null })
-function wvStateText(s) {
-  if (s.running) return t('备份中…')
-  if (s.last_error) return s.last_error
-  if (s.last_ok) return t('上次 {t} · {kb} KB', { t: s.last_at, kb: Math.round((s.last_size || 0) / 1024) })
-  return ''
-}
-async function wvRefresh() {
-  try {
-    const s = await api.webdavStatus()
-    wv.state = wvStateText(s)
-    if (wv.poll) { clearInterval(wv.poll); wv.poll = null }
-    if (s.running) wv.poll = setInterval(wvRefresh, 2000)
-  } catch { /* 服务不在了：下一拍再说 */ }
-}
-async function wvSave() {
-  await api.saveSettings({ webdav: { url: f.wurl, username: f.wuser, password: f.wpass, auto: f.wauto } })
-  store.settings = await api.settings()
-}
-async function wvTest() {
-  wv.busy = true
-  try {
-    await wvSave()
-    const r = await api.webdavTest({ url: f.wurl, username: f.wuser, password: f.wpass })
-    wv.state = r.ok ? t('连得上') : (r.why || t('连不上'))
-  } catch (e) { wv.state = e.message } finally { wv.busy = false }
-}
-async function wvBackup() {
-  wv.busy = true
-  try {
-    await wvSave()
-    await api.webdavBackupNow()
-    wvRefresh()
-  } catch (e) { wv.state = e.message } finally { wv.busy = false }
-}
-async function wvRestore() {
-  const yes = await confirmBox({
-    title: t('从网盘恢复'), ok: t('恢复'),
-    body: t('当前文库将被网盘上的备份替换，重启后生效。'),
-  })
-  if (!yes) return
-  try {
-    await api.webdavRestore()
-    toast(t('备份已就位，重启后生效'))
-  } catch (e) { toast(e.message) }
-}
-onUnmounted(() => { if (wv.poll) clearInterval(wv.poll) })
 const savingData = ref(false)
 const picking = ref(false)
 /* 迁移 = 弹 Windows 自带目录选择框，选中即迁——不填路径、不加浏览按钮。 */
@@ -258,7 +203,6 @@ onMounted(async () => {
     const s = await api.pdf2zhInstallStatus()
     if (s.state === 'done' && !eng.ok) checkEngine()
   } catch { /* 无所谓 */ }
-  wvRefresh()
 })
 
 function save() {
@@ -270,9 +214,6 @@ function save() {
                  mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim(),
                                          deepl_key: f.deepl_key.trim() },
                  update: { auto_check: f.auto_check },
-                 metadata: { crossref: f.crossref },
-                 webdav: { url: f.wurl.trim(), username: f.wuser.trim(),
-                           password: f.wpass, auto: f.wauto },
                  shot_save: f.shot_save })
 }
 </script>
@@ -389,10 +330,6 @@ function save() {
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
                 @click="checkNow" :disabled="checking">{{ checking ? t('检查中…') : t('检查更新') }}</button>
       </div>
-      <div class="f-line">
-        <span class="mono-label" style="margin:0">{{ t('元数据') }}</span>
-        <label class="ck"><input type="checkbox" v-model="f.crossref" />{{ t('导入时联网补全（Crossref）') }}</label>
-      </div>
       <div class="f-row">
         <label class="mono-label">{{ t('数据目录') }}
           <button class="eng-check" style="margin-left:8px" @click="api.revealUpdate(f.data_dir)">{{ t('打开') }}</button>
@@ -407,23 +344,6 @@ function save() {
                 @click="exportBackup">{{ t('导出全库') }}</button>
         <button style="margin-left:6px;padding:2px 10px;font-size:var(--fs-sm)"
                 @click="restoreBackup">{{ t('从备份恢复') }}</button>
-      </div>
-      <div class="f-row">
-        <label class="mono-label">{{ t('WebDAV 备份') }}
-          <span class="wv-note">{{ t('轻包：文库与配置，不含 PDF 原件') }}</span>
-        </label>
-        <input type="text" v-model="f.wurl" placeholder="https://dav.jianguoyun.com/dav/eggpaper/" />
-        <div class="wv-row">
-          <input type="text" v-model="f.wuser" :placeholder="t('账号')" autocomplete="off" />
-          <input type="password" v-model="f.wpass" :placeholder="t('密码')" autocomplete="new-password" />
-          <label class="ck"><input type="checkbox" v-model="f.wauto" />{{ t('每天自动') }}</label>
-        </div>
-        <div class="wv-row">
-          <button class="eng-check" @click="wvTest" :disabled="wv.busy">{{ t('测试') }}</button>
-          <button class="eng-check" style="margin-left:4px" @click="wvBackup" :disabled="wv.busy">{{ t('立即备份') }}</button>
-          <button class="eng-check" style="margin-left:4px" @click="wvRestore">{{ t('从网盘恢复') }}</button>
-          <span class="eng-state" v-if="wv.state" style="margin-left:8px">{{ wv.state }}</span>
-        </div>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('窗口') }}</span>
