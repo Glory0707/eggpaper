@@ -3728,6 +3728,14 @@ if os.path.isdir(DIST):
                             media_type="text/html; charset=utf-8",
                             headers={"Cache-Control": "no-cache, must-revalidate"})
 
+    @app.api_route("/{path:path}", methods=["POST", "PUT", "DELETE", "PATCH"],
+                   include_in_schema=False)
+    def _api_404(path: str):
+        # SPA 的 StaticFiles 挂在 / 上，会把未知路径的 POST 吃成 405（暗示"路径存在"）——
+        # 已删端点的旧客户端、打错的 API 路径都该得到诚实的 404。GET 不用管：挂载点
+        # 本来就回 404。所有真路由都注册在这条兜底之前，不会被动到。
+        raise HTTPException(404, "Not Found")
+
     app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
 
 @app.on_event("startup")
