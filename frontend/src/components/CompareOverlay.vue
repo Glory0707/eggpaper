@@ -61,30 +61,15 @@ function colsReady() {
 }
 async function run() {
   if (step.value !== 'pick') return          // 双击/连点只放行第一发，其余在入口挡掉
-  if (m.value === 'extract') {
-    const payload = colsReady()
-    if (!payload.length) return
-    step.value = 'run'
-    try {
-      const r = await api.compare(props.ids, null, payload)
-      papers.value = r.papers
-      cells.value = r.cells
-      dims.value = r.dims || []
-      demo.value = !!r.demo
-      step.value = 'done'
-    } catch (e) {
-      failed.value = e.message
-      step.value = 'fail'
-    }
-    return
-  }
-  if (!picked.value.size) return
+  const extract = m.value === 'extract'
+  const cols = extract ? colsReady() : null
+  if (extract ? !cols.length : !picked.value.size) return
   step.value = 'run'
   try {
-    const r = await api.compare(props.ids, [...picked.value])
+    const r = await api.compare(props.ids, extract ? null : [...picked.value], cols)
     papers.value = r.papers
     cells.value = r.cells
-    dims.value = DIMS_ALL.filter(d => picked.value.has(d.k))
+    dims.value = extract ? (r.dims || []) : DIMS_ALL.filter(d => picked.value.has(d.k))
     demo.value = !!r.demo
     step.value = 'done'
   } catch (e) {

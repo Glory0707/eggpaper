@@ -2307,22 +2307,17 @@ def six_answer(pid: str, key: str):
 def compare_papers(body: dict):
     """数据对比表：勾选的几篇各抽一次、按同一 schema 拼成一张表（格子带 ¶ 锚点）。
 
-    cols（自定义列口径）：用户自定义列 [{label, hint?}]，给了它就抽「固定维度
-    （dims 里勾的）+ 自定义列」的合集，篇数上限放宽到 12——批量过表时每篇仍是一次
-    调用，只是列由用户定义。"""
+    cols（自定义列口径）：用户自定义列 [{label, hint?}]，给了它就抽纯自定义列；
+    没有 cols 照旧六维勾选。两种口径同一入口，篇数都钳 12——每篇各一次调用，
+    成本只随篇数走，口径不该影响上限。"""
     ids = [str(x) for x in ((body or {}).get("ids") or [])]
     ids = list(dict.fromkeys(ids))       # 重复 id 去重保序：同一篇抽两次 = 重复列 + 白花的缓存键
     ids = ids[:12]
+    if len(ids) < 2:
+        raise HTTPException(400, "至少选两篇才能对比")
     cols = [c for c in ((body or {}).get("cols") or [])
             if isinstance(c, dict) and str(c.get("label") or "").strip()]
     dims = [str(k) for k in ((body or {}).get("dims") or []) if str(k) in compare.KEYS]
-    if cols:
-        if len(ids) < 2:
-            raise HTTPException(400, "至少选两篇才能对比")
-    else:
-        ids = ids[:5]
-        if len(ids) < 2:
-            raise HTTPException(400, "至少选两篇才能对比")
     papers = []
     for pid in ids:
         p = db.get_paper(pid)
