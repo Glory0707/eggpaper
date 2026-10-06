@@ -1999,7 +1999,7 @@ def _json_of(raw, fallback=None):
 
 def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
               demo_fn, real_fn, precond=None, cached_value=None, cached: bool = False):
-    """一眼卡/提问建议/导师三问/方法卡四个端点同用的骨架：
+    """一眼卡/提问建议/方法卡三个端点同用的骨架：
 
     锁外缓存命中 → （cached=1 只读不生成）→ 按篇锁 → 锁内重读（等锁期间可能已被
     首个请求写回）→ 前置条件 → 演示或真身生成 → 形状闸 → 写回。
@@ -2116,28 +2116,15 @@ def suggest(pid: str):
         _, claims, annos = db.get_analysis(pid)
         return llm.suggest_questions(p["title"], claims, annos)
     return _gen_card(pid, "suggest", "suggest", what="提问建议", shape=("questions",),
-                     demo_fn=lambda p: {"questions": [_demo_txt("〔演示〕核心证据的强度如何？", "[demo] How strong is the core evidence?"),
-                                                    _demo_txt("〔演示〕方法上有什么可挑剔的？", "[demo] What is methodologically questionable?")]},
+                     demo_fn=lambda p: {"questions": [_demo_txt("〔演示〕关键数字是在什么条件下测的？", "[demo] Under what conditions were the key numbers measured?"),
+                                                    _demo_txt("〔演示〕这个思路能搬到我的体系吗？", "[demo] Does this approach transfer to my system?"),
+                                                    _demo_txt("〔演示〕方法上最容易被挑的毛病是什么？", "[demo] What would a reviewer pick on in the methods?")]},
                      real_fn=real,
                      precond=lambda p: {"questions": []} if p["analysis_status"] != "done" else None)
 
 KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别扭", "redundant": "多余重复",
            "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑",
            "conflict": "前后打架", "lookup": "查译", "region": "选区问答", "note": "批注"}
-
-@app.get("/api/papers/{pid}/advisor")
-def advisor(pid: str, cached: bool = False):
-    """连点只付一次钱：锁内重读缓存，第二拍直接命中。"""
-    def real(p):
-        _, claims, annos = db.get_analysis(pid)
-        warns = [f"{n['note']}（{n['quote'][:30]}）" for n in db.get_marginalia(pid) if _band(n) == "warn"]
-        return llm.advisor_questions(p["title"], claims, warns, kind=_ensure_paper_type(pid))
-    empty = {"questions": []}
-    return _gen_card(pid, "advisor", "advisor", what="导师三问", shape=("questions",),
-                     demo_fn=lambda p: {"questions": [{"q": _demo_txt("〔演示〕证据够硬吗？", "[demo] Is the evidence solid enough?"),
-                                                     "outline": [_demo_txt("演示要点", "demo outline")]}]},
-                     real_fn=real, cached=cached, cached_value=empty,
-                     precond=lambda p: empty if p["analysis_status"] != "done" else None)
 
 @app.post("/api/ask-visual")
 def ask_visual(body: dict):

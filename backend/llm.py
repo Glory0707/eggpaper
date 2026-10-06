@@ -623,18 +623,16 @@ def translate_captions(caps: list) -> dict:
 # ---------------- 论文专属推荐问题 ----------------
 
 def suggest_questions(title: str, claims: list, annos: dict) -> dict:
-    """提问面板空态里的起步问题。
-
-    口径与"导师三问"划死边界：**这一栏只帮读者读懂**（这里到底怎么做的、
-    数字是在什么条件下得的、这个说法能不能推广到我要用的体系），审稿人式挑刺归导师三问。
-    """
+    """提问面板空态里的起步问题：前两条帮他把这篇读懂，第三条是导师/答辩式挑刺。"""
     claims_txt = _claims_lines(claims) or "（无）"
     gap = next((v["purpose"] for k, v in sorted(annos.items(), key=lambda x: int(x[0])) if v["role"] == "gap"), "")
     data = chat_json([
         {"role": "system", "content":
-            "你在帮一位研究生读懂这篇论文。基于论文的主张与研究缺口，出 4 个他最想问出口的问题。"
-            "好的问题具体到这篇的内容：怎么做的、数字在什么条件下得的、这个结论能不能用到别的体系、"
-            "某个术语在这里到底指什么。你比他更懂这篇，什么最值得问由你判断——"
+            "你在帮一位研究生读懂这篇论文。基于论文的主张与研究缺口，出 3 个他最想问出口的问题："
+            "前两个帮他把这篇读懂——怎么做的、数字在什么条件下得的、这个结论能不能用到别的体系、"
+            "某个术语在这里到底指什么；第三个当一次苛刻的导师，问组会/答辩上最可能问住他的那个问题"
+            "（证据强度、方法选择、结论推广性，比读懂更狠一层）。"
+            "你比他更懂这篇，什么最值得问由你判断——"
             "只要别停在'这篇讲了什么'这种翻开摘要就能回答的层面。"
             "每条是**一个**短问题：一句话、十五到二十五字问完，别加铺垫，也别一口气问两件事"
             "（面板里是竖排按钮，长句读着累）。"
@@ -642,7 +640,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
     ], max_tokens=4000, temperature=0.5, no_think=True, scene="推荐问题")
     qs = [_clip_q(str(q)) for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
-    return {"questions": qs[:4]}
+    return {"questions": qs[:3]}
 
 def _clip_q(q: str) -> str:
     """问题的长度上限只做兜底，且断在标点处。
@@ -1159,38 +1157,6 @@ def extract_citation(title: str, src: str) -> dict:
         {"role": "system", "content": CITATION_SYSTEM},
         {"role": "user", "content": f"[论文标题（版面分析抽的，可能不全）]\n{title or '（无）'}\n\n{src}"},
     ], max_tokens=2000, temperature=0, no_think=True, timeout=90, scene="引用抄写")
-
-# ---------------- 导师三问 ----------------
-
-def advisor_questions(title: str, claims: list, warnings: list, kind: str = "research") -> dict:
-    claims_txt = _claims_lines(claims) or "（无）"
-    warn_txt = "\n".join(f"- {w}" for w in warnings) or "（无）"
-    if kind == "review":
-        sys = ("你是苛刻但建设性的导师。学生要拿这篇**综述**去组会汇报/答辩。"
-               "综述没有实验证据层，你问的是组织与评述的骨头：分类框架站不站得住、"
-               "哪条重要线索被漏了或轻轻带过、它的评判标准是否一以贯之、"
-               "下结论的地方有没有它自己的梳理撑住。"
-               "出 3 个最可能把学生问住的问题，每个配一份过关要点提纲。"
-               '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。'
-               + _lang_tail())
-    else:
-        sys = ("你是苛刻但建设性的导师。学生要拿这篇论文去组会汇报/答辩。"
-               "下面这些『作者已承认的薄弱点』当作已知前提——它们本身不必再复述一遍，"
-               "你要问的是更往里的问题：承认了还不够在哪里？缺的是哪一步证据？"
-               "结论到底能走到哪一步？换个做法会怎样？"
-               "出 3 个最可能把学生问住的问题（证据强度、方法选择、结论推广性都是好切入口，"
-               "你也可以从自己对这篇的判断出发），每个配一份过关要点提纲。"
-               '只输出 JSON：{"questions":[{"q":"<问题，≤60字>","outline":["<要点1，≤40字>","<要点2>"]}]}，不要代码块。'
-               + _lang_tail())
-    data = chat_json([
-        {"role": "system", "content": sys},
-        {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n已承认的薄弱点（已知前提）：\n{warn_txt}"},
-    ], max_tokens=6000, temperature=0.5, no_think=True, scene="导师三问")
-    qs = []
-    for q in data.get("questions", []):
-        if isinstance(q, dict) and q.get("q"):
-            qs.append({"q": str(q["q"])[:80], "outline": [str(o)[:44] for o in (q.get("outline") or [])[:3]]})
-    return {"questions": qs[:3]}
 
 # ---------------- 视觉问答（框选/图表） ----------------
 

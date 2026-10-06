@@ -188,7 +188,6 @@ const EN = {
   '入门': 'Getting started',
   '方法卡': 'Method card',
   '谱系卡': 'Landscape card',
-  '导师三问': 'Advisor questions',
   '图表速览 · {n}': 'Figures · {n}',
   '表': 'Table',
   '图': 'Fig',
@@ -515,9 +514,6 @@ const EN = {
   '《{t}》翻译完成': '“{t}” — translation done',
   '翻页': 'Page up / down',
   '这张卡': 'This card',
-  '去回答': 'Answer it',
-  '导师三问第 {n} 问「{q}」：给我口头回答提纲——先结论，再论据（标 [¶n]），最后是最可能被追问的点。':
-    'Advisor question {n}: “{q}”. Draft an outline for an oral answer: conclusion first, then arguments (cite as [¶n]), end with the most likely challenge.',
   '复制失败：{m}': 'Copy failed: {m}',
   '在文中查找': 'Find in paper',
   '跳到这一段': 'Jump to this paragraph',

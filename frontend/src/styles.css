@@ -1400,9 +1400,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 :focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 2px; }
 
 .ev-q { font-size: var(--fs-sm); color: var(--ink-3); margin-top: 3px; }
-.adv-item { border-top: 1px solid var(--hairline-soft); padding: 9px 2px; }
-.adv-q { font-weight: 600; font-size: var(--fs-md); line-height: 1.55; }
-.adv-outline { margin: 5px 0 0; padding-left: 16px; color: var(--ink-2); font-size: var(--fs-md); line-height: 1.65; }
 
 .draggable { will-change: transform; }
 .draggable [data-drag], .draggable[data-drag] { cursor: grab; }
@@ -1903,7 +1900,7 @@ html.dark .vis-img { background: #fff; }
 
 .md, .qa-msg .q-body, .cal-paper, .paper-item .fn, .ce-v, .six-txt,
 .claim-item .c-txt, .gap-row .g-txt,
-.sel-pop .sp-zh, .sp-hits .chip, .ev-row .e-note, .adv-q, .adv-outline,
+.sel-pop .sp-zh, .sp-hits .chip, .ev-row .e-note,
 .cal-paper, .t-zh, .p-author { overflow-wrap: anywhere; }
 
 @keyframes imgIn { from { opacity: 0; } }

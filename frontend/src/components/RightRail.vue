@@ -137,16 +137,6 @@ function askIt(q) {
   store.askPrefill = { question: q, send: true }
 }
 
-/* 导师三问的「去回答」：把这道题连提纲一起递给提问页，让模型帮起草口头回答——
-   组会前一晚最想要的那个按钮。 */
-function askAdvisor(q, i) {
-  store.askPrefill = {
-    question: t('导师三问第 {n} 问「{q}」：给我口头回答提纲——先结论，再论据（标 [¶n]），最后是最可能被追问的点。',
-                { n: i + 1, q: q.q }),
-    send: true,
-  }
-}
-
 /* 眉批跑到一半喊停：后端在块边界收手，已写完的批注保留。 */
 async function stopMarginalia() {
   try { await api.marginaliaCancel(store.currentId) } catch { /* 状态轮询会自己归位 */ }
@@ -296,7 +286,7 @@ watch(tab, t => {
 })
 watch(() => store.analysis.status, s => {
   if (s !== 'done') return
-  methodCard.value = null; advisor.value = []; suggest.value = []
+  methodCard.value = null; suggest.value = []
   loadSuggest(); loadCachedBlocks()
   termsTried.value = ''              // 重算析读 = 词表也重发了一批，允许再补一次空白
   loadTerms()
@@ -304,7 +294,6 @@ watch(() => store.analysis.status, s => {
 })
 watch(() => store.marginalia.status, s => {
   if (s !== 'done') return
-  advisor.value = []
   loadCachedBlocks()
   loadSix()          // ⑥「还能做什么」是从"有坑"的批注长出来的，眉批一换就得重取
 })
@@ -374,19 +363,6 @@ function eqq(idx) {
   return m[String(idx)] || ''
 }
 
-const advisor = ref([])
-const advBusy = ref(false)
-async function loadAdvisor() {
-  if (advBusy.value || advisor.value.length) return
-  const mine = paperEpoch()
-  advBusy.value = true
-  try {
-    const r = await api.advisor(store.currentId)
-    if (!samePaper(mine)) return
-    advisor.value = r.questions || []
-  } catch (e) { toast(t('生成失败：{m}', { m: e.message })) } finally { advBusy.value = false }
-}
-
 /* ---------- 库内互引（scite 式）：库里谁引了这篇、引的哪句、什么立场 ----------
    扫描是本地的（子串 + 归一化，不花钱），进速览页自动扫一次；
    立场判定是一次模型调用，按篇对缓存——「判定立场」按钮才花钱。 */
@@ -431,13 +407,6 @@ async function loadCachedBlocks() {
       const r = await api.methodCard(store.currentId, true)
       if (samePaper(mine) && r?.goal) methodCard.value = r
     } catch { /* 没缓存很正常 */ }
-  }
-  if (!advisor.value.length && store.analysis.status === 'done') {
-    try {
-      const r = await api.advisor(store.currentId, true)
-      if (!samePaper(mine)) return
-      advisor.value = r.questions || []
-    } catch { /* 同上 */ }
   }
 }
 
@@ -562,7 +531,6 @@ watch(() => store.currentId, () => {
   tab.value = 'skeleton'
   methodCard.value = null
   mcMore.value = false
-  advisor.value = []
   figures.value = []
   suggest.value = []
   cited.value = []
@@ -833,22 +801,6 @@ async function saveToGlobal(term) {
             <button v-if="!mcMore && methodCard.steps.length > MC_STEPS" class="blk-more" @click="mcMore = true">
               {{ t('展开全部') }} {{ methodCard.steps.length }} {{ t(isReview ? '条' : '步') }}<span v-if="methodCard.notes"> · {{ t(isReview ? '入门' : '注意') }}</span>
             </button>
-          </div>
-        </div>
-
-                <div class="blk">
-          <div class="blk-head">
-            <span class="mono-label">{{ t('导师三问') }}</span>
-            <button v-if="!advisor.length && !advBusy && store.analysis.status === 'done'" class="blk-get"
-                    @click="loadAdvisor">{{ t('获取') }}</button>
-            <span v-else-if="advBusy" class="blk-busy">{{ t('获取中…') }}</span>
-          </div>
-          <div v-if="advisor.length">
-            <div class="adv-item" v-for="(q, i) in advisor" :key="i">
-              <div class="adv-q">Q{{ i + 1 }} · {{ prettyChem(q.q) }}</div>
-              <ul class="adv-outline"><li v-for="o in q.outline" :key="o">{{ prettyChem(o) }}</li></ul>
-              <button class="si-ask" @click="askAdvisor(q, i)">{{ t('去回答') }} ↗</button>
-            </div>
           </div>
         </div>
 
