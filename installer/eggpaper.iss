@@ -1,6 +1,6 @@
 ; eggpaper 安装包（Inno Setup 6）
 ;
-; 由 tools/build_installer.py 调用，版本号通过 /DMyVersion=0.2.0 传进来。
+; 由 tools/build_installer.py 调用，版本号通过 /DMyVersion=0.1.0 传进来。
 ; 手动编译：ISCC.exe /DMyVersion=0.1.0 installer\eggpaper.iss
 ;
 ; 四个关键决定：
