@@ -6,7 +6,6 @@ import { useEdgeResize } from '../edgeResize'
 import { lineSpanOf, sentenceAround, normText } from '../find'
 import { prettyChem } from '../chem'
 import { t, isEn } from '../i18n'
-import { copyText } from '../clip'
 import AskPanel from './AskPanel.vue'
 import MdLite from './MdLite.vue'
 
@@ -143,18 +142,6 @@ async function stopMarginalia() {
 }
 async function stopAnalyzeHere() {
   try { await api.analysisCancel(store.currentId) } catch { /* 同上 */ }
-}
-
-/* 同一份笔记的第二条路：不落盘、直接进剪贴板，粘进 Notion/Obsidian/组会文档。 */
-const exportCopied = ref(false)
-async function copyExport() {
-  try {
-    const md = await (await fetch(api.exportMdUrl(store.currentId))).text()
-    if (await copyText(md)) {
-      exportCopied.value = true
-      setTimeout(() => (exportCopied.value = false), 1600)
-    } else toast(t('复制失败'))
-  } catch (e) { toast(t('复制失败：{m}', { m: e.message })) }
 }
 
 const parasOfRole = roles => store.paras.filter(p => roles.includes(annoRole(p.idx)))
@@ -824,7 +811,6 @@ async function saveToGlobal(term) {
 
         <div class="blk" style="display:flex;gap:8px;flex-wrap:wrap">
           <a class="exp-btn" :href="api.exportMdUrl(store.currentId)" download>{{ t('导出笔记 .md') }}</a>
-          <button class="exp-btn" @click="copyExport">{{ exportCopied ? t('已复制') : t('复制 Markdown') }}</button>
         </div>
       </template>
 
