@@ -26,13 +26,13 @@ DIMS = [
 ]
 KEYS = [k for k, _n, _h in DIMS]
 
-# 自定义维度（Elicit 式批量抽取）：列名与给模型的一句话说明都由用户给，
+# 自定义维度（自定义列口径）：列名与给模型的一句话说明都由用户给，
 # 键用 c1..c6 合成——缓存与格子结构跟固定维度完全同构
 MAX_COLS = 6
 
 def dims_meta(dims: list = None, cols: list = None) -> list:
     """本次要抽的全部维度：[(k, label, hint)]。dims=None = 固定六维全选；
-    dims=[] = 固定维度一个不选（批量抽取模式就是纯自定义列）；自定义列收编成
+    dims=[] = 固定维度一个不选（纯自定义列口径）；自定义列收编成
     c1..cN（label/hint 清洗钳长，label 必填）。"""
     out = [(k, n, h) for k, n, h in DIMS if dims is None or k in dims]
     for i, c in enumerate((cols or [])[:MAX_COLS]):

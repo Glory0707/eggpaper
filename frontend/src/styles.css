@@ -2025,7 +2025,7 @@ html.dark .vis-img { background: #fff; }
 }
 .coll-menu .cm-row.cm-uncat:hover { color: var(--vermilion); background: none; }
 
-/* 批量抽取（Elicit 式）的自定义列编辑器：列名必填、说明选填，最多六列 */
+/* 自定义列口径的编辑器：列名必填、说明选填，最多六列 */
 .cmp-cols { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
 .cmp-col { display: flex; gap: 6px; align-items: center; }
 .cmp-col input { font-size: var(--fs-sm); min-width: 0; }

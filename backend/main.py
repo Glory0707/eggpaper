@@ -2307,7 +2307,7 @@ def six_answer(pid: str, key: str):
 def compare_papers(body: dict):
     """数据对比表：勾选的几篇各抽一次、按同一 schema 拼成一张表（格子带 ¶ 锚点）。
 
-    cols（Elicit 式批量抽取）：用户自定义列 [{label, hint?}]，给了它就抽「固定维度
+    cols（自定义列口径）：用户自定义列 [{label, hint?}]，给了它就抽「固定维度
     （dims 里勾的）+ 自定义列」的合集，篇数上限放宽到 12——批量过表时每篇仍是一次
     调用，只是列由用户定义。"""
     ids = [str(x) for x in ((body or {}).get("ids") or [])]
@@ -2337,7 +2337,7 @@ def compare_papers(body: dict):
         return db.get_paragraphs(xpid, with_lines=False), claims, annos
 
     demo = _demo_mode()
-    # cols 在场 = 批量抽取模式：纯用户自定义列（dims=[]），不掺固定维度；没有 cols 照旧六维勾选
+    # cols 在场 = 自定义列口径：纯用户自定义列（dims=[]），不掺固定维度；没有 cols 照旧六维勾选
     meta = compare.dims_meta(dims=[] if cols else (dims or None), cols=cols or None)
     cells = compare.extract_all(papers, material_of, demo=demo, meta=meta)
     return {"papers": [{k: p.get(k) for k in ("id", "title", "filename", "authors", "year")}
@@ -2433,6 +2433,7 @@ def export_md(pid: str):
         "mcard": ("方法卡", "Method card"),
         "scard": ("谱系卡", "Survey map"),
         "notes": ("眉批与查译", "Margin notes & lookups"),
+        "cited": ("库内互引", "Cited by in library"),
         "qa": ("问答", "Q&A"),
         "you": ("你", "You"),
     }
@@ -2445,7 +2446,11 @@ def export_md(pid: str):
         lines += [f"**{s.get('one_line', '')}**", ""]
         if s.get("novelty"):
             lines.append(f"- 创新点：{s['novelty']}")
-        lines += [f"- 发现：{s.get('findings', '')}", ""]
+        lines.append(f"- 发现：{s.get('findings', '')}")
+        kw = " · ".join(str(k).strip() for k in (s.get("keywords") or []) if str(k).strip())
+        if kw:
+            lines.append(f"- 关键词：{kw}")
+        lines.append("")
     status, claims, annos = db.get_analysis(pid)
     if claims:
         lines += [f"## {L('skeleton')}", ""]
@@ -2492,6 +2497,25 @@ def export_md(pid: str):
                 lab = "Notes" if en else ("入门" if is_rev else "注意")
                 lines.append(f"- {lab}: {mc['notes']}")
             lines.append("")
+    # 库内互引：谁引了这篇、引的哪句、什么立场（扫描免费，立场只读缓存）
+    cb = []
+    try:
+        cached = db.cite_ctx_all(pid)
+        for x in _citedby_scan(p):
+            for h in (cached.get(x["citing"]["id"]) or x["hits"])[:3]:
+                cb.append((x["citing"], h))
+    except Exception:
+        cb = []
+    if cb:
+        ST = {"support": ("支持", "supports"), "contest": ("质疑", "questions"),
+              "mention": ("提及", "mentions")}
+        lines += [f"## {L('cited')}", ""]
+        for citing, h in cb:
+            st = ST.get(h.get("stance") or "mention", ST["mention"])
+            yr = f" {citing['year']}" if citing.get("year") else ""
+            t = citing.get("title") or citing.get("filename") or "（无标题）"
+            lines.append(f"- **{t}{yr}**（{st[1] if en else st[0]}）：{h.get('quote') or ''}")
+        lines.append("")
     notes = db.get_marginalia(pid)
     if notes:
         lines += [f"## {L('notes')}", ""]
