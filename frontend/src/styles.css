@@ -1992,8 +1992,11 @@ html.dark .vis-img { background: #fff; }
 .cmp-ref:hover { border-color: var(--accent-line); transform: none; box-shadow: none; }
 .cmp-wait { padding: 52px 20px; text-align: center; color: var(--ink-3); font-size: var(--fs-sm); line-height: 2.1; }
 
-/* 对比弹窗第一步：选维度 */
+/* 对比弹窗第一步：选维度 / 立列（顶部切口径） */
 .cmp-pick { padding: 18px 22px 20px; overflow-y: auto; }
+.cmp-mode { display: inline-flex; margin-bottom: 16px; border: 1px solid var(--hairline); border-radius: 15px; padding: 2px; }
+.cmp-mode button { border: none; background: none; border-radius: 12px; padding: 4px 14px; font-size: var(--fs-sm); color: var(--ink-3); }
+.cmp-mode button.on { background: var(--accent-soft); color: var(--accent-deep); font-weight: 600; }
 .cmp-dims { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .cmp-dim {
   display: inline-flex; align-items: center; gap: 7px; cursor: pointer;

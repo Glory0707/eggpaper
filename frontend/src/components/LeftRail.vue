@@ -249,10 +249,8 @@ const selMode = ref(false)
 const selSet = ref(new Set())
 const selN = computed(() => selSet.value.size)
 const canSplit = computed(() => selN.value >= 2 && selN.value <= 4)
-const canCompare = computed(() => selN.value >= 2 && selN.value <= 5)
-const canExtract = computed(() => selN.value >= 2 && selN.value <= 12)
+const canCompare = computed(() => selN.value >= 2 && selN.value <= 12)
 const selMenu = ref(false)
-const cmpMode = ref('compare')
 function toggleSelMode() {
   selMode.value = !selMode.value
   selSet.value = new Set()
@@ -283,16 +281,8 @@ function doSplit() {
 }
 function doCompare() {
   if (!canCompare.value) return
-  cmpMode.value = 'compare'
   cmpIds.value = [...selSet.value]
   cmpOpen.value = true          // 覆盖层关掉后回选择模式，勾选还在，方便接着调
-}
-/* 批量抽取（Elicit 式）：同一张对比表的变体——列由用户自定义，篇数放宽到 12 */
-function doExtract() {
-  if (!canExtract.value) return
-  cmpMode.value = 'extract'
-  cmpIds.value = [...selSet.value]
-  cmpOpen.value = true
 }
 /* 批量引用表格：弹格式选择（带示例），选好直接出 CSV */
 const citeOpen = ref(false)
@@ -463,8 +453,7 @@ function onCmpGoto(c) {
       <button class="s-done" @click="toggleSelMode">{{ t('完成') }}</button>
       <span class="s-actions">
         <button :disabled="!canSplit" :title="canSplit ? '' : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
-        <button :disabled="!canCompare" :title="canCompare ? '' : t('对比要选 2~5 篇')" @click="doCompare">{{ t('数据对比') }}</button>
-        <button :disabled="!canExtract" :title="canExtract ? '' : t('批量抽取要选 2~12 篇')" @click="doExtract">{{ t('批量抽取') }}</button>
+        <button :disabled="!canCompare" :title="canCompare ? '' : t('对比要选 2~12 篇')" @click="doCompare">{{ t('数据对比') }}</button>
         <button :disabled="!selN" @click="doCite">{{ t('引用') }}</button>
         <button :disabled="!selN" @click="selMenu = !selMenu">{{ t('分类') }}</button>
         <button :disabled="!selN" class="s-danger" @click="doDelete">{{ t('删除') }}</button>
@@ -487,7 +476,7 @@ function onCmpGoto(c) {
     </div>
     <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFile" />
     <ZoteroDialog v-model:open="zotOpen" @imported="onZotImported" />
-    <CompareOverlay :open="cmpOpen" :ids="cmpIds" :mode="cmpMode" @close="cmpOpen = false" @goto="onCmpGoto" />
+    <CompareOverlay :open="cmpOpen" :ids="cmpIds" @close="cmpOpen = false" @goto="onCmpGoto" />
     <CiteExport v-model:open="citeOpen" :ids="citeIds" />
   </div>
 </template>

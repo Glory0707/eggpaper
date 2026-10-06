@@ -297,7 +297,7 @@ const EN = {
   '同屏阅读': 'Split view',
   '同屏要选 2~4 篇': 'Pick 2–4 papers for split view',
   '数据对比': 'Compare',
-  '对比要选 2~5 篇': 'Pick 2–5 papers to compare',
+  '对比要选 2~12 篇': 'Pick 2–12 papers to compare',
   '分类': 'Collections',
   '归入分类 · {n} 篇': 'File {n} papers',
   /* 从 Zotero 导入 */
@@ -315,7 +315,7 @@ const EN = {
   '演示': 'Demo',
   '复制 Markdown': 'Copy Markdown',
   '开始对比（{n} 个维度）': 'Compare ({n} dimensions)',
-  '换维度': 'Change dimensions',
+  '重选': 'Re-pick',
   '正在逐篇抽取要点': 'Extracting key points from each paper',
   '(无标题)': '(untitled)',
   '跳到原文这段': 'Jump to this passage',
@@ -531,10 +531,9 @@ const EN = {
     'The PDF is gone from its original location. Drop it back in to re-import — your notes are safe.',
   '读取中…': 'Loading…',
 
-  // ---- 批量抽取（Elicit 式对比表） ----
-  '批量抽取': 'Batch extract',
-  '批量抽取要选 2~12 篇': 'Pick 2–12 papers for batch extract',
-  '批量抽取 · {n} 篇': 'Batch extract · {n} papers',
+  // ---- 数据对比（标准维度 / 自定义列，同一入口） ----
+  '标准维度': 'Standard dims',
+  '自定义列': 'Custom columns',
   '列名，如：样本量': 'Column, e.g. sample size',
   '抽取说明（可空）': 'Extraction hint (optional)',
   '删掉这列': 'Remove this column',

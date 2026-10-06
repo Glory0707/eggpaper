@@ -295,7 +295,7 @@ function pickFirst() {
 const citeCount = computed(() => picked.value.length)
 const citeTitle = computed(() => t('已引用：') + picked.value.slice(0, 5).join(', ') + (picked.value.length > 5 ? '…' : ''))
 /* 引用了别的论文时，一键把「当前篇 + 引用篇」送进数据对比（CompareOverlay）——
-   对照表只有这一个家：六维度可选、逐格带 ¶ 锚点。这里不给它再造第二张表。 */
+   对照表只有这一个家：标准六维或自定义列、逐格带 ¶ 锚点。这里不给它再造第二张表。 */
 const cmpIds = computed(() => {
   const ids = [pid.value]
   for (const t of picked.value) {

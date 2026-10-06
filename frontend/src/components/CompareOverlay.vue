@@ -4,15 +4,12 @@ import { api, toast } from '../store'
 import { t } from '../i18n'
 import { modalFocus } from '../modalFocus'
 
-/* 数据对比表的全屏覆盖层，两步走：
-   ① 选维度——六个维度默认全勾，减掉不要的（每减一个省一份抽取的活）
-   ② 抽取呈现——逐篇并行抽，表格格子带 ¶ 锚点点回原文，可复制 Markdown。
-   表格文本要能选中复制，点遮罩关灯箱的守卫这里同样要有。
-
-   mode='extract' 是同一张表的 Elicit 式变体（批量抽取）：维度不用固定的六行，
-   用户自己立列（列名 + 给模型的一句话说明），篇数上限放宽到 12——
-   系统综述式过表要的就是"我说了算的列"。表格与 CSV 导出两模式共用。 */
-const props = defineProps({ open: Boolean, ids: { type: Array, default: () => [] }, mode: { type: String, default: 'compare' } })
+/* 数据对比表的全屏覆盖层，一个入口两种口径（浮层顶部切换）：
+   标准维度——六个维度默认全勾，减掉不要的（每减一个省一份抽取的活）；
+   自定义列——用户自己立列（列名 + 给模型的一句话说明），系统综述式过表
+   要的就是"我说了算的列"。逐篇并行抽，格子带 ¶ 锚点点回原文，表格与
+   CSV 导出两模式共用。表格文本要能选中复制，点遮罩关灯箱的守卫同样要有。 */
+const props = defineProps({ open: Boolean, ids: { type: Array, default: () => [] } })
 const emit = defineEmits(['close', 'goto'])
 const maskEl = ref(null)
 modalFocus(maskEl, () => props.open, () => null)
@@ -27,22 +24,31 @@ const DIMS_ALL = [
 const MAX_COLS = 6
 const step = ref('pick')            // pick 选维度 | run 抽取中 | done 表格 | fail
 const picked = ref(new Set(DIMS_ALL.map(d => d.k)))
-const cols = ref([])                // [{label, hint}] 批量抽取的自定义列
+const cols = ref([])                // [{label, hint}] 自定义列口径的列
 const papers = ref([])
 const cells = ref({})
 const dims = ref(DIMS_ALL)
 const demo = ref(false)
 const failed = ref('')
+const m = ref('compare')            // 标准维度 compare | 自定义列 extract（浮层内切换）
 
 watch(() => props.open, v => {
   if (!v) return
+  m.value = 'compare'
   step.value = 'pick'
   picked.value = new Set(DIMS_ALL.map(d => d.k))
-  cols.value = props.mode === 'extract' ? [{ label: '', hint: '' }] : []
+  cols.value = []
   papers.value = []
   cells.value = {}
   failed.value = ''
 })
+
+function setMode(v) {
+  if (m.value === v) return
+  m.value = v
+  step.value = 'pick'
+  if (v === 'extract' && !cols.value.length) cols.value = [{ label: '', hint: '' }]
+}
 
 function toggleDim(k) {
   const s = new Set(picked.value)
@@ -55,7 +61,7 @@ function colsReady() {
 }
 async function run() {
   if (step.value !== 'pick') return          // 双击/连点只放行第一发，其余在入口挡掉
-  if (props.mode === 'extract') {
+  if (m.value === 'extract') {
     const payload = colsReady()
     if (!payload.length) return
     step.value = 'run'
@@ -137,9 +143,9 @@ function downloadCsv() {
     <div class="cmp-mask" ref="maskEl" v-if="open" tabindex="-1" @keydown="onKey" @click.self="closeClick">
       <div class="cmp-panel">
         <div class="cmp-head">
-          <span class="mono-label">{{ t(mode === 'extract' ? '批量抽取 · {n} 篇' : '数据对比 · {n} 篇', { n: ids.length }) }}<i v-if="demo" class="demo-flag">{{ t('演示') }}</i></span>
+          <span class="mono-label">{{ t('数据对比 · {n} 篇', { n: ids.length }) }}<i v-if="demo" class="demo-flag">{{ t('演示') }}</i></span>
           <div class="cmp-actions">
-            <button v-if="step === 'done'" class="cmp-ghost" @click="step = 'pick'">{{ t('换维度') }}</button>
+            <button v-if="step === 'done'" class="cmp-ghost" @click="step = 'pick'">{{ t('重选') }}</button>
             <button v-if="step === 'done'" @click="copyMd">{{ t('复制 Markdown') }}</button>
             <button v-if="step === 'done'" @click="downloadCsv">{{ t('下载 CSV') }}</button>
             <button class="cmp-x" :title="t('关闭')" @click="emit('close')">
@@ -148,9 +154,13 @@ function downloadCsv() {
           </div>
         </div>
 
-        <!-- ① 选维度 / 立列 -->
+        <!-- ① 选维度 / 立列（顶部切口径） -->
         <div class="cmp-pick" v-if="step === 'pick'">
-          <div class="cmp-dims" v-if="mode !== 'extract'">
+          <div class="cmp-mode">
+            <button :class="{ on: m === 'compare' }" @click="setMode('compare')">{{ t('标准维度') }}</button>
+            <button :class="{ on: m === 'extract' }" @click="setMode('extract')">{{ t('自定义列') }}</button>
+          </div>
+          <div class="cmp-dims" v-if="m === 'compare'">
             <label v-for="d in DIMS_ALL" :key="d.k" class="cmp-dim" :class="{ on: picked.has(d.k) }">
               <input type="checkbox" :checked="picked.has(d.k)" @change="toggleDim(d.k)" />
               <span>{{ t(d.label) }}</span>
@@ -166,8 +176,8 @@ function downloadCsv() {
           </div>
           <div class="f-actions">
             <button @click="emit('close')">{{ t('取消') }}</button>
-            <button class="primary" :disabled="mode === 'extract' ? !colsReady().length : !picked.size" @click="run">
-              {{ mode === 'extract'
+            <button class="primary" :disabled="m === 'extract' ? !colsReady().length : !picked.size" @click="run">
+              {{ m === 'extract'
                   ? t('开始抽取（{n} 列）', { n: colsReady().length })
                   : t('开始对比（{n} 个维度）', { n: picked.size }) }}
             </button>
