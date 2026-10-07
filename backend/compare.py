@@ -33,16 +33,22 @@ MAX_COLS = 6
 def dims_meta(dims: list = None, cols: list = None) -> list:
     """本次要抽的全部维度：[(k, label, hint)]。dims=None = 固定六维全选；
     dims=[] = 固定维度一个不选（纯自定义列口径）；自定义列收编成
-    c1..cN（label/hint 清洗钳长，label 必填）。"""
+    c1..cN（label/hint 清洗钳长，label 必填，同口径列去重——否则同一格
+    抽两次，白花一次模型调用）。"""
     out = [(k, n, h) for k, n, h in DIMS if dims is None or k in dims]
-    for i, c in enumerate((cols or [])[:MAX_COLS]):
+    seen, n = set(), 0
+    for c in (cols or [])[:MAX_COLS]:
         if not isinstance(c, dict):
             continue
         label = str(c.get("label") or "").strip()[:40]
         if not label:
             continue
         hint = str(c.get("hint") or "").strip()[:200] or label
-        out.append((f"c{i + 1}", label, hint))
+        if (label, hint) in seen:
+            continue
+        seen.add((label, hint))
+        n += 1
+        out.append((f"c{n}", label, hint))
     return out
 
 
