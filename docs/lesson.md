@@ -12,7 +12,7 @@
 - **git 配置了 127.0.0.1 代理，代理没开时连不上 gitee**：克隆/推送加 `-c http.proxy= -c https.proxy=` 直连（httpx 不读 git 代理配置，走 API 的调用不受影响）。
 - **Gitee 网页编辑器把整串路径当文件名会建出嵌套目录**（"raw/master/update/latest.json" 变三层文件夹）；且路径里含分支名（master）时 Gitee 的 tree/blob/delete 路由 404/405、?path= 只救得回 blob——网页 UI 删不掉，只能 git push 修。2FA 账号 HTTPS 推送必须用私人令牌当密码。
 - **`.build-venv` 不自动装依赖**：改了 `backend/requirements.txt` 必须手动 `uv pip install --python .build-venv/Scripts/python.exe -r backend/requirements.txt pyinstaller pillow`。OCR 引擎就这么漏过一次：包 34MB、模型没进去，装到别人机器才炸。
-- 本机重装验证：先 `taskkill //IM eggpaper.exe //F` → `powershell Start-Process <setup.exe> '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon'` ——**不要 `-Wait`**（运行中的 exe 锁着文件，安装器收尾不退，永远等不完）→ 轮询 tasklist 等退出 → 启动。
+- 本机重装验证：先 `taskkill //IM eggpaper.exe //F` → **Git Bash 里直接前台跑安装器**：`MSYS_NO_PATHCONV=1 "<setup.exe>" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=D:\eggpaper"`——bash 原生等它退出还带回显码，最省事；别绕 `cmd //c start ""`（引号解析误开交互 cmd，安装器根本没跑）也别用 powershell `Start-Process`（**不要 `-Wait`**：运行中的 exe 锁着文件，安装器收尾不退，永远等不完）。装完启动，轮询 /api/version。
 - 装完核两条：`GET /api/version` 的 version/packaged；首页引用的 `index-*.js` 哈希与 `frontend/dist` 一致（确认装的是新前端，不是浏览器缓存）。
 - **安装器自拉起偶发「服务报告已启动但端口空」自退**（实测一次，重开即好，根因未定位）：READY 是 startup 事件（绑定后置位），按理探测不会空——失败模式安全：进程自退、日志留「重开一次即可」，重开正常。静默安装后轮询 /api/version 为空就再 start 一次。
 
@@ -31,7 +31,7 @@
 
 ## 二、测试
 
-- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8495）。测试 python 用 hermes venv（httpx/playwright/fitz/rapidocr 齐）。
+- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8495）。**测试 python 用项目自带的 `.build-venv`**（uv 管，requirements 全套；playwright 不在 requirements 里，缺就 `uv pip install --python .build-venv/Scripts/python.exe playwright`；浏览器二进制在 `D:\hermes\ms-playwright`，全局环境变量 PLAYWRIGHT_BROWSERS_PATH 指着，换 venv 不用重下。原先记的"hermes venv"已被清空，别再找）。
 - **测试实例的引擎与缓存一个共享一个不共享**：引擎装在 `dirname(data_dir)/engines`（`_qa/engines`，全实例共用，别删）；babeldoc 资产缓存在各数据目录的 `home/.cache`（每实例 ~337MB，只增不减）——`_tmp_*` 目录定期清，只留手工夹具。
 - 打包版黄金验证：`EGGPAPER_DATA` 指临时目录后直接跑 `D:\eggpaper\eggpaper.exe`。打包版不认 PORT 环境变量（起在 PORTS[0]=8430），但数据目录重定向生效——正好验"别人装完第一次打开"的完整链路。
 - 端口格局：8430=打包实例（用户真库）兼源码默认端口（别同时开）；8431/8432 是 desktop.py PORTS 的后备。
@@ -92,7 +92,7 @@
 - 惰性检测判断"任务活着"不可靠：后台线程（OCR+析读）必须自己登记进 `_live_jobs`、finally 注销，否则被误判"上次中断"遭清零。
 - 数据库里的 `running` 可能是僵尸（进程崩了状态还在）：启动时清零 + 运行中用 `_live_jobs` 识别，POST 不再被旧 running 挡住。
 - 极小而合法的输入最容易被漏：整页只有一行文字时 `statistics.median([])` 炸掉整篇导入。
-- 推理型模型 max_tokens 要留思考额度（骨架 16k、眉批 12k 量级）；等外部响应的地方必须有"在动"的东西（首字 30–60s，空气泡和坏了长得一样）；提问面板常驻（`v-show`），切页签不能 abort 掉正在生成的流。
+- 推理型模型 max_tokens 要留思考额度（骨架 16k、眉批 12k 量级）；等外部响应的地方必须有"在动"的东西（首字 30–60s，空气泡和坏了长得一样）；提问面板常驻（`v-show`），切页签不能 abort 掉正在生成的流。**"在动"的信号必须放在主视线上，藏在悬浮提示里等于没有**（实测：翻译按钮的活性信号只有 title 提示，用户盯着「翻译中 0/4」三分半就按了停止——离译完只差 1 分钟；修法=按钮文本带秒级时钟 + 小文档批次拆两半让页数中途真的动）。
 - 演示模式文案双语成对（`_demo_txt`），改一处两处都改；演示数据要具体，不要摆拍腔。
 - **AI 上下文缓存吃的是「从第 0 个 token 起逐字节相同」的前缀**：同篇论文的整文任务共用 SHARED_SYSTEM + paper_doc（每段截到句界、全文 90k 保头也保尾），任务规则放全文之后——命中输入按约 1/50 计费。任何随任务/调用变化的字段（图表注、术语表、问题、历史）进了前缀就前功尽弃。
 - **错误话术映射必须把异常类名并进匹配串**：httpx ConnectError 的消息体是「[WinError 10061] 目标计算机积极拒绝」，"connect" 只在类名里——只匹配消息体的话，连接类错误就带着原文漏给用户（实测）。

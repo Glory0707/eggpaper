@@ -649,14 +649,14 @@ async function stopEngineInstall() {
   await cancelEngineInstall()
 }
 
-/* 全文翻译的进度：pdf2zh 用 tqdm 打 `11%|██ | 2/18`，后端逐行抠出页数。
-   完成这一拍也在这里接——完成通知与「译文/双语」的解锁都看它。 */
+/* 全文翻译的进度：进度 = 已完成页数（pdf2zh 到批结束才落产物）；小文档已拆两半，
+   中途就有一次跳变。完成这一拍也在这里接——完成通知与「译文/双语」的解锁都看它。 */
 async function pollTranslate() {
   if (!store.currentId) return
   const pid = store.currentId
   const j = await api.translateStatus(pid)
   if (store.currentId !== pid) return      // 等待期间换了篇：旧篇的进度别写进新篇
-  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [], started: tranProg.value.started }
+  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [], started: tranProg.value.started || j.started || 0 }
   if (j.status === 'done') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
@@ -823,11 +823,20 @@ const tranElapsed = computed(() => {
   const sec = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
   return sec >= 90 ? t('{m} 分 {s} 秒', { m: Math.floor(sec / 60), s: sec % 60 }) : t('{s} 秒', { s: sec })
 })
+/* 按钮上的紧凑时钟（m:ss）：整个批次期间页数一动不动（pdf2zh 到批结束才落产物），
+ * 秒针就是唯一的"活着"信号——只放悬浮提示里用户根本不看（实测盯着 0/4 三分半就按了停止） */
+const tranClock = computed(() => {
+  tranTick.value
+  if (!tranProg.value.started || tranSt.value !== 'running') return ''
+  const sec = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
+})
 const tranLabel = computed(() => {
   if (tranSt.value === 'done') return t('重新全文翻译')
   if (tranSt.value !== 'running') return t('全文翻译')
   const n = tranProg.value.total ? ` ${tranProg.value.done}/${tranProg.value.total}` : '…'
-  return t('翻译中') + n
+  const clk = tranClock.value
+  return t('翻译中') + n + (clk ? ` · ${clk}` : '')
 })
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {

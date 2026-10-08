@@ -109,6 +109,33 @@ def _warmup(exe: str):
     except Exception:
         pass
 
+def settle_assets() -> int:
+    """旧版装的引擎没赶上 _warmup 的「zip 改名收起」（或当时 warmup 失败）：
+    每批翻译都白付 220MB 重哈希的 10-20 秒。资产缓存齐全就把 zip 收起，
+    返回收起个数（0 = 没有可收的，或缓存不齐不敢收——zip 是离线恢复的唯一
+    来源，缓存被清过时收了它，再恢复就只能联网重下）。"""
+    try:
+        import glob
+        zips = glob.glob(os.path.join(install_dir(), "**", "offline_assets_*.zip"),
+                         recursive=True)
+        if not zips:
+            return 0
+        cache = os.path.join(appinfo.data_dir(), "home", ".cache", "babeldoc")
+        if not os.path.isfile(os.path.join(cache, "cache.v1.db")):
+            return 0
+        if not all(os.path.isdir(os.path.join(cache, d)) for d in ("models", "fonts", "cmap")):
+            return 0
+        n = 0
+        for zp in zips:
+            try:
+                os.rename(zp, zp + ".installed")
+                n += 1
+            except OSError:
+                pass
+        return n
+    except Exception:
+        return 0
+
 def _partial_dir() -> str:
     return install_dir() + ".partial"    # 断点的家：稳定目录，start() 重试不清它，装完才清
 

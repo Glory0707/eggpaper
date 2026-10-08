@@ -542,6 +542,17 @@ def _page_timeout(service: str) -> float:
 def _page_dir(out_dir: str, pno: int, t: int) -> str:
     return os.path.join(out_dir, ".pages", f"p{pno}-{t}")
 
+def _plan_batches(pending: list) -> list:
+    """把待译页号切成批次。常规按 BATCH_PAGES 切（冷启动摊薄）。
+    待译页不超过一批的小文档（几页的 short letter 是常态）若整份一刀切，
+    pdf2zh 要到全批结束才落产物——进度从 0 直接跳 n，中途几分钟没有任何可见
+    的动静（实测用户等了 3 分半就当死了按停止，其实 1 分钟后就译完了）。
+    拆成两半交两个引擎进程并行：前一半完成时进度立刻可见，墙钟也更短。"""
+    if 1 < len(pending) <= BATCH_PAGES:
+        mid = (len(pending) + 1) // 2
+        return [pending[:mid], pending[mid:]]
+    return [pending[i:i + BATCH_PAGES] for i in range(0, len(pending), BATCH_PAGES)]
+
 def _product_mono(dirpath: str, stem: str) -> str:
     """目录里这份源的译文版产物；没有返回空串。
 
@@ -755,6 +766,12 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             return
         say(f"全文翻译 {pid}: 用引擎 {exe}（{why}）")
         try:
+            import engine_install
+            if engine_install.settle_assets():
+                say(f"全文翻译 {pid}: 收起引擎的 offline 资产包，后续每批省 10-20 秒重哈希")
+        except Exception:
+            pass
+        try:
             import pymupdf
             os.makedirs(out_dir, exist_ok=True)
             if fresh:
@@ -896,7 +913,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
 
             from concurrent.futures import ThreadPoolExecutor
             pending = [p for p in range(n) if p not in results]
-            batches = [pending[i:i + BATCH_PAGES] for i in range(0, len(pending), BATCH_PAGES)]
+            batches = _plan_batches(pending)
             with ThreadPoolExecutor(max_workers=_page_workers(service)) as pool:
                 list(pool.map(worker, batches))
 
