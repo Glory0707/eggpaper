@@ -15,6 +15,8 @@
 - 本机重装验证：先 `taskkill //IM eggpaper.exe //F` → **Git Bash 里直接前台跑安装器**：`MSYS_NO_PATHCONV=1 "<setup.exe>" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=D:\eggpaper"`——bash 原生等它退出还带回显码，最省事；别绕 `cmd //c start ""`（引号解析误开交互 cmd，安装器根本没跑）也别用 powershell `Start-Process`（**不要 `-Wait`**：运行中的 exe 锁着文件，安装器收尾不退，永远等不完）。装完启动，轮询 /api/version。
 - 装完核两条：`GET /api/version` 的 version/packaged；首页引用的 `index-*.js` 哈希与 `frontend/dist` 一致（确认装的是新前端，不是浏览器缓存）。
 - **安装器自拉起偶发「服务报告已启动但端口空」自退**（实测一次，重开即好，根因未定位）：READY 是 startup 事件（绑定后置位），按理探测不会空——失败模式安全：进程自退、日志留「重开一次即可」，重开正常。静默安装后轮询 /api/version 为空就再 start 一次。
+- **双实例端口竞争的输家会变成"僵尸注册表"**（2026-10-08 实测一次 full chain）：重装时安装器自拉起 + 手动拉起同时跑，输家在 uvicorn bind 失败前就过了就绪闸——写了 instance.json、挂了托盘；用户在它的托盘点退出，POST 替端口主人退了役，自己走 graceful 路径永远等下去 → 无服务僵尸攥着 instance.json，之后每次启动都被「已有一个在跑」挡在门外（页面 Failed to fetch、PDF 空白、删除失败全是它的相）。修了三道闸（desktop.py）：就绪闸补验服务线程存活（`except BaseException`——bind 失败走 SystemExit，`except Exception` 接不住）；托盘退出加 8 秒看门狗 os._exit 兜底；启动对登记实例验尸（pid 活着但端口空闲 = 僵尸，接管启动）。**uvicorn 的 lifespan startup 事件在 create_server（bind）之前触发**——"就绪"和"bind 成功"之间天然有个输家窗口，任何"事件即就绪"的判定都要补一道服务线程存活验证。
+- **测试 venv 的 python.exe 是启动器（launcher）**：`Popen(venv_python)` 的 pid 是 launcher 的，代码里 `os.getpid()` 是它拉起的真实解释器——两者对不上号；`terminate()` 只杀 launcher，真实解释器成孤儿继续占端口。测试要按登记 pid `taskkill /T` 杀树、按"登记被改写"而不是"Popen pid"下断言；失败运行先按命令行 sweep 孤儿再跑，不然端口/数据目录残留把下一轮搅成 environment-flake。
 
 ## 一·二、全文翻译引擎（pdf2zh_next 2.x）
 

@@ -143,7 +143,15 @@ def start_tray(url: str, port: int, log) -> bool:
         if not graceful:
             os._exit(0)     # 开发模式 /api/quit 不接管：托盘自己收场
         # 打包版：/api/quit 已广播 quitting，宽限一拍后才整进程退出——
-        # 这一拍就是留给所有开着的页面自行关闭的，这里千万别抢跑 os._exit
+        # 这一拍就是留给所有开着的页面自行关闭的，这里千万别抢跑 os._exit。
+        # 兜底看门狗：8 秒后进程若还活着就自己收场，绝不留没有服务的僵尸——
+        # 端口竞争输家的托盘也在这里（它的退出 POST 是替端口主人退的役，自己的
+        # 后端永远等不到），僵尸还攥着 instance.json，之后每次启动都被
+        # 「已有一个在跑」挡在门外（2026-10-08 实测）
+        def _watchdog():
+            time.sleep(8)
+            os._exit(0)
+        threading.Thread(target=_watchdog, daemon=True).start()
 
     icon = pystray.Icon("eggpaper", tray_image(), "eggpaper", menu=pystray.Menu(
         pystray.MenuItem("打开界面", guard("打开界面", on_open), default=True),
@@ -320,6 +328,12 @@ def main():
     want_tray = "--no-tray" not in sys.argv
 
     running = _running_instance()
+    if running and _port_free(running[0]):
+        # 登记的实例 pid 活着，但它声称的端口上没有服务——半死僵尸（服务已亡、
+        # 进程还在，2026-10-08 实测：端口竞争输家退出后留下的僵尸把后续每次启动
+        # 都挡在"已有一个在跑"外面）。它的登记不算数，接管启动并重写 instance.json。
+        log(f"登记的实例（端口 {running[0]}）端口上没有服务，按无实例处理，接管启动")
+        running = None
     if running:
         old_port, old_ver = running
         if old_ver and _ver_tuple(old_ver) < _ver_tuple(appinfo.version()):
@@ -345,7 +359,7 @@ def main():
 
     port = next((p for p in PORTS if _port_free(p)), None)
     if port is None:
-        log("没有可用端口（8430-8432 都被占），无法启动")
+        log(f"没有可用端口（{'/'.join(map(str, PORTS))} 都被占），无法启动")
         return 1
 
     try:
@@ -354,21 +368,35 @@ def main():
         log("后端模块导入失败：")
         log(traceback.format_exc())
         return 1
+    serve_state = {"alive": True}
     def _serve():
         try:
             backend.serve(port=port, log_level="warning")
-        except Exception:
+        except BaseException:
+            # SystemExit 也在内：uvicorn bind 失败（端口被抢）走的就是它，
+            # except Exception 接不住，输家会带着"就绪"的假象往下走
+            serve_state["alive"] = False
             log("服务线程挂了：")
             log(traceback.format_exc())
 
     threading.Thread(target=_serve, daemon=True).start()
 
     url = f"http://{HOST}:{port}/"
-    if not backend.READY.wait(45):
-        log(f"服务 45 秒内没起来（端口 {port}）——如果上面没有别的错，把这份日志发给作者")
-        return 1
-    if _port_free(port):
-        log(f"服务报告已启动，但 {port} 还是空的——端口可能被别的程序抢了，重开一次即可")
+    ready = backend.READY.wait(45)
+    if ready:
+        # lifespan 的就绪事件在 uvicorn 真正 bind **之前**就触发：端口竞争的输家
+        # 一样会走到这里。等一拍让 bind 成败落定（服务线程死了/端口已被别人占着
+        # 都不算就绪），输家在这里退场——往后走就会写 instance.json、挂托盘，
+        # 变成一具挡住所有后续启动的僵尸
+        for _ in range(20):
+            if not serve_state["alive"] or _port_free(port):
+                break
+            time.sleep(0.25)
+    if not ready or not serve_state["alive"] or _port_free(port):
+        if not ready:
+            log(f"服务 45 秒内没起来（端口 {port}）——如果上面没有别的错，把这份日志发给作者")
+        else:
+            log(f"服务没有真正就绪（端口 {port} 被抢或服务线程已死，本实例退出）——重开一次即可")
         return 1
     _write_instance(port)
     log(f"服务已就绪：{url}")
