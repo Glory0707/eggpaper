@@ -311,15 +311,25 @@ def _align_names(pid: str) -> bool:
     # 也别挪，免得「夹已改名、path 字段还指着旧夹」的悬空态（下一拍保洁再来追平）。
     blocked = False
     ups = {}
+    _legacy_inner = {"path": "paper.pdf", "mono_path": "mono.pdf", "dual_path": "dual.pdf"}
     for key, suf in _INNER_SUFFIX:
         v = p.get(key) or ""
+        if v and not os.path.isfile(v):
+            # 字段断了（数据目录迁移只搬了文件没跟上字段、外部原件被清）：夹内有像样的
+            # 就认领——新旧两种命名都认。不认领的话这份译文永远躺在夹里没人指。
+            legacy = _legacy_inner[key]
+            v = next((os.path.join(cur, c) for c in (f"{base}{suf}.pdf", legacy)
+                      if c and os.path.isfile(os.path.join(cur, c))), "")
         if not v or not os.path.isfile(v):
             continue
         if os.path.normcase(os.path.dirname(os.path.abspath(v))) != \
                 os.path.normcase(os.path.abspath(cur)):
-            continue    # 外部原件/旧目录里的残留：不属于这里的对齐范围
+            continue    # 外部原件：不属于这里的对齐范围
         fn = f"{base}{suf}.pdf"
         if os.path.basename(v) == fn:
+            if v != p.get(key):
+                ups[key] = v          # 认领到的文件恰好已在目标名上：字段直接修回
+                moved = True
             continue
         tgt = os.path.join(cur, fn)
         if os.path.exists(tgt):
