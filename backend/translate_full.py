@@ -496,21 +496,22 @@ def _kill_orphan_posix(out_dir: str) -> int:
                 pass
     return killed
 
-def adopt_existing(out_dir: str):
+def adopt_existing(out_dir: str, mono=(), dual=()):
     """盘上已经有"看起来完整"的成品就认领，返回 {"dual","mono"}（缺的一方是空串）或 None。
 
     为什么要有：pdf2zh 是独立进程，eggpaper 关掉/装新版本时它还在跑，写完之后没人认领——
     启动时那次扫描早过了。用户看到界面上还是「全文翻译」，点一次就重译一遍（还覆盖成品）。
     判定"完整"看 %%EOF 收尾，免得把写到一半就被杀掉的半截文件当成成品。
     盘上**只落译文版（mono）**省盘，双语版按需派生。
-    """
-    mono = os.path.join(out_dir, "mono.pdf")
-    dual = os.path.join(out_dir, "dual.pdf")
-    mono_ok = _pdf_complete(mono)
-    dual_ok = _pdf_complete(dual)
-    if not mono_ok and not dual_ok:
+    成品名两代并存：可读名（`<显示名>（译文）.pdf`，调用方从 DB 显示名派生传入）优先，
+    老名 mono/dual.pdf 兜底——夹名对齐迁移过的库只有前者，没跑到的两样都认。"""
+    mono_path = next((os.path.join(out_dir, n) for n in (*mono, "mono.pdf")
+                      if _pdf_complete(os.path.join(out_dir, n))), "")
+    dual_path = next((os.path.join(out_dir, n) for n in (*dual, "dual.pdf")
+                      if _pdf_complete(os.path.join(out_dir, n))), "")
+    if not mono_path and not dual_path:
         return None
-    return {"dual": dual if dual_ok else "", "mono": mono if mono_ok else ""}
+    return {"dual": dual_path, "mono": mono_path}
 
 def job(pid: str) -> dict:
     return JOBS.setdefault(pid, {"status": "none", "error": "", "dual": "", "mono": "",
@@ -731,7 +732,8 @@ def _pdf_complete(path: str) -> bool:
 
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "",
-          glossary_rows: list = None, fresh: bool = False) -> dict:
+          glossary_rows: list = None, fresh: bool = False,
+          mono_name: str = "", dual_name: str = "") -> dict:
     """按页流水线翻译全文：进度=完成页数，坏页回退原文，一页卡不住整份文档。
 
     glossary_rows：本篇术语表（[{term_en, term_zh}, …]）。非空且服务是 LLM 家族时
@@ -739,6 +741,8 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
     术语锁定就靠它（bing/google 这类非 LLM 服务吃不了，跳过不报错）。
     fresh=True：清掉全部页级缓存与成品再译——「重新全文翻译」按的是这个，不 fresh
     的话预扫描会把上次译好的页全复用，按钮等于没按（实测踩过）。
+    mono_name/dual_name：成品文件名（`<显示名>（译文）.pdf`），调用方从 DB 显示名
+    派生；空串退回老名 mono/dual.pdf。落名走调用方，这层不认名字只认路径。
     """
     j = job(pid)
     if j["status"] in ("running", "queued"):
@@ -777,8 +781,9 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             if fresh:
                 # 重译 = 连缓存一起清：页级产物、成品、双语缓存都不要了
                 shutil.rmtree(page_root, ignore_errors=True)
-                for stale in ("mono.pdf", "dual.pdf"):
-                    _remove_quiet(os.path.join(out_dir, stale))
+                for stale in dict.fromkeys(("mono.pdf", "dual.pdf", mono_name, dual_name)):
+                    if stale:
+                        _remove_quiet(os.path.join(out_dir, stale))
             try:
                 sig = json.dumps({"m": int(os.path.getmtime(pdf_path)),
                                   "s": os.path.getsize(pdf_path)})
@@ -926,7 +931,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 return
 
             # ---- 组装：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文
-            mono_path = os.path.join(out_dir, "mono.pdf")
+            mono_path = os.path.join(out_dir, mono_name or "mono.pdf")
             failed = []
             src = pymupdf.open(pdf_path)
             mono = pymupdf.open()
@@ -973,7 +978,9 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         if _try == 2:
                             raise       # 旧 mono 还被浏览器响应占着句柄：等它放手再换名，
                         time.sleep(1.5) # 别把整场已经译完的活儿标成失败
-                _remove_quiet(os.path.join(out_dir, "dual.pdf"))
+                for stale in dict.fromkeys(("dual.pdf", dual_name)):
+                    if stale:
+                        _remove_quiet(os.path.join(out_dir, stale))
             finally:
                 src.close(); mono.close()
                 for d in prods.values():

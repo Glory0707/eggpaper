@@ -432,9 +432,11 @@ function onCmpGoto(c) {
         <i class="p-check" v-if="selMode" :class="{ on: selSet.has(p.id) }">
           <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </i>
-        <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
-        <button class="p-ren" v-if="!selMode && pEditId !== p.id" :title="t('改名')"
-                @click.stop="startEdit(p)">✎</button>
+        <div class="p-acts">
+          <button class="p-ren" v-if="!selMode && pEditId !== p.id" :title="t('改名')"
+                  @click.stop="startEdit(p)">✎</button>
+          <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
+        </div>
         <input v-if="pEditId === p.id" ref="pEditEl" v-model="pEditTitle" class="p-edit"
                @click.stop @dblclick.stop @keydown.enter.prevent="commitEdit"
                @keydown.esc="pEditId = ''" @blur="commitEdit" />

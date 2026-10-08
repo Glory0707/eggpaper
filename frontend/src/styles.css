@@ -472,24 +472,24 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .paper-item .p-hit b { color: var(--accent-deep); font-weight: 600; margin-right: 5px; }
-.paper-item .p-del {
-  position: absolute; right: 5px; top: 7px;
-  border: none; background: none; color: var(--ink-3);
-  font-size: var(--fs-md); padding: 0 3px;
+/* 改名 ✎ 与删除 × 同列竖排（✎ 上 × 下）：悬浮出现。竖排不占横向标题空间，
+   也不随条目行数变化挤压——flex 列几何稳固，单行条目也不会互相叠 */
+.paper-item .p-acts {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
   opacity: 0; visibility: hidden;
-  transition: opacity var(--t-fast) var(--ease-smooth), visibility var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth);
+  transition: opacity var(--t-fast) var(--ease-smooth), visibility var(--t-fast) var(--ease-smooth);
 }
-.paper-item:hover .p-del { opacity: 1; visibility: visible; }
-.paper-item .p-del:hover { color: var(--vermilion); transform: none; box-shadow: none; }
-.paper-item .p-ren {
-  position: absolute; right: 24px; top: 7px;
+.paper-item:hover .p-acts { opacity: 1; visibility: visible; }
+.paper-item .p-acts button {
   border: none; background: none; color: var(--ink-3);
-  font-size: var(--fs-sm); padding: 0 3px;
-  opacity: 0; visibility: hidden;
-  transition: opacity var(--t-fast) var(--ease-smooth), visibility var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth);
+  padding: 0 3px; line-height: 1.1;
+  transition: color var(--t-fast) var(--ease-smooth);
 }
-.paper-item:hover .p-ren { opacity: 1; visibility: visible; }
-.paper-item .p-ren:hover { color: var(--accent-deep); transform: none; box-shadow: none; }
+.paper-item .p-acts .p-ren { font-size: var(--fs-sm); }
+.paper-item .p-acts .p-del { font-size: var(--fs-md); }
+.paper-item .p-acts .p-del:hover { color: var(--vermilion); transform: none; box-shadow: none; }
+.paper-item .p-acts .p-ren:hover { color: var(--accent-deep); transform: none; box-shadow: none; }
 .paper-item .p-edit {
   width: 100%; margin: 0; padding: 0 3px;
   border: 1px solid var(--accent-line); border-radius: 3px;

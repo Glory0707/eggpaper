@@ -77,7 +77,7 @@ def lookup(doi: str) -> dict:
         return {}
 
 
-def backfill(pid: str):
+def backfill(pid: str, on_update=None):
     """导入后的后台回填（不挡导入返回）。DOI 没找到、字段都齐——都不动手。"""
     try:
         p = db.get_paper(pid)
@@ -109,6 +109,11 @@ def backfill(pid: str):
                 ups["citation"] = json.dumps(meta, ensure_ascii=False)
         if ups:
             db.update_paper(pid, **ups)
+            if on_update:
+                try:
+                    on_update()
+                except Exception:
+                    pass
             print(f"[eggpaper] Crossref 回填 {pid}：{', '.join(ups)}（doi:{doi[:40]}）")
     except Exception as e:
         print(f"[eggpaper] Crossref 回填失败（不影响使用）：{type(e).__name__}: {str(e)[:120]}")
@@ -122,6 +127,7 @@ def _pid_gone_guard(pid: str) -> bool:
         return True
 
 
-def kick(pid: str):
-    """导入管线调用：开一条后台线程，立刻返回。"""
-    threading.Thread(target=backfill, args=(pid,), daemon=True).start()
+def kick(pid: str, on_update=None):
+    """导入管线调用：开一条后台线程，立刻返回。on_update：回填真的写了字段后
+    调一下（main 传夹名对齐）——回填只补作者/年份，夹名想带上它们就得等这一拍。"""
+    threading.Thread(target=backfill, args=(pid, on_update), daemon=True).start()
