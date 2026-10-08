@@ -242,43 +242,52 @@ def _migrate_paper_layout():
     if moved:
         _applog(f"数据目录迁移：{moved} 个文件归位到 papers/<论文 id>/ 每篇一个文件夹")
 
-def _rename_paper_dirs():
-    """给老文件夹补可读短名（`<id>/` → `<id> <标题短名>/`），同步改写库里的路径字段。
+def _rename_paper_dir(pid: str, display: str) -> bool:
+    """把一篇论文的文件夹名对齐到 `<id> <标题短名>`，同步改写库里的路径字段。
 
-    **只在启动时做**：跑任务期间挪目录，读写路径就赌输了；启动时没有任何任务在跑。
+    返回是否真挪了。挪不动（目录被占用——比如浏览器还开着这份 PDF、或目标名
+    已存在）安静放弃：标题照改，盘上名字留给下次启动的 _rename_paper_dirs 追平。
+    短名洗不出来（标题全是不合法字符）保持原样，别把可读名倒退成裸 id。"""
+    if not _slug(display):
+        return False
+    cur = paper_dir(pid)
+    if not os.path.isdir(cur):
+        return False
+    want_name = _dir_name(pid, display)
+    if os.path.basename(os.path.normpath(cur)) == want_name:
+        return False
+    want = os.path.join(PAPERS_DIR, want_name)
+    if os.path.exists(want):
+        return False
+    try:
+        os.rename(cur, want)
+    except OSError:
+        return False
+    with _dir_lock:
+        _dir_cache[pid] = want_name
+    p = db.get_paper(pid) or {}
+    ups = {}
+    for key, fn in (("path", "paper.pdf"), ("mono_path", "mono.pdf"), ("dual_path", "dual.pdf")):
+        v = p.get(key) or ""
+        if v and os.path.normcase(os.path.dirname(os.path.abspath(v))) == os.path.normcase(os.path.abspath(cur)):
+            ups[key] = os.path.join(want, fn)
+    if ups:
+        db.update_paper(pid, **ups)
+    return True
+
+def _rename_paper_dirs():
+    """启动时把每篇的文件夹名对齐 `<id> <标题短名>`（老库的裸 id、按文件名起的
+    短名、改名时目录被占用没跟上的一律在这里追平）。
+
+    **只在启动时做**：跑任务期间挪目录，读写路径就赌输了；启动时没有任何任务在
+    跑。运行中的改名诉求（标题编辑）由忙碌闸拒绝，不在这里补。
     """
     n = 0
     for row in db.list_papers():
-        pid = row["id"]
-        slug = _slug(row["title"] or "")
-        if not slug:
-            continue
-        cur = paper_dir(pid)
-        if not os.path.isdir(cur):
-            continue
-        want_name = f"{pid} {slug}"
-        if os.path.basename(os.path.normpath(cur)) == want_name:
-            continue
-        want = os.path.join(PAPERS_DIR, want_name)
-        if os.path.exists(want):
-            continue
-        try:
-            os.rename(cur, want)
-        except OSError:
-            continue
-        with _dir_lock:
-            _dir_cache[pid] = want_name
-        p = db.get_paper(pid) or {}
-        ups = {}
-        for key, fn in (("path", "paper.pdf"), ("mono_path", "mono.pdf"), ("dual_path", "dual.pdf")):
-            v = p.get(key) or ""
-            if v and os.path.normcase(os.path.dirname(os.path.abspath(v))) == os.path.normcase(os.path.abspath(cur)):
-                ups[key] = os.path.join(want, fn)
-        if ups:
-            db.update_paper(pid, **ups)
-        n += 1
+        if _rename_paper_dir(row["id"], row["title"] or ""):
+            n += 1
     if n:
-        _applog(f"论文文件夹补可读名：{n} 个")
+        _applog(f"论文文件夹名对齐标题：{n} 个")
 
 def _repair_paper_paths():
     """path 字段与库内副本互相修（启动时跑一遍）：
@@ -365,8 +374,15 @@ def _startup():
     def _warm_engine():
         time.sleep(3)
         try:
-            exe = translate_full.engine_path((config.load()["pdf2zh"].get("path") or "").strip())
+            cfg = config.load()
+            exe = translate_full.engine_path((cfg["pdf2zh"].get("path") or "").strip())
             translate_full.engine_probe_cached(exe)
+            import engine_install
+            engine_install.find_installed()   # 目录树走一遍进缓存：首发点击别付这笔
+            # 服务探针一并预热：冷探针是一次最坏 2.5 秒的 TCP 连接，别让用户点
+            # 「全文翻译」的第一下付这笔账（前端按钮的即时反馈就靠 POST 快速返回）
+            svc = (cfg["pdf2zh"].get("service") or "bing").strip()
+            translate_full.choose_service(svc, _pdf2zh_env(svc, cfg)[1])
         except Exception:
             pass
     threading.Thread(target=_warm_engine, daemon=True).start()
@@ -554,6 +570,7 @@ def get_settings():
             "mock": cfg["mock"], "pdf2zh": cfg["pdf2zh"], "update": cfg.get("update", {}),
             "ui_lang": cfg.get("ui_lang", "zh"),
             "shot_save": cfg.get("shot_save", True),
+            "analysis": cfg.get("analysis", {}),
             "data_dir": appinfo.data_dir()}
 
 @app.put("/api/settings")
@@ -576,6 +593,8 @@ def put_settings(body: dict):
         cfg["ui_lang"] = body["ui_lang"]
     if "shot_save" in body:
         cfg["shot_save"] = bool(body["shot_save"])
+    if isinstance(body.get("analysis"), dict) and "auto" in body["analysis"]:
+        cfg.setdefault("analysis", {})["auto"] = bool(body["analysis"]["auto"])
     if "pdf2zh" in body:
         if not isinstance(body["pdf2zh"], dict):
             raise HTTPException(400, "翻译引擎那一栏格式不对")
@@ -1036,13 +1055,19 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     crossref.kick(pid)     # 按首页 DOI 联网补元数据（后台线程，失败安静）
     row = db.get_paper(pid)
     db.update_paper(pid, last_read_at=db._now())
+    auto = (config.load().get("analysis") or {}).get("auto")
+    auto = True if auto is None else bool(auto)     # 设置里没这一项时按老行为来：自动析读
     if paras:
-        _enqueue_analysis(pid, paras)
+        if auto:
+            _enqueue_analysis(pid, paras)
+        else:
+            # 「导入即析读」被关掉：只入库不花 token，想读时点一下「析读」（analyze 端点）
+            db.update_paper(pid, analysis_status="none")
     elif ocr.available():
-        # 扫描件：无感补一段 OCR（后台线程），识别完段落入库、析读自动排队。
+        # 扫描件：无感补一段 OCR（后台线程），识别完段落入库；要不要接着析读看设置。
         # 状态借「排队通读中」显示——用户不需要知道中间多了道识别的工序。
         db.update_paper(pid, analysis_status="queued", analysis_error=None)
-        threading.Thread(target=_ocr_then_analyze, args=(pid, path), daemon=True).start()
+        threading.Thread(target=_ocr_then_analyze, args=(pid, path, auto), daemon=True).start()
     else:
         db.update_paper(pid, analysis_status="done")
     return {"paper": row, "n_paragraphs": len(paras),
@@ -1050,8 +1075,11 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
             "no_text": not paras}
 
 
-def _ocr_then_analyze(pid: str, path: str):
+def _ocr_then_analyze(pid: str, path: str, auto: bool = True):
     """扫描件的隐形后半段：OCR → 段落入库 → 排析读。失败落 analysis_error，说人话。
+
+    auto=False（设置关掉了导入即析读）：OCR 照跑——没有文字层连翻译/划词都做不了，
+    这道工序不属于析读；识别完只把状态归位，不排队花 token 的析读。
 
     登记成 ("analysis", pid) 的在跑任务：analysis 端点有"状态说 queued 但进程里没活 =
     上次被中断"的惰性检测，OCR 这一段不登记的话刚导入的篇会被它误杀回 none。
@@ -1084,7 +1112,10 @@ def _ocr_then_analyze(pid: str, path: str):
             return
         db.replace_paragraphs(pid, paras)
         _ensure_paper_type(pid)
-        _enqueue_analysis(pid, paras)
+        if auto:
+            _enqueue_analysis(pid, paras)
+        else:
+            db.update_paper(pid, analysis_status="none")
     except ocr.OcrUnavailable as e:
         db.update_paper(pid, analysis_status="error", analysis_error=str(e))
     except Exception:
@@ -1261,6 +1292,27 @@ def paper_meta(pid: str, body: dict):
     b = body or {}
     db.set_paper_meta(pid, str(b.get("title") or ""), str(b.get("authors") or ""), str(b.get("year") or ""))
     return {"paper": db.get_paper(pid)}
+
+@app.post("/api/papers/{pid}/title")
+def paper_title(pid: str, body: dict):
+    """手动改标题（首页识别不出像样标题时的补手工）：改库、文件夹名跟着对齐。
+
+    忙碌闸：析读/眉批/翻译握着这个目录里的路径，改到一半目录被挪，哪边都收不了场——
+    一律拒绝，等跑完再改。"""
+    p = _paper_or_404(pid)
+    title = str((body or {}).get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "标题不能是空的")
+    if (p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid)) \
+            or _job_live("marginalia", pid) or p["marginalia_status"] == "running" \
+            or p["translate_status"] in ("running", "queued") \
+            or translate_full.job(pid)["status"] in ("running", "queued"):
+        raise HTTPException(400, "这篇还有析读或翻译在跑，结束后再改标题")
+    db.set_paper_meta(pid, title=title)
+    renamed = _rename_paper_dir(pid, title)
+    if renamed:
+        _applog(f"标题 {pid}: 文件夹已对齐新标题")
+    return {"paper": db.get_paper(pid), "renamed": renamed}
 
 def _paper_or_404(pid: str) -> dict:
     p = db.get_paper(pid)
@@ -1540,10 +1592,11 @@ def _run_analysis(pid: str, paras: list):
         if _analysis_cancelled(pid, "已取消（开始前）"):
             return
         ex = ThreadPoolExecutor(max_workers=5)
-        tfut = ex.submit(_demo_terms if demo else llm.extract_terms, title, paras)
+        tfut = None
         cap_fut = None
         if demo:
             data = llm.mock_analyze(paras)
+            tfut = ex.submit(_demo_terms, title, paras)
         else:
             # 图注翻译独立成一次调用，与骨架**并行**（图表扫描 O(n²) 也不再挡在骨架前面）：
             # 以前挤在骨架同一次输出里，图多的论文把 16k 输出顶截断 → 坏 JSON 重试再烧
@@ -1572,8 +1625,10 @@ def _run_analysis(pid: str, paras: list):
             # 一眼卡先发、歇 4 秒再放其余六个并发：带着全文前缀的请求要让服务端把
             # 公共前缀落盘（实测几秒后才可命中）。不错峰时六个并发的首拍会各吃一次
             # 全文未命中——20 页真论文实测第一拍 0% 命中、白付 11k tokens。
-            # 一眼卡/推荐问题走 *_compute（与各自端点共锁）：用户在析读完成瞬间
-            # 打开速览页也不会把同一张卡生成两遍。
+            # 术语表同理，且与骨架同发的话两个全文首拍**都**全价未命中（12-13 点那
+            # 笔 71k 未命中输入的主因之一）：跟着骨架 4 秒后发才命中缓存。入参换成
+            # 非参考文献段落：术语不长在文献表里，前缀还与骨架对齐、命中更彻底。
+            futs[ex.submit(llm.extract_terms, title, use)] = "terms"
             futs[ex.submit(_summary_compute, pid)] = "summary"
             time.sleep(4)
         # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
@@ -1587,7 +1642,8 @@ def _run_analysis(pid: str, paras: list):
             futs[ex.submit(_suggest_compute, pid)] = "suggest"
         if cap_fut is not None:
             futs[cap_fut] = "figcaps"
-        futs[tfut] = "terms"
+        if tfut is not None:
+            futs[tfut] = "terms"
         _analysis_progress[pid] = {"done": 1, "total": 1 + len(futs)}   # 骨架算已完成的 1 项
         for fut in as_completed(futs):
             k = futs[fut]

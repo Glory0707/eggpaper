@@ -98,6 +98,7 @@ export const api = {
   translateFull: (pid, force) => req('POST', `/api/papers/${pid}/translate-full${force ? '?force=1' : ''}`),
   translateStatus: (pid) => req('GET', `/api/papers/${pid}/translate-status`),
   translateCancel: (pid) => req('POST', `/api/papers/${pid}/translate-full/cancel`),
+  setTitle: (pid, title) => req('POST', `/api/papers/${pid}/title`, { title }),
   glossary: (pid) => req('GET', `/api/papers/${pid}/glossary`),
   glossaryGen: (pid) => req('POST', `/api/papers/${pid}/glossary/generate`),
   glossaryAdd: (pid, item) => req('POST', `/api/papers/${pid}/glossary`, item),

@@ -229,6 +229,7 @@ const EN = {
   '彩蛋': 'Easter egg',
   '截图': 'Screenshot',
   '保存到本地': 'Save locally',
+  '导入后自动开始': 'Auto-start on import',
   '打开目录': 'Open folder',
   '已复制到剪贴板': 'Copied to clipboard',
   '已复制 · 已保存 {n}': 'Copied · saved as {n}',

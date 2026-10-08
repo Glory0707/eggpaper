@@ -244,6 +244,28 @@ async function del(pid, name) {
 }
 function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
 
+/* ---------- 改标题：首页识别不出像样标题时手动补一笔（后端会把文件夹名跟着对齐） ---------- */
+const pEditId = ref('')
+const pEditTitle = ref('')
+const pEditEl = ref(null)
+function startEdit(p) {
+  pEditId.value = p.id
+  pEditTitle.value = p.title || p.filename || ''
+  nextTick(() => { pEditEl.value?.focus(); pEditEl.value?.select() })
+}
+async function commitEdit() {
+  const pid = pEditId.value
+  if (!pid) return                    // Enter 后跟着的 blur：已经清了 id，别提交第二遍
+  pEditId.value = ''
+  const p = store.papers.find(x => x.id === pid)
+  const title = pEditTitle.value.trim()
+  if (!p || !title || title === (p.title || '')) return
+  try {
+    await api.setTitle(pid, title)
+    await refreshPapers()
+  } catch (e) { toast(e.message) }
+}
+
 /* ---------- 多选：勾几篇，批量做事（同屏/对比/分类/删除） ---------- */
 const selMode = ref(false)
 const selSet = ref(new Set())
@@ -411,9 +433,15 @@ function onCmpGoto(c) {
           <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </i>
         <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
+        <button class="p-ren" v-if="!selMode && pEditId !== p.id" :title="t('改名')"
+                @click.stop="startEdit(p)">✎</button>
+        <input v-if="pEditId === p.id" ref="pEditEl" v-model="pEditTitle" class="p-edit"
+               @click.stop @dblclick.stop @keydown.enter.prevent="commitEdit"
+               @keydown.esc="pEditId = ''" @blur="commitEdit" />
         <button class="p-tag" v-if="!selMode" :title="t('归入分类')"
                 @click.stop="openMenu(p, $event)">+</button>
-        <div class="fn" :title="p.title || p.filename">{{ p.title || p.filename }}</div>
+        <div class="fn" v-if="pEditId !== p.id" :title="p.title || p.filename"
+             @dblclick="startEdit(p)">{{ p.title || p.filename }}</div>
         <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
         <div class="p-hit" v-if="hitOf(p.id)" :title="`${t(WHERE_KEYS[hitOf(p.id).where])} · ${hitOf(p.id).n} 处\n${hitOf(p.id).snippet}`">
           <b>{{ t(WHERE_KEYS[hitOf(p.id).where]) }}</b>{{ hitOf(p.id).snippet }}

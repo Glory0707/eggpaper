@@ -152,24 +152,39 @@ def status() -> dict:
 def _set(**kw):
     with _lock:
         _prog.update(kw)
+    if kw.get("state") == "done":
+        _find_cache["at"] = 0.0      # 新引擎刚落地：find_installed 的缓存别拿着旧空值骗人
 
 def cancel():
     """用户喊停：断点留着，下次（换源、重开应用）从断点接着下。"""
     _cancel.set()
 
+_find_cache = {"at": 0.0, "path": ""}
+
 def find_installed() -> str:
     """在 engines/ 里找 pdf2zh.exe（递归：官方 zip 解压出来是带版本号的子目录）。
 
     这条也是"手动安装"的路：用户自己把官方 zip 解压到这个目录里，我们照样认。
+
+    结果缓存 10 秒：递归 glob 要走遍引擎的 site-packages（几千个文件），而它挂在
+    「点全文翻译」的同步路径上（engine_path → find_installed），每次点击都走一遍
+    纯属浪费。装完/换引擎的时刻由 _set(state="done") 主动失效，TTL 只是兜底。
     """
     import glob
+    import time as _time
+    now = _time.time()
+    if now - _find_cache["at"] < 10:
+        return _find_cache["path"]
+    got = ""
     root = install_dir()
-    if not os.path.isdir(root):
-        return ""
-    for p in sorted(glob.glob(os.path.join(root, "**", "pdf2zh.exe"), recursive=True)):
-        if os.path.isfile(p):
-            return p
-    return ""
+    if os.path.isdir(root):
+        for p in sorted(glob.glob(os.path.join(root, "**", "pdf2zh.exe"), recursive=True)):
+            if os.path.isfile(p):
+                got = p
+                break
+    _find_cache["at"] = now
+    _find_cache["path"] = got
+    return got
 
 def _sources() -> list:
     """源表：更新源同源 → 镜像 → 官方直连，(url, 展示名) 列表。"""

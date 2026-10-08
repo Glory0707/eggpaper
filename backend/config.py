@@ -33,6 +33,9 @@ DEFAULTS = {
     "ui_lang": "zh",
     "shot_save": True,
     "mock": False,
+    "analysis": {
+        "auto": True,      # 导入后自动开始析读；关掉 = 只导入不析读，想读时手动点
+    },
     "pdf2zh": {
         "service": "bing",
         "options": "",

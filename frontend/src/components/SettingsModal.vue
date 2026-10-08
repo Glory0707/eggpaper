@@ -27,6 +27,7 @@ const f = reactive({
   deepl_key: (S.pdf2zh || {}).deepl_key || '',
   auto_check: (S.update || {}).auto_check !== false,
   shot_save: S.shot_save !== false,
+  auto_analysis: (S.analysis || {}).auto !== false,
   layers: { ...store.viewer.layers },
   data_dir: (S.data_dir || '').replace(/\$/, ''),
 })
@@ -214,7 +215,8 @@ function save() {
                  mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim(),
                                          deepl_key: f.deepl_key.trim() },
                  update: { auto_check: f.auto_check },
-                 shot_save: f.shot_save })
+                 shot_save: f.shot_save,
+                 analysis: { auto: f.auto_analysis } })
 }
 </script>
 
@@ -318,6 +320,10 @@ function save() {
                 @click="installEngine">{{ t('安装') }}</button>
         <button class="eng-check" style="margin-left:4px" v-if="eng.upgrade && !['downloading', 'unpacking', 'warming'].includes(engInst.state)"
                 @click="installEngine">{{ t('升级') }}</button>
+      </div>
+      <div class="f-line">
+        <span class="mono-label" style="margin:0">{{ t('析读') }}</span>
+        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.auto_analysis" />{{ t('导入后自动开始') }}</label>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('截图') }}</span>

@@ -592,6 +592,10 @@ async function stopAnalyze() {
   try { await api.analysisCancel(store.currentId); toast(t('正在停止…')) } catch { /* 不打扰 */ }
 }
 async function stopTranslate() {
+  if (tranStarting) {            // 点击的瞬间就喊停：任务还在 POST 途中没登记，先记账，开跑即停
+    tranStopPending = true
+    return
+  }
   try { await api.translateCancel(store.currentId); await refreshPapers() } catch { /* 同上 */ }
 }
 
@@ -613,14 +617,26 @@ function startMarginFast() {
 onUnmounted(() => clearInterval(marginFastTimer))
 
 let tranStarting = false
+let tranOptimistic = ref(false)
+let tranStopPending = false
 async function doTranslateFull() {
   if (!store.currentId || tranSt.value === 'running' || tranStarting) return
   const again = tranSt.value === 'done'
   tranStarting = true
+  tranStopPending = false
+  /* 乐观态先亮：POST 里可能有一次最坏 2.5 秒的服务预检，按钮要在这之前就
+   * 翻成「翻译中」——用户以为没点上再点第二下的双发，比预检本身更贵 */
+  tranOptimistic.value = true
+  tranProg.value = { done: 0, total: 0, svc: '', started: Date.now() / 1000 | 0, cur: [] }
   try {
     const r = await api.translateFull(store.currentId, again)
     tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0, cur: [] }
     await refreshPapers()
+    if (tranStopPending) {       // 开跑前用户就按了停止：现在任务登记上了，把停停实
+      tranStopPending = false    // （不能再走 stopTranslate——tranStarting 还没清，会无限记账）
+      api.translateCancel(store.currentId).then(refreshPapers).catch(() => {})
+      return
+    }
     toast(r.note || t('全文翻译已开始'))
   } catch (e) {
     // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
@@ -632,7 +648,7 @@ async function doTranslateFull() {
     } else {
       toast(t('启动失败：{m}', { m: e.message }))
     }
-  } finally { tranStarting = false }
+  } finally { tranStarting = false; tranOptimistic.value = false }
 }
 /* 引擎装好后的自动续翻：只续"因为等引擎而停下"的那一篇——设置页手动装的
  * （没记 engResumeId）只收 toast，不冷不丁替用户开翻译反而吓人。 */
@@ -806,7 +822,8 @@ async function onSplitMany(ids) {
     if (r?.full) { toast(t('同屏最多 4 篇')); break }
   }
 }
-const tranSt = computed(() => store.papers.find(x => x.id === store.currentId)?.translate_status || 'none')
+const tranSt = computed(() => tranOptimistic.value || store.papers.find(x => x.id === store.currentId)?.translate_status === 'running'
+  ? 'running' : (store.papers.find(x => x.id === store.currentId)?.translate_status || 'none'))
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0, cur: [] })
 const tranPct = computed(() => tranProg.value.total
   ? Math.round(tranProg.value.done * 100 / tranProg.value.total) : 0)

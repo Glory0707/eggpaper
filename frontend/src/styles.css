@@ -481,6 +481,22 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 }
 .paper-item:hover .p-del { opacity: 1; visibility: visible; }
 .paper-item .p-del:hover { color: var(--vermilion); transform: none; box-shadow: none; }
+.paper-item .p-ren {
+  position: absolute; right: 24px; top: 7px;
+  border: none; background: none; color: var(--ink-3);
+  font-size: var(--fs-sm); padding: 0 3px;
+  opacity: 0; visibility: hidden;
+  transition: opacity var(--t-fast) var(--ease-smooth), visibility var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth);
+}
+.paper-item:hover .p-ren { opacity: 1; visibility: visible; }
+.paper-item .p-ren:hover { color: var(--accent-deep); transform: none; box-shadow: none; }
+.paper-item .p-edit {
+  width: 100%; margin: 0; padding: 0 3px;
+  border: 1px solid var(--accent-line); border-radius: 3px;
+  background: var(--card-2); color: var(--ink-1);
+  font-size: var(--fs-sm); line-height: 1.6;
+}
+.paper-item .p-edit:focus { outline: none; }
 /* 多选：勾选框（文库行、Zotero 导入列表共用） */
 .p-check {
   width: 15px; height: 15px; border-radius: 3px; flex-shrink: 0;
