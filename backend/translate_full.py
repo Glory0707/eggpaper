@@ -320,6 +320,22 @@ def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", p
         cmd += ["--glossaries", glossary_csv]
     cmd += ["--only-include-translated-page", "--no-dual",
             "--watermark-output-mode", "no_watermark"]
+    if service in LLM_SERVICES:
+        # LLM 通道提速（2026-10-09 真端点对照实测）：BabelDOC 默认 qps=4、段落翻译
+        # 线程池=并发池=qps——每页几十段请求排成 4 路纵队。抬到 12 实测墙钟 ~1.35x
+        # （215s→159s，两轮复现），同样的请求只是并发跑，质量不动；429 有 tenacity
+        # 指数退避兜着。qps 再往上收益趋平（瓶颈转向端点每请求延迟），12 是实测拐点。
+        # 用户在设置里自己写了 --qps 就尊重用户的。
+        if "--qps" not in (extra or ""):
+            cmd += ["--qps", "12"]
+        # 注入了自家词表就必须关掉引擎的自动术语抽取：2.9.0 的
+        # get_glossaries_for_translation 在"抽取开启且抽到了词"时**只用它自己抽的那份**，
+        # 我们 --glossaries 注入的析读精选词表会被无视——术语锁定整个落空。
+        # 关掉后翻译走 user_glossaries（就是我们的词表），顺带省掉抽取那趟
+        # ~76k input tokens（对照实测墙钟无害：162s vs 159s）。
+        # 没有词表可注入时（这篇还没析读过）留着它，引擎自己抽一份聊胜于无。
+        if glossary_csv and "--no-auto-extract-glossary" not in (extra or ""):
+            cmd += ["--no-auto-extract-glossary"]
     if extra:
         cmd += shlex.split(extra)
     if pages:

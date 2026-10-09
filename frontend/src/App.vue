@@ -641,7 +641,7 @@ async function doTranslateFull() {
       return
     }
     if (LLM_SVCS.includes((r.service || '').toLowerCase())) {
-      toast(t('AI 通道全文翻译较慢（每页都要过一遍模型，约 1 分钟一页），进度会按页推进'), 6000)
+      toast(t('AI 通道全文翻译较慢（每页都要过一遍模型），进度会按页推进'), 6000)
     } else {
       toast(r.note || t('全文翻译已开始'))
     }
@@ -832,8 +832,6 @@ async function onSplitMany(ids) {
 const tranSt = computed(() => tranOptimistic.value || store.papers.find(x => x.id === store.currentId)?.translate_status === 'running'
   ? 'running' : (store.papers.find(x => x.id === store.currentId)?.translate_status || 'none'))
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0, cur: [] })
-const tranPct = computed(() => tranProg.value.total
-  ? Math.round(tranProg.value.done * 100 / tranProg.value.total) : 0)
 const tranTick = ref(0)
 let tranTimer = null
 watch(tranSt, s => {
@@ -861,15 +859,6 @@ const tranLabel = computed(() => {
   const n = tranProg.value.total ? ` ${tranProg.value.done}/${tranProg.value.total}` : '…'
   const clk = tranClock.value
   return t('翻译中') + n + (clk ? ` · ${clk}` : '')
-})
-/* 正在译哪些页：pdf2zh 到批结束才落产物，页数一格能停几分钟——"在译第几页"必须
- * 放在工具栏主视线里（悬浮提示实测没人看），用户才知道它活着、在动 */
-const tranWhere = computed(() => {
-  if (tranSt.value !== 'running') return ''
-  const cur = tranProg.value.cur || []
-  if (!cur.length) return ''
-  const svc = tranProg.value.svc ? `（${tranProg.value.svc}）` : ''
-  return svc + t('第{p}页', { p: cur.join('、') })
 })
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
@@ -982,7 +971,6 @@ function onKey(e) {
                 :title="tranTip">
           {{ tranLabel }}
         </button>
-        <span v-if="tranWhere && !isEn()" class="tran-where">{{ tranWhere }}</span>
         <button v-if="tranSt === 'running'" class="ghost" @click="stopTranslate"
                 :title="t('已译好的页会保留')">{{ t('停止') }}</button>
         <button class="primary" @click="doAnalyze" :disabled="anaBusy">
@@ -996,9 +984,6 @@ function onKey(e) {
         <button class="demo-badge" v-if="demoOn" @click="showSettings = true"
                 >{{ t('演示模式') }}</button>
         <button class="ghost" @click="showSettings = true" :title="t('设置')">⚙</button>
-      </div>
-            <div class="tran-line" v-if="tranSt === 'running' && !isEn()">
-        <i :class="{ det: tranPct > 0 }" :style="tranPct > 0 ? { width: tranPct + '%' } : null"></i>
       </div>
     </header>
 
