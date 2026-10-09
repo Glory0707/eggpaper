@@ -619,6 +619,9 @@ onUnmounted(() => clearInterval(marginFastTimer))
 let tranStarting = false
 let tranOptimistic = ref(false)
 let tranStopPending = false
+/* 与后端 translate_full.LLM_SERVICES 同名单：这些服务每页都要真过一遍模型，
+ * 全文翻译是分钟级不是秒级——开跑时就说清，别让用户在 0/n 上猜它死没死 */
+const LLM_SVCS = ['openai', 'deepseek', 'zhipu', 'silicon', 'modelscope', 'gemini', 'grok', 'groq']
 async function doTranslateFull() {
   if (!store.currentId || tranSt.value === 'running' || tranStarting) return
   const again = tranSt.value === 'done'
@@ -637,7 +640,11 @@ async function doTranslateFull() {
       api.translateCancel(store.currentId).then(refreshPapers).catch(() => {})
       return
     }
-    toast(r.note || t('全文翻译已开始'))
+    if (LLM_SVCS.includes((r.service || '').toLowerCase())) {
+      toast(t('AI 通道全文翻译较慢（每页都要过一遍模型，约 1 分钟一页），进度会按页推进'), 6000)
+    } else {
+      toast(r.note || t('全文翻译已开始'))
+    }
   } catch (e) {
     // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
@@ -855,9 +862,17 @@ const tranLabel = computed(() => {
   const clk = tranClock.value
   return t('翻译中') + n + (clk ? ` · ${clk}` : '')
 })
+/* 正在译哪些页：pdf2zh 到批结束才落产物，页数一格能停几分钟——"在译第几页"必须
+ * 放在工具栏主视线里（悬浮提示实测没人看），用户才知道它活着、在动 */
+const tranWhere = computed(() => {
+  if (tranSt.value !== 'running') return ''
+  const cur = tranProg.value.cur || []
+  if (!cur.length) return ''
+  const svc = tranProg.value.svc ? `（${tranProg.value.svc}）` : ''
+  return svc + t('第{p}页', { p: cur.join('、') })
+})
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
-    // pdf2zh 2.x 不吐实时页进度，后端报的是"正在译哪些批"——至少让用户看见在动
     const cur = tranProg.value.cur?.length
       ? ` ${t('第{p}页', { p: tranProg.value.cur.join('、') })}` : ''
     return t('正在译{svc}{cur} · 已用 {t}', { svc: tranProg.value.svc ? `（${tranProg.value.svc}）` : '',
@@ -967,6 +982,7 @@ function onKey(e) {
                 :title="tranTip">
           {{ tranLabel }}
         </button>
+        <span v-if="tranWhere && !isEn()" class="tran-where">{{ tranWhere }}</span>
         <button v-if="tranSt === 'running'" class="ghost" @click="stopTranslate"
                 :title="t('已译好的页会保留')">{{ t('停止') }}</button>
         <button class="primary" @click="doAnalyze" :disabled="anaBusy">

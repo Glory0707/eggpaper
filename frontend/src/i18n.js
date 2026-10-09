@@ -87,6 +87,8 @@ const EN = {
   '未知错误': 'unknown error',
   '初始化失败：{m}': 'Startup failed: {m}',
   '全文翻译已开始': 'Translation started',
+  'AI 通道全文翻译较慢（每页都要过一遍模型，约 1 分钟一页），进度会按页推进':
+    'AI services are slow for full-paper translation (~1 min per page, it goes through the model page by page) — progress advances page by page',
   '启动失败：{m}': 'Failed to start: {m}',
   '全文翻译完成': 'Full-paper translation finished',
   '全文翻译失败：{m}': 'Full-paper translation failed: {m}',

@@ -3549,7 +3549,11 @@ def _pdf2zh_env(service: str, cfg: dict):
             envs["PDF2ZH_OPENAI_BASE_URL"] = base
         if model:
             envs["PDF2ZH_OPENAI_MODEL"] = model
-        return envs, urlparse(base).hostname or ""
+        u = urlparse(base)
+        host = u.hostname or ""
+        if host and u.port:
+            host = f"{host}:{u.port}"       # 带端口的端点（本地网关等）预检要探对端口
+        return envs, host
     if service == "deepseek":
         envs = {"PDF2ZH_DEEPSEEK_API_KEY": key}
         if model:

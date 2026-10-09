@@ -72,10 +72,12 @@ AUTO_FALLBACK = ("bing",)
 # ---------------- 连通性预检 ----------------
 
 def probe(host: str, port: int = 443, timeout: float = PROBE_TIMEOUT, ttl: float = PROBE_TTL):
-    """能不能连上 host:port。返回 (是否通, 不通时的一句人话)。结果缓存 ttl 秒。"""
+    """能不能连上 host:port。返回 (是否通, 不通时的一句人话)。结果缓存 ttl 秒。
+    缓存键含端口：同一台 127.0.0.1 上的 443 与 8080 是两个服务的两回事。"""
     if not host:
         return True, ""
-    hit = _PROBE.get(host)
+    key = f"{host}:{port}"
+    hit = _PROBE.get(key)
     now = time.time()
     if hit and now - hit[2] < ttl:
         return hit[0], hit[1]
@@ -87,17 +89,20 @@ def probe(host: str, port: int = 443, timeout: float = PROBE_TIMEOUT, ttl: float
         ok = True
     except Exception as e:
         why = f"{host} 连不上（{type(e).__name__}）"
-    _PROBE[host] = (ok, why, now)
+    _PROBE[key] = (ok, why, now)
     return ok, why
 
 def choose_service(service: str, host: str = ""):
     """定下这次真正用哪个服务。返回 (服务名或 None, 给用户的一句话)。
 
-    host 传了就以它为准（openai 服务用的是用户在设置里填的那个端点）。
+    host 传了就以它为准（openai 服务用的是用户在设置里填的那个端点），
+    可以带端口（`127.0.0.1:8080` 这类本地网关）——端口不参与就按 443 探，
+    把明明活着的端点判成"连不通"，然后静默跌落 bing。
     """
     service = (service or "bing").strip()
     target = host or SERVICE_HOST.get(service, "")
-    ok, why = probe(target)
+    h, _, port_s = target.partition(":")
+    ok, why = probe(h, int(port_s) if port_s.isdigit() else 443)
     if ok:
         return service, ""
 
@@ -528,8 +533,13 @@ ENGINE_PROCS_CAP = 4
 _SLOTS = threading.BoundedSemaphore(ENGINE_PROCS_CAP)
 PAGE_TIMEOUT = 150
 PAGE_TRIES = 2
-BATCH_PAGES = 8          # 一次 pdf2zh 进程译几页。2.x 单进程冷启动 ~15-35s（1.9 约 3s），
+BATCH_PAGES = 8          # 免费服务一次 pdf2zh 进程译几页。2.x 单进程冷启动 ~15-35s（1.9 约 3s），
                          # 批太小全是纯开销；批内坏页仍拆单页兜底，复用粒度退到"批"但产物按页认
+BATCH_PAGES_LLM = 2      # LLM 服务（openai 等）一次译几页：每页都要真过一遍模型（实测 openai
+                         # 通道 ~66s/页），8 页一批 = 第一拍进度要等 ~9 分钟，用户早当它死了
+                         # 按停止（2026-10-08 真库日志：4 页 264s，第 3 分半被取消——上一次
+                         # 的"小文档拆两半"只救了 ≤8 页的文档）。2 页一批，每 ~2 分半跳一格；
+                         # 多付的冷启动全程摊下来 ~2 分钟，换来的是进度条真的在动
 
 LLM_SERVICES = {"openai", "deepseek", "zhipu", "silicon", "modelscope",
                 "gemini", "grok", "groq"}
@@ -543,16 +553,20 @@ def _page_timeout(service: str) -> float:
 def _page_dir(out_dir: str, pno: int, t: int) -> str:
     return os.path.join(out_dir, ".pages", f"p{pno}-{t}")
 
-def _plan_batches(pending: list) -> list:
-    """把待译页号切成批次。常规按 BATCH_PAGES 切（冷启动摊薄）。
+def _batch_size(service: str) -> int:
+    """一批译几页：LLM 服务 2（页数要中途真的动，见 BATCH_PAGES_LLM），免费服务 8。"""
+    return BATCH_PAGES_LLM if service in LLM_SERVICES else BATCH_PAGES
+
+def _plan_batches(pending: list, size: int = BATCH_PAGES) -> list:
+    """把待译页号切成批次，size=一批几页（免费服务 8、LLM 服务 2，见 BATCH_PAGES_LLM）。
     待译页不超过一批的小文档（几页的 short letter 是常态）若整份一刀切，
     pdf2zh 要到全批结束才落产物——进度从 0 直接跳 n，中途几分钟没有任何可见
     的动静（实测用户等了 3 分半就当死了按停止，其实 1 分钟后就译完了）。
     拆成两半交两个引擎进程并行：前一半完成时进度立刻可见，墙钟也更短。"""
-    if 1 < len(pending) <= BATCH_PAGES:
+    if 1 < len(pending) <= size:
         mid = (len(pending) + 1) // 2
         return [pending[:mid], pending[mid:]]
-    return [pending[i:i + BATCH_PAGES] for i in range(0, len(pending), BATCH_PAGES)]
+    return [pending[i:i + size] for i in range(0, len(pending), size)]
 
 def _product_mono(dirpath: str, stem: str) -> str:
     """目录里这份源的译文版产物；没有返回空串。
@@ -918,7 +932,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
 
             from concurrent.futures import ThreadPoolExecutor
             pending = [p for p in range(n) if p not in results]
-            batches = _plan_batches(pending)
+            batches = _plan_batches(pending, _batch_size(service))
             with ThreadPoolExecutor(max_workers=_page_workers(service)) as pool:
                 list(pool.map(worker, batches))
 
