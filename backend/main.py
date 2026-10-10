@@ -2169,6 +2169,8 @@ def pin_lookup(pid: str, body: dict):
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
     para_idx = _int_arg(body.get("para_idx") or 0, 400, "para_idx 得是整数")
+    if para_idx < -1:
+        raise HTTPException(400, "para_idx 最小 -1（划词在段外）")   # 负值落库后引文永远对不上
     try:
         page = int(body.get("page") or 0)
     except (TypeError, ValueError):
@@ -2197,7 +2199,8 @@ def pin_lookup(pid: str, body: dict):
 @app.delete("/api/papers/{pid}/marginalia/{mid}")
 def marginalia_remove(pid: str, mid: int):
     _paper_or_404(pid)
-    db.marginalia_delete(mid)
+    if not db.marginalia_delete_count(mid, pid):
+        raise HTTPException(403, "这条批注不属于这篇论文")
     return {"ok": True}
 
 # ---------------- 一眼卡 ----------------

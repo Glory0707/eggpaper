@@ -949,8 +949,23 @@ def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, ki
                     "VALUES(?,?,?,?,?,?,?,?,?)",
                     (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None, label, band))
 
-def marginalia_delete(mid: int):
+def marginalia_delete(mid: int, pid: str = None):
+    """pid 给了就校验归属：URL 是 A 篇、mid 是 B 篇的卡，删 B 就是越权（对抗轮实锤）。"""
+    if pid is None:
+        q("DELETE FROM marginalia WHERE id=?", (mid,), commit=True)
+        return
+    q("DELETE FROM marginalia WHERE id=? AND paper_id=?", (mid, pid), commit=True)
+
+def marginalia_delete_count(mid: int, pid: str) -> bool:
+    """带归属校验的删除。True=可删（含幂等：mid 本就不存在，前端重试/换页竞态都无害）；
+    False=mid 存在但属于别篇——URL 是 A 篇、mid 是 B 篇的卡，删 B 就是越权（对抗轮实锤）。"""
+    row = q("SELECT paper_id FROM marginalia WHERE id=?", (mid,))
+    if not row:
+        return True
+    if row[0]["paper_id"] != pid:
+        return False
     q("DELETE FROM marginalia WHERE id=?", (mid,), commit=True)
+    return True
 
 # ---------- 论文日历 ----------
 

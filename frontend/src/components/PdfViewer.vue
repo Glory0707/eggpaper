@@ -216,7 +216,11 @@ function startCreep() {
 }
 function stopCreep() { clearInterval(creep); creep = 0 }
 
+let loadSeq = 0    // 装载代次：变体/排布连切时，先发的 load 慢一步回来的话会把旧布局
+                   // 覆盖回去（sheets 赋值没有守卫），屏幕停在用户早已离开的模式上
+
 async function load({ keepPlace = false } = {}) {
+  const seq = ++loadSeq
   loading = true
   const veryFirst = !sheets.value.length
   if (veryFirst) { ready.value = false; loadPct.value = 0.08; startCreep() }
@@ -226,6 +230,7 @@ async function load({ keepPlace = false } = {}) {
   try {
     await buildSheets()
   } catch (e) {
+    if (seq !== loadSeq) return      // 已被更新的装载顶掉：这份是过站的，别再碰任何状态
     if (store.viewer.variant !== 'original') {
       const was = store.viewer.variant
       store.viewer.variant = 'original'      // 赋值会触发 watch → 重新 load
@@ -239,9 +244,10 @@ async function load({ keepPlace = false } = {}) {
     loading = false
     return
   }
+  if (seq !== loadSeq) return
   let settled = false
   const settle = () => {
-    if (settled) return
+    if (settled || seq !== loadSeq) return
     settled = true
     stopCreep()
     loadPct.value = 1
@@ -254,6 +260,7 @@ async function load({ keepPlace = false } = {}) {
     await measure()
     await renderAll({ early: settle })
   } catch (e) {
+    if (seq !== loadSeq) return
     console.error('[eggpaper] 渲染失败：', e)
     toast(t('渲染失败：{m}', { m: String(e.message || e).slice(0, 120) }), 6000)
     stopCreep()
@@ -262,6 +269,7 @@ async function load({ keepPlace = false } = {}) {
     loading = false
     return
   }
+  if (seq !== loadSeq) { loading = false; return }
   settle()                 // 只有一两页的薄文档，early 的打点可能赶不上，这里兜住
   await nextTick()
   await measureNotes()

@@ -10,6 +10,8 @@ export { api, askStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
 export { lsGet, lsSet, lsRemove } from './ls'
 
 
+const _clamp = (v, lo, hi, d) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d)
+
 export const store = reactive({
   vw: window.innerWidth,     // 视口宽度：窄窗要换一套排布（右栏改浮层、栏位让给论文）
   papers: [],
@@ -30,8 +32,10 @@ export const store = reactive({
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
-    railW: lsGet('railW', 336),            // 右栏宽度：可拖可双击复位
-    libW: lsGet('libW', null) ?? 300,      // 文库抽屉宽：日历/目录抽屉共用这把尺
+    /* 栏宽读入即钳位：localStorage 是能被旧版本/手动改坏的地方，99999px 一读进来
+       布局就爆（拖动本身有 min/max 把关，唯独「读回」这条路没人管）。 */
+    railW: _clamp(lsGet('railW', 336), 268, 760, 336),
+    libW: _clamp(lsGet('libW', null) ?? 300, 236, 560, 300),
     noteBands: lsGet('noteBands', { good: true, warn: true, noise: true }),
     frame: false,
     libOpen: false,
