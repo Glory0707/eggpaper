@@ -161,7 +161,8 @@ async function getDoc(kind) {
     }
     return doc
   }
-}
+  throw new Error('pdf worker 连续两轮 20s 无响应')   // 不写这行：函数静默返回 undefined，
+}                                                      // 上层报「Cannot read properties of undefined」天书
 
 async function meta(doc) {
   const vp = await (await doc.getPage(1)).getViewport({ scale: 1 })
@@ -1659,7 +1660,7 @@ watch(store.marginalia, m => {
       </div>
       <img class="vis-img" :src="vis.img" />
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
-             @keydown.enter="askVisual" :placeholder="t('问这个选区…')" />
+             @keydown.enter="askVisual" @keydown.escape="closeVis" :placeholder="t('问这个选区…')" />
       <div class="sp-actions">
                 <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图：画了什么、支持什么结论'))">{{ t('分析此图') }}</button>
         <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式：每一步的含义和推导逻辑'))">{{ t('分析公式') }}</button>

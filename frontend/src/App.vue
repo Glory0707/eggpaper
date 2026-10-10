@@ -537,7 +537,8 @@ let greetBootT = 0
 function maybeGreet() {
   const slot = greetSlot()
   if (!slot || greetShow.value || greetShown.has(slot)) return
-  greetShown.add(slot)
+  if (store.currentId) return      // 已经在读论文：问候只属于书桌（启动恢复上次阅读时
+  greetShown.add(slot)             // 会走到这里——弹出来就是压在正文上，实测撞过）
   const pool = GREET_POOL[slot]
   greetKey.value = pool[Math.floor(Math.random() * pool.length)]
   greetShow.value = true

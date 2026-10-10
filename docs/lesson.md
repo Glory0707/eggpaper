@@ -133,3 +133,7 @@
 - **WebDAV 探活用 PROPFIND 别用 OPTIONS**（Joplin WebDavApi.ts 源码级结论）：OPTIONS 的 DAV 头各家服务器不可靠；只看状态码不解析 body（各家响应格式不一）。坚果云免费档 1GB 上传/月、500MB 单文件、600 请求/30 分钟——自动备份必须"内容未变不传"（哈希比对，rclone/Zotero 同款），轻包口径是对的。
 - **LLM 术语注入只做命中过滤**（Lokalise/BabelDOC 同款实践）：全量塞表是噪音；eggpaper 的 glossary_global_hits 子串命中 + 30 条封顶 + 本篇优先即此。缓存键注意：改动术语表会改变前缀，服务端缓存自然失效，无需自己做指纹。
 - **「内容没变就不传」的指纹必须打在逻辑内容上**：活库的文件字节被 WAL checkpoint 翻动，逻辑相同的两次备份在文件级哈希不同——文件级对比天天误报「变了」天天重传（webdav 实测）。对 iterdump 行序（+脱敏 config 文本）做哈希才稳定。
+- **视觉审查里"看起来没生效"的遮罩类问题，先用像素定案再动手**：灯箱 rgba(5,5,6,.78) 的暗罩在截图缩略里看着像"背景全亮、缩放条透出"，getComputedStyle 全对、读 PNG 像素更实锤（全屏 60,60,61 = 255×0.22，遮罩好端端的）——深灰底白字的低对比在缩略显示里会被对比度感知骗成"亮背景"。顺序：眼见疑点 → 读像素/计算样式 → 才配得上改代码。
+- **capture 阶段的 keydown 监听 stopPropagation 会吞掉全局 Esc**：多选模式的 escSel 挂在 document capture 上（先于 App 的 window 监听），一刀 stopPropagation 之后 App 的"收抽屉/关浮层"整条语义全部失联——实测"退了多选，文库抽屉还杵在那"。分层放行：确认框开着 → 全放行（App 的 dlgCancel 管）；归类菜单开着 → 收菜单后拦；裸多选 → 退多选后放行。凡是 capture+stopPropagation，都要问一句"后面的层级还听得见吗"。
+- **开场问候这类"书桌专属"的浮层，入口函数要自带"是否已在读"守卫**：启动恢复上次阅读（lastPaper）与手动重载都会让 currentId 先于问候定时器就位，此时弹问候就是压在正文上 5.6 秒（高分辨率逐屏审查在 02/16/27/28 四屏撞到同一颗）。已有的 currentId watch 只覆盖"先问候后开论文"，反方向只有入口守卫能拦。
+- **Playwright evaluate 会 await 返回值**：`() => Promise.reject(...)` 直接把 rejection 抛回测试脚本，压根到不了页面的 unhandledrejection——要触发全局兜底 toast 得用 `setTimeout(() => Promise.reject(...), 0)` 包一层。

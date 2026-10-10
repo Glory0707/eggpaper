@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { api, store, toast, refreshPapers, refreshCollections, openPaper, jumpPara, goHome, lsRemove, gotoPaperPara } from '../store'
-import { confirmBox } from '../dialog'
+import { confirmBox, dlg } from '../dialog'
 import { t } from '../i18n'
 import { useEdgeResize } from '../edgeResize'
 import ZoteroDialog from './ZoteroDialog.vue'
@@ -283,11 +283,15 @@ function toggleSel(pid) {
   s.has(pid) ? s.delete(pid) : s.add(pid)
   selSet.value = s
 }
-/* Esc 先退选择模式，再轮到别的 Esc 语义 */
+/* Esc 在多选模式的三层语义：确认框开着 → 什么都不做（放行给 App 的 dlgCancel）；
+   归类菜单开着 → 只收菜单，这一拍到此为止（拦住，别顺手把抽屉也收了）；
+   裸多选态 → 退出多选后**放行**——否则全局 Esc 收不到，文库抽屉收不掉
+   （实测：退了多选，抽屉还杵在那）。 */
 function escSel(e) {
   if (e.key !== 'Escape') return
-  e.preventDefault(); e.stopPropagation()
-  if (selMenu.value) { selMenu.value = false; return }
+  if (dlg.open) return
+  e.preventDefault()
+  if (selMenu.value) { selMenu.value = false; e.stopPropagation(); return }
   toggleSelMode()
 }
 watch(selMode, v => {
