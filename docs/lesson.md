@@ -137,3 +137,6 @@
 - **capture 阶段的 keydown 监听 stopPropagation 会吞掉全局 Esc**：多选模式的 escSel 挂在 document capture 上（先于 App 的 window 监听），一刀 stopPropagation 之后 App 的"收抽屉/关浮层"整条语义全部失联——实测"退了多选，文库抽屉还杵在那"。分层放行：确认框开着 → 全放行（App 的 dlgCancel 管）；归类菜单开着 → 收菜单后拦；裸多选 → 退多选后放行。凡是 capture+stopPropagation，都要问一句"后面的层级还听得见吗"。
 - **开场问候这类"书桌专属"的浮层，入口函数要自带"是否已在读"守卫**：启动恢复上次阅读（lastPaper）与手动重载都会让 currentId 先于问候定时器就位，此时弹问候就是压在正文上 5.6 秒（高分辨率逐屏审查在 02/16/27/28 四屏撞到同一颗）。已有的 currentId watch 只覆盖"先问候后开论文"，反方向只有入口守卫能拦。
 - **Playwright evaluate 会 await 返回值**：`() => Promise.reject(...)` 直接把 rejection 抛回测试脚本，压根到不了页面的 unhandledrejection——要触发全局兜底 toast 得用 `setTimeout(() => Promise.reject(...), 0)` 包一层。
+- **"unused 变量"可能是作用域断裂的信号，别照 linter 直接删绑定**：ruff 报 delete_paper 里 `p = _paper_or_404(pid)` 未使用，照删之后全量回归当场炸出 500——真正的病是 `_late_rm_paper_dir` 里裸引用了 `p`/`pid`/`d` 三个既非参数也非闭包的名字（历史重构漏传参），只要"文件夹当场没收失败"走保洁就 NameError，以前全靠"当场总能删掉"侥幸。linter 的价值在这类报告把灯照到可疑处，修法必须顺着作用域链查一遍再定。
+- **删数据链路里的 `paper_dir(pid)` 要在 DB purge 之前算好**：purge 之后再解析只剩兜底路径（DB path 没了、缓存清了就猜 `<pid>`），命中全靠运气。凡是"先删账本再动盘上东西"的顺序，盘上路径一律提前取快照。
+- **跨文件重复注释扫描是找"同一知识两处维护"的雷达**（≥14 字的注释句在多处出现）：本轮只撞到三处同名分区标题（编排层与调用层各一份，职责不同不是重复）。真命中过的例子是 styles.css 里漂移了三轮的 `92px→112px→132px` 注释——值改了注释没跟。

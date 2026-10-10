@@ -507,7 +507,6 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 }
 .lib-multi:hover, .lib-multi.on { background: var(--accent-soft); color: var(--accent-deep); }
 .lib-multi.on { border-color: var(--accent-line); }
-.lib-tools .lib-sort { max-width: 112px; }
 /* 选择模式的吸底动作条：替换拖放区的位置，动作将来加就往 s-actions 里添一颗。
    窄栏放不下四个动作一行，排两行：上行计数+完成、下行动作均分铺满 */
 .sel-bar {
@@ -1531,7 +1530,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .lib-tools { display: flex; gap: 6px; padding: 0 10px 8px; flex-shrink: 0; }
 .lib-tools .lib-search { flex: 1; min-width: 0; font-size: var(--fs-sm); }
-.lib-tools .lib-sort { flex: 0 0 auto; font-size: var(--fs-sm); padding: 3px 4px; max-width: 132px; }  /* 92px 裁掉英文 "Recently added" */
+.lib-tools .lib-sort { flex: 0 0 auto; font-size: var(--fs-sm); padding: 3px 4px; max-width: 132px; }  /* 限宽：英文 "Recently added" 一档会把工具行撑宽 */
 
 .coll-list { padding: 0 8px 8px; border-bottom: 1px solid var(--hairline); flex-shrink: 0; max-height: 38vh; overflow-y: auto; }
 .coll-row {
@@ -1685,10 +1684,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   58%  { transform: translateY(-9px) scale(0.98, 1.03) }
   72%  { transform: translateY(0) scale(1.04, 0.96) }
   86%  { transform: translateY(-2px) scale(1, 1) }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .qa-caret { animation: none; }
 }
 
 .modal.upd { width: 452px; }
@@ -1912,14 +1907,6 @@ html.dark .vis-img { background: #fff; }
 
 @keyframes imgIn { from { opacity: 0; } }
 .lightbox img { animation: imgIn 200ms var(--ease-out) both; }
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
 
 .strip-dot {
   position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);

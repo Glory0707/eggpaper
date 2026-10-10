@@ -175,7 +175,7 @@ export function findQuoteRects(pageEl, quote, paraBox) {
     }
   }
   const rects = rectsOf(idx, at, at + len, pageEl.getBoundingClientRect())
-  return rects.length ? { rects, 覆盖比: len / q.length } : null
+  return rects.length ? { rects, coverage: len / q.length } : null
 }
 
 /* ---------- 引文扩成整句 ---------- */

@@ -104,7 +104,7 @@ def _bib_key(meta: dict, aus: list) -> str:
     year = re.sub(r"[^0-9]", "", _s(meta.get("year")))
     tag = _bib_tag(_s(meta.get("journal_abbr")) or _s(meta.get("journal")))
     if not tag:
-        words = [w for w in re.findall(r"[A-Za-z]{3,}", _s(meta.get("title")))]
+        words = re.findall(r"[A-Za-z]{3,}", _s(meta.get("title")))
         tag = (words[0].lower()[:5] if words else "paper")
     return f"{fam}{year}{tag}"
 

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper, jumpPara, goHome, lsRemove, gotoPaperPara } from '../store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, goHome, lsRemove, gotoPaperPara } from '../store'
 import { confirmBox, dlg } from '../dialog'
 import { t } from '../i18n'
 import { useEdgeResize } from '../edgeResize'

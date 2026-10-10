@@ -655,7 +655,7 @@ function computeQuoteMarks() {
     const p = paraByIdx.value[n.para_idx]
     const box = p ? { y0: p.bbox.y0 * scale.value, y1: p.bbox.y1 * scale.value } : null
     const r = findQuoteRects(el, anchorText(n), box)
-    if (r) { out[n.id] = r.rects; cov[n.id] = r.覆盖比 }
+    if (r) { out[n.id] = r.rects; cov[n.id] = r.coverage }
   }
   quoteMarks.value = out
   quoteCov.value = cov

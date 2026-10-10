@@ -1618,31 +1618,33 @@ def _pid_gone(pid: str) -> bool:
 
 @app.delete("/api/papers/{pid}")
 def delete_paper(pid: str):
-    p = _paper_or_404(pid)
+    p = _paper_or_404(pid)      # 404 守卫；path 字段留给收尾删库内文件用
     with _deleted_lock:
         _deleted_pids.add(pid)
     _lines_probe_done.discard(pid)
     with _key_lock("translate:" + pid):
         _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
         _cancel_request("marginalia", pid)
+        d = paper_dir(pid)                    # purge 前算好：之后 DB 没了，只剩兜底解析
         db.purge_paper(pid)
-        if translate_full.cancel(pid, paper_dir(pid)):
+        if translate_full.cancel(pid, d):
             _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
-        shutil.rmtree(paper_dir(pid), ignore_errors=True)
+        shutil.rmtree(d, ignore_errors=True)
         for _ in range(6):
-            if not os.path.exists(paper_dir(pid)):
+            if not os.path.exists(d):
                 break
             # 刚落盘的 PDF 会被杀软/索引器攥几秒（WinError 32，文件级共享锁）：
             # 这几拍是当场收走文件夹的唯一机会，放弃就只剩下次启动的孤儿清扫
             time.sleep(0.5)
-            shutil.rmtree(paper_dir(pid), ignore_errors=True)
-        if os.path.exists(paper_dir(pid)):
-            _late_rm_paper_dir(paper_dir(pid))
+            shutil.rmtree(d, ignore_errors=True)
+        if os.path.exists(d):
+            _late_rm_paper_dir(pid, p, d)
 
-def _late_rm_paper_dir(d: str):
+def _late_rm_paper_dir(pid: str, p: dict, d: str):
     """当场没收成功的文件夹交给后台保洁：每 2 秒试一次、封顶 60 秒。杀软松手就收走。
     每拍删前先对 DB path 锚——同名文件夹万一已被新导入占走（几十秒窗口内重导入同题，
-    极罕见），立刻收手，别把新论文的库删了。"""
+    极罕见），立刻收手，别把新论文的库删了。d 必须调用方先算好传进来：DB 行已 purge，
+    这时再 paper_dir(pid) 只会兜底出一个错的目录。"""
     def work():
         deadline = time.time() + 60
         while time.time() < deadline and os.path.exists(d):
@@ -2821,7 +2823,7 @@ def _wide_flags(rects, colw_of, lm, rm):
     （半栏排版的正文段落）。后者是为了认出单栏页里左右并排的两段正文——
     它们是屏障；表格里的单元格段落（缩在页面中间）不算。"""
     flags = []
-    for i, r in enumerate(rects):
+    for r in rects:
         f = r.width >= 0.7 * max(colw_of(r), 60)
         if not f and r.width >= 140 and (r.x0 <= lm + 8 or r.x1 >= rm - 8):
             for r2 in rects:
@@ -3904,7 +3906,7 @@ def _citedby_classify(pid: str, scan: list) -> list:
                         pass
         except Exception as e:
             _applog(f"互引立场判定失败（回退 mention）：{_human_msg(e)}")
-        for i, (cid, h) in enumerate(flat):
+        for i, (_, h) in enumerate(flat):
             h["stance"] = stances.get(i, "mention")
         for x in todo:
             cid = x["citing"]["id"]
