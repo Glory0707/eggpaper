@@ -2050,6 +2050,9 @@ def _applog(msg: str):
     except OSError:
         pass
 
+llm.applog = _applog     # token 账从 print 换成落盘：打包版没有 stdout，
+                         # 不注入的话用户"钱花在哪"永远只有平台账单一个答案
+
 def _run_marginalia(pid: str):
     t0 = time.time()
     _margin_progress[pid] = {"done": 0, "total": 0, "t0": t0}

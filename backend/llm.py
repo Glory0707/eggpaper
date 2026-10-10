@@ -132,11 +132,12 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
             break
 
 def _log_cache(usage: dict, scene: str):
-    """每次模型调用记一行 token 账（stdout → app.log，grep「tokens」全在）：
-    输入多少、缓存命中多少、输出多少。省钱的全部杠杆就是命中率——
-    DeepSeek flash 档命中 ¥0.02/M、未命中 ¥1/M（1/50）、输出 ¥2/M，
-    输出才是大头，输入能命中就别让它按未命中计费。
-    没报 usage 的端点按 prompt_tokens-命中 反推，再没有就打一行空账。"""
+    """每次模型调用记一行 token 账：输入多少、缓存命中多少、输出多少（含思考）。
+    省钱的全部杠杆就是命中率——DeepSeek flash 档命中 ¥0.02/M、未命中 ¥1/M（1/50）、
+    输出 ¥2/M，输出才是大头，输入能命中就别让它按未命中计费。
+    没报 usage 的端点按 prompt_tokens-命中 反推，再没有就打一行空账。
+    落盘走 applog 钩子（main 启动时注入 _applog）：打包版 console=False 没有
+    stdout，token 账只 print 的话一个字都留不下，用户的"钱花哪了"就没法回答。"""
     if not usage:
         return
     hit = usage.get("prompt_cache_hit_tokens")
@@ -155,7 +156,11 @@ def _log_cache(usage: dict, scene: str):
         return
     pct = f"，命中 {round(100 * hit / tot)}%" if tot else ""
     think_s = f"（思考 {think}）" if think else ""
-    print(f"[eggpaper] tokens [{scene or '-'}] 输入 {tot}（缓存 {hit}{pct}）输出 {out}{think_s}")
+    applog(f"[eggpaper] tokens [{scene or '-'}] 输入 {tot}（缓存 {hit}{pct}）输出 {out}{think_s}")
+
+def applog(msg: str):
+    """token 账的出口，默认 stdout；main 启动时替换成 _applog 让打包版也留痕。"""
+    print(msg)
 
 def _json_patch(raw: str) -> str:
     """一次扫表的廉价修复：字符串内的裸换行转义、掉右括号补齐、尾逗号去掉。"""
