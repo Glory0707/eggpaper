@@ -252,6 +252,9 @@ async function load({ keepPlace = false } = {}) {
     stopCreep()
     loadPct.value = 1
     ready.value = true
+    // 同屏切换（单篇→多窗格）会卸载本实例：进行中的 load 尾巴还在跑，
+    // scroller() 已经是 null——落位作罢，别把卸载当渲染失败惊扰用户
+    if (!scroller()) return
     if (anchor) applyAnchor(anchor)
     else if (savedScroll != null) { scroller().scrollTop = savedScroll }
     updateProg()
@@ -1300,6 +1303,9 @@ onMounted(async () => {
   if (saved.fit) fit.value = saved.fit
   if (saved.zoom) zoom.value = saved.zoom
   await load()
+  // load 可能横跨整个窗格重组（同屏阅读把旧实例卸掉）：恢复时已卸载就到此为止，
+  // 否则下面 deskEl/scroller 全是 null，监听挂不上去还炸一屏
+  if (!deskEl.value || !scroller()) return
   await nextTick()
   await measureNotes()
   ro = new ResizeObserver(() => { reflow() })

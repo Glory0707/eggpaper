@@ -823,7 +823,9 @@ function titleOf(pid) {
   return p ? (p.title || p.filename) : t('正在打开…')
 }
 async function onSplitMany(ids) {
-  /* 多选出来的同屏组是一次多选的整体结果：先清场再逐篇进窗格，不再是追加语义 */
+  /* 多选出来的同屏组是一次多选的整体结果：先清场再逐篇进窗格，不再是追加语义。
+     面板不收：多选是连续工作流（同屏完多半接着对比/归类），面板开着才顺手；
+     与导入路径（打开第一篇后收面板让位）语义不同，是有意的。 */
   store.openIds = []
   for (const pid of ids) {
     const r = await store.addPane(pid)
