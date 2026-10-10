@@ -71,7 +71,7 @@ _cancel = threading.Event()
 def install_dir() -> str:
     return os.path.join(os.path.dirname(appinfo.data_dir()), "engines", "pdf2zh")
 
-from translate_full import _no_window   # 子进程藏控制台：与 translate_full 共用一份
+from translate_full import _no_window, engine_version   # 子进程藏控制台/版本比较：与 translate_full 共用
 
 def _warmup(exe: str):
     """装完先 `--warmup` 一次：把内置的 offline_assets 包 restore 进缓存并整体校验。
@@ -165,6 +165,8 @@ def find_installed() -> str:
     """在 engines/ 里找 pdf2zh.exe（递归：官方 zip 解压出来是带版本号的子目录）。
 
     这条也是"手动安装"的路：用户自己把官方 zip 解压到这个目录里，我们照样认。
+    手动解压的旧版本可能和自动装的一份并存——**认版本号最高的那份**（保留最新的即;
+    可，2026-10-10 口径），解析不出版本当最老，同版本取 mtime 新的。
 
     结果缓存 10 秒：递归 glob 要走遍引擎的 site-packages（几千个文件），而它挂在
     「点全文翻译」的同步路径上（engine_path → find_installed），每次点击都走一遍
@@ -175,16 +177,72 @@ def find_installed() -> str:
     now = _time.time()
     if now - _find_cache["at"] < 10:
         return _find_cache["path"]
-    got = ""
+    cands = []
     root = install_dir()
     if os.path.isdir(root):
-        for p in sorted(glob.glob(os.path.join(root, "**", "pdf2zh.exe"), recursive=True)):
-            if os.path.isfile(p):
-                got = p
-                break
+        cands = [p for p in glob.glob(os.path.join(root, "**", "pdf2zh.exe"), recursive=True)
+                 if os.path.isfile(p)]
+    if not cands:
+        got = ""
+    elif len(cands) == 1:
+        got = cands[0]
+    else:
+        def _key(p: str):
+            try:
+                mt = os.path.getmtime(p)
+            except OSError:
+                mt = 0.0
+            return (engine_version(p), mt)
+        got = max(cands, key=_key)
     _find_cache["at"] = now
     _find_cache["path"] = got
     return got
+
+def sweep_leftovers(max_age: float = 7 * 86400) -> list:
+    """启动清扫：升级换装与断点下载的残骸（2026-10-10 用户口径：更新只留最新，
+    别把别人电脑的文件越堆越大）。
+
+    - pdf2zh.old / pdf2zh.tmp：换装中途的残骸。_unpack 是「旧目录 rename 成 .old →
+      新目录就位 → 删 .old」，那最后一删可能被杀软/僵尸 pdf2zh 的文件锁静默挡掉
+      （ignore_errors）——正常路径删不掉的，启动时再试一遍；.tmp 是解压中途崩的。
+    - pdf2zh.partial：断点下载的家。**新鲜的留着**（7 天内：600MB 的断点，重试还能
+      接着下）；过期的删——换版本之后旧断点永远续不上了，留着纯属占地。
+
+    正在下载/解压时不动（那是活在用的目录）。返回清掉的条目清单（写启动日志用）。
+    """
+    with _lock:
+        if _prog["state"] in ("downloading", "unpacking", "warming"):
+            return []
+    root = os.path.dirname(install_dir())
+    cleaned = []
+    for name in ("pdf2zh.old", "pdf2zh.tmp"):
+        p = os.path.join(root, name)
+        if os.path.isdir(p):
+            shutil.rmtree(p, ignore_errors=True)
+            if not os.path.isdir(p):
+                cleaned.append(name)
+    partial = _partial_dir()
+    if os.path.isdir(partial):
+        now = time.time()
+        try:
+            names = os.listdir(partial)
+        except OSError:
+            names = []
+        for fn in names:
+            fp = os.path.join(partial, fn)
+            try:
+                if os.path.isfile(fp) and now - os.path.getmtime(fp) > max_age:
+                    os.remove(fp)
+                    cleaned.append(f"pdf2zh.partial/{fn}")
+            except OSError:
+                pass
+        try:
+            if not os.listdir(partial):
+                os.rmdir(partial)
+                cleaned.append("pdf2zh.partial/")
+        except OSError:
+            pass
+    return cleaned
 
 def _sources() -> list:
     """源表：更新源同源 → 镜像 → 官方直连，(url, 展示名) 列表。"""
@@ -244,7 +302,8 @@ def _unpack(zpath: str):
         os.rename(ex_dir, final)
         shutil.rmtree(old, ignore_errors=True)
         shutil.rmtree(tmp_root, ignore_errors=True)
-        exe = find_installed()
+        _find_cache["at"] = 0.0     # 刚换了目录树：先失效缓存再找——TTL 里可能还躺着
+        exe = find_installed()      # 装前那次「没装」的旧结论，快装完（<10s）时实测踩中
         if not exe:
             _set(state="error", error="包里没有 pdf2zh.exe")
             return

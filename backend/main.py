@@ -470,6 +470,13 @@ def _startup():
             except OSError:
                 pass
             translate_full.sweep_page_dirs(PAPERS_DIR)
+            try:
+                import engine_install
+                gone = engine_install.sweep_leftovers()
+                if gone:
+                    _applog("引擎残骸已清：" + "、".join(gone))
+            except Exception:
+                pass
             _clear_zombie_jobs()
             _backfill_pdf_hashes()
         except Exception:
