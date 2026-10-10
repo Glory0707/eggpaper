@@ -642,7 +642,7 @@ async function doTranslateFull() {
       return
     }
     if (LLM_SVCS.includes((r.service || '').toLowerCase())) {
-      toast(t('AI 通道全文翻译较慢（每页都要过一遍模型），进度会按页推进'), 6000)
+      toast(t('AI 通道较慢，进度按页推进'), 6000)
     } else {
       toast(r.note || t('全文翻译已开始'))
     }
@@ -763,11 +763,11 @@ async function onImport(list) {
   importing = false
   if (!first) return
   if (many && ok.length > 1) {
-    toast(t('已导入 {n} 篇，其余在后台排队通读', { n: ok.length }))
+    toast(t('已导入 {n} 篇，其余排队通读中', { n: ok.length }))
   } else if (first.no_text) {
-    toast(t('扫描件：后台识别中，完事自动析读'))
+    toast(t('扫描件识别中，完成后自动析读'))
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
-    toast(t('只认出 {n} 段，析读会比较粗', { n: first.n_paragraphs }))
+    toast(t('只认出 {n} 段，析读会较粗', { n: first.n_paragraphs }))
   }
 }
 
@@ -792,7 +792,7 @@ async function askSupersede(r) {
     await refreshPapers()
     await refreshCollections()
     toast(st.pins_lost
-      ? t('已替换；{n} 条页边卡在新版找不到了', { n: st.pins_lost })
+      ? t('已替换；{n} 条页边卡没迁过去', { n: st.pins_lost })
       : t('已替换，问答、术语与分类已迁到新版'))
   } catch (e) { toast(e.message) }
 }
@@ -1083,8 +1083,8 @@ function onKey(e) {
     <Transition name="pop">
       <div class="eng-card" v-if="engInst.on && !engInst.hidden">
         <div class="eng-title">
-          <span v-if="engInst.state === 'downloading'">{{ t('正在下载全文翻译引擎 {p}%', { p: engInst.pct }) }}</span>
-          <span v-else-if="engInst.state === 'unpacking'">{{ t('引擎解压安装中…') }}</span>
+          <span v-if="engInst.state === 'downloading'">{{ t('正在下载翻译引擎 {p}%', { p: engInst.pct }) }}</span>
+          <span v-else-if="engInst.state === 'unpacking'">{{ t('解压安装中…') }}</span>
           <span v-else-if="engInst.state === 'warming'">{{ t('引擎预热中…') }}</span>
           <span v-else-if="engInst.state === 'error'" style="color:var(--vermilion)">{{ engInst.error }}</span>
         </div>
@@ -1092,7 +1092,7 @@ function onKey(e) {
         <div class="eng-sub" v-if="engInst.state === 'downloading'">
           {{ t('已下载 {a} / {b} MB（{s}）', { a: fmtMB(engInst.got), b: fmtMB(engInst.total), s: engInst.src }) }}
         </div>
-        <div class="eng-sub" v-else-if="engInst.state === 'unpacking' || engInst.state === 'warming'">{{ t('装好后自动开始全文翻译') }}</div>
+        <div class="eng-sub" v-else-if="engInst.state === 'unpacking' || engInst.state === 'warming'">{{ t('装好后自动开始翻译') }}</div>
         <div class="eng-btns">
           <template v-if="engInst.state === 'error'">
             <button @click="startEngineInstall">{{ t('重试') }}</button>
@@ -1105,7 +1105,7 @@ function onKey(e) {
         </div>
       </div>
     </Transition>
-        <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，可以关掉这个页面') }}</div>
+        <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，可关闭此页') }}</div>
         <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 
         <Transition name="pop">

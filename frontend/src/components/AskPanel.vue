@@ -135,7 +135,7 @@ async function send(q, pidArg) {
   store.egg.nod++                      // 蛋注意到你在提问，歪头看一眼
   const h = askStream(reqPid, body, ev => {
     if (ev.type === 'delta') queue(ev.text)
-    else if (ev.type === 'status') m.hint = t('正在翻 {n} 篇找相关段落…', { n: ev.n || '' })
+    else if (ev.type === 'status') m.hint = t('正在翻 {n} 篇…', { n: ev.n || '' })
     else if (ev.type === 'done') { flush(); gotDone = true; applyIds(ev) }
     else if (ev.type === 'error') {
       flush()

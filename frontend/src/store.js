@@ -338,7 +338,7 @@ export function askNotePrefill(n, { openRail = false } = {}) {
   if (openRail) store.viewer.railUser = true
   const kind = kindZH(n) || t('批注')
   store.askPrefill = {
-    question: t('眉批标了「{kind}」：「{note}」（引文：“{quote}”）。这条站得住吗？依据在哪？[¶{n}]',
+    question: t('眉批「{kind}」：「{note}」（引文：“{quote}”）。站得住吗？依据在哪？[¶{n}]',
                 { kind, note: n.note, quote: (n.quote || '').slice(0, 60), n: n.para_idx }),
     send: true,
   }

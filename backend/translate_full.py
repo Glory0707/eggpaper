@@ -842,7 +842,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             with pymupdf.open(pdf_path) as doc:
                 n = len(doc)
             if n == 0:
-                j.update(status="error", error="这份 PDF 没有可翻译的页面")
+                j.update(status="error", error="PDF 没有可翻译的页面")
                 say(f"全文翻译失败 {pid}：0 页")
                 return
             stem = os.path.splitext(os.path.basename(pdf_path))[0]

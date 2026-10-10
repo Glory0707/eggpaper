@@ -29,7 +29,8 @@ const EN = {
   '就这句写点什么…': 'Write a note…',
   '引擎装好了，继续翻译': 'Engine ready — resuming translation',
   '库里已有这篇，直接打开': 'Already in the library — opening it',
-  '扫描件：后台识别中，完事自动析读': 'Scanned PDF: recognizing text in background, deep read follows',
+  '扫描件识别中，完成后自动析读': 'Scanned PDF: recognizing — analysis will follow',
+
   '已译好的页会保留': 'Translated pages are kept',
   '已生成的部分会保留': 'Generated parts are kept',
   '拖入 PDF，或点击选择文件': 'Drop a PDF here, or click to browse',
@@ -45,12 +46,16 @@ const EN = {
   '这个领域的共识是什么？': 'What is the consensus in this field?',
   '创新点': 'Novelty',
   '没找到明确的局限': 'No explicit limitations found',
-  '本文正文没有这个词': 'Not found in this paper',
+  '本文未出现这个词': 'Not found in this paper',
+
   '已复制 Markdown': 'Markdown copied',
-  '这一版没有更新说明': 'No release notes for this version',
-  '安装器已拉起，可以关了': 'Installer launched — you can close this',
+  '本版无更新说明': 'No release notes for this version',
+
+  '安装器已启动': 'Installer launched',
+
   '打开所在文件夹': 'Show in folder',
-  '选中的都已在库里': 'Selected items are already in the library',
+  '选中项已在库里': 'Selection is already in the library',
+
   '回书桌': 'Back to desk',
   '引用': 'Cite',
   '原文': 'Original',
@@ -87,16 +92,18 @@ const EN = {
   '未知错误': 'unknown error',
   '初始化失败：{m}': 'Startup failed: {m}',
   '全文翻译已开始': 'Translation started',
-  'AI 通道全文翻译较慢（每页都要过一遍模型），进度会按页推进':
-    'AI services are slow for full-paper translation (every page goes through the model) — progress advances page by page',
+  'AI 通道较慢，进度按页推进': 'AI translation is slower — progress advances page by page',
+
   '启动失败：{m}': 'Failed to start: {m}',
   '全文翻译完成': 'Full-paper translation finished',
   '全文翻译失败：{m}': 'Full-paper translation failed: {m}',
   '正在导入 {i}/{n}：{name}': 'Importing {i}/{n}: {name}',
   '正在导入上一批': 'Still importing the previous batch',
   '《{name}》导入失败：{m}': 'Import failed for “{name}”: {m}',
-  '已导入 {n} 篇，其余在后台排队通读': 'Imported {n} papers — the rest are reading in the background',
-  '只认出 {n} 段，析读会比较粗': 'Only {n} paragraphs found — the deep read will be coarse',
+  '已导入 {n} 篇，其余排队通读中': '{n} imported — the rest are queuing for analysis',
+
+  '只认出 {n} 段，析读会较粗': 'Only {n} paragraphs found — analysis will be coarse',
+
   '已更新到 {v}，刷新中…': 'Updated to {v} — refreshing…',
   '{m} 分 {s} 秒': '{m}m {s}s',
   '{s} 秒': '{s}s',
@@ -104,7 +111,8 @@ const EN = {
   '收起': 'Less',
   '展开': 'More',
   '问 ↗': 'Ask ↗',
-  '跳到纸上这句：{q}': 'Jump to this sentence: {q}',
+  '跳到这句：{q}': 'Jump to this sentence: {q}',
+
   '全句': 'Full quote',
   '引文与原文略有出入': 'Quote differs slightly from the paper',
   '上一页': 'Previous page',
@@ -134,9 +142,12 @@ const EN = {
   '分析此图': 'Analyze figure',
   '分析公式': 'Analyze equation',
   '分析表格': 'Analyze table',
-  '分析这张图：画了什么、支持什么结论': 'Analyze this figure: what does it show, what conclusion does it support?',
-  '分析这个公式：每一步的含义和推导逻辑': 'Analyze this equation: the meaning of each step and the derivation',
-  '分析这张表：趋势、异常和可疑之处': 'Analyze this table: trends, anomalies, and anything suspicious',
+  '分析这张图：内容与结论': 'Analyze this figure: content and conclusion',
+
+  '分析这个公式：含义与推导': 'Analyze this equation: meaning and derivation',
+
+  '分析这张表：趋势、异常与疑点': 'Analyze this table: trends, anomalies, and caveats',
+
   '正在看图': 'Looking at the image…',
   '返回原位 · Alt+←': 'Back · Alt+←',
   '模型没返回内容，再试一次': 'The model returned nothing — try again',
@@ -144,16 +155,19 @@ const EN = {
   '先划选一段原文': 'Select some text in the paper first',
   '解释选区里的内容。': 'Explain what is inside the selection.',
   '讲解这张图。': 'Walk me through this figure.',
-  '先滚动到要译的段落': 'Scroll to the paragraph you want translated first',
+  '先滚到要译的段落': 'Scroll to a paragraph first',
+
   '译文已复制': 'Translation copied',
-  '钉到页边没成功：{m}': 'Could not pin to the margin: {m}',
+  '钉页边失败：{m}': 'Failed to pin to the margin: {m}',
+
   '没写上：{m}': 'Not saved: {m}',
   '没删成：{m}': 'Could not delete: {m}',
   '删这条批注？': 'Delete this note?',
   '译文版打不开，已切回原文': 'The translation could not be opened — back to the original',
   '双语版打不开，已切回原文': 'The dual version could not be opened — back to the original',
   '文档加载失败：{m}': 'Failed to load the document: {m}',
-  '这份文档渲染失败了：{m}': 'This document failed to render: {m}',
+  '渲染失败：{m}': 'Render failed: {m}',
+
   '你 · ': 'You · ',
   '问题': 'Questions',
   '速览': 'Overview',
@@ -310,7 +324,8 @@ const EN = {
   '正在读 Zotero 的库…': 'Reading your Zotero library…',
   '导入中…': 'Importing…',
   '导入 {n} 篇': 'Import {n}',
-  '已从 Zotero 导入 {n} 篇，后台通读中': 'Imported {n} from Zotero — reading in background',
+  '已导入 {n} 篇，通读中': 'Imported {n} from Zotero — analyzing',
+
   '连不上 Zotero——先把它打开，再回来点导入': "Can't reach Zotero — open it first, then try again",
   /* 数据对比表 */
   '数据对比 · {n} 篇': 'Comparison · {n} papers',
@@ -343,7 +358,8 @@ const EN = {
   '下载': 'Download',
   '稍后': 'Later',
   '立即重启并安装': 'Restart & install now',
-  '安装包下好了': 'Installer downloaded',
+  '下载完成': 'Download complete',
+
   '下载中 {p}%': 'Downloading {p}%',
   '使用指南': 'User guide',
   '模型': 'Model',
@@ -354,7 +370,8 @@ const EN = {
   'AI 眉批': 'AI margin notes',
   '我的眉批': 'My marginalia',
   '迁移数据目录': 'Move data folder',
-  '文库、批注与配置将迁到 {p}，重启后生效': 'Library, annotations and config will move to {p}. Restart to apply.',
+  '全部数据将迁到 {p}，重启后生效': 'All data will move to {p} — restart to apply',
+
   'DeepL Key': 'DeepL Key',
   '演示模式': 'Demo mode',
   '护眼底纹': 'Eye-care tint',
@@ -385,20 +402,26 @@ const EN = {
   '更新': 'Updates',
   '打开时自动检查': 'Check on startup',
   '检查中…': 'Checking…',
-  '已经是最新的（{v}）': 'Already up to date ({v})',
-  '没读到更新源：{m}': 'Could not read the feed: {m}',
+  '已是最新（{v}）': 'Already up to date ({v})',
+
+  '更新源不可用：{m}': 'Update feed unavailable: {m}',
+
   '地址为空': 'feed address is empty',
   '窗口': 'Window',
-  '在独立窗口打开': 'Open in its own window',
+  '独立窗口': 'App window',
+
   '退出 eggpaper': 'Quit eggpaper',
   '保存': 'Save',
   '显示': 'Show',
   '隐藏': 'Hide',
-  '正在下载全文翻译引擎 {p}%': 'Downloading translation engine {p}%',
-  '引擎解压安装中…': 'Installing engine…',
+  '正在下载翻译引擎 {p}%': 'Downloading translation engine {p}%',
+
+  '解压安装中…': 'Unpacking engine…',
+
   '引擎预热中…': 'Warming up engine…',
   '已下载 {a} / {b} MB（{s}）': 'Downloaded {a} / {b} MB ({s})',
-  '装好后自动开始全文翻译': 'Full-paper translation starts automatically when done',
+  '装好后自动开始翻译': 'Translation starts automatically when done',
+
   '停止下载': 'Stop download',
   '待读': 'To read',
   '待读 {n} 篇': '{n} to read',
@@ -432,10 +455,12 @@ const EN = {
   '正在通读全文': 'Reading the whole paper',
   '没有匹配的论文': 'No matching papers',
   '眉批': 'Margin notes',
-  '眉批标了「{kind}」：「{note}」（引文：“{quote}”）。这条站得住吗？依据在哪？[¶{n}]': 'Margin note flagged “{kind}”: “{note}” (quoting “{quote}”). Does it hold? Where is the evidence? [¶{n}]',
+  '眉批「{kind}」：「{note}」（引文：“{quote}”）。站得住吗？依据在哪？[¶{n}]': 'Margin note "{kind}": "{note}" (quoting "{quote}"). Does it hold? Where is the evidence? [¶{n}]',
+
   '确定': 'OK',
   '第 {p} 页': 'Page {p}',
-  '讲这张图：画了什么、支持哪个结论、有何可疑。': 'This figure: what it shows, which conclusion it backs, anything suspicious.',
+  '讲这张图：内容、结论与疑点。': 'Explain this figure: content, conclusion, and caveats.',
+
   '识别文献信息': 'Recognize citation',
   '该实验回答：': 'This experiment answers: ',
   '重写': 'Rewrite',
@@ -476,14 +501,18 @@ const EN = {
   '两篇都保留': 'Keep both',
   '替换旧篇': 'Replace the old one',
   '已替换，问答、术语与分类已迁到新版': 'Replaced — Q&A, glossary and collections moved to the new version.',
-  '已替换；{n} 条页边卡在新版找不到了': 'Replaced; {n} margin card(s) no longer match the new version.',
+  '已替换；{n} 条页边卡没迁过去': 'Replaced; {n} margin notes could not migrate',
+
   '备份': 'Backup',
   '导出全库': 'Export library',
   '从备份恢复': 'Restore from backup',
   '恢复': 'Restore',
-  '正在打包文库，完成后自动下载': 'Packing your library — the download starts when it is done.',
-  '当前文库将被这份备份替换，重启后生效。': 'Your library will be replaced by this backup — restart to apply.',
-  '备份已就位，重启后生效': 'Backup staged — restart to apply.',
+  '正在打包，完成后自动下载': 'Packing — the download starts when ready',
+
+  '现有数据将被这份备份替换，重启后生效。': 'Current data will be replaced by this backup — restart to apply.',
+
+  '已恢复，重启后生效': 'Restored — restart to apply',
+
   '导出引用表格': 'Export citation table',
   '基本信息': 'Basics',
   '参考文献条目': 'Reference entries',
@@ -493,7 +522,8 @@ const EN = {
   '至少选一种格式': 'Pick at least one format',
   '导出 CSV · {n} 篇': 'Export CSV · {n} papers',
   '导出中…': 'Exporting…',
-  '{n} 篇未识别过引用，引用列为空': '{n} paper(s) have no recognized citation info — those cells are empty.',
+  '{n} 篇未识别出引用': '{n} papers with no recognizable citations',
+
   '一眼卡': 'Glance',
   '七问': 'Seven questions',
   '问答': 'Q&A',
@@ -512,7 +542,8 @@ const EN = {
   '复制失败': 'Copy failed',
   '没有匹配的条目': 'No matching items',
   '去设置配好模型': 'Add a model in settings',
-  'eggpaper 已退出，可以关掉这个页面': 'eggpaper has quit — you can close this page',
+  'eggpaper 已退出，可关闭此页': 'eggpaper has quit — you can close this page',
+
   '《{t}》翻译完成': '“{t}” — translation done',
   '翻页': 'Page up / down',
   '这张卡': 'This card',
@@ -555,7 +586,8 @@ const EN = {
   '已收进学科库': 'Saved to subject glossary',
 
   // ---- 全库分层问答 ----
-  '正在翻 {n} 篇找相关段落…': 'Scanning {n} papers for relevant passages…',
+  '正在翻 {n} 篇…': 'Scanning {n} papers…',
+
 }
 
 /* t：界面文案的统一出口。en 模式查词典，查不到（新文案漏翻、后端动态消息）原样回落。

@@ -778,7 +778,7 @@ def _dialog_throttle():
         while _dialog_times and now - _dialog_times[0] > 60.0:
             _dialog_times.pop(0)
         if (_dialog_times and now - _dialog_times[-1] < 1.0) or len(_dialog_times) >= 6:
-            raise HTTPException(429, "对话框打开太频繁，稍等一两秒再试")
+            raise HTTPException(429, "操作太频繁，稍候再试")
         _dialog_times.append(now)
 
 @app.post("/api/data/pick")
@@ -923,7 +923,7 @@ def _stage_restore(src: str):
             need = sum(i.file_size for i in z.infolist())
             free = shutil.disk_usage(config.DATA_DIR).free
             if need > free * 0.9:
-                raise HTTPException(400, f"磁盘空间不够，这份备份约需 {need // (1 << 20)} MB")
+                raise HTTPException(400, f"磁盘空间不足，备份约需 {need // (1 << 20)} MB")
             shutil.rmtree(staged, ignore_errors=True)
             os.makedirs(staged)
             for info in z.infolist():
@@ -1168,7 +1168,7 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
             os.remove(path)
         except OSError:
             pass
-        raise HTTPException(400, f"这份 PDF 读不了：{_human_msg(e)}")
+        raise HTTPException(400, f"PDF 读不了：{_human_msg(e)}")
     db.create_paper(pid, filename, title, path, n_pages, authors)
     if pdf_hash:
         db.update_paper(pid, pdf_hash=pdf_hash)
@@ -1450,7 +1450,7 @@ def paper_title(pid: str, body: dict):
             or _job_live("marginalia", pid) or p["marginalia_status"] == "running" \
             or p["translate_status"] in ("running", "queued") \
             or translate_full.job(pid)["status"] in ("running", "queued"):
-        raise HTTPException(400, "这篇还有析读或翻译在跑，结束后再改标题")
+        raise HTTPException(400, "有析读或翻译在跑，结束后再改")
     db.set_paper_meta(pid, title=title)
     renamed = _align_names(pid)
     if renamed:
@@ -2361,7 +2361,7 @@ def ask_visual(body: dict):
         return {"answer": "〔演示模式〕视觉问答需要配置视觉模型。"}
     ans = llm.vision_ask(image, question)
     if not ans.strip():
-        raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
+        raise HTTPException(503, "模型没返回内容，重试一次")
     return {"answer": ans}
 
 # ---------------- 七问里需要现场生成的那几问 ----------------
@@ -2512,7 +2512,7 @@ def _six_compute(pid: str, key: str) -> dict:
             _paper_or_404(pid)          # 排队等生成时论文被删：404，别把 None 递进生成
         data = _gen_six(p, key)
         if not (data.get("text") or data.get("items")):
-            raise HTTPException(503, "模型这次没返回内容，重试一次通常就好")
+            raise HTTPException(503, "模型没返回内容，重试一次")
         if _pid_gone(pid):      # 生成隔着一次 LLM 调用，期间论文可能已被删/被替换：只返回不落库
             return data
         db.answer_put(pid, key, data)
@@ -2549,7 +2549,7 @@ def compare_papers(body: dict):
         if not p:
             raise HTTPException(404, "有篇论文不存在，刷新文库后再试")
         if not db.get_paragraphs(pid, with_lines=False):
-            raise HTTPException(400, "选中的篇里有扫描件（没有文字层），它进不了对比")
+            raise HTTPException(400, "扫描件没有文字层，进不了对比")
         papers.append(p)
 
     def material_of(xpid):
@@ -3058,7 +3058,7 @@ def _figures_for(pid: str, p: dict) -> list:
         try:
             out = _figure_regions(src)
         except Exception as e:
-            raise HTTPException(400, f"这份 PDF 解析图表时失败了：{str(e)[:120]}")
+            raise HTTPException(400, f"解析图表失败：{str(e)[:120]}")
     finally:
         ev.set()
         if mine:
@@ -3164,7 +3164,7 @@ def _open_pdf(src: str):
     try:
         return pymupdf.open(src)
     except Exception as e:
-        raise HTTPException(400, f"这份 PDF 打不开：{str(e)[:120]}")
+        raise HTTPException(400, f"PDF 打不开：{str(e)[:120]}")
 
 def _type_out(text: str, step: int = 3, delay: float = 0.02):
     """演示流的假打字：每次吐 step 个字符，拖出真流式的手感。"""
@@ -3592,7 +3592,7 @@ def translate_full_start(pid: str, force: bool = False):
     if force and translate_full.job(pid)["status"] in ("running", "queued"):
         # 「重新全文翻译」按在在跑的任务上要明说，别静默空转——用户以为重译开始了，
         # 界面却一直停在旧任务上（start() 的在途去重会原样退回旧 job）
-        raise HTTPException(400, "这篇已经在翻译中了，等它跑完再重新翻译")
+        raise HTTPException(400, "正在翻译中，稍后再试")
     svc = (cfg["pdf2zh"].get("service") or "bing").strip()
     envs, host = _pdf2zh_env(svc, cfg)
     if not force:
@@ -3730,7 +3730,7 @@ def glossary_generate(pid: str):
         got = _demo_terms(p["title"], []) if _demo_mode() else llm.extract_terms(
             p["title"], db.get_paragraphs(pid))
         if not _save_terms(pid, got):
-            raise HTTPException(503, "模型这次没给出术语，重试一次通常就好")
+            raise HTTPException(503, "模型没给出术语，重试一次")
         return {"items": db.glossary_list(pid), "generated": True, "abbrs": _abbrs_of(pid)}
 
 def _abbrs_of(pid: str) -> dict:

@@ -463,7 +463,7 @@ async function askFigure(f) {
     figIdx.value = -1
     const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
     store.visPrefill = {
-      img, question: t('讲这张图：画了什么、支持哪个结论、有何可疑。'),
+      img, question: t('讲这张图：内容、结论与疑点。'),
       page: f.page, paraIdx: para?.idx ?? 0, rect: { x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y1 },
     }
   } catch (e) { toast(t('取图失败：{m}', { m: e.message })) }
@@ -845,7 +845,7 @@ async function saveToGlobal(term) {
             <span class="t-zh">{{ term.term_zh }}</span>
             <button v-if="inPaper(term)" class="t-go" :title="t('在文中查找')"
                     @click="findTerm(term.term_en)">↗</button>
-            <span v-else class="t-no" :title="t('本文正文没有这个词')">—</span>
+            <span v-else class="t-no" :title="t('本文未出现这个词')">—</span>
             <button class="t-add" :title="t('收进学科库')" @click="saveToGlobal(term)">☆</button>
             <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
           </div>

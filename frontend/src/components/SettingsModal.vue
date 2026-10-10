@@ -47,7 +47,7 @@ async function moveData() {
   if (target.replace(/[\\/]+$/, '') === f.data_dir.replace(/[\\/]+$/, '')) return
   const yes = await confirmBox({
     title: t('迁移数据目录'), ok: t('迁移'), danger: false,
-    body: t('文库、批注与配置将迁到 {p}，重启后生效', { p: target }),
+    body: t('全部数据将迁到 {p}，重启后生效', { p: target }),
   })
   if (!yes) return
   savingData.value = true
@@ -65,7 +65,7 @@ function exportBackup() {
   a.href = api.backupExportUrl()
   a.download = ''
   a.click()
-  toast(t('正在打包文库，完成后自动下载'))
+  toast(t('正在打包，完成后自动下载'))
 }
 async function restoreBackup() {
   let path = ''
@@ -76,12 +76,12 @@ async function restoreBackup() {
   if (!path) return
   const yes = await confirmBox({
     title: t('从备份恢复'), ok: t('恢复'),
-    body: t('当前文库将被这份备份替换，重启后生效。'),
+    body: t('现有数据将被这份备份替换，重启后生效。'),
   })
   if (!yes) return
   try {
     await api.backupRestore(path)
-    toast(t('备份已就位，重启后生效'))
+    toast(t('已恢复，重启后生效'))
   } catch (e) { toast(e.message) }
 }
 
@@ -140,13 +140,13 @@ async function checkNow() {
     store.settings = await api.settings()
     const r = await checkUpdate(true, false)
     if (r?.has_update) { emit('close'); return }         // 有新版：把弹窗让给更新卡片
-    toast(r?.ok ? t('已经是最新的（{v}）', { v: r.current }) : t('没读到更新源：{m}', { m: r?.reason || t('地址为空') }))
+    toast(r?.ok ? t('已是最新（{v}）', { v: r.current }) : t('更新源不可用：{m}', { m: r?.reason || t('地址为空') }))
   } finally {
     checking.value = false                               // 失败也不能把按钮永远停在「检查中…」
   }
 }
 
-/* 在独立窗口打开：没有地址栏/标签页的一个窗口，任务栏里就是 eggpaper 自己。 */
+/* 独立窗口：没有地址栏/标签页的一个窗口，任务栏里就是 eggpaper 自己。 */
 async function openWindow() {
   try { await api.nativeWindow() }
   catch (e) { toast(e.message) }
@@ -353,7 +353,7 @@ function save() {
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('窗口') }}</span>
-        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openWindow">{{ t('在独立窗口打开') }}</button>
+        <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)" @click="openWindow">{{ t('独立窗口') }}</button>
       </div>
       <div class="f-actions">
         <button v-if="store.update.packaged" class="quit-btn"

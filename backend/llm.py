@@ -194,7 +194,7 @@ def parse_json(text: str) -> dict:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     i, j = text.find("{"), text.rfind("}")
     if i < 0:
-        raise ValueError("模型这次没按约定的格式回，重试一次通常就好")
+        raise ValueError("模型没按约定格式回，重试一次")
     raw = text[i:j + 1] if j > i else text[i:]   # 截断的输出可能整个右括号都没了，交给 _json_patch 补
     no_curly = raw.replace("“", '"').replace("”", '"')
     patched = _json_patch(no_curly)
@@ -416,13 +416,13 @@ def human_error(exc: Exception) -> str:
     if "402" in msg or "insufficient" in low or "quota" in low:
         return "账户余额/额度不足，模型服务拒绝了请求"
     if "timeout" in low or "timed out" in low:
-        return "模型服务超时了，重试一次通常就好"
+        return "模型服务超时，重试一次"
     if "connect" in low or "connection" in low:
         return "连不上模型服务，检查网络与 base_url"
     if "404" in msg and "model" in low:
         return "模型名不对（404），去设置里核对"
     if isinstance(exc, (json.JSONDecodeError, ValueError)):
-        return "模型这次没按约定的格式回，重试一次通常就好"
+        return "模型没按约定格式回，重试一次"
     detail = getattr(exc, "detail", None)
     if isinstance(detail, str) and detail:
         return detail             # FastAPI 的 HTTPException：detail 本来就是人话
@@ -1192,7 +1192,7 @@ def vision_ask(image_dataurl: str, question: str) -> str:
             _log_cache(data.get("usage") or {}, "视觉")
             if out.strip():
                 return out
-            last = RuntimeError("模型这次没返回内容，重试一次通常就好")
+            last = RuntimeError("模型没返回内容，重试一次")
         except (httpx.TransportError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
             last = e
     raise last

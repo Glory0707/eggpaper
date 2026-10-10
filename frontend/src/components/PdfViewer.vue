@@ -255,7 +255,7 @@ async function load({ keepPlace = false } = {}) {
     await renderAll({ early: settle })
   } catch (e) {
     console.error('[eggpaper] 渲染失败：', e)
-    toast(t('这份文档渲染失败了：{m}', { m: String(e.message || e).slice(0, 120) }), 6000)
+    toast(t('渲染失败：{m}', { m: String(e.message || e).slice(0, 120) }), 6000)
     stopCreep()
     loadPct.value = 1
     ready.value = true
@@ -868,7 +868,7 @@ async function pinSel() {
     if (!sel.zh) return
     try {
       await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
-    } catch (e) { toast(t('钉到页边没成功：{m}', { m: e.message })); return }
+    } catch (e) { toast(t('钉页边失败：{m}', { m: e.message })); return }
     await refreshM()
     closeSel()
   } finally { pinning = false }
@@ -1128,7 +1128,7 @@ function step(dir) {
 
 async function translateCurrent() {
   if (store.readingPara) await translateParaAndPin(store.readingPara)
-  else toast(t('先滚动到要译的段落'))
+  else toast(t('先滚到要译的段落'))
 }
 
 /* ---------------- 截图：拖拽框选，选区直接成图（Windows 截图的手感） ----------------
@@ -1554,7 +1554,7 @@ watch(store.marginalia, m => {
               <div class="mg-body">{{ prettyChem(n.note) }}</div>
                             <div class="mg-quote-row">
                 <span class="mg-quote" :class="{ all: openQuote === n.id }"
-                      :title="t('跳到纸上这句：{q}', { q: anchorText(n) })" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
+                      :title="t('跳到这句：{q}', { q: anchorText(n) })" @click.stop="jumpQuote(n)">“{{ quoteShown(n) }}”</span>
                 <button v-if="anchorText(n).length > 44" class="mg-qall" @click.stop="toggleQuote(n)">
                   {{ openQuote === n.id ? t('收起') : t('全句') }}
                 </button>
@@ -1662,9 +1662,9 @@ watch(store.marginalia, m => {
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" @keydown.escape="closeVis" :placeholder="t('问这个选区…')" />
       <div class="sp-actions">
-                <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图：画了什么、支持什么结论'))">{{ t('分析此图') }}</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式：每一步的含义和推导逻辑'))">{{ t('分析公式') }}</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表：趋势、异常和可疑之处'))">{{ t('分析表格') }}</button>
+                <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图：内容与结论'))">{{ t('分析此图') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式：含义与推导'))">{{ t('分析公式') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表：趋势、异常与疑点'))">{{ t('分析表格') }}</button>
       </div>
       <div v-if="vis.busy" class="vp-state">{{ t('正在看图') }}</div>
       <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>

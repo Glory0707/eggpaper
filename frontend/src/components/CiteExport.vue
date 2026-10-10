@@ -69,7 +69,7 @@ async function doExport() {
     // BOM：Excel 打开中文不乱码
     const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
     saveBlob(blob, `eggpaper-引用-${new Date().toISOString().slice(0, 10)}.csv`)
-    if (missing) toast(t('{n} 篇未识别过引用，引用列为空', { n: missing }))
+    if (missing) toast(t('{n} 篇未识别出引用', { n: missing }))
     emit('update:open', false)
   } catch (e) {
     toast(e.message)

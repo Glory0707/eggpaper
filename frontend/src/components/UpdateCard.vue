@@ -27,7 +27,7 @@ async function startDownload() {
       store.update = { ...store.update, prog: p }
       if (p.state === 'ready' || p.state === 'error') {
         stopPoll()
-        if (p.state === 'ready') toast(t('安装包下好了'))
+        if (p.state === 'ready') toast(t('下载完成'))
       }
     }, 500)
   } catch (e) { toast(e.message) }
@@ -66,7 +66,7 @@ const mb = n => (n / 1048576).toFixed(1)
       </div>
 
       <div class="upd-notes" v-if="d.notes">{{ d.notes }}</div>
-      <div class="upd-notes muted" v-else>{{ t('这一版没有更新说明') }}</div>
+      <div class="upd-notes muted" v-else>{{ t('本版无更新说明') }}</div>
 
             <div class="upd-prog" v-if="state === 'downloading'">
         <div class="upd-bar"><i :style="{ width: pct + '%' }" /></div>
@@ -76,7 +76,7 @@ const mb = n => (n / 1048576).toFixed(1)
         </div>
       </div>
       <div class="upd-note err" v-if="state === 'error'">{{ t(d.prog.error) }}</div>
-      <div class="upd-note" v-if="d.installing">{{ t('安装器已拉起，可以关了') }}</div>
+      <div class="upd-note" v-if="d.installing">{{ t('安装器已启动') }}</div>
 
       <div class="f-actions">
         <button v-if="!d.required" @click="close">{{ t('稍后') }}</button>

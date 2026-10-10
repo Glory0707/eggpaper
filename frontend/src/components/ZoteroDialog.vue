@@ -70,10 +70,10 @@ async function doImport() {
   busy.value = false
   close()
   if (ok) {
-    toast(t('已从 Zotero 导入 {n} 篇，后台通读中', { n: ok }))
+    toast(t('已导入 {n} 篇，通读中', { n: ok }))
     emit('imported')
   } else {
-    toast(t('选中的都已在库里'))
+    toast(t('选中项已在库里'))
   }
   refreshCollections()
 }
