@@ -1239,7 +1239,7 @@ def _short_answer(title: str, paras: list, ask: str, payload: str) -> dict:
     data = chat_json([
         {"role": "system", "content": _doc_system(title, paras, ask + _CITE_TAIL + _lang_tail())},
         {"role": "user", "content": payload + "\n\n" + _kick("回答这一问题")},
-    ], max_tokens=3000, temperature=0.3, no_think=True, scene="七问")
+    ], max_tokens=3000, temperature=0.3, scene="七问")
     return {"text": str(data.get("text") or "").strip()[:500]}
 
 def answer_motive(title: str, paras: list, gaps: list, backgrounds: list, claims: list) -> dict:
@@ -1323,7 +1323,7 @@ def answer_next(title: str, paras: list, limits: list, exts: list, claims: list,
             '"text":"<做什么、为什么，句尾带依据段落号 ¶n，有依据就标>",'
             '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。' + _lang_tail())},
         {"role": "user", "content": payload + "\n\n" + _kick("给出接下来的方向")},
-    ], max_tokens=4000, temperature=0.45, no_think=True, scene="七问")
+    ], max_tokens=4000, temperature=0.45, scene="七问")
     out = _items(data.get("items"))
     out["v"] = 3
     return out
@@ -1350,7 +1350,7 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
         {"role": "user", "content":
             f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
             "[主张]\n" + _claims_lines(claims) + "\n\n" + _kick("给出三个学科视角")},
-    ], max_tokens=4000, temperature=0.6, no_think=True, scene="七问")
+    ], max_tokens=4000, temperature=0.6, scene="七问")
     items = _items(data.get("items"))
     items["v"] = 3
     return items
