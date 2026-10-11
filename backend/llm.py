@@ -59,7 +59,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             if r.status_code == 400 and budget > 2048 and \
                     "max_tokens" in (r.text or ""):
                 # 有的供应商输出上限低于我们给的 16k，400 里点名 max_tokens——
-                # 折半重试，别让整篇析读/眉批一击即灭
+                # 折半重试，别让整篇析读一击即灭
                 budget = max(2048, budget // 2)
                 last_err = RuntimeError("这个模型的输出上限不够，换个模型或稍后再试")
                 continue
@@ -1128,11 +1128,11 @@ def answer_next(title: str, paras: list, limits: list, exts: list, claims: list)
     return out
 
 def answer_doubt(title: str, paras: list, limits: list, claims: list, kind: str = "research") -> dict:
-    """哪里可疑：q5「还有什么没解决」升级后的现场生成（眉批退场后批判性阅读的承接位）。
+    """哪里可疑：七问⑤「哪里可疑、还有什么没解决？」的现场生成——批判性阅读的承接位。
 
     材料只有全文 + 骨架的局限段（导航），可疑点由模型自己找——真端点 A/B 实测过
-    它找得到预埋的数字冲突与"无对照"坑，不需要预先批注一遍垫底。刀法继承原眉批
-    验证过的规则：冲突要指得出和哪里对不上、语言文风一律不批、措辞就事论事留余地。"""
+    它找得到预埋的数字冲突与"无对照"坑，不需要预先垫底。规则：冲突要指得出和哪里
+    对不上、语言文风一律不批、措辞就事论事留余地。"""
     payload = (f"论文标题：{title or ''}\n\n"
                f"[骨架认为的局限段]\n{_paras_block(limits, 400)}\n\n"
                "[主张]\n" + _claims_lines(claims))

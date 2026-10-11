@@ -2037,7 +2037,7 @@ def _applog(msg: str):
 llm.applog = _applog     # token 账从 print 换成落盘：打包版没有 stdout，
                          # 不注入的话用户"钱花在哪"永远只有平台账单一个答案
 
-USER_NOTE_KINDS = ("lookup", "region", "note")   # 用户自己的页边钉子；AI 眉批已退场，存量行不下发
+USER_NOTE_KINDS = ("lookup", "region", "note")   # 页边只下发用户钉的三种 kind；老库里 kind 在此之外的存量行不下发
 
 @app.get("/api/papers/{pid}/marginalia")
 def marginalia_get(pid: str):
@@ -2049,7 +2049,7 @@ def marginalia_get(pid: str):
     if any(not n["rect"] for n in notes):
         _resolve_rects(pid)          # 老钉子补定位（每条只试一次，见 _resolve_rects）
         notes = user_notes()
-    return {"status": "done", "error": None, "progress": None, "notes": notes}
+    return {"notes": notes}
 
 @app.post("/api/papers/{pid}/analysis/cancel")
 def analysis_cancel(pid: str):
@@ -2086,7 +2086,7 @@ def pin_lookup(pid: str, body: dict):
         page = 0
     if (body.get("kind") or "").strip() == "note":
         return {"id": db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
-                                        kind="note", band="mine")}
+                                        kind="note")}
     rect = body.get("rect") or None
     if rect:
         try:
@@ -2095,14 +2095,14 @@ def pin_lookup(pid: str, body: dict):
             rect = None
     if rect:
         return {"id": db.marginalia_add(pid, para_idx, page, quote[:200],
-                                        note[:600], kind="region", rect=rect, band="mine")}
+                                        note[:600], kind="region", rect=rect)}
     dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
                (pid, para_idx))
     if dup:
         db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
         return {"id": dup[0]["id"]}
     mid = db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
-                            kind="lookup", band="mine")
+                            kind="lookup")
     return {"id": mid}
 
 @app.delete("/api/papers/{pid}/marginalia/{mid}")
@@ -2569,7 +2569,7 @@ def cite_table(body: dict):
 @app.get("/api/papers/{pid}/export.md")
 def export_md(pid: str):
     """导出笔记 .md。栏目标题跟随界面语言（ui_lang），内容本身保持原文
-    （摘要/眉批是生成时的语言，问答是你说过的话——导出不做翻译）。"""
+    （摘要等生成内容用生成时的语言，问答与页边批注是你说过的话——导出不做翻译）。"""
     p = _paper_or_404(pid)
     en = (config.load().get("ui_lang") or "zh") == "en"
     T = {
@@ -2665,7 +2665,7 @@ def export_md(pid: str):
     if notes:
         lines += [f"## {L('notes')}", ""]
         for n in notes:
-            zh = (n.get("label") or "").strip() or KIND_ZH.get(n["kind"], n["kind"])
+            zh = KIND_ZH.get(n["kind"], n["kind"])
             lines.append(f"- **[你 · {zh}] {n['note']}** — “{n['quote'][:48]}”")
         lines.append("")
     convs = db.conv_list(pid)

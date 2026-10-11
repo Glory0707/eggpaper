@@ -11,7 +11,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, askNotePrefill, paraByIdx, bandOf, kindColor, kindText, kindZH } from '../store'
+import { api, store, toast, askNotePrefill, paraByIdx, kindZH } from '../store'
 import { confirmBox } from '../dialog'
 import { lsGet, lsSet } from '../ls'
 import { copyWithToast } from '../clip'
@@ -673,11 +673,11 @@ function quoteLoose(n) {
 const hotNote = ref(null)
 function hoverNote(id) { hotNote.value = id }
 
-/* 批注的标签：九种常用款用它自己的名字；模型自造的类型（kind='custom'）用模型起的标签；
-   你自己钉的那些前面加"你 · "——一眼分得清哪句是别人说的、哪句是你自己写的。 */
+/* 页边卡的标签：你自己钉的那几种各有名字，前面加"你 · "——
+   页边只有你自己的东西，一眼知道这句是谁写的。 */
 function kindLabel(n) {
   const zh = kindZH(n)
-  return USER_KINDS.has(n.kind) && zh ? t('你 · ') + zh : zh
+  return zh ? t('你 · ') + zh : zh
 }
 
 /* 引文默认只看开头，想看全句点「全句」。
@@ -924,7 +924,7 @@ async function refreshM() {
 }
 
 async function unpin(n) {
-  // 自己写的话删了就没了，问一声；查译/框选这类 AI 卡可以随手删（重划一次就有）
+  // 自己写的话删了就没了，问一声；查译/框选这类卡重划一次就有，随手删不用拦
   if (n.kind === 'note') {
     const yes = await confirmBox({ title: t('删这条批注？'), ok: t('删除'), danger: true,
                                    body: (n.note || '').slice(0, 80) })
@@ -1080,7 +1080,7 @@ async function applyJump() {
   applyJump._t = setTimeout(() => (backChip.value = false), 3000)
 }
 
-/* 眉批卡片上的引文：点一下跳到纸上那句话，位置就是划线的位置 */
+/* 页边卡上的引文：点一下跳到纸上那句话，位置就是划线的位置 */
 function jumpQuote(n) {
   const boxes = markBoxes(n)
   const it = pageItem(n.page)
@@ -1476,7 +1476,7 @@ watch(mnotes, (n, o) => {
   }
   measureNotes()
 })
-/* 活动篇的眉批由 App 轮询进全局 store——是自己的就收下（生成中的实时刷新走这条） */
+/* 活动篇的批注由 App 在增删后刷新进全局 store，页边卡跟着全局状态走 */
 watch(store.marginalia, m => {
   if (m.pid === props.pid && m.notes) mnotes.value = m.notes
 })
@@ -1529,8 +1529,8 @@ watch(store.marginalia, m => {
               </template>
 
                             <template v-for="{ n } in notesOnPage(it.origPage)" :key="'n' + n.id">
-                <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark" :data-nid="n.id"
-                     :class="['b-' + bandOf(n), { draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }]"
+                <div v-for="(b, bi) in markBoxes(n)" :key="bi" class="mg-mark mine" :data-nid="n.id"
+                     :class="{ draw: freshNotes, hot: hotNote === n.id, loose: quoteLoose(n) }"
                      :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
               </template>
             </div>
@@ -1541,7 +1541,7 @@ watch(store.marginalia, m => {
                          width: gutterW + 'px', marginLeft: gutterPad + 'px' }">
             <div v-for="{ n, top, pending } in notesOnPage(it.origPage)" :key="'mg' + n.id"
                  class="mg-note" :data-nid="n.id"
-                 :style="{ top: top + 'px', borderLeftColor: kindColor(n),
+                 :style="{ top: top + 'px',
                            width: Math.max(120, gutterW - 30) + 'px' }"
                  :class="{ fresh: freshNotes, pending, ping: pingId === n.id,
                            expanded: expandedNote === n.id,
@@ -1550,8 +1550,8 @@ watch(store.marginalia, m => {
                  @mouseenter="hoverNote(n.id)" @mouseleave="hoverNote(null)"
                  @click="toggleNote(n)">
               <div class="mg-head">
-                <span class="mg-dot" :style="{ background: kindColor(n) }"></span>
-                <span class="mg-kind" :style="{ color: kindText(n) }">
+                <span class="mg-dot"></span>
+                <span class="mg-kind">
                   {{ pending ? t('翻译中') : kindLabel(n) }}
                 </span>
                 <span v-if="(n.note || '').length > 34" class="mg-more">{{ expandedNote === n.id ? t('收起') : t('展开') }}</span>

@@ -1,9 +1,9 @@
 """前端也要有"调用了但没定义/没导入"的闸门。
 
 来历：`App.vue` 里 `await refreshMarginalia()` 写了**两处**，而 `refreshMarginalia`
-从来没被 import——点「AI 眉批」时后端照常开始写，前端紧接着抛
+从来没被 import——用户点下按钮、后端照常开始干活，前端紧接着抛
 `ReferenceError: refreshMarginalia is not defined`：界面既不知道任务在跑、也不会刷新，
-只能靠离开再回来才看见批注。后端那侧 M4.6 加过同类检查（调用与定义对不上），
+只能靠离开再回来才看见结果。后端那侧 M4.6 加过同类检查（调用与定义对不上），
 前端一直缺这一道，于是这个 bug 从写下那天活到现在。
 
 做法：扒出每个 .js / .vue 的 script 块里**被当作函数调用**的裸标识符，减去
@@ -27,6 +27,7 @@ GLOBALS = {
     "FormData", "CustomEvent", "Event", "Intl", "Symbol", "WeakMap", "Proxy", "queueMicrotask",
     "getComputedStyle", "matchMedia", "Image", "Audio", "IntersectionObserver", "ResizeObserver",
     "MutationObserver", "AbortController", "TextEncoder", "TextDecoder", "requestIdleCallback",
+    "ClipboardItem",
     "open", "close", "scrollTo", "atob", "btoa", "DOMParser", "XMLHttpRequest", "EventSource", "Worker",
     # Vue 编译器宏与运行时
     "defineProps", "defineEmits", "defineExpose", "defineOptions", "defineSlots", "withDefaults",

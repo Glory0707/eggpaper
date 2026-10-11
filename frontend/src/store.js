@@ -3,10 +3,8 @@ import { api, kindZH } from './api'
 import { t, ui } from './i18n'
 import { lsGet, lsSet } from './ls'
 
-/* 只转出组件真的会 import 的那些。颜色/标签的字典（KIND_*、BAND_*）不再对外——
-   它们只该通过下面这四个解析口被读到，散出去就又会有人绕过口径直接取色。 */
-export { api, askStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
-         bandOf, kindColor, kindText, kindZH } from './api'
+/* 只转出组件真的会 import 的那些；页边卡的颜色/笔触统一在 styles.css，不经这里。 */
+export { api, askStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindZH } from './api'
 export { lsGet, lsSet, lsRemove } from './ls'
 
 
@@ -19,7 +17,7 @@ export const store = reactive({
   paper: null,
   paras: [],
   analysis: { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' },
-  marginalia: { status: 'none', notes: [], progress: null },
+  marginalia: { notes: [] },
   summary: null,
   summaryErr: '',
   settings: null,
@@ -191,7 +189,7 @@ export function goHome() {
   store.paper = null
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-  store.marginalia = { status: 'none', notes: [], progress: null }
+  store.marginalia = { notes: [] }
   store.readingPara = null
   store.summary = null
   store.summaryErr = ''
@@ -264,7 +262,7 @@ export async function activatePaper(pid, applyVariant = true) {
   }
   store.paras = []
   store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-  store.marginalia = { status: 'none', notes: [], progress: null, pid }
+  store.marginalia = { notes: [], pid }
   store.readingPara = null
   store.summary = null
   store.summaryErr = ''
@@ -315,7 +313,7 @@ export async function refreshMarginalia() {
     return        // 同上：篇没了就不刷
   }
   if (store.epoch !== mine) return             // 同上：别把上一篇的批注装到这篇上
-  Object.assign(store.marginalia, m, { notes: m.notes || [], pid: store.currentId })
+  Object.assign(store.marginalia, { notes: m.notes || [], pid: store.currentId })
 }
 
 /* 重新析读会把一眼卡一并作废（它是旧主张的产物），所以析读完成后要重新取一次。
@@ -334,7 +332,7 @@ export async function reloadSummary() {
   catch (e) { if (samePaper(mine)) store.summaryErr = e.message }
 }
 
-/* 眉批卡上的「问 ↗」：质疑这条批注的问题直接带进提问面板并发出去。
+/* 页边卡上的「问 ↗」：质疑这条批注的问题直接带进提问面板并发出去。
    原先在 RightRail（右栏的卡）和 PdfViewer（纸上的卡）各写一份，措辞一改就漏一边。 */
 export function askNotePrefill(n, { openRail = false } = {}) {
   if (openRail) store.viewer.railUser = true

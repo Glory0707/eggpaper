@@ -200,7 +200,7 @@ def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int, a
 def list_papers():
     return [dict(r) for r in q(
         "SELECT id, filename, title, authors, year, n_pages, created_at, last_read_at, analysis_status, "
-        "marginalia_status, translate_status, plan_day FROM papers ORDER BY created_at DESC")]
+        "translate_status, plan_day FROM papers ORDER BY created_at DESC")]
 
 
 def set_plan(pid: str, day: str):
@@ -345,7 +345,7 @@ def _txn():
             raise
 
 def purge_paper(pid: str):
-    """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、眉批、问答会话、分类归属，
+    """删一篇文献 = 它的全部痕迹都从本地消失：段落、骨架、页边批注、问答会话、分类归属，
     以及互引缓存里**它作为引用方**的那一半（作为被引方的行走 PAPER_TABLES 清单）。
     漏掉任何一张表都会留下读不出来的孤儿数据，所以一张一张点名列（见 PAPER_TABLES）。"""
     with _txn() as c:
@@ -379,7 +379,7 @@ def supersede(new_pid: str, old_pid: str) -> dict:
 
     跟着论文走的软资产整表改主：问答会话、术语、分类、阅读日志；Zotero 回填过的
     作者/年份比新解析的准，老的非空就带过来。挂在段落号上的东西不迁——新版的段落
-    结构已经变了，旧锚点留着只会指错地方（析读与眉批本来就会对新文重跑）；唯独
+    结构已经变了，旧锚点留着只会指错地方（析读本来就会对新文重跑）；唯独
     用户钉的页边卡按引句文本尽力跟迁（去空白比对），新版里找不回原句的只能丢下，
     丢了几条如实在统计里报。七问/一眼卡等缓存清掉：那是按旧文生成的。一个事务，
     中途崩了整体回滚。
@@ -494,7 +494,7 @@ def replace_paragraphs(pid: str, paras: list):
 
     先 commit 删除、再另起一次 commit 插入的话，中间有一个真实的"这篇 0 段"窗口：
     `GET /paragraphs` 的惰性回填、七问生成取语料都可能落进去，最坏是拿空语料
-    算眉批并以"成功"把整页批注覆盖掉。
+    跑生成、把空结论当成功写进缓存。
     """
     with _txn() as c:
         # 论文行已经不在（刚被删）就不插：惰性补解析的几秒里可能撞上 purge
@@ -573,10 +573,10 @@ def set_analysis(pid: str, claims: list, annos: list, status: str = "done", erro
         c.commit()
 
 def clear_ai_results() -> int:
-    """清掉"模型生成的、按篇缓存的"那些产物（换演示/真实模式时用）。
+    """清掉"一眼就能重算出来的卡片"（换演示/真实模式时用）。
 
-    只清模型产物：claims/annotations/marginalia 不动（那些是用户读过的成果，
-    重算代价高、而且换个模式未必想重来一遍）；这里清的是看一眼就重算得出来的卡片。
+    claims/annotations/marginalia 不动：前两者是整篇析读的产物、重算代价高，
+    后者是用户钉的页边卡（用户资产）；这里清的是 summary/suggest/… 这些缓存卡。
     """
     cols = ("summary", "suggest", "advisor", "method_card", "citation", "abbrs", "evidence_qs")
     n = q("SELECT COUNT(*) FROM papers")[0][0]
@@ -909,17 +909,17 @@ def qa_clear(pid: str):
 
 def get_marginalia(pid: str):
     return [dict(r) for r in q(
-        "SELECT id, para_idx, page, quote, kind, note, label, band, rect FROM marginalia "
+        "SELECT id, para_idx, page, quote, kind, note, rect FROM marginalia "
         "WHERE paper_id=? ORDER BY page, para_idx", (pid,))]
 
 def marginalia_set_rect(mid: int, rect: dict):
     q("UPDATE marginalia SET rect=? WHERE id=?", (json.dumps(rect), mid), commit=True)
 
 def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, kind: str = "lookup",
-                   rect: dict = None, label: str = "", band: str = "") -> int:
-    return q_insert("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect, label, band) "
-                    "VALUES(?,?,?,?,?,?,?,?,?)",
-                    (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None, label, band))
+                   rect: dict = None) -> int:
+    return q_insert("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None))
 
 def marginalia_delete(mid: int, pid: str = None):
     """pid 给了就校验归属：URL 是 A 篇、mid 是 B 篇的卡，删 B 就是越权（对抗轮实锤）。"""
