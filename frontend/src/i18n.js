@@ -123,6 +123,8 @@ const EN = {
   '适页': 'Fit page',
   '查找': 'Find',
   '在论文里找…': 'Find in paper…',
+  '在原文里找…': 'Find in the original…',
+  '在译文里找…': 'Find in the translation…',
   '无结果': 'No matches',
   '退出框选': 'Exit framing',
   '已选 {n} 字符': '{n} characters selected',

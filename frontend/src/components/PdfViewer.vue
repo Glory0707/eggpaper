@@ -40,7 +40,7 @@ import { translateStream } from '../api'
 import MdLite from './MdLite.vue'
 import EggMark from './EggMark.vue'
 import { vDrag } from '../drag'
-import { t, isEn } from '../i18n'
+import { t, isEn, ui } from '../i18n'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -731,15 +731,24 @@ function quoteY(n) {
   return (paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value
 }
 const currentHit = computed(() => searchHits.value[searchAt.value] || null)
-const searchHitsByPage = computed(() => {
+/* 查找范围＝当前版面，占位文案把这层语义说出来：原文/译文各自一边，双语两边都在 */
+const searchPlaceholder = computed(() => {
+  ui.lang                                   // 语言切换要跟着重算（t() 本身不惹响应式）
+  return t(store.viewer.variant === 'mono' ? '在译文里找…'
+    : store.viewer.variant === 'dual' ? '在论文里找…' : '在原文里找…')
+})
+/* 命中按**这一项**（窗格里的那一页）归组，不按页号：译文/双语里译文页的 origPage 是 -1，
+   按页号归组的话它们彼此不分、还会把框画到原文页上。gi 就是 flatItems 的下标，
+   每一项唯一——双向都对得上。 */
+const searchHitsByGi = computed(() => {
   const m = new Map()
   for (const h of searchHits.value) {
-    if (!m.has(h.page)) m.set(h.page, [])
-    m.get(h.page).push(h)
+    if (!m.has(h.gi)) m.set(h.gi, [])
+    m.get(h.gi).push(h)
   }
   return m
 })
-function searchHitsOnPage(pno) { return searchHitsByPage.value.get(pno) || [] }
+function searchHitsOnItem(it) { return searchHitsByGi.value.get(it.gi) || [] }
 
 const progPct = ref(0)
 function updateProg() {
@@ -998,15 +1007,17 @@ async function runSearch() {
   const prev = lastSearchQ === q && searchAt.value >= 0 ? searchHits.value[searchAt.value] : null
   const hits = []
   const items = flatItems.value
+  /* 查找范围＝**当前版面**看得见的文字：原文版面查原文的文字层、译文版面查译文、
+     双语版面两边都查。以前这里跳过了 origPage < 0 的项（译文页整类），于是译文里
+     中英文都查不到；现在逐项扫各自渲染出的文字层，版面是哪种就查哪种。 */
   for (let idx = 0; idx < items.length; idx++) {
     const it = items[idx]
-    if (it.origPage < 0) continue
     const el = pageEls.value[it.gi]
     if (!el?.querySelector('.textLayer')) continue
-    for (const h of findAllRects(el, q)) hits.push({ ...h, page: it.origPage, gi: it.gi, k: scale.value })
+    for (const h of findAllRects(el, q)) hits.push({ ...h, gi: it.gi, k: scale.value })
     if ((idx & 15) === 15) await new Promise(r => setTimeout(r, 0))   // 大部头分片扫描：每 16 页让出主线程，别把输入卡死
   }
-  hits.sort((a, b) => (a.page - b.page) || (a.y - b.y))
+  hits.sort((a, b) => (a.gi - b.gi) || (a.y - b.y))
   searchHits.value = hits
   lastSearchQ = q
   let at = -1
@@ -1016,7 +1027,7 @@ async function runSearch() {
       const oldY = prev.rects[0].y * (scale.value / prev.k)
       let best = Infinity
       for (let i = 0; i < hits.length; i++) {
-        const d = Math.abs(hits[i].page - prev.page) * 1e4 + Math.abs(hits[i].rects[0].y - oldY)
+        const d = Math.abs(hits[i].gi - prev.gi) * 1e4 + Math.abs(hits[i].rects[0].y - oldY)
         if (d < best) { best = d; at = i }
       }
     }
@@ -1031,8 +1042,7 @@ function gotoHit(i) {
   if (!hits.length) return
   searchAt.value = (i + hits.length) % hits.length
   const h = hits[searchAt.value]
-  const it = pageItem(h.page)
-  const el = it && pageEls.value[it.gi]
+  const el = pageEls.value[h.gi]
   if (!el) return
   scrollToY(el.offsetTop + h.rects[0].y * hitK(h) - scroller().clientHeight * 0.3, true)
 }
@@ -1239,12 +1249,15 @@ const viewerApiObj = { step, translateCurrent, startShot, jumpBack, translateSel
 watch(() => props.pid === store.currentId, act => { if (act) store.viewerApi = viewerApiObj }, { immediate: true })
 
 function openSearch() { searchOpen.value = true }
-/* 别的面板（术语表）说"去原文里找这个词"：预填 + 打开 + 自动搜（searchQ 的 watch 会跑）。
-   术语和原文本来是两个各自翻的地方，连起来之后"这个词在这篇里怎么用的"才问得出口。 */
+/* 别的面板（术语表/一眼卡关键词）说"去文中找这个词"：预填 + 打开 + 自动搜。
+   术语和关键词都是**英文**（取自原文），所以：
+   - 原文版面：直接搜。
+   - 双语版面：直接搜——原文那半就摆在眼前，不用把人从双语里拽出去。
+   - 译文版面：切回原文再搜（译文页里通常没有这几个词，原地搜只会看到"无结果"）。 */
 let pendingFind = null       // 等这一轮渲染完再搜（换模式要重新出图、建文字层）
 function findInPaper(q) {
   if (!q) return
-  if (store.viewer.variant !== 'original') {
+  if (store.viewer.variant === 'mono') {
     store.viewer.variant = 'original'
     pendingFind = q          // 换模式要重新出图、重建文字层：等 load() 收尾再搜
     return
@@ -1480,8 +1493,11 @@ watch(searchOpen, v => { if (v) nextTick(() => searchInputEl.value?.focus({ prev
 let searchT = null
 watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 320) })
 
-watch(() => store.viewer.variant, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
-watch(() => store.viewer.spread, () => { doneKeys.clear(); load({ keepPlace: true }); saveLater() })
+/* 换版面/换对开姿势：命中框先清掉——里面存的是旧布局的 gi 与页坐标，重排期间
+   画出来会落在错的页上。渲染收尾会按新文字层自动重搜（见 renderAll 末尾），
+   查询词不动，用户看到的是「结果跟着版面刷新」。 */
+watch(() => store.viewer.variant, () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
+watch(() => store.viewer.spread, () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
 watch(paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
@@ -1544,7 +1560,7 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
 
                             <div v-for="(b, bi) in flash?.gi === it.gi ? flash.boxes || [] : []" :key="'fb' + bi"
                    class="para-fade hot boxed" :style="{ left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px' }"></div>
-              <template v-for="(h, hi) in searchHitsOnPage(it.origPage)" :key="'s' + hi">
+              <template v-for="(h, hi) in searchHitsOnItem(it)" :key="'s' + hi">
                 <div v-for="(b, bi) in h.rects" :key="bi" class="find-hit" :class="{ cur: h === currentHit }"
                      :style="{ left: b.x * hitK(h) + 'px', top: b.y * hitK(h) + 'px',
                                width: b.w * hitK(h) + 'px', height: b.h * hitK(h) + 'px' }"></div>
@@ -1624,7 +1640,7 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
         <Transition name="pop">
     <div v-if="ready && searchOpen" class="desk-float find-bar" :style="{ left: midX + 'px', maxWidth: floatMax }"
          v-drag="{ key: 'findbar' }" data-drag>
-      <input ref="searchInputEl" v-model="searchQ" class="fb-input" :placeholder="t('在论文里找…')"
+      <input ref="searchInputEl" v-model="searchQ" class="fb-input" :placeholder="searchPlaceholder"
              @keydown.enter="searchStep(1)" @keydown.escape="closeSearch" />
       <span class="fb-count">
         {{ searchHits.length ? (searchAt + 1) + ' / ' + searchHits.length : (searchBusy ? '…' : t('无结果')) }}
