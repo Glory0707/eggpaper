@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, refreshMarginalia, reloadSummary, checkUpdate, loadVersion, startLibraryWatch } from './store'
+import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, reloadSummary, checkUpdate, loadVersion, startLibraryWatch } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
@@ -25,7 +25,6 @@ const dragOver = ref(false)
 const gPending = ref(false)
 const VARIANTS = ['original', 'mono', 'dual']
 let pollTimer = null
-let marginFastTimer = null     // 眉批运行时那条 1 秒快轮询（跑完即停）
 let _lastErrToast = { msg: '', at: 0 }   // 全局兜底报错的限流记号
 
 /* ---- 蛋宠物：顶栏一枚、书桌空态一枚大的，同一套脾气的两个实例。
@@ -398,12 +397,6 @@ async function poll() {
   if (!store.currentId) return
   try { if (anaBusy.value) await refreshAnalysis() } catch { /* 下一个 3 秒再试 */ }
   try {
-    if (store.marginalia.status === 'running') {
-      await refreshMarginalia()
-      startMarginFast()      // 刷新/换篇回来时也接上快轮询（否则只能等 3 秒那条）
-    }
-  } catch { /* 同上 */ }
-  try {
     const p = store.papers.find(x => x.id === store.currentId)
     if (p && p.translate_status === 'running') await pollTranslate()
   } catch { /* 同上 */ }
@@ -576,17 +569,6 @@ async function doAnalyze() {
   } finally { anaStarting = false }
 }
 
-let margStarting = false
-async function doMarginalia() {
-  if (!store.currentId || store.marginalia.status === 'running' || margStarting) return
-  margStarting = true
-  try {
-    await api.marginaliaStart(store.currentId)
-    await refreshMarginalia()
-    startMarginFast()
-  } finally { margStarting = false }
-}
-
 /* 长任务的「停止」：后端是协作式取消，析读在阶段边界收手（已生成的部分保留），
    全文翻译直接掐 pdf2zh 进程（已译好的页留着，下次接着译）。 */
 async function stopAnalyze() {
@@ -599,23 +581,6 @@ async function stopTranslate() {
   }
   try { await api.translateCancel(store.currentId); await refreshPapers() } catch { /* 同上 */ }
 }
-
-/* 眉批是**唯一**会持续几十秒到几分钟的任务。全局那条 3 秒轮询在它跑完那一刻最多还要
-   再等 3 秒才把结果取回来——"明明好了却还显示在写"就是这么来的。只给它一条 1 秒的
-   快轮询，跑完立刻停；其他功能照旧 3 秒，互不影响。 */
-function startMarginFast() {
-  if (marginFastTimer) return
-  const t0 = Date.now()
-  marginFastTimer = setInterval(async () => {
-    await refreshMarginalia()
-    // 10 分钟硬上限：后端真卡死在 running 时轮询也得自己收，不能一秒一条永动机
-    if (store.marginalia.status !== 'running' || Date.now() - t0 > 600000) {
-      clearInterval(marginFastTimer)
-      marginFastTimer = null
-    }
-  }, 1000)
-}
-onUnmounted(() => clearInterval(marginFastTimer))
 
 let tranStarting = false
 let tranOptimistic = ref(false)
@@ -927,7 +892,6 @@ function onKey(e) {
     case '/': e.preventDefault(); store.askFocusTick++; break
     case 'x': store.viewer.railUser = !store.viewer.railUser; break
     case 'a': doAnalyze(); break
-    case 'm': doMarginalia(); break
     case '?': store.shortcutCard = !store.shortcutCard; break
   }
 }
@@ -1059,7 +1023,7 @@ function onKey(e) {
                 @click="store.viewer.railUser = true" aria-label="展开右栏"></button>
             </Transition>
             <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight, overlay: store.railOverlay }">
-        <RightRail @analyze="doAnalyze" @marginalia="doMarginalia" />
+        <RightRail @analyze="doAnalyze" />
       </div>
     </div>
 
@@ -1124,7 +1088,6 @@ function onKey(e) {
       <div class="k-row"><span>{{ t('聚焦提问') }}</span><kbd>/</kbd></div>
       <div class="k-row"><span>{{ t('折叠右栏') }}</span><kbd>x</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('析读') }}</span><kbd>a</kbd></div>
-      <div class="k-row" v-if="!isEn()"><span>{{ t('AI 眉批') }}</span><kbd>m</kbd></div>
       <div class="k-row"><span>{{ t('文库 / 日历 / 目录') }}</span><kbd>g l / g c / g o</kbd></div>
       <div class="k-row"><span>{{ t('回书桌') }}</span><kbd>g h</kbd></div>
       <div class="k-row"><span>{{ t('返回原位') }}</span><kbd>Alt + ←</kbd></div>

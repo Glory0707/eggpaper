@@ -98,18 +98,12 @@ const parasByPage = computed(() => {
   for (const p of paras.value) (m[p.page] ||= []).push(p)
   return m
 })
-/* 页边摆哪些批注。读者自己钉的（查译/框选答疑/自己写的批注）是**读者资产**：
-   「AI 眉批」图层开关和档位开关管不着它们，唯一的开关是设置里的「我的眉批」——
-   默认显示，没有 AI 眉批也照常显示（用户原话），想收起去设置里点一下。
-   AI 眉批四档就是纸上那四种笔触，一档一个开关（右栏「问题」页的眉批块里点）——
-   批注上到三四十条时，"只看要当心"是读者的第一个念头。 */
+/* 页边摆哪些批注：读者自己钉的（查译/框选答疑/自己写的批注）是**读者资产**，
+   唯一的开关是设置里的「我的眉批」——默认显示，想收起去设置里点一下。 */
 const USER_KINDS = new Set(['lookup', 'region', 'note'])
 const notesShown = computed(() => {
-  const on = store.viewer.noteBands || {}
   const mineOn = store.viewer.layers.mine !== false
-  return mnotes.value.filter(n =>
-    (USER_KINDS.has(n.kind) && mineOn) ||
-    (store.viewer.layers.marginalia && !USER_KINDS.has(n.kind) && on[bandOf(n)] !== false))
+  return mnotes.value.filter(n => USER_KINDS.has(n.kind) && mineOn)
 })
 /* 页边要多宽，取决于"上面真有东西要放吗"：有批注 → 整条 184，没有 → 一点都不留，
    论文因此能多出近 200px 的宽度。这条宽度是 measure() 的输入，图层一变就得重排。 */
@@ -1474,7 +1468,6 @@ watch(paras, () => { spanCache.clear() })
 watch(() => store.jump, applyJump)
 watch(() => store.viewer.layers, () => measureNotes(), { deep: true })    // 图层开关只动页边卡，画布不用重画
 watch(() => store.reflowTick, () => reflow())
-watch(() => store.viewer.noteBands, () => measureNotes(), { deep: true })  // 档位筛选同理：只重排批注，不重画纸面
 watch(mnotes, (n, o) => {
   spanCache.clear()
   if (n.length && (!o || n.length > o.length)) {

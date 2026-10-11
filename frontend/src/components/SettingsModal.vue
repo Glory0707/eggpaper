@@ -258,7 +258,6 @@ function save() {
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('图层') }}</span>
-        <label class="ck"><input type="checkbox" v-model="f.layers.marginalia" />{{ t('AI 眉批') }}</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.layers.mine" />{{ t('我的眉批') }}</label>
         <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.mock" />{{ t('演示模式') }}</label>
       </div>

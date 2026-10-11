@@ -493,7 +493,7 @@ def replace_paragraphs(pid: str, paras: list):
     """整篇替换段落。**删与插必须在同一个事务里**。
 
     先 commit 删除、再另起一次 commit 插入的话，中间有一个真实的"这篇 0 段"窗口：
-    `GET /paragraphs` 的惰性回填、`_run_marginalia` 取语料都可能落进去，最坏是拿空语料
+    `GET /paragraphs` 的惰性回填、七问生成取语料都可能落进去，最坏是拿空语料
     算眉批并以"成功"把整页批注覆盖掉。
     """
     with _txn() as c:
@@ -625,11 +625,6 @@ def fail_analysis(pid: str, error: str):
     重算失败应该只是"这次没成"，不该把上次的成果一起赔进去
     （summarize_dialog 早就是"失败退回原摘要"的写法，这里是同一个道理）。"""
     q("UPDATE papers SET analysis_status='error', analysis_error=? WHERE id=?",
-      (error, pid), commit=True)
-
-def fail_marginalia(pid: str, error: str):
-    """眉批失败：同理，AI 写的那批**留着**，只把状态与原因写下来（用户自己钉的本来就留着）。"""
-    q("UPDATE papers SET marginalia_status='error', marginalia_error=? WHERE id=?",
       (error, pid), commit=True)
 
 def get_analysis(pid: str):
@@ -911,29 +906,6 @@ def qa_clear(pid: str):
     with _txn() as c:
         c.execute("DELETE FROM qa_messages WHERE paper_id=?", (pid,))
         c.execute("DELETE FROM conversations WHERE paper_id=?", (pid,))
-
-# ---------- 眉批（句级人性化批注） ----------
-
-def set_marginalia(pid: str, notes: list, status: str = "done", error: str = None):
-    """写入 AI 眉批（整篇重写）。
-
-    只删 AI 写的那几种，**用户自己钉的（lookup/region/note）一根都不动**——
-    这张表里住着两种人写的东西，前者可以重算，后者是读者的资产，重算眉批不该顺手把它抹了。
-    """
-    with _lock:
-        c = _get()
-        if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
-            return
-        c.execute("DELETE FROM marginalia WHERE paper_id=? AND kind NOT IN ('lookup','region','note')", (pid,))
-        c.executemany(
-            "INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, label, band) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            [(pid, n["para_idx"], n["page"], n["quote"], n["kind"], n["note"],
-              n.get("label", ""), n.get("band", "")) for n in notes])
-        c.execute("UPDATE papers SET marginalia_status=? WHERE id=?", (status, pid))
-        c.commit()
-    if error:
-        q("UPDATE papers SET marginalia_error=? WHERE id=?", (error, pid), commit=True)
 
 def get_marginalia(pid: str):
     return [dict(r) for r in q(

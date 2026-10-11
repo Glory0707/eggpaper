@@ -840,196 +840,6 @@ def translate_stream(text: str, context: str = "", hits: list = None):
     return chat_stream(translate_messages(text, context, hits),
                        max_tokens=4000, temperature=0.1, no_think=True, scene="划词")
 
-# ---------------- 眉批（句级人性化批注） ----------------
-
-MARGINALIA_SYSTEM = """你是实验室里最会读论文的师兄，正在一篇论文的打印稿上给师弟/师妹写眉批。你只为一件事动笔：**让师弟少走弯路**——看清作者到底证明了什么、哪里证据不够、哪里和别处对不上。
-
-只对"影响你怎么判断这篇论文"的句子下手：
-- 主张：作者真的证明了什么，有没有说过头
-- 证据与数据：指标、对照组、样本量、误差，够不够撑住那句话
-- 前后一致：摘要/正文/图注/结论之间的数字与说法对不上
-- 能不能复现：关键参数、单位、坐标系、统计口径缺没缺
-- 读者的坑：容易被误读的地方；看着像结论、其实只是推测的地方
-
-**语言层面基本不批**。语法、单复数、翻译腔、用词好坏、句子啰不啰嗦、像不像 AI 写的——
-读者自己会读过去；批这些只会显得刻薄，而且占掉了页边本该留给硬问题的地方。
-只有一种例外：这句话的**写法会让读者理解错**（含糊到看不出结论有多强、吹到超出证据、
-绕到读不懂）。这时写的也是"读者会被带偏到哪儿"，不是"作者文笔不好"。
-
-批注类型 kind：优先用这些常用款——口径一致，读者不用重新认颜色：
-- insight   点睛之笔：真正的关键句，值得画线
-- warning   有坑：数据或方法的可疑之处，读者要小心
-- conflict  前后打架：这一处和本文别处的说法/数字对不上（摘要与结果、正文与图注、结论与数据）
-- hedge     含糊其辞：**只在含糊会让读者误判结论强弱时**才用，不是"用词不精确"就写
-- hype      吹嘘过头：证据只够说 X，作者说了 Y
-- padding   凑字数：信息量为零的样板句，**且它挡住了读者的路**（比如把真正的结论埋在第 5 句）
-
-另有三种保留款：stiff（生硬拗口）、ai（AI 腔）、redundant（重复）。它们仍然有效，但**默认不写**，
-只有读者真会被绊住（一句话得读两遍才知道在说什么）时才用。整篇的语言类批注加起来不要超过 2-3 条。
-
-真遇到装不下的东西（引用过时、坐标系没交代、图表看不清、术语前后不统一），自造一条：
-kind 填 custom，label 填你那个短标签（≤6 字），band 填 good / warn / noise。
-band 只有一个作用——决定它在纸上怎么被划、页边是什么颜色，所以只有三档。
-
-只输出 JSON，不要 markdown 代码块，不要解释：
-{"notes":[{"para":<¶编号>, "quote":"<原句，逐字复制，≤120字符>", "kind":"<类型或 custom>",
-"label":"<自造类型的短标签，用常用款时留空>", "band":"<good|warn|noise，自造时必填>",
-"note":"<批注，≤40字>"}]}
-
-要求：
-1. quote **要引完整的句子或完整的分句**：从句子（分句）的开头起，引到句末标点为止。
-   不要在句子中间开始，也不要在句子中间断掉——程序靠它划出纸上的那一道线，
-   引半截就只有半截被划上。逐字复制，绝对不要改写、翻译或加省略号；整句太长（>120 字）
-   就取包含批注点的那个分句，但起点仍要落在自然的分句开头
-2. 一段最多 3 条，**但不要求写满**。一篇四十来段的论文，十来二十条是正常量；
-   写到三四十条基本就是在挑刺了。别为了凑数硬找，也别把真正该提的漏掉
-3. note 像师兄在旁边低声提醒：就事论事，说清"哪里不对、为什么、你要注意什么"。
-   不抖机灵、不嘲讽（"删了不疼""读着卡"这种口吻不要），也别空夸
-4. insight / warning / conflict 比吐槽更有价值，但别为了显得有用而只挑刺或只夸
-5. conflict 要指得出和哪里对不上（"和摘要说的 0.1 eV 不一致""图注写五段、正文写四段"），别只说"矛盾"
-
-例：{"para":12,"quote":"The barrier is relatively high for practical operation.","kind":"custom",
-"label":"口径含糊","band":"warn","note":"相对什么算高？全文没给这个数，也没给对比条件"}
-
-不要写的例（语法、文风一律跳过）："a arrays 单复数不对"、"此外 Moreover 起句，AI 腔"、
-"formidable challenge 是套话，删了不疼"。
-
-"""
-
-REVIEW_MARGINALIA_APPENDIX = """
-
-这是一篇**综述/回顾**：它的"证据"是它对文献的组织与评述，不是实验。换一套刀法——
-- **不要批**"对照组/样本量/参数缺没缺/能不能复现"这类实验口径的事：综述没有实验层，
-  照研究型批会满页"没提对照"式的错批；
-- 重点批：分类框架公不公允、哪条重要线索被漏掉或轻描淡写、它的评判标准是否一以贯之、
-  下结论（"X 已是主流 / Y 已解决"）的地方与它引的证据对不对得上、开放问题点没点到位；
-- 它汇总的表格、数据、图照样按证据批：数字与引文对不上、口径前后不一致是硬伤；
-- 前后一致与"读者的坑"两条通用刀法照旧。
-
-"""
-
-KINDS = ("hedge", "padding", "stiff", "redundant", "hype", "ai", "insight", "warning", "conflict")
-BANDS = ("good", "warn", "noise")
-BAND_OF = {"insight": "good",
-           "warning": "warn", "hype": "warn", "ai": "warn", "conflict": "warn",
-           "padding": "noise", "redundant": "noise", "stiff": "noise", "hedge": "noise"}
-
-PROSE_KINDS = ("stiff", "ai", "redundant", "padding")
-PROSE_MAX = 4
-
-CHUNK_PARAS = 12
-CHUNK_WORKERS = 6
-
-def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "research",
-                       should_stop=None) -> tuple:
-    """分块细读，返回 `(notes, failed_blocks)`：notes 是
-    [{para_idx, page, quote, kind, label, band, note}]，failed_blocks 是**重试之后仍没成**的块数。
-
-    kind：research / review（综述换批注刀法，见 REVIEW_MARGINALIA_APPENDIX）。
-    should_stop：调用方给的取消探针（返回 True 就别再发起下一波、也别再组装）——
-    眉批是几十分钟级的活，"手滑点了大部头"得有地方喊停。
-
-    为什么把失败数交出去：块级失败原来被静默吞掉——一次 429 只挂一块，界面照样显示"完成"，
-    用户以为那些段落没问题。现在调用方能把"8 块里 1 块没成"写成一条提示，让他知道这片是空的。
-
-    `on_chunk(已完成块数, 总块数)` 每读完一块回调一次（总量在第 0 秒就回调一次）——
-    界面上那条小进度条吃的是它。为什么报"块"而不是百分比：一次请求是一条 12 段的完整
-    LLM 调用，中间没有可信的颗粒度，报块数才是**真实**进度。
-
-    **并发为什么是 6**（实测定的，别凭感觉调）：这篇 48 段的论文 = 4 块，
-    3 并发要排两波、端到端 53 秒；6 并发一波就完、~36 秒。单块的耗时由模型决定
-    （带思考时代实测 ~36 秒/块、七成 token 花在思考上；调用处已关思考，此数偏大），
-    **墙钟时间 = 波数 × 单块时间**，
-    所以能压的只有波数。再往上加并发收益就有限了（还容易被服务端限流），
-    真正要更快只能减块数或减单块输出量，那是产品取舍（实测数字就写在上面的常量旁）。
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    page_of = {p["idx"]: p["page"] for p in paras}
-    n = CHUNK_PARAS
-    chunks = [paras[i:i + n] for i in range(0, len(paras), n)]
-
-    def run(chunk):
-        body = "\n\n".join(f"¶{p['idx']} {p['text'][:900]}" for p in chunk)
-        msgs = [
-            {"role": "system", "content": MARGINALIA_SYSTEM
-                + (REVIEW_MARGINALIA_APPENDIX if kind == "review" else "") + _lang_tail()},
-            {"role": "user", "content": f"论文标题：{title or ''}\n\n{body}"},
-        ]
-        # 要 JSON 的统一走 chat_json：坏 JSON 带纠错说明重发，成功率高于原样重滚；
-        # 块级失败由 wave 的二遍补跑兜底，这里抛出去是对的
-        data = chat_json(msgs, max_tokens=16000, temperature=0.3, scene="眉批", no_think=True)
-        return data.get("notes", []) if isinstance(data, dict) else []
-
-    total = len(chunks)
-    if on_chunk:
-        try:
-            on_chunk(0, total)
-        except Exception:
-            pass
-    batches = [None] * total
-    state = {}
-
-    def wave(idx_list):
-        """跑一批块（第一遍全部；第二遍只补失败的）。返回没成的块号。"""
-        bad = []
-        with ThreadPoolExecutor(max_workers=min(CHUNK_WORKERS, max(1, len(idx_list)))) as ex:
-            futs = {ex.submit(run, chunks[i]): i for i in idx_list}
-            for fut in as_completed(futs):
-                i = futs[fut]
-                try:
-                    batches[i] = fut.result()
-                    state[i] = True
-                except Exception:
-                    bad.append(i)
-                    batches[i] = []
-                if on_chunk:
-                    try:
-                        on_chunk(len(state), total)
-                    except Exception:
-                        pass
-        return bad
-
-    failed = wave(list(range(total)))
-    if failed and len(failed) < total and not (should_stop and should_stop()):
-        failed = wave(failed)
-    if should_stop is not None and should_stop():
-        return [], total        # 已取消：调用方不会落库，这里把没写的都算没成
-    if total and len(failed) == total:
-        raise RuntimeError(f"{total} 块全部失败（模型或网络问题）")
-
-    notes, seen, per_para = [], set(), {}
-    prose_kept = 0
-    for batch in batches:
-        for n in batch:
-            if not isinstance(n, dict):
-                continue
-            try:
-                para_idx, quote = int(n.get("para")), str(n.get("quote", "")).strip()
-                note = str(n.get("note", "")).strip()[:80]
-            except (TypeError, ValueError):
-                continue
-            kind = str(n.get("kind", "")).strip().lower()
-            label, band = str(n.get("label", "")).strip()[:8], str(n.get("band", "")).strip().lower()
-            if kind in KINDS:
-                band, label = BAND_OF[kind], ""
-            elif label and band in BANDS:
-                kind = "custom"
-            else:
-                continue
-            if kind in PROSE_KINDS:
-                if prose_kept >= PROSE_MAX:
-                    continue
-                prose_kept += 1
-            if not quote or quote[:40] in seen or per_para.get(para_idx, 0) >= 3:
-                continue
-            if para_idx not in page_of:
-                continue
-            seen.add(quote[:40])
-            per_para[para_idx] = per_para.get(para_idx, 0) + 1
-            notes.append({"para_idx": para_idx, "page": page_of[para_idx], "quote": quote,
-                          "kind": kind, "label": label, "band": band, "note": note})
-    return notes[:48], len(failed)
-
 def _demo_txt(zh: str, en: str) -> str:
     """演示数据的语言跟界面走（ui_lang）：纯英文用户不该拿到一手中文假数据。"""
     return en if _is_en() else zh
@@ -1048,15 +858,6 @@ _MOCK_PURPOSE_EN = {
 
 def _mock_purpose(role: str) -> str:
     return _demo_txt(_MOCK_PURPOSE.get(role, "（演示）"), _MOCK_PURPOSE_EN.get(role, "(demo)"))
-
-def mock_marginalia(paras: list) -> list:
-    kinds = ["insight", "padding", "hedge", "ai", "warning", "redundant"]
-    notes = []
-    for i, p in enumerate([p for p in paras if not p["in_refs"]][:6]):
-        k = kinds[i % len(kinds)]
-        notes.append({"para_idx": p["idx"], "page": p["page"], "quote": p["text"][:60], "kind": k,
-                      "label": "", "band": BAND_OF[k], "note": _mock_purpose(k)})
-    return notes
 
 def mock_analyze(paras: list) -> dict:
     roles, purposes = {}, {}
@@ -1295,7 +1096,7 @@ def answer_how_review(title: str, claims: list, paras: list) -> dict:
         "最后落到哪些开放问题。说它自己的组织方式，不要复述被综述的内容。",
         f"论文标题：{title or ''}\n\n[它的组织主张]\n" + _claims_lines(claims))
 
-def answer_next(title: str, paras: list, limits: list, exts: list, claims: list, warns: list) -> dict:
+def answer_next(title: str, paras: list, limits: list, exts: list, claims: list) -> dict:
     """还能做什么：两条腿都要有——论文自己承认的局限/延伸里长出来的方向，以及你顺着这篇
     想出来的新研究（可以是一篇新论文的体量：新问题、新体系、新方法）。
 
@@ -1306,12 +1107,10 @@ def answer_next(title: str, paras: list, limits: list, exts: list, claims: list,
                f"[作者承认的局限]\n{_paras_block(limits)}\n\n"
                f"[作者做的延伸]\n{_paras_block(exts, 400)}\n\n"
                "[主张]\n" + _claims_lines(claims))
-    if warns:
-        payload += "\n\n[可疑之处]\n" + "\n".join(f"- {w}" for w in warns)
     data = chat_json([
         {"role": "system", "content": _doc_system(title, paras,
             "你是带学生读论文的师兄。给出 2~3 条'接下来可以做什么'，两条腿都要有："
-            "①从论文自己承认的局限、它做的延伸或被标出的可疑之处长出来的方向；"
+            "①从论文自己承认的局限或它做的延伸里长出来的方向；"
             "②至少一条是你**自己的思考**：顺着这篇的结论还能做什么新研究——可以是一篇新论文的体量"
             "（新问题、新体系、新方法都行），说清新在哪、为什么值得做、大概要动哪些工。"
             "要具体、可执行、有指向（该换哪个对象/数据、该补哪组对照或基线、该换哪种方法）；"
@@ -1326,6 +1125,40 @@ def answer_next(title: str, paras: list, limits: list, exts: list, claims: list,
     ], max_tokens=4000, temperature=0.45, scene="七问")
     out = _items(data.get("items"))
     out["v"] = 3
+    return out
+
+def answer_doubt(title: str, paras: list, limits: list, claims: list, kind: str = "research") -> dict:
+    """哪里可疑：q5「还有什么没解决」升级后的现场生成（眉批退场后批判性阅读的承接位）。
+
+    材料只有全文 + 骨架的局限段（导航），可疑点由模型自己找——真端点 A/B 实测过
+    它找得到预埋的数字冲突与"无对照"坑，不需要预先批注一遍垫底。刀法继承原眉批
+    验证过的规则：冲突要指得出和哪里对不上、语言文风一律不批、措辞就事论事留余地。"""
+    payload = (f"论文标题：{title or ''}\n\n"
+               f"[骨架认为的局限段]\n{_paras_block(limits, 400)}\n\n"
+               "[主张]\n" + _claims_lines(claims))
+    ask = ("你是带学生读论文的师兄，这一问教他**批判性阅读**：找出这篇论文里值得警惕的地方。"
+           "三类都算——"
+           "①冲突：前后对不上的地方（摘要与正文、正文与图注、结论与数据），要指得出和哪里对不上；"
+           "②可疑：证据撑不住结论的坑（没对照、没误差棒、样本单一、机制只是推测、外推没验证）；"
+           "③含糊：关键条件没交代（参数、口径、统计方式找不到，读者核不了）。"
+           "语法、文风、用词一律不批——那是作者改稿的事，不是读者防坑的事。"
+           "措辞就事论事、留有余地：说「这里读不出」，不说「作者造假」。"
+           "每点落到具体段落，句尾标 ¶n，2~5 条，按值得警惕的程度排。")
+    if kind == "review":
+        ask += ("这是一篇**综述**：没有实验层，不要批「没对照/样本量」这类事——"
+                "改批：分类框架公不公允、哪条重要线索被漏掉或轻描淡写、评判标准是否一以贯之、"
+                "下结论（「X 已是主流」）的地方与它引的证据对不对得上。")
+    data = chat_json([
+        {"role": "system", "content": _doc_system(title, paras, ask +
+            "注意：[主张] 那一份只是帮你理解的背景，正文里**绝不**引用它——依据一律写正文段落号 "
+            "¶n，直接写不要加方括号，也不要出现「主张」字样或主张编号。"
+            '只输出 JSON：{"items":[{"lead":"<冲突|可疑|含糊|未决，≤4字>",'
+            '"text":"<哪里、为什么值得警惕，句尾带依据段落号 ¶n>",'
+            '"ask":"<拿去追问模型的一句话，≤40字>"}]}，不要代码块。' + _lang_tail())},
+        {"role": "user", "content": payload + "\n\n" + _kick("给出这篇值得警惕的地方")},
+    ], max_tokens=4000, temperature=0.4, scene="七问")
+    out = _items(data.get("items"))
+    out["v"] = 1
     return out
 
 def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:

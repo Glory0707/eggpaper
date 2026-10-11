@@ -638,14 +638,14 @@ def _sweep_orphan_papers():
 def _clear_zombie_jobs():
     """把"上一次进程留下的在跑状态"清掉。
 
-    析读/眉批/翻译都是**守护线程**在跑，状态却写在数据库里：进程一没（崩溃、
+    析读/翻译都是**守护线程**在跑，状态却写在数据库里：进程一没（崩溃、
     装新版重启、托盘退出），那条 `running` 就永远留在库里——POST 看到 running
     直接返回，用户点多少次都没反应。刚启动的进程里不可能有任务在跑，这些状态
     全是僵尸，一律归零；运行中途的判断看 `_live_jobs`（本进程的真实登记）。
     """
     _adopt_orphan_translation()
     _sweep_orphan_papers()
-    for col, kind in (("analysis_status", "analysis"), ("marginalia_status", "marginalia"),
+    for col, kind in (("analysis_status", "analysis"),
                       ("translate_status", "translate")):
         rows = db.q(f"SELECT id FROM papers WHERE {col} IN ('running','queued')")
         # 晚启动清扫与本进程刚接的新任务有竞争窗：活着的任务（含本进程已在跑的翻译）
@@ -1391,11 +1391,10 @@ def supersede_paper(pid: str, body: dict):
         if row and row["translate_status"] == "running":
             raise HTTPException(400, "这篇正在全文翻译，结束后再替换")
     with _deleted_lock:
-        # 旧篇从现在起视同已删：析读/眉批/七问线程的 _pid_gone 护栏全部生效，
+        # 旧篇从现在起视同已删：析读/七问线程的 _pid_gone 护栏全部生效，
         # 不再往被替换掉的 pid 白烧 LLM 或插回孤儿行
         _deleted_pids.add(old["id"])
     _cancel_request("analysis", old["id"])
-    _cancel_request("marginalia", old["id"])
     with _key_lock("translate:" + old["id"]):
         if translate_full.cancel(old["id"], paper_dir(old["id"])):
             _applog(f"替换 {old['id']}：终止了还在跑的全文翻译")
@@ -1442,14 +1441,13 @@ def paper_meta(pid: str, body: dict):
 def paper_title(pid: str, body: dict):
     """手动改标题（首页识别不出像样标题时的补手工）：改库、文件夹名跟着对齐。
 
-    忙碌闸：析读/眉批/翻译握着这个目录里的路径，改到一半目录被挪，哪边都收不了场——
+    忙碌闸：析读/翻译握着这个目录里的路径，改到一半目录被挪，哪边都收不了场——
     一律拒绝，等跑完再改。"""
     p = _paper_or_404(pid)
     title = str((body or {}).get("title") or "").strip()
     if not title:
         raise HTTPException(400, "标题不能是空的")
     if (p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid)) \
-            or _job_live("marginalia", pid) or p["marginalia_status"] == "running" \
             or p["translate_status"] in ("running", "queued") \
             or translate_full.job(pid)["status"] in ("running", "queued"):
         raise HTTPException(400, "有析读或翻译在跑，结束后再改")
@@ -1611,7 +1609,7 @@ def _rm(path: str):
         except OSError:
             pass
 
-_deleted_pids: set = set()      # 已删篇：析读/眉批线程写库前查这里，避免给死篇插回孤儿行
+_deleted_pids: set = set()      # 已删篇：析读线程写库前查这里，避免给死篇插回孤儿行
 _deleted_lock = threading.Lock()
 
 def _pid_gone(pid: str) -> bool:
@@ -1626,7 +1624,6 @@ def delete_paper(pid: str):
     _lines_probe_done.discard(pid)
     with _key_lock("translate:" + pid):
         _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
-        _cancel_request("marginalia", pid)
         d = paper_dir(pid)                    # purge 前算好：之后 DB 没了，只剩兜底解析
         db.purge_paper(pid)
         if translate_full.cancel(pid, d):
@@ -1804,7 +1801,7 @@ def _run_analysis(pid: str, paras: list):
             time.sleep(4)
         # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
         todo = (["motive", "principle", "method"] if kind == "research"
-                else ["motive", "principle", "how"]) + ["next", "lens"]
+                else ["motive", "principle", "how"]) + ["next", "lens", "doubt"]
         # 真实模式走 _six_compute（与端点同锁同缓存）：前端在析读一完成就会来要答案，
         # 两边必须串到同一把锁上，否则同一问生成两遍
         futs.update({ex.submit(_mock_six, k) if demo else ex.submit(_six_compute, pid, k): k
@@ -1880,9 +1877,6 @@ def analyze(pid: str):
     # 查互斥与占位排队必须同锁：拆开就有 TOCTOU——两边都过了检查再各自启动，照样互相清缓存
     with _key_lock("job:" + pid):
         p = db.get_paper(pid) or p     # 锁内重读：锁外那份可能是"已完成"的旧读，照它判会连环重析
-        if _job_live("marginalia", pid) or p["marginalia_status"] == "running":
-            # 眉批也在收网析读：两边都会清七问/导师缓存，先结束的一方会删掉刚花钱生成的结果
-            raise HTTPException(400, "AI 眉批还在跑，先等它结束")
         if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
             return {"status": p["analysis_status"]}
         if p["analysis_status"] in ("running", "queued"):
@@ -1901,16 +1895,6 @@ def analysis(pid: str):
     return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos,
             "evidence_qs": eqs, "progress": _analysis_progress.get(pid)}
 
-# ---------------- 眉批（句级批注） ----------------
-
-def _band(n: dict) -> str:
-    """一条批注属于哪一档。
-
-    库里存了档位就用存的（自造类型只有存下来的那份算数）；老数据没存过，按类型推。
-    判"哪些是可疑之处"要看**档位**而不是类型名：类型是开放词表，模型会自造
-    「参考态不一」这种 warn 档的批注，只认 kind=='warning' 会把它们漏在外面。
-    """
-    return n.get("band") or llm.BAND_OF.get(n["kind"], "")
 
 def _resolve_rects(pid: str):
     """把 quote 定位成页面矩形（**退路**：这里的搜索跨不过换行和连字符，真正的
@@ -1960,10 +1944,8 @@ _rect_tried = set()
 _live_jobs = set()
 _live_lock = threading.Lock()
 
-_margin_progress = {}
-
 # ---- 长任务取消：协作式。线程在阶段边界查探针，查到就不再写库、状态归回"没做过"。
-_cancel_flags: set = set()        # (kind, pid)：旗子按任务种类隔离，取消析读不误杀同篇的眉批
+_cancel_flags: set = set()        # (kind, pid)：旗子按任务种类隔离，取消析读不误杀同篇的翻译
 _cancel_lock = threading.Lock()
 
 def _cancel_requested(kind: str, pid: str) -> bool:
@@ -2055,103 +2037,25 @@ def _applog(msg: str):
 llm.applog = _applog     # token 账从 print 换成落盘：打包版没有 stdout，
                          # 不注入的话用户"钱花在哪"永远只有平台账单一个答案
 
-def _run_marginalia(pid: str):
-    t0 = time.time()
-    _margin_progress[pid] = {"done": 0, "total": 0, "t0": t0}
-
-    def on_chunk(done, total):
-        p = _margin_progress.get(pid) or {"t0": t0}
-        p.update(done=done, total=total)
-        _margin_progress[pid] = p
-
-    try:
-        title = (db.get_paper(pid) or {}).get("title") or ""
-        paras = db.get_paragraphs(pid)
-        use = [p for p in paras if not p.get("in_refs")]
-        kind = _ensure_paper_type(pid)
-        if _demo_mode():
-            notes, misses = llm.mock_marginalia(paras), 0
-            on_chunk(1, 1)
-        else:
-            notes, misses = llm.analyze_marginalia(title, use, on_chunk=on_chunk, kind=kind,
-                                                   should_stop=lambda: _cancel_requested("marginalia", pid))
-        if _cancel_requested("marginalia", pid):
-            db.update_paper(pid, marginalia_status="none", marginalia_error=None)
-            _applog(f"眉批 {pid}: 已取消")
-            return
-        t_llm = time.time() - t0
-        db.set_marginalia(pid, notes)
-        if misses:
-            db.update_paper(pid, marginalia_error=(
-                f"{misses} 块没生成批注（限流或超时）"))
-            _applog(f"眉批 {pid}: {misses} 块重试后仍失败")
-        db.answers_clear(pid)
-        db.update_paper(pid, advisor=None)
-        _resolve_rects(pid)
-        t_all = time.time() - t0
-        n = _margin_progress.get(pid, {}).get("total") or 0
-        cfg = config.load()["provider"]
-        _applog(f"眉批完成 {pid}: {len(notes)} 条 / {n} 块 · 模型 {t_llm:.1f}s · "
-                f"定位+入库 {t_all - t_llm:.1f}s · 总 {t_all:.1f}s"
-                + (f" · 平均 {t_llm / n:.1f}s/块" if n else "")
-                + f" · {cfg['model']} @ {cfg['base_url']}")
-        print(f"[eggpaper] 眉批 {pid}: {len(notes)} 条 · 模型 {t_llm:.1f}s · 定位 {t_all - t_llm:.1f}s")
-    except Exception as e:
-        _applog(f"眉批失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
-        db.fail_marginalia(pid, _human_msg(e))
-    finally:
-        _cancel_clear("marginalia", pid)
-        _margin_progress.pop(pid, None)
-        _job_done("marginalia", pid)
-
-@app.post("/api/papers/{pid}/marginalia")
-def marginalia_start(pid: str):
-    _paper_or_404(pid)
-    with _key_lock("job:" + pid):       # 与 analyze 同一把每篇锁：检查+占位原子化
-        if _analysis_inflight(pid):
-            raise HTTPException(400, "析读还在跑，先等它结束")
-        _cancel_clear("marginalia", pid)    # 上次取消留下的旗子别误杀这次
-        with _live_lock:
-            if _job_live("marginalia", pid):
-                return {"status": "running"}
-            _live_jobs.add(("marginalia", pid))
-        _margin_progress[pid] = {"done": 0, "total": 0, "t0": time.time()}
-        db.update_paper(pid, marginalia_status="running", marginalia_error=None)
-        threading.Thread(target=_run_marginalia, args=(pid,), daemon=True).start()
-        return {"status": "running"}
+USER_NOTE_KINDS = ("lookup", "region", "note")   # 用户自己的页边钉子；AI 眉批已退场，存量行不下发
 
 @app.get("/api/papers/{pid}/marginalia")
 def marginalia_get(pid: str):
-    p = _paper_or_404(pid)
-    if p["marginalia_status"] == "running" and not _job_live("marginalia", pid):
-        db.update_paper(pid, marginalia_status="none")
-        p = _paper_or_404(pid)
-    status = p["marginalia_status"]
-    if status == "running":                      # 跑的时候一条都没落库，别每秒白取全量
-        return {"status": status, "error": None,
-                "progress": _margin_progress.get(pid), "notes": []}
-    if status == "done":
-        notes = db.get_marginalia(pid)
-        if any(not n["rect"] for n in notes):
-            _resolve_rects(pid)
-            notes = db.get_marginalia(pid)
-    else:
-        notes = db.get_marginalia(pid)
-    return {"status": status, "error": p.get("marginalia_error"),
-            "progress": _margin_progress.get(pid),
-            "notes": [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None) for n in notes]}
+    _paper_or_404(pid)
+    def user_notes():
+        return [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None)
+                for n in db.get_marginalia(pid) if n["kind"] in USER_NOTE_KINDS]
+    notes = user_notes()
+    if any(not n["rect"] for n in notes):
+        _resolve_rects(pid)          # 老钉子补定位（每条只试一次，见 _resolve_rects）
+        notes = user_notes()
+    return {"status": "done", "error": None, "progress": None, "notes": notes}
 
 @app.post("/api/papers/{pid}/analysis/cancel")
 def analysis_cancel(pid: str):
     """请求取消析读：正在跑的线程在阶段边界看到旗子就停，已生成的部分保留。"""
     _paper_or_404(pid)
     _cancel_request("analysis", pid)
-    return {"ok": True}
-
-@app.post("/api/papers/{pid}/marginalia/cancel")
-def marginalia_cancel(pid: str):
-    _paper_or_404(pid)
-    _cancel_request("marginalia", pid)
     return {"ok": True}
 
 @app.post("/api/papers/{pid}/translate-full/cancel")
@@ -2355,9 +2259,7 @@ def suggest(pid: str):
                      real_fn=real,
                      precond=lambda p: {"questions": []} if p["analysis_status"] != "done" else None)
 
-KIND_ZH = {"hedge": "妥协让步", "padding": "凑字数", "stiff": "生硬别扭", "redundant": "多余重复",
-           "hype": "吹嘘过头", "ai": "AI 痕迹", "insight": "点睛之笔", "warning": "有坑",
-           "conflict": "前后打架", "lookup": "查译", "region": "选区问答", "note": "批注"}
+KIND_ZH = {"lookup": "查译", "region": "选区问答", "note": "批注"}
 
 @app.post("/api/ask-visual")
 def ask_visual(body: dict):
@@ -2374,7 +2276,7 @@ def ask_visual(body: dict):
 
 # ---------------- 七问里需要现场生成的那几问 ----------------
 
-SIX_KEYS = ("motive", "principle", "method", "how", "next", "lens")
+SIX_KEYS = ("motive", "principle", "method", "how", "next", "lens", "doubt")
 
 def _paras_of_role(annos: dict, by_idx: dict, roles: set, cap: int = 8):
     out = [by_idx[int(k)] for k, v in annos.items() if v["role"] in roles and int(k) in by_idx]
@@ -2405,11 +2307,13 @@ def _gen_six(p: dict, key: str):
                                  role({"background"}, 6),
                                  claims)
     if key == "next":
-        warns = [n["note"] for n in db.get_marginalia(pid) if _band(n) == "warn"][:6]
         return llm.answer_next(p["title"], paras,
                                role({"limitation"}),
                                role({"extension"}, 5),
-                               claims, warns)
+                               claims)
+    if key == "doubt":
+        return llm.answer_doubt(p["title"], paras, role({"limitation"}), claims,
+                                kind="review" if is_review else "research")
     if key == "lens":
         # 管线期 lens 与 summary 并行生成，调用方传入的快照里 summary 还是 None——
         # 照抄快照会让「换个学科」永远拿不到那句话，还被 v=2 缓存固化。现场重读一次。
@@ -2479,6 +2383,19 @@ def _mock_six(key: str) -> dict:
                                "[demo mode] Sees the unpriced externality missing from the cost table, and "
                                "asks who bears it."),
              "ask": _demo_txt("成本核算包含外部性吗？", "Does the cost accounting include externalities?")},
+        ]}
+    if key == "doubt":
+        return {"v": 1, "items": [
+            {"lead": _demo_txt("可疑", "Suspicious"),
+             "text": _demo_txt("〔演示模式〕关键结论只来自单一体系的少量数据点，换体系的普适性还没人验证 [¶10]。",
+                               "[demo mode] The key conclusion rests on few data points from a single "
+                               "system; nobody has tested whether it generalizes [¶10]."),
+             "ask": _demo_txt("换一类体系这条结论还成立吗？", "Would this conclusion hold in another system?")},
+            {"lead": _demo_txt("含糊", "Vague"),
+             "text": _demo_txt("〔演示模式〕响应度没给测量口径与误差，读者核不了 [¶6]。",
+                               "[demo mode] The responsivity comes without measurement conditions or "
+                               "error bars, so readers cannot check it [¶6]."),
+             "ask": _demo_txt("这个数的误差和测量条件是什么？", "What are the error bars and conditions?")},
         ]}
     return {"v": 3, "items": [
         {"lead": _demo_txt("论文已说明", "Admitted"),
@@ -2744,13 +2661,12 @@ def export_md(pid: str):
             t = citing.get("title") or citing.get("filename") or "（无标题）"
             lines.append(f"- **{t}{yr}**（{st[1] if en else st[0]}）：{h.get('quote') or ''}")
         lines.append("")
-    notes = db.get_marginalia(pid)
+    notes = [n for n in db.get_marginalia(pid) if n["kind"] in USER_NOTE_KINDS]
     if notes:
         lines += [f"## {L('notes')}", ""]
         for n in notes:
             zh = (n.get("label") or "").strip() or KIND_ZH.get(n["kind"], n["kind"])
-            who = "你 · " + zh if n["kind"] in ("lookup", "region", "note") else zh
-            lines.append(f"- **[{who}] {n['note']}** — “{n['quote'][:48]}”")
+            lines.append(f"- **[你 · {zh}] {n['note']}** — “{n['quote'][:48]}”")
         lines.append("")
     convs = db.conv_list(pid)
     for c in convs:

@@ -1,57 +1,17 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, jumpTo, jumpPara, askNotePrefill, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindColor, bandOf,
+import { api, store, toast, jumpTo, jumpPara, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
          paperEpoch, samePaper, reloadSummary, gotoPaperPara } from '../store'
 import { useEdgeResize } from '../edgeResize'
-import { lineSpanOf, sentenceAround, normText } from '../find'
+import { normText } from '../find'
 import { prettyChem } from '../chem'
 import { t, isEn } from '../i18n'
 import AskPanel from './AskPanel.vue'
 import MdLite from './MdLite.vue'
 
-/* 眉批只有一个家：纸面页边那些卡，右栏只给生成入口与档位开关——
-   同一批句子在同一页里出现两遍（④里一遍、速览里一遍），删了。 */
-
-const emit = defineEmits(['analyze', 'marginalia'])
+const emit = defineEmits(['analyze'])
 const tab = ref('skeleton')
 const rbodyEl = ref(null)      // 「↗」指针要滚到指定那一问，得能问到滚动容器
-
-/* 眉批生成中的进度：块数来自服务端（真进度），秒数是本地计时（不依赖服务端时钟）。 */
-const marginPct = computed(() => {
-  const p = store.marginalia.progress
-  if (!p || !p.total) return null
-  return Math.max(3, Math.min(100, Math.round((p.done / p.total) * 100)))
-})
-const marginSecs = ref(0)
-let marginT0 = 0
-let marginTimer = null
-watch(() => store.marginalia.status, (s) => {
-  if (s === 'running') {
-    marginT0 = Date.now()
-    marginSecs.value = 0
-    if (!marginTimer) marginTimer = setInterval(() => { marginSecs.value = Math.round((Date.now() - marginT0) / 1000) }, 1000)
-  } else if (marginTimer) {
-    clearInterval(marginTimer)
-    marginTimer = null
-  }
-})
-onUnmounted(() => { if (marginTimer) clearInterval(marginTimer) })
-
-function excerpt(text, cap = 132) {
-  const t = String(text || '').replace(/\s+/g, ' ').trim()
-  if (t.length <= cap) return t
-  const cut = t.slice(0, cap)
-  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('。'), cut.lastIndexOf('; '))
-  return (stop > cap * 0.55 ? cut.slice(0, stop + 1) : cut + '…')
-}
-
-function jumpNote(n) {
-  const p = paraByIdx.value[n.para_idx]
-  const span = p ? lineSpanOf(p, sentenceAround(p.text, n.quote) || n.quote) : null
-  if (span) return jumpTo(n.page, span.bbox.y0, span.bbox.y1)
-  if (n.rect) return jumpTo(n.page, n.rect.y0, n.rect.y1)
-  jumpPara(n.para_idx)
-}
 
 /* ---------- 七个问题（「问题」页签） ----------
    段落角色退到幕后：页边书签、跳转定位一律照旧，
@@ -65,7 +25,7 @@ const SIX = [
   { k: 'q2', n: 2, q: '原理是什么？', gen: 'principle' },
   { k: 'q3', n: 3, q: '怎么解决的？', gen: 'method' },
   { k: 'q4', n: 4, q: '结论有哪些？' },
-  { k: 'q5', n: 5, q: '还有什么没解决？' },
+  { k: 'q5', n: 5, q: '哪里可疑、还有什么没解决？', gen: 'doubt' },
   { k: 'q6', n: 6, q: '还能做什么？', gen: 'next' },
   { k: 'q7', n: 7, q: '换个学科怎么看？', gen: 'lens' },
 ]  // 问题文案在渲染处过 t()
@@ -78,8 +38,8 @@ function sixQ(s) {
   return t(s.q)
 }
 
-const six = reactive({ motive: null, principle: null, method: null, how: null, next: null, lens: null })
-const sixBusy = reactive({ motive: false, principle: false, method: false, how: false, next: false, lens: false })
+const six = reactive({ motive: null, principle: null, method: null, how: null, next: null, lens: null, doubt: null })
+const sixBusy = reactive({ motive: false, principle: false, method: false, how: false, next: false, lens: false, doubt: false })
 /* 七问各自的"答没答出来"。免费的 ④⑤ 看骨架，①②③⑥⑦ 看有没有取过。
    综述的 ③ 走模型生成的"谱系问"（综述没有实验层，方法问对它是空壳）。
    有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
@@ -88,12 +48,12 @@ const sixHas = computed(() => ({
   q2: !!six.principle?.text,
   q3: isReview.value ? !!six.how?.text : !!six.method?.text,
   q4: !!store.analysis.claims.length,
-  q5: !!(limitParas.value.length + warnNotes.value.length),
+  q5: !!six.doubt?.items?.length,
   q6: !!six.next?.items?.length, q7: !!six.lens?.items?.length,
 }))
 
 async function loadSix() {
-  Object.assign(six, { motive: null, principle: null, method: null, how: null, next: null, lens: null })
+  Object.assign(six, { motive: null, principle: null, method: null, how: null, next: null, lens: null, doubt: null })
   Object.keys(openSix).forEach(k => (openSix[k] = false))   // 换篇回到"只有问题"的样子
   if (!store.currentId) return
   const mine = paperEpoch()
@@ -105,7 +65,7 @@ async function loadSix() {
     if (r.next && !r.next.v) delete r.next
     Object.assign(six, r)
   } catch { /* 没缓存很正常 */ }
-  const wanted = ['motive', 'principle', 'next', 'lens'].concat(isReview.value ? ['how'] : ['method'])
+  const wanted = ['motive', 'principle', 'next', 'lens', 'doubt'].concat(isReview.value ? ['how'] : ['method'])
   for (const k of wanted) {
     if (six[k] || sixBusy[k]) continue
     sixBusy[k] = true
@@ -136,10 +96,6 @@ function askIt(q) {
   store.askPrefill = { question: q, send: true }
 }
 
-/* 眉批跑到一半喊停：后端在块边界收手，已写完的批注保留。 */
-async function stopMarginalia() {
-  try { await api.marginaliaCancel(store.currentId) } catch { /* 状态轮询会自己归位 */ }
-}
 async function stopAnalyzeHere() {
   try { await api.analysisCancel(store.currentId) } catch { /* 同上 */ }
 }
@@ -147,34 +103,6 @@ async function stopAnalyzeHere() {
 const parasOfRole = roles => store.paras.filter(p => roles.includes(annoRole(p.idx)))
 const annoRole = idx => store.analysis.annotations[String(idx)]?.role
 const annoOf = idx => store.analysis.annotations[String(idx)] || {}
-const limitParas = computed(() => parasOfRole(['limitation']))
-/* ④「还有什么没解决」里"眉批标出的可疑之处"：按**档位**收，不按类型名收。
-   类型现在是开放词表——模型可以自造「参考态不一」这种 warn 档的批注，
-   只认 kind==='warning' 会把它们漏在外面（第四问说的是"读者要当心的"，都属于这条）。 */
-const warnNotes = computed(() => (store.marginalia.notes || []).filter(n => bandOf(n) === 'warn'))
-
-/* 页边批注的四个档位开关。四档不是四个色相，是"读的时候给多少注意力"——
-   它们同时是纸面上四种笔触，关了就在两边一起消失（纸上、页边各少一批）。
-   计数按**全部**批注算（不受开关影响），否则关掉一档就看不到它有几条了。 */
-const mnotes = computed(() => store.marginalia.notes)
-/* 档位开关只管 AI 眉批。读者自己钉的（查译/框选/自己写的）是读者资产，永远显示、
-   不参与筛选——所以这里没有「我写的」这一档（用户原话：没有 AI 眉批也要能显示）。 */
-const BANDS = [
-  { k: 'good', zh: '值得读', color: '#1d4e5f' },
-  { k: 'warn', zh: '要当心', color: '#b8462e' },
-  { k: 'noise', zh: '可跳过', color: '#8e8a80' },
-]
-const bandCount = computed(() => {
-  const m = { good: 0, warn: 0, noise: 0 }
-  for (const n of mnotes.value) m[bandOf(n)] = (m[bandOf(n)] || 0) + 1
-  return m
-})
-const bandOn = k => store.viewer.noteBands[k] !== false
-const bandAny = computed(() => BANDS.some(b => bandOn(b.k)))
-function toggleBand(k) {
-  store.viewer.noteBands = { ...store.viewer.noteBands, [k]: !bandOn(k) }
-}
-
 function anchorsOf(claim) {
   return claim.anchors
     .map(idx => ({ idx, anno: store.analysis.annotations[String(idx)], para: paraByIdx.value[idx] }))
@@ -279,12 +207,6 @@ watch(() => store.analysis.status, s => {
   loadTerms()
   loadSix()          // 服务端重算析读时把七问的答案一并清了（answers_clear），这里重新拉
 })
-watch(() => store.marginalia.status, s => {
-  if (s !== 'done') return
-  loadCachedBlocks()
-  loadSix()          // ⑥「还能做什么」是从"有坑"的批注长出来的，眉批一换就得重取
-})
-
 /* ---------- 右栏宽度：拖动改，双击复位 ----------
    经典分栏拖动：位移直接写进 railW，宽度过渡由 CSS 负责；拖的过程中把过渡关掉
    （body.rail-resizing），松手再交还给 CSS，否则边缘会黏在手后面。
@@ -651,24 +573,12 @@ async function saveToGlobal(term) {
               </template>
 
                             <template v-else-if="s.k === 'q5'">
-                <div v-for="p in limitParas" :key="p.idx" class="gap-node">
-                  <div class="gap-row" @click="jumpPara(p.idx)">
-                    <span class="g-tag">¶{{ p.idx }}</span>
-                    <span class="g-txt">{{ annoOf(p.idx).purpose }}</span>
-                  </div>
-                  <div class="gap-quote" @click="jumpPara(p.idx)">{{ excerpt(p.text) }}</div>
+                <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
+                  <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
+                  <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
+                  <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
-                <div v-for="n in warnNotes" :key="'w' + n.id" class="ev-row" @click="jumpNote(n)">
-                  <span class="e-dot">¶{{ n.para_idx }}</span>
-                  <span class="e-bar" :style="{ background: kindColor(n) }"></span>
-                  <span class="e-note">
-                    {{ prettyChem(n.note) }}
-                    <button class="ev-ask" @click.stop="askNotePrefill(n)">{{ t('问 ↗') }}</button>
-                  </span>
-                </div>
-                <div class="six-note" v-if="!limitParas.length && !warnNotes.length">
-                  {{ t('没找到明确的局限') }}
-                </div>
+                <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
               </template>
 
                             <template v-else-if="s.k === 'q6'">
@@ -693,39 +603,7 @@ async function saveToGlobal(term) {
             </div>
           </section>
 
-                    <div class="blk">
-            <div class="blk-head">
-              <span class="mono-label">{{ t('眉批') }}<span v-if="mnotes.length"> · {{ mnotes.length }}</span></span>
-              <button v-if="store.marginalia.status !== 'running'" class="blk-get" @click="emit('marginalia')"
-                      :title="mnotes.length ? t('替换现有眉批') : ''">
-                {{ mnotes.length ? t('重写') : t('AI 眉批') }}
-              </button>
-              <span v-else class="blk-busy">{{ t('写批注中') }}<span class="r-dots">…</span>
-                <button class="lnk" style="margin-left:8px" @click="stopMarginalia">{{ t('停止') }}</button></span>
-            </div>
-                        <div class="blk-prog" v-if="store.marginalia.status === 'running'">
-              <div class="r-bar">
-                <i :class="{ det: marginPct !== null }" :style="marginPct !== null ? { width: marginPct + '%' } : null" />
-              </div>
-              <div class="blk-prog-line">
-                <span v-if="store.marginalia.progress?.total">{{ t('已读 {n}/{m} 块', { n: store.marginalia.progress.done, m: store.marginalia.progress.total }) }}</span>
-                <span v-else>{{ t('正在通读全文') }}</span>
-                <span class="blk-elapsed">{{ marginSecs }}s</span>
-              </div>
-            </div>
-                        <div class="band-bar" v-if="mnotes.length">
-              <button v-for="b in BANDS" :key="b.k" class="band-chip" :class="{ off: !bandOn(b.k) }"
-                      @click="toggleBand(b.k)">
-                <i class="bdot" :style="{ background: b.color }"></i>{{ t(b.zh) }}<span class="n">{{ bandCount[b.k] }}</span>
-              </button>
-            </div>
-            <div class="band-alloff" v-if="mnotes.length && !bandAny">
-              {{ t('AI 眉批都已收起 ·') }}
-              <button class="lnk" @click="store.viewer.noteBands = { good: true, warn: true, noise: true }">{{ t('全开') }}</button>
-            </div>
-            <p class="blk-warn" v-if="store.marginalia.error">{{ t(store.marginalia.error) }}</p>
-          </div>
-        </template>
+                            </template>
       </template>
 
                   <template v-if="tab === 'eye'">

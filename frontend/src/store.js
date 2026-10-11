@@ -28,7 +28,7 @@ export const store = reactive({
   viewer: {
     variant: lsGet('variant', 'original'),
     spread: lsGet('spread', 'spread'),
-    layers: { marginalia: true, mine: true, ...lsGet('layers', {}) },
+    layers: { mine: true, ...lsGet('layers', {}) },
     care: lsGet('care', 'off'),            // 护眼底纹：off / mung / cyan / sand
     fs: lsGet('fs', 'std'),                // 字号：sm / std / lg / xl（论文正文不受影响）
     railUser: lsGet('railUser', true),     // 用户对右栏的偏好；双语对开姿势可临时覆盖
@@ -36,7 +36,6 @@ export const store = reactive({
        布局就爆（拖动本身有 min/max 把关，唯独「读回」这条路没人管）。 */
     railW: _clamp(lsGet('railW', 336), 268, 760, 336),
     libW: _clamp(lsGet('libW', null) ?? 300, 236, 560, 300),
-    noteBands: lsGet('noteBands', { good: true, warn: true, noise: true }),
     frame: false,
     libOpen: false,
     calOpen: false,        // 论文日历抽屉（与文库同侧，互斥打开）
@@ -98,7 +97,6 @@ watch(() => store.viewer.layers, v => lsSet('layers', v), { deep: true })
 watch(() => store.viewer.railUser, v => lsSet('railUser', v))
 watch(() => store.viewer.railW, v => lsSet('railW', v))
 watch(() => store.viewer.libW, v => lsSet('libW', v))
-watch(() => store.viewer.noteBands, v => lsSet('noteBands', v), { deep: true })
 watch(() => store.lib.sort, v => lsSet('libSort', v))
 
 /* 护眼底纹落在 <html> 上：CSS 变量在那里改，全站（含空态、弹层）一起换 */
