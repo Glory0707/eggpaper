@@ -35,7 +35,7 @@ const f = reactive({
 
 const savingData = ref(false)
 const picking = ref(false)
-/* 迁移 = 弹 Windows 自带目录选择框，选中即迁——不填路径、不加浏览按钮。 */
+/* 迁移 = 弹 Windows 自带目录选择框，选中即迁——不填路径、不加浏览按钮；空串 = 用户取消 */
 async function moveData() {
   picking.value = true
   let target = ''

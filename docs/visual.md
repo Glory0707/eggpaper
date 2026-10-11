@@ -288,7 +288,7 @@ Alt+←    返回上一个位置                      Esc         收浮层 / �
 
 ### 性能纪律
 
-只动 `opacity`/`transform`；滚动跟随用 IntersectionObserver 不挂 scroll handler；canvas 重渲染去抖 160ms；`will-change` 只加在已知将动的浮层上。
+只动 `opacity`/`transform`；滚动跟随用去抖的 scroll 监听（scroll-spy，见 PdfViewer `onScroll` 的 `spyT` 去抖）而不是逐帧读布局；canvas 重渲染去抖 160ms；`will-change` 只加在已知将动的浮层上。
 
 ## 13. 文案：标签，不是说明
 

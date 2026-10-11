@@ -12,16 +12,11 @@ Edge——同一个引擎，不用往安装包里塞几十兆，也没有额外�
 连"10 秒没出来就退回应用模式"这种兜底计时都跑不到（主线程要 GIL 才能跑 Python 回调）。
 一个会僵住的窗口不值得为了一个任务栏图标去换，所以这条路撤掉了，留这段话防止再试一遍。
 
-**关于任务栏/标题栏图标**（这是整条链路里最绕的一个，结论务必看全）：
-Chromium 给应用模式窗口的图标取自 favicon，而且按**物理像素**挑档位再放大——150% 缩放下
-取 24px 当逻辑 24，再放大到 36/48 物理像素，源头小，怎么画都软；`--app-icon` 开关实测无效
-（红方块 A/B：任务栏零变化）；内联 SVG favicon 更糟，会被栅格化成很小的位图再放大。
-favicon 那一侧我们仍按每档 DPI 的精确尺寸给足原图（见 `tools/make_icon.py` 的 ICO_SIZES 与
-`frontend/index.html` 的 `?v=`），但真正让任务栏达到**桌面快捷方式同级清晰度**的是
-`_give_window_icon()`：窗口拉起后，从进程外用 `WM_SETICON` 把按窗口 DPI 现画的精确像素位图
-（`mark.draw` + `CreateIconIndirect`，不再经 LoadImage 选档）注入进去——Windows 11 任务栏
-读的是 `ICON_SMALL2`，给它满物理尺寸（150% 下 48）即 1:1。favicon 加载后会把图标重设回去，
-所以后台线程反复压约 20 秒，歇 10 秒再补一拍（合计约 30 秒跨度的压制）。
+**关于任务栏/标题栏图标**：favicon 那条路走不通——Chromium 按物理像素挑档位再放大，
+`--app-icon` 实测无效（红方块 A/B：任务栏零变化），内联 SVG favicon 更糟。favicon 一侧仍按
+每档 DPI 给足原图（`tools/make_icon.py` 的 ICO_SIZES 与 `frontend/index.html` 的 `?v=`），
+真正让任务栏达到桌面快捷方式级清晰度的是 `_give_window_icon()`（窗口拉起后从进程外注入按
+窗口 DPI 现画的精确位图；原因、手法与"压 20 秒"的由来见该函数的文档）。
 """
 import os
 import subprocess

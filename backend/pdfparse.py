@@ -57,10 +57,8 @@ def _heading_kind(text: str):
     return None
 
 def page0_lines(path: str):
-    """首页的干净行列表（text/size/y0/y1，水印行已滤）与页高。
-    标题、作者两个提取器共用这一趟扫描——不然一篇 PDF 光元数据就要开两遍文档。
-    导入方（main._ingest）把这一次扫描的结果同时喂给两个提取器，整个元数据
-    环节只开一遍文档。"""
+    """首页的干净行列表（text/size/y0/y1，水印行已滤）与页高。标题、作者两个提取器共用
+    这一趟扫描——导入方（main._ingest）拿它同时喂两个，元数据环节只开一遍文档。"""
     doc = pymupdf.open(path)
     try:
         page = doc[0]

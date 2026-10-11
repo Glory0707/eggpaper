@@ -10,8 +10,8 @@
    （划词、Ctrl+F、缩放、打印、多标签）全长在浏览器上，所以窗口用系统自带的
    Edge/Chrome 的 **应用模式**（`--app=URL`）开——同样的引擎、同样的能力、自己的任务栏
    条目，**不额外背一个 WebView 运行时**。
-2. **没有控制台窗口**（打包时 console=False）。所以任何启动失败都必须写进日志文件，
-   路径 %LOCALAPPDATA%\\eggpaper\\logs\\app.log——设置面板里写了怎么找到它。
+2. **没有控制台窗口**（打包时 console=False）。所以任何启动失败都必须写进日志文件：
+   %LOCALAPPDATA%\\eggpaper\\logs\\app.log（数据目录旁的 logs/），排查时直接看它。
 3. **单实例**。端口上已经有 eggpaper 在跑（用户双击了两次图标），就只打开浏览器，
    不再起第二个进程去抢同一份 SQLite 和文库。
 """

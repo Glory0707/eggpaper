@@ -49,7 +49,8 @@ const GUTTER_FULL = 184   // 页边批注带（184 宽 + 12 的左边距）
 const deskEl = ref(null)
 const ready = ref(false)
 const loadPct = ref(0)         // 破壳进度：喂给入场那条细线
-let creep = 0                   // 缓慢逼近的底速（本地 PDF 的下载是瞬时的，
+let creep = 0                   // 缓慢逼近的底速：本地加载瞬时就绪、真进度来得太快,
+                                // 每 240ms 向 92% 挪、封顶 90%（startCreep/stopCreep）
 const zoom = ref(1)              // 在"适宽/适页"之上的微调倍率
 const fit = ref('width')         // width 适宽 / page 适页 / none 固定百分比
 const fitScale = ref(1)          // 适宽比例：容器宽 ÷ 纸宽
@@ -827,9 +828,9 @@ function onMouseUp(e) {
   selStream?.abort()          // 上一次的流别再往新气泡里写字
 }
 
-/* 纸上那条划线点一下要有回应。为什么不直接在 .mg-mark 上挂 click：那些块盖在正文上，
-   一旦吃鼠标事件就没法选字了（见 styles.css 里那段注释）。所以走"整页 mouseup + 命中测试"——
-   点一下（没拖动）本来也会触发 mouseup，选字、划词一条都不受影响。 */
+/* 纸上那条划线点一下要有回应。为什么不直接在 .mg-mark 上挂 click：那些块盖在正文上
+   （样式里是 pointer-events: none），一旦吃鼠标事件就没法选字了。所以走"整页 mouseup +
+   命中测试"——点一下（没拖动）本来也会触发 mouseup，选字、划词一条都不受影响。 */
 function onPaperClick(e) {
   if (!notesShown.value.length) return
   const pageEl = e.target?.closest?.('.page')
@@ -919,7 +920,8 @@ function askAboutSel() {
 }
 
 /* 自己写一条批注：页边不只是"看批注的地方"，也是读者自己的本子。
-   查译/段译是"AI 给你的"，这条是你自己的话——所以 kind='note'，颜色归"你自己的"那一档。 */
+   查译/段译是"AI 给你的"，这条是你自己的话——所以 kind='note'，标签带「你 · 」前缀，
+   笔触与其它钉子同一种墨色（页边只有一种笔触，见 styles.css）。 */
 const mine = reactive({ open: false, text: '' })
 const mineEl = ref(null)
 function openMine() {

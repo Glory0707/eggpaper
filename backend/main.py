@@ -219,11 +219,8 @@ def _backfill_pdf_hashes():
 
 def _migrate_paper_layout():
     """旧平铺布局（library/{pid}.pdf、translated/{pid}-mono/dual.pdf、translated/.pages-{pid}/）
-    一次性搬进 papers/{pid}/，db 里的路径同步改写。
-
-    布局：每篇一个文件夹——paper.pdf + mono.pdf + dual.pdf + .pages/，删论文 = 删文件夹。
-    搬完后旧目录里剩下的必然是没有论文指向的孤儿，整个清掉；
-    有文件搬不动（被占用）就不删目录，下次启动接着试。"""
+    一次性搬进 papers/{pid}/，db 里的路径同步改写；搬完清掉空壳旧目录。有文件搬不动
+    （被占用）就不删目录，下次启动接着试。"""
     lib = os.path.join(config.DATA_DIR, "library")
     tr = os.path.join(config.DATA_DIR, "translated")
     if not os.path.isdir(lib) and not os.path.isdir(tr):
@@ -586,13 +583,9 @@ def _apply_pending_restore():
         _applog("备份恢复落地失败：" + traceback.format_exc(limit=3))
 
 def _sweep_old_data_dirs():
-    """恢复落地后的旧目录，若上个会话没删完（落地后马上退出，删除线程跟着死了），
-    启动时顺手清掉。恢复的暂存目录（.restore）同理：标记写下去之前被杀的话它就一直
-    在盘上（几百 MB），标记还在（这次启动就要用它落地）时别碰。
-
-    另外回收数据目录里的上传残渣（.upload-*.tmp）：上传中途进程被杀（崩溃/装新版重启）
-    会把它整份留在盘上，没人扫的话天长日久越积越多。只删超过 1 天的：正在写的临时文件
-    mtime 每块都在刷新，1 天阈值误伤不到活的请求。"""
+    """恢复落地后的旧目录（上个会话没删完的）启动时顺手清；.restore 暂存同理——标记还在
+    （这次启动就要用它落地）时别碰。另回收数据目录里的上传残渣（.upload-*.tmp）：只删超过
+    1 天的，正在写的临时文件 mtime 每块都在刷新，误伤不到活的请求。"""
     base = os.path.dirname(config.DATA_DIR)
     name = os.path.basename(config.DATA_DIR)
     try:
@@ -619,17 +612,10 @@ _TRASH_PREFIX = ".trash-"
 
 def _sweep_orphan_papers():
     """papers/ 里没有论文指向的文件夹：改名进 .trash-<本场时间戳>-<原名>/ 观察一场，
-    下一场启动才删。
-
-    什么时候会有孤儿：导入写了一半进程被杀（PDF 落了盘、库记录没写上），
-    或者旧平铺布局迁移前留下的残骸。曾经的对孤儿直接 rmtree 有个致命口子：
-    **db 被换空/损坏而 papers/ 完好时，整个文库会被当成孤儿一次删光**。
-    改进 trash 后留了一场启动的窗口——db 修回来了，下一场启动按 id 把文件夹
-    **从 trash 抢回来**；修不回来，那时才真删。改名失败（句柄被占）就留在原地，
-    下一场再判一次，这里绝没有就地删除这条路。
-    目录认两代名：裸 `<id>/` 和可读名 `<id> <短名>/`——判 owner 取空格前的
-    那段 id；**这步绝不能比 rename pass 先跑**，否则刚改完名的目录会被当孤儿删光。
-    """
+    下一场启动才删。孤儿来源：导入写了一半进程被杀，或旧平铺布局的残骸。
+    **绝不就地 rmtree**——db 被换空/损坏而 papers/ 完好时会把整个文库一次删光；
+    留一场启动的窗口，db 修回来了下一场按 id 从 trash 抢回。夹名认两代
+    （老名取空格前那段判 id，可读名按 DB path 锚）——**这步绝不能比 rename pass 先跑**。"""
     try:
         dirs = os.listdir(PAPERS_DIR)
     except OSError:
@@ -1901,8 +1887,8 @@ def _run_analysis(pid: str, paras: list):
             tfut = ex.submit(_demo_terms, title, paras)
         else:
             # 图注翻译独立成一次调用，与骨架**并行**（图表扫描 O(n²) 也不再挡在骨架前面）：
-            # 以前挤在骨架同一次输出里，图多的论文把 16k 输出顶截断 → 坏 JSON 重试再烧
-            # 一整遍 → 最后整个析读被判失败，图注一张都拿不到
+            # 挤在同一次输出里的代价（16k 顶截断 → 坏 JSON 重烧 → 整个析读判失败）见
+            # llm.analyze_skeleton 的文档
             if not llm._is_en():
                 cap_fut = ex.submit(_caps_job, pid)
             data = llm.analyze_skeleton(title, use, kind=kind)
@@ -2691,7 +2677,7 @@ def export_md(pid: str):
         "six": ("五个问题", "Five questions"),
         "mcard": ("方法卡", "Method card"),
         "scard": ("谱系卡", "Survey map"),
-        "notes": ("眉批与查译", "Margin notes & lookups"),
+        "notes": ("页边批注与查译", "Margin notes & lookups"),
         "cited": ("库内互引", "Cited by in library"),
         "qa": ("问答", "Q&A"),
         "you": ("你", "You"),
@@ -2720,7 +2706,9 @@ def export_md(pid: str):
                 if anno:
                     lines.append(f"  - ¶{a}：{anno['purpose']}")
             lines.append("")
-    # 七问：它们存在 answers 表里，原先导出漏了——写综述/组会汇报时最值钱的恰是这几问
+    # 七问里现场生成的那几问（answers 表，原先导出漏了——写综述/组会汇报时最值钱的恰是它们）。
+    # 目前标签表覆盖 ①/②/③（研究型 method、综述型 how）/⑥/⑦；⑤「哪里可疑」（doubt）还没进表，
+    # 补导出时把它一起加上
     answers = db.answers_all(pid)
     is_rev = (p.get("paper_type") == "review")
     SIX_LABELS = {"motive": ("① 要解决什么、为什么", "① What & why"),

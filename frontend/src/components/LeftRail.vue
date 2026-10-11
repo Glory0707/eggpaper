@@ -333,7 +333,6 @@ async function doDelete() {
 }
 /* 批量归类：点分类名就整批归入并收起——不搞复选框三态（半选的横杠没人看得懂）；
    右侧的 ✓ 只是状态标记：这批已经全在这个分类里 */
-/* 批量归类菜单里的"已全在"标记：只有 all 会被渲染，其余两态不需要区分 */
 function selCollAll(cid) {
   const hits = [...selSet.value].filter(pid => collOf(pid).includes(cid)).length
   return hits > 0 && hits === selN.value

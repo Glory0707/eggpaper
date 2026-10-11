@@ -42,7 +42,8 @@ function sixQ(s) {
 
 const six = reactive({ motive: null, principle: null, method: null, how: null, next: null, lens: null, doubt: null })
 const sixBusy = reactive({ motive: false, principle: false, method: false, how: false, next: false, lens: false, doubt: false })
-/* 七问各自的"答没答出来"。免费的 ④⑤ 看骨架，①②③⑥⑦ 看有没有取过。
+/* 七问各自的"答没答出来"。只有 ④ 是免费的（骨架 claims）；①②③⑤⑥⑦ 看有没有生成过
+   （answers 按篇缓存——析读时预生成，进这一页就有）。
    综述的 ③ 走模型生成的"谱系问"（综述没有实验层，方法问对它是空壳）。
    有答案的那一问，行首的编号是墨色（没答的是灰的）——不点开也知道哪几问已经落地。 */
 const sixHas = computed(() => ({

@@ -731,8 +731,9 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
     整台机器现在够不到引擎的资源站，这一页和下一页都卡在同一处，重试纯属把时间耗光。
 
     为什么收"页区间"：pdf2zh 每次冷启动要全套依赖 import（2.x 还要加载 onnx 模型），
-    一页一进程时 30 页 = 30 次纯开销。按 4 页一批冷启动摊薄；批里单页坏了拆成单页
-    再各试一遍，复用粒度从"页"退到"批"，断点续译（_page_done 逐页认）不变。
+    一页一进程时 30 页 = 30 次纯开销。按批（免费 8 页 / LLM 2 页，见 _batch_size）冷启动
+    摊薄；批里单页坏了拆成单页再各试一遍，复用粒度从"页"退到"批"，
+    断点续译（_page_done 逐页认）不变。
     """
     cmd = _cmd(pdf_path, out_dir, service, extra, glossary_csv, engine, pages)
     tail = collections.deque(maxlen=5)

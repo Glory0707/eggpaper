@@ -52,8 +52,9 @@ CREATE TABLE IF NOT EXISTS marginalia(
 CREATE TABLE IF NOT EXISTS conversations(
   id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id TEXT, title TEXT, created_at TEXT, updated_at TEXT
 );
--- 七问里需要现场生成的那几问（motive 要解决什么、principle/method/how 怎么解决、next 还能做什么、
--- lens 换个学科怎么看；键的口径见 llm.py）：按篇缓存，点过一次就不再花钱
+-- 七问里需要现场生成的那几问（motive 要解决什么、principle 原理、method/how 怎么解决、
+-- next 还能做什么、lens 换个学科怎么看、doubt 哪里可疑；键的口径见 llm.py）：按篇缓存，
+-- 生成过一次就不再花钱
 CREATE TABLE IF NOT EXISTS answers(
   paper_id TEXT, key TEXT, json TEXT, PRIMARY KEY(paper_id, key)
 );

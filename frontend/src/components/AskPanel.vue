@@ -35,8 +35,9 @@ const convs = ref([])
 const convId = ref(null)
 const msgs = ref([])
 const text = ref('')
-const busy = ref(false)          // 正在生成
-const loading = ref(false)       // 正在拉历史
+/* busy=正在生成回答，loading=正在拉历史：两个在途态分开——守卫与 spinner 文案都不一样 */
+const busy = ref(false)
+const loading = ref(false)
 const inputEl = ref(null)
 const scrollEl = ref(null)
 const atBottom = ref(true)
@@ -122,9 +123,8 @@ async function send(q, pidArg) {
     if (ev.assistant_id) m.id = ev.assistant_id
     adoptConv(ev)
   }
-  /* 流式的增量按**帧**合并再落进 DOM。每个 token 写一次响应式状态，就等于每个 token
-     重排一次整条 Markdown、再读一次 scrollHeight 决定跟不跟滚——短回答看不出来，
-     长回答（几百字以上）就是肉眼可见的卡。合并成"一帧一次"之后它只是更快，字一个不少。 */
+  /* 增量按帧合并再上屏（frameBuffer）：每个 token 直写响应式状态＝每 token 重排一次
+     整条 Markdown 再读一次 scrollHeight——长回答肉眼可见地卡（细节见 clip.js） */
   const fb = frameBuffer(piece => { m.content += piece; follow() })
   const body = picked.value.length
     ? { question: q, conv_id: id, refs: picked.value }
@@ -231,8 +231,9 @@ async function delConv() {
   } catch (e) { toast(e.message) }
 }
 
-/* 只带每篇的析读摘要（几百字），不搬全文——两篇全文就顶到上下文天花板了。
-   范围两种：手选几篇；或「全库·自动挑相关」（后端先用标题清单侦察出最相关的 2~4 篇）。 */
+/* 跨篇材料由后端分层取材（main._recon_pick / _gather_others）：两三篇直接带全文，
+   更多时先用标题清单侦察挑相关篇，仍超过 4 篇就逐篇抽相关段落作答——两篇全文就顶到
+   上下文天花板了。范围两种：手选几篇；或「全库·自动挑相关」（后端自己筛）。 */
 const citeOpen = ref(false)
 const citeQ = ref('')
 const libPapers = ref([])

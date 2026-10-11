@@ -33,7 +33,6 @@
   --vermilion-deep: #9d3a25;
 
   --r-claim: #1d4e5f;
-  --r-gap: #57534a;
 
   --fs-scale: 1;
   --fs-xl: calc(15px * var(--fs-scale));
@@ -863,19 +862,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 @keyframes rtIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes rtOut { from { opacity: 1; } to { opacity: 0; } }
 
-.gap-node { margin-bottom: 10px; }
-.gap-row { display: flex; gap: 8px; align-items: baseline; cursor: pointer; padding: 3px 4px; border-radius: 3px; }
-.gap-row:hover { background: rgba(var(--ink-rgb), 0.05); }
-.gap-row .g-tag { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; color: #fff; background: var(--r-gap); border-radius: 2px; padding: 2px 5px; flex-shrink: 0; }
-.gap-row .g-txt { font-family: var(--sans); font-weight: 500; font-size: var(--fs-read); line-height: 1.6; }
-
-.gap-quote {
-  margin: 3px 0 2px 26px; padding: 6px 9px; border-radius: 3px;
-  background: var(--paper-deep);
-  font-size: var(--fs-sm); line-height: 1.68; color: var(--ink-2);
-  cursor: pointer; transition: color var(--t-fast) var(--ease-smooth);
-}
-.gap-quote:hover { color: var(--ink); }
 .ev-row { display: flex; gap: 7px; align-items: baseline; margin-top: 7px; padding-left: 2px; cursor: pointer; }
 .ev-row:hover .e-note { color: var(--ink); }
 .ev-row .e-dot { width: calc(22px * var(--fs-scale)); font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
@@ -909,21 +895,10 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .blk-get:hover { border-color: var(--accent-deep); color: var(--accent-deep); background: var(--accent-soft); }
 .blk-busy { margin-left: auto; font-size: var(--fs-sm); color: var(--ink-3); }
 
-.blk-warn { margin: 6px 0 0; font-size: var(--fs-sm); line-height: 1.6; color: var(--vermilion); }
-
-.blk-prog { margin: 2px 0 4px; }
-.blk-prog .r-bar { height: 2px; background: var(--hairline-soft); overflow: hidden; }
-.blk-prog .r-bar i {
-  display: block; height: 100%; width: 30%; background: var(--accent);
-  animation: slide 1.8s var(--ease-smooth) infinite;
-  transition: width .45s var(--ease-smooth);
-}
-.blk-prog .r-bar i.det { animation: none; }
 .blk-prog-line {
   display: flex; justify-content: space-between; margin-top: 6px;
   font-size: var(--fs-xs); color: var(--ink-3);
 }
-.blk-elapsed { font-family: var(--mono); }
 .blk-more {
   display: block; width: 100%; text-align: center; padding: 7px 0;
   font-size: var(--fs-sm); color: var(--ink-3); background: transparent;
@@ -965,7 +940,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .term-row .t-arrow { color: var(--ink-3); font-size: var(--fs-xs); margin: 0 5px; }
 .term-row .t-zh { color: var(--ink); }
 .term-row .t-acts { flex: 0 0 auto; display: flex; align-items: baseline; gap: 1px; margin-left: auto; }
-.term-row .t-acts button, .term-row .t-act { border: none; background: none; color: var(--ink-3); padding: 0 3px; }
+.term-row .t-acts button { border: none; background: none; color: var(--ink-3); padding: 0 3px; }
 .term-row .t-go { font-size: var(--fs-xs); text-decoration: underline; text-underline-offset: 2px; text-decoration-style: dotted; }
 .term-row .t-no { font-size: var(--fs-xs); }
 .term-row .t-add { font-size: var(--fs-md); }
@@ -1617,12 +1592,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .six-q i.on { color: var(--ink); font-weight: 600; }
 .six-q:hover i.on { color: var(--accent-deep); }
 
-.ev-ask {
-  border: none; background: transparent; color: var(--ink-3);
-  font-size: var(--fs-xs); padding: 0 3px; opacity: 0; margin-left: 4px;
-}
-.ev-row:hover .ev-ask { opacity: 1; }
-.ev-ask:hover { color: var(--accent-deep); background: var(--accent-soft); box-shadow: none; transform: none; }
 .six { border-top: 1px solid var(--hairline-soft); }
 .six:last-of-type { border-bottom: 1px solid var(--hairline-soft); }
 .six-q {
@@ -1916,7 +1885,7 @@ html.dark .vis-img { background: #fff; }
 .toc-row .toc-p { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
 
 .md, .qa-msg .q-body, .cal-paper, .paper-item .fn, .ce-v, .six-txt,
-.claim-item .c-txt, .gap-row .g-txt, .cc-quote, .mg-note .mg-body,
+.claim-item .c-txt, .cc-quote, .mg-note .mg-body,
 .sel-pop .sp-zh, .sp-hits .chip, .ev-row .e-note,
 .cal-paper, .term-row .t-main, .p-author, .mg-note .mg-quote,
 .lb-cap, .zot-list .z-title { overflow-wrap: anywhere; }
