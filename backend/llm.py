@@ -644,7 +644,7 @@ def suggest_questions(title: str, claims: list, annos: dict) -> dict:
             "（面板里是竖排按钮，长句读着累）。"
             "只输出 JSON：{\"questions\":[\"...\"]}，不要代码块。" + _lang_tail()},
         {"role": "user", "content": f"论文标题：{title or ''}\n\n核心主张：\n{claims_txt}\n\n研究缺口：{gap}"},
-    ], max_tokens=4000, temperature=0.5, no_think=True, scene="推荐问题")
+    ], max_tokens=4000, temperature=0.5, scene="推荐问题")
     qs = [_clip_q(str(q)) for q in data.get("questions", []) if isinstance(q, str) and q.strip()]
     return {"questions": qs[:3]}
 
