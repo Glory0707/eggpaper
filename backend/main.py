@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import shutil
 import tempfile
 import threading
@@ -14,6 +15,7 @@ import uuid
 import zipfile
 from urllib.parse import urlparse
 
+import httpx
 import uvicorn
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -3537,14 +3539,58 @@ def translate_para(pid: str, body: dict):
     ctx = (ctx_row or {}).get("text", "")
     return _sse_response(_translate_sse(para["text"], ctx, hits))
 
+_RELAY_TOKEN = secrets.token_urlsafe(16)   # 引擎拿来叩中转的临时令牌，每次启动换
+RELAY_PORT = 0        # serve() 落定；不开端口直调 app 的场合（TestClient）保持 0 → 翻译走直连老路
+_relay_http = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=20))
+
+@app.post("/llm-relay/chat/completions")
+async def _llm_relay(req: Request):
+    """全文翻译引擎的透明中转：注入 thinking:disabled 再转发，真 key 不出进程。
+
+    引擎的通用 openai 通道没有 thinking 入口，而 deepseek-flash 默认开思考——翻译
+    是逐段短改写，思考纯属白烧（输出 token 是输入的 5.6 倍，大头就是它）。引擎的
+    base_url 指到本端点，这里补上开关后转发给真端点；顺带把引擎请求的 token 账
+    记进 app.log（scene=翻译引擎），翻译烧多少钱第一次看得见。
+    429/5xx 原样透传：引擎的 tenacity 退避重试靠状态码工作，吞了它就瞎了。
+    """
+    if req.headers.get("authorization") != f"Bearer {_RELAY_TOKEN}":
+        raise HTTPException(403, "relay token mismatch")
+    try:
+        body = await req.json()
+    except Exception:
+        raise HTTPException(400, "bad json")
+    if isinstance(body, dict):
+        body["thinking"] = {"type": "disabled"}
+    prov = config.load().get("provider") or {}
+    base = (prov.get("base_url") or "").strip().rstrip("/")
+    key = (prov.get("api_key") or "").strip()
+    if not base or not key:
+        raise HTTPException(502, "provider 未配置")
+    try:
+        r = await _relay_http.post(f"{base}/chat/completions",
+                                   headers={"Authorization": f"Bearer {key}"},
+                                   json=body)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"上游 {type(e).__name__}")
+    try:
+        usage = r.json().get("usage") or {}
+    except Exception:
+        usage = {}
+    if usage:
+        llm._log_cache(usage, "翻译引擎")
+    return Response(content=r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type", "application/json"))
+
 def _pdf2zh_env(service: str, cfg: dict):
     """全文翻译要的 key 从哪来：**用用户在「设置」里已经填的那一套**，不让他填第二遍。
 
     pdf2zh_next（2.x）的配置体系是 pydantic-settings：`--openai-api-key` 对应环境变量
     `PDF2ZH_OPENAI_API_KEY`（`--` 换 `PDF2ZH_`、`-` 换 `_`），所以 key 只经环境变量
-    交给子进程，不进命令行。子进程 HOME 指到数据目录 home/（见 translate_full._page_env），
-    引擎若把收到的值自动落盘也只落在我们自己文件夹里，任务收尾会扫掉。
-    返回 (环境变量, 端点主机名)。
+    交给子进程，不进命令行。openai 通道再进一层：引擎拿到的不是真 key 而是一次性
+    令牌，base_url 指向本进程的 /llm-relay——请求注入 thinking:disabled 后由中转
+    持真 key 转发（引擎通道没有 thinking 入口，不中转就只能白烧思考 token）。
+    子进程 HOME 指到数据目录 home/（见 translate_full._page_env），引擎若把收到的值
+    自动落盘也只落在我们自己文件夹里，任务收尾会扫掉。返回 (环境变量, 端点主机名)。
     """
     prov = cfg.get("provider") or {}
     key = (prov.get("api_key") or "").strip()
@@ -3559,9 +3605,13 @@ def _pdf2zh_env(service: str, cfg: dict):
     if not key:
         return {}, ""
     if service == "openai":
-        envs = {"PDF2ZH_OPENAI_API_KEY": key}
-        if base:
-            envs["PDF2ZH_OPENAI_BASE_URL"] = base
+        if RELAY_PORT:
+            envs = {"PDF2ZH_OPENAI_API_KEY": _RELAY_TOKEN,
+                    "PDF2ZH_OPENAI_BASE_URL": f"http://127.0.0.1:{RELAY_PORT}/llm-relay"}
+        else:
+            envs = {"PDF2ZH_OPENAI_API_KEY": key}
+            if base:
+                envs["PDF2ZH_OPENAI_BASE_URL"] = base
         if model:
             envs["PDF2ZH_OPENAI_MODEL"] = model
         u = urlparse(base)
@@ -4009,6 +4059,8 @@ def serve(port: int = DEFAULT_PORT, log_level: str = "info"):
     用户那头就是"双击图标没反应"。日志本来也没地方显示，索性不装。
     开发模式保持原样（终端里要看请求日志）。
     """
+    global RELAY_PORT
+    RELAY_PORT = port              # 翻译中转要知道自己该听哪个口（见 _pdf2zh_env）
     try:
         import window
         window.start_icon_guard()   # 任务栏图标守护：所有 eggpaper 窗口 15s 重钉一次
