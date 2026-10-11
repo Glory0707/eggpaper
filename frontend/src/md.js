@@ -75,14 +75,14 @@ function runsOf(t) {
   const runs = []
   for (const seg of String(t).split(/(\*\*[^*]+\*\*|`[^`]+`|《[^》]*》\s*¶\s*\d+|¶\s*\d+)/)) {
     if (!seg) continue
-    if (BOLD.test(seg) && seg.startsWith('**')) runs.push({ text: seg.slice(2, -2), bold: true })
-    else if (CODE.test(seg) && seg.startsWith('`')) runs.push({ text: seg.slice(1, -1), code: true })
+    if (seg.startsWith('**')) runs.push({ text: seg.slice(2, -2), bold: true })
+    else if (seg.startsWith('`')) runs.push({ text: seg.slice(1, -1), code: true })
     else if (CROSS.test(seg)) {
       const m = seg.match(CROSS)
       runs.push({ text: `《${m[1]}》` })
       runs.push({ text: m[2], cite: parseInt(m[2].replace(/\D/g, ''), 10), ref: m[1] })
     }
-    else if (CITE.test(seg) && /^¶\s*\d+$/.test(seg)) runs.push({ text: seg, cite: parseInt(seg.replace(/\D/g, ''), 10) })
+    else if (/^¶\s*\d+$/.test(seg)) runs.push({ text: seg, cite: parseInt(seg.replace(/\D/g, ''), 10) })
     else runs.push({ text: seg })
   }
   return runs

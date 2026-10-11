@@ -29,6 +29,7 @@ import time
 import httpx
 
 import appinfo
+import fsutil
 import llm     # 只借 human_error：下载失败也按统一口径说人话
 
 _cache = {}
@@ -127,9 +128,7 @@ def download(url: str, sha256: str = "", size: int = 0):
         if os.path.isfile(part):
             got = os.path.getsize(part)
             if got:                      # 断点字节先喂哈希：拼完整才能校验得过
-                with open(part, "rb") as f:
-                    for blk in iter(lambda: f.read(1 << 20), b""):
-                        h.update(blk)
+                h, _ = fsutil.sha256_seeded(part)
         headers = {"Range": f"bytes={got}-"} if got else {}
         with httpx.stream("GET", url, headers=headers, timeout=httpx.Timeout(600, connect=15),
                           follow_redirects=True) as r:

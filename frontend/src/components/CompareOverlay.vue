@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch } from 'vue'
-import { api, toast } from '../store'
+import { api, toast, paperName } from '../store'
+import { saveBlob, csvCell } from '../save'
 import { t } from '../i18n'
 import { modalFocus } from '../modalFocus'
 
@@ -85,7 +86,7 @@ function closeClick() {
 }
 function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); emit('close') } }
 
-function titleOf(p) { return p.title || p.filename || t('(无标题)') }
+function titleOf(p) { return paperName(p, t('(无标题)')) }
 function goto(p, n) {
   if (!n) return
   emit('goto', { pid: p.id, n })
@@ -105,21 +106,12 @@ async function copyMd() {
 }
 /* 系统综述的终点是把表带走：CSV（带 BOM，Excel 直接开不吃乱码）。 */
 function downloadCsv() {
-  const esc = v => {
-    v = String(v ?? '')
-    return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v
-  }
   const lines = [['文献', ...dims.value.map(d => d.label)]]
   for (const p of papers.value) {
     lines.push([titleOf(p), ...dims.value.map(d => cells.value[p.id]?.[d.k]?.text || '')])
   }
-  const blob = new Blob(['\ufeff' + lines.map(r => r.map(esc).join(',')).join('\r\n')],
-                        { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = 'eggpaper-compare.csv'
-  a.click()
-  URL.revokeObjectURL(a.href)
+  saveBlob(new Blob(['\ufeff' + lines.map(r => r.map(csvCell).join(',')).join('\r\n')],
+                    { type: 'text/csv;charset=utf-8' }), 'eggpaper-compare.csv')
 }
 </script>
 

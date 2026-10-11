@@ -28,6 +28,7 @@ from starlette.concurrency import run_in_threadpool
 import appinfo
 import citation
 import compare
+import fsutil
 
 appinfo.migrate_if_needed()
 
@@ -104,16 +105,15 @@ def _demo_mode(cfg: dict = None) -> bool:
 
 _demo_txt = llm._demo_txt          # 演示文案双语：与 llm 共用同一份实现
 
-def _human_msg(exc: Exception) -> str:
-    """人话映射统一在 llm.human_error：「测试连接」、流式问答、这里的异常处理器共用一份，
-    免得"哪里报错"决定"用户看到什么"。"""
-    return llm.human_error(exc)
+# 人话映射统一在 llm.human_error：「测试连接」、流式问答、这里的异常处理器共用一份，
+# 免得"哪里报错"决定"用户看到什么"。别名形式与 _demo_txt/_strip_secrets 同款。
+_human_msg = llm.human_error
 
 @app.exception_handler(Exception)
 async def _any_error(request, exc):
     """别让异常裸奔——前端只会拿到一个"500"，用户看到的就是这个数字。"""
     hint = _human_msg(exc)
-    print(f"[eggpaper] {request.url.path} 出错 → {hint}")
+    _applog(f"[eggpaper] {request.url.path} 出错 → {hint}")   # 打包版没有 stdout：走 _applog 才留得下痕
     return JSONResponse({"detail": hint}, status_code=500)
 
 @app.exception_handler(RequestValidationError)
@@ -207,7 +207,7 @@ def _backfill_pdf_hashes():
     """
     def work():
         for pid, path in db.papers_missing_hash():
-            h = _pdf_hash_file(path or "")
+            h = fsutil.sha256_file(path or "", quiet=True)
             if h:
                 try:
                     db.update_paper(pid, pdf_hash=h)
@@ -281,6 +281,16 @@ def _migrate_paper_layout():
         _applog(f"数据目录迁移：{moved} 个文件归位到 papers/<论文 id>/ 每篇一个文件夹")
 
 _INNER_SUFFIX = (("path", ""), ("mono_path", "（译文）"), ("dual_path", "（双语）"))
+
+def _variant_names(base: str) -> tuple:
+    """两个成品文件名（含扩展名、不含目录）：(译文, 双语)——中缀与 _INNER_SUFFIX 同源。
+
+    base 由调用方从显示名算好（空名的兜底各按各的口径：serve 路径退回 "paper"、
+    认领旧成品时退回空 = 没有可认的名字）。空 base 给空名，别造一个假名。
+    """
+    if not base:
+        return "", ""
+    return f"{base}（译文）.pdf", f"{base}（双语）.pdf"
 
 def _late_align(pid: str):
     """当场没对齐成的（刚导入的 PDF 被杀软攥几秒是常态）交给后台保洁追平：
@@ -384,6 +394,14 @@ def _align_names(pid: str) -> bool:
             moved = True
     if ups:
         db.update_paper(pid, **ups)
+    return moved
+
+def _align_or_late(pid: str) -> bool:
+    """盘上名字立刻对齐可读名；当场没挪动（杀软攥着刚落的 PDF 之类）交给保洁几秒内追平。
+    返回是否真的挪了（改名端点要原样回给前端）。"""
+    moved = _align_names(pid)
+    if not moved:
+        _late_align(pid)
     return moved
 
 def _rename_paper_dirs():
@@ -592,7 +610,7 @@ def _sweep_old_data_dirs():
             fp = os.path.join(config.DATA_DIR, fn)
             if fn.startswith(".upload-") and fn.endswith(".tmp") \
                     and os.path.isfile(fp) and os.path.getmtime(fp) < stale:
-                _rm(fp)
+                fsutil.rm_quiet(fp)
                 _applog(f"回收上传残渣：{fn}")
     except OSError:
         pass
@@ -620,11 +638,8 @@ def _sweep_orphan_papers():
     # 夹名认主两把尺：可读名（无 pid）按 DB path 锚——path 的 dirname 就是它的夹；
     # 老两代名（裸 `<id>/`、`<id> <短名>/`）保留 id 前缀判法兜底。可读名夹在 DB
     # 路径断了时靠启动自愈先修回来（_repair_paper_paths 先于本清扫跑），不误伤。
-    known_dirs = set()
-    for r in db.q("SELECT path FROM papers"):
-        v = r["path"] or ""
-        if v:
-            known_dirs.add(os.path.normcase(os.path.abspath(os.path.dirname(v))))
+    known_dirs = {os.path.normcase(os.path.abspath(os.path.dirname(v)))
+                  for v in (r["path"] or "" for r in db.q("SELECT path FROM papers")) if v}
 
     def owned(name: str) -> bool:
         if os.path.normcase(os.path.abspath(os.path.join(PAPERS_DIR, name))) in known_dirs:
@@ -1011,7 +1026,7 @@ async def pdf2zh_install_from_file(file: UploadFile = File(...)):
                     raise HTTPException(400, "文件过大")
                 f.write(chunk)
     except Exception:
-        _rm(tmp)        # 超限/写一半失败：两 GB 的残骸别一直躺在盘上
+        fsutil.rm_quiet(tmp)        # 超限/写一半失败：两 GB 的残骸别一直躺在盘上
         raise
     return engine_install.start_from_zip(tmp, cleanup=True)
 
@@ -1075,8 +1090,8 @@ def _my_port() -> int:
             p = int(json.load(f).get("port") or 0)
         if p:
             return p
-    except Exception:
-        pass
+    except Exception as e:
+        _applog(f"读 instance.json 失败（退回默认端口 {DEFAULT_PORT}）：{type(e).__name__}: {str(e)[:120]}")
     return DEFAULT_PORT
 
 @app.post("/api/window")
@@ -1160,28 +1175,6 @@ def search_everywhere(q: str = ""):
     """全库内容检索（粗粒度）：一眼卡/七问/主张/问答/正文，命中按篇聚合。"""
     return db.search_content((q or "")[:200])
 
-def _pdf_hash_file(path: str) -> str:
-    """流式算一份 PDF 的 sha256（几百 MB 也就一两秒，内存只占一块 1MB 的缓冲）。"""
-    import hashlib
-    h = hashlib.sha256()
-    try:
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except OSError:
-        return ""
-
-def _copy_with_hash(src: str, dest: str) -> str:
-    """边复制边喂 sha256：原来的「整读算哈希 + copyfile 整读整写」把源文件读了两遍。"""
-    import hashlib
-    h = hashlib.sha256()
-    with open(src, "rb") as fsrc, open(dest, "wb") as fdst:
-        for chunk in iter(lambda: fsrc.read(1 << 20), b""):
-            h.update(chunk)
-            fdst.write(chunk)
-    return h.hexdigest()
-
 def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     """把已经落在 papers/<pid>/ 里的一份 PDF 建进库（上传与"双击打开"两条路共用）。
 
@@ -1192,9 +1185,7 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
         title = pdfparse.extract_title(path, page0)
         authors = pdfparse.extract_authors(path, page0)
         paras = pdfparse.extract_paragraphs(path)
-        import pymupdf
-        with pymupdf.open(path) as d:      # 用完就关：裸开会让 Windows 短暂锁着文件
-            n_pages = len(d)
+        n_pages = pdfparse.page_count(path)    # 用完就关：裸开会让 Windows 短暂锁着文件
     except Exception as e:
         try:
             os.remove(path)
@@ -1205,8 +1196,7 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     if pdf_hash:
         db.update_paper(pid, pdf_hash=pdf_hash)
     try:
-        if not _align_names(pid):     # 标题/作者刚提取完：夹名、文件名立刻对齐可读名
-            _late_align(pid)          # 当场挪不动（杀软攥着刚落的 PDF）交给保洁追平
+        _align_or_late(pid)   # 标题/作者刚提取完：夹名、文件名立刻对齐可读名（挪不动由保洁追平）
     except Exception as e:
         _applog(f"导入对齐 {pid} 失败（标题照存，下次启动的迁移会再对一次）：{_human_msg(e)}")
     db.replace_paragraphs(pid, paras)
@@ -1237,6 +1227,28 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
             "no_text": not paras}
 
 
+def _analysis_reset(pid: str, where: str = ""):
+    """取消/中断的收尾动作本身：清旗子、状态归"没做过"、按需记一笔日志。
+
+    篇已被删就直接收手（状态行都没了，别把死篇写回库；旗子随篇作废，没人再查它）。
+    OCR 与析读两条路共用这一份（where 为空 = 静默收尾，OCR 的两处就是这么用的）。
+    """
+    if _pid_gone(pid):
+        return
+    _cancel_clear("analysis", pid)
+    db.update_paper(pid, analysis_status="none", analysis_error=None)
+    if where:
+        _applog(f"析读 {pid}: {where}")
+
+def _analysis_cancelled(pid: str, where: str) -> bool:
+    """析读的取消闸：请求了取消就收尾并写一笔日志。
+    返回 True 时调用方直接 return——已生成的部分按各阶段自己的口径保留。"""
+    if not _cancel_requested("analysis", pid):
+        return False
+    _analysis_reset(pid, where)
+    return True
+
+
 def _ocr_then_analyze(pid: str, path: str, auto: bool = True):
     """扫描件的隐形后半段：OCR → 段落入库 → 排析读。失败落 analysis_error，说人话。
 
@@ -1249,13 +1261,6 @@ def _ocr_then_analyze(pid: str, path: str, auto: bool = True):
     _job_done 挪到最后的 finally——先撤登记再排析读的话，惰性检测会在毫秒窗里
     把刚排上的 queued 误归零。
     """
-    def _stopped_midway():
-        """OCR 前后探到取消/删篇：旗子收掉别留给下一次误杀，状态回"没做过"。"""
-        if _pid_gone(pid):
-            return
-        _cancel_clear("analysis", pid)
-        db.update_paper(pid, analysis_status="none", analysis_error=None)
-
     with _q_lock:
         _job_start("analysis", pid)
     t0 = time.time()
@@ -1264,13 +1269,13 @@ def _ocr_then_analyze(pid: str, path: str, auto: bool = True):
             paras = ocr.ocr_pdf(
                 path, should_stop=lambda: _pid_gone(pid) or _cancel_requested("analysis", pid))
         except ocr.OcrStopped:
-            _stopped_midway()
+            _analysis_reset(pid)      # OCR 前后探到取消/删篇：旗子收掉别留给下一次误杀
             return
         if not paras:
             raise ValueError("没认出文字")
         _applog(f"OCR {pid}: {len(paras)} 段，{time.time() - t0:.1f}s")
         if _pid_gone(pid) or _cancel_requested("analysis", pid):
-            _stopped_midway()
+            _analysis_reset(pid)
             return
         db.replace_paragraphs(pid, paras)
         _ensure_paper_type(pid)
@@ -1333,25 +1338,25 @@ async def upload(request: Request, file: UploadFile = File(...)):
                     head = chunk[:16]
                 f.write(chunk)
     except HTTPException:
-        _rm(tmp)
+        fsutil.rm_quiet(tmp)
         raise
     except OSError:
-        _rm(tmp)
+        fsutil.rm_quiet(tmp)
         raise HTTPException(500, "PDF 没写进库里（磁盘满了或被占用）")
     if head[:4] != b"%PDF":
-        _rm(tmp)
+        fsutil.rm_quiet(tmp)
         raise HTTPException(400, "不是 PDF 文件")
     if size < 256:
-        _rm(tmp)
+        fsutil.rm_quiet(tmp)
         raise HTTPException(400, "文件太小，不像完整的 PDF")
     name = (file.filename or "paper.pdf").split("/")[-1].split("\\")[-1]
 
     def _import():
         with _import_lock:
-            pdf_hash = _pdf_hash_file(tmp)       # 流式算哈希：内存只占一块 1MB 缓冲
+            pdf_hash = fsutil.sha256_file(tmp, quiet=True)   # 流式算哈希：内存只占一块 1MB 缓冲
             dup = db.find_duplicate(name, size, pdf_hash)
             if dup:
-                _rm(tmp)
+                fsutil.rm_quiet(tmp)
                 paras = db.get_paragraphs(dup)
                 return {"paper": db.get_paper(dup), "n_paragraphs": len(paras),
                         "n_captions": sum(1 for pp in paras if pp.get("caption")),
@@ -1373,7 +1378,7 @@ async def upload(request: Request, file: UploadFile = File(...)):
     try:
         return await run_in_threadpool(_import)
     except Exception:
-        _rm(tmp)      # _import 没接住的失败（判重前的异常等）：临时文件别留在数据目录
+        fsutil.rm_quiet(tmp)      # _import 没接住的失败（判重前的异常等）：临时文件别留在数据目录
         raise
 
 @app.post("/api/papers/import-path")
@@ -1396,13 +1401,13 @@ def import_path(body: dict):
         pid, pid_dir, base = _new_paper_dir(name)
         dest = os.path.join(pid_dir, f"{base}.pdf")
         try:
-            pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
+            pdf_hash = fsutil.sha256_file(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
         except OSError as e:
             _discard_paper_dir(pid, pid_dir)   # 复制不出来（盘满/源被锁）：别留半截目录
             raise HTTPException(400, f"复制不出来：{_human_msg(e)}")
         dup = db.find_duplicate(name, size, pdf_hash)
         if dup:
-            _rm(dest)
+            fsutil.rm_quiet(dest)
             _discard_paper_dir(pid, pid_dir)   # 刚建的空文件夹顺手收掉
             _pending_open["pid"] = dup
             return {"paper": db.get_paper(dup), "duplicate": True}
@@ -1440,7 +1445,7 @@ def supersede_paper(pid: str, body: dict):
             with _dir_lock:
                 d = _dir_cache.pop(old["id"], None)
             if d:
-                _rm(os.path.join(PAPERS_DIR, d))
+                fsutil.rm_quiet(os.path.join(PAPERS_DIR, d))
             shutil.rmtree(paper_dir(old["id"]), ignore_errors=True)   # 缓存漏了也要兜底删
     except Exception:
         # 迁移没成（DB 整体回滚了）：旧篇还在，把"视同已删"的护栏撤回——
@@ -1475,8 +1480,7 @@ def paper_meta(pid: str, body: dict):
     b = body or {}
     db.set_paper_meta(pid, str(b.get("title") or ""), str(b.get("authors") or ""), str(b.get("year") or ""))
     try:
-        if not _align_names(pid):     # 可信元数据回填完，盘上名字跟着对齐
-            _late_align(pid)
+        _align_or_late(pid)   # 可信元数据回填完，盘上名字跟着对齐
     except Exception as e:
         _applog(f"元数据回填后对齐 {pid} 失败（名字下轮启动会再对一次）：{_human_msg(e)}")
     return {"paper": db.get_paper(pid)}
@@ -1496,11 +1500,9 @@ def paper_title(pid: str, body: dict):
             or translate_full.job(pid)["status"] in ("running", "queued"):
         raise HTTPException(400, "有析读或翻译在跑，结束后再改")
     db.set_paper_meta(pid, title=title)
-    renamed = _align_names(pid)
+    renamed = _align_or_late(pid)
     if renamed:
         _applog(f"标题 {pid}: 夹名/文件名已对齐新标题")
-    else:
-        _late_align(pid)      # 当场没挪动（杀软攥着刚导入的 PDF 之类）：保洁几秒内追平
     return {"paper": db.get_paper(pid), "renamed": renamed}
 
 def _paper_or_404(pid: str) -> dict:
@@ -1646,13 +1648,6 @@ def calendar_view(month: str = ""):
         days[day] = entry
     return {"month": month, "days": days}
 
-def _rm(path: str):
-    if path and os.path.exists(path):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
 _deleted_pids: set = set()      # 已删篇：析读线程写库前查这里，避免给死篇插回孤儿行
 _deleted_lock = threading.Lock()
 
@@ -1672,8 +1667,11 @@ def delete_paper(pid: str):
     p = _paper_or_404(pid)      # 404 守卫；path 字段留给收尾删库内文件用
     with _deleted_lock:
         _deleted_pids.add(pid)   # 有意的守卫：在跑的析读/七问线程靠它不再往死篇写孤儿行
-    _lines_probe_done.discard(pid)
-    _rect_tried.difference_update(n["id"] for n in db.get_marginalia(pid))   # 钉子行要没了，补定位的死键顺手收掉
+    with _lines_probe_lock:
+        _lines_probe_done.discard(pid)
+    stale_rects = [n["id"] for n in db.get_marginalia(pid)]   # 先取（查库不占锁），再收死键
+    with _rect_lock:
+        _rect_tried.difference_update(stale_rects)   # 钉子行要没了，补定位的死键顺手收掉
     with _key_lock("translate:" + pid):
         _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
         d = paper_dir(pid)                    # purge 前算好：之后 DB 没了，只剩兜底解析
@@ -1713,8 +1711,8 @@ def _late_rm_paper_dir(pid: str, p: dict, d: str):
     threading.Thread(target=work, daemon=True).start()
     with _dir_lock:
         _dir_cache.pop(pid, None)
-    _rm(p["path"])
-    _rm(p["dual_path"]); _rm(p.get("mono_path"))
+    fsutil.rm_quiet(p["path"])
+    fsutil.rm_quiet(p["dual_path"]); fsutil.rm_quiet(p.get("mono_path"))
     return {"ok": True}
 
 _key_locks: dict = {}
@@ -1724,24 +1722,30 @@ def _key_lock(key: str) -> threading.Lock:
     同一 key 的生成任务并发请求在这里排队，拿锁的一方真生成，后到者重读缓存直接返回。"""
     return _key_locks.setdefault(key, threading.Lock())
 
+def _pdf_or_404(path: str, msg: str) -> FileResponse:
+    """盘上有就服务这个 PDF，没有就按调用方口径 404（三种变体各有各的人话）。"""
+    if path and os.path.exists(path):
+        return FileResponse(path, media_type="application/pdf")
+    raise HTTPException(404, msg)
+
 @app.get("/api/papers/{pid}/pdf")
 def paper_pdf(pid: str, variant: str = "original"):
     p = _paper_or_404(pid)
-    base = _display_name(p) or "paper"
+    mono_name, dual_name = _variant_names(_display_name(p) or "paper")
     if variant == "dual":
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
             return FileResponse(dual, media_type="application/pdf")
-        mono = p.get("mono_path") or os.path.join(paper_dir(pid), f"{base}（译文）.pdf")
+        mono = p.get("mono_path") or os.path.join(paper_dir(pid), mono_name)
         src = _paper_src(pid, p)
         if (mono and os.path.exists(mono) and src and os.path.exists(src)):
             try:
                 with _key_lock("variant:" + pid + ":dual"):
-                    dual = os.path.join(paper_dir(pid), f"{base}（双语）.pdf")
+                    dual = os.path.join(paper_dir(pid), dual_name)
                     if not os.path.exists(dual):
                         translate_full.derive_dual(src, mono, dual)
                     db.update_paper(pid, dual_path=dual)
-                return FileResponse(dual, media_type="application/pdf")
+                return _pdf_or_404(dual, "双语版尚未生成")
             except OSError:
                 # Windows 上刚换名的产物可能还被上一个响应占着句柄：当作没生成好，让前端走原文
                 raise HTTPException(404, "双语版尚未生成")
@@ -1753,24 +1757,31 @@ def paper_pdf(pid: str, variant: str = "original"):
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
             with _key_lock("variant:" + pid + ":mono"):
-                mono = os.path.join(paper_dir(pid), f"{base}（译文）.pdf")
+                mono = os.path.join(paper_dir(pid), mono_name)
                 if not os.path.exists(mono):
                     translate_full.derive_mono(dual, mono)
                 db.update_paper(pid, mono_path=mono)
-            return FileResponse(mono, media_type="application/pdf")
+            return _pdf_or_404(mono, "译文版尚未生成")
         raise HTTPException(404, "译文版尚未生成")
     src = _paper_src(pid, p)
-    if not src or not os.path.exists(src):
-        raise HTTPException(404, PDF_GONE)
-    return FileResponse(src, media_type="application/pdf")
+    return _pdf_or_404(src, PDF_GONE)
 
 _lines_probe_done: set = set()   # 行级补解析每篇每进程只试一次：对不上的篇反复整本重解析纯属浪费
+_lines_probe_lock = threading.Lock()   # 上面这本簿子的锁：端点线程与删篇线程并发翻它
+
+def _probe_lines_once(pid: str) -> bool:
+    """这篇要不要做行级补解析：查与登记同一把锁——两个窗口同时首拉时，两边都"没试过"
+    就会各跑一遍整本 PDF 重解析（重），而簿子的本意是每篇只试一次。"""
+    with _lines_probe_lock:
+        if pid in _lines_probe_done:
+            return False
+        _lines_probe_done.add(pid)
+        return True
 
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
-    if db.paragraphs_need_lines(pid) and pid not in _lines_probe_done:
-        _lines_probe_done.add(pid)
+    if db.paragraphs_need_lines(pid) and _probe_lines_once(pid):
         p = db.get_paper(pid)
         path = _paper_src(pid, p)
         try:
@@ -1783,20 +1794,10 @@ def paragraphs(pid: str):
                 else:
                     _applog(f"行级坐标补解析 {pid}: 新解析的段落与库里那批对不上，这次不补（避免批注错位）")
         except Exception as e:
-            print(f"[eggpaper] 行级坐标补解析失败 {pid}: {e}")
+            _applog(f"[eggpaper] 行级坐标补解析失败 {pid}: {e}")
     return db.get_paragraphs(pid)
 
 # ---------------- 骨架分析 ----------------
-
-def _analysis_cancelled(pid: str, where: str) -> bool:
-    """析读的取消闸：请求了取消就清标记、状态归零、写一笔日志。
-    返回 True 时调用方直接 return——已生成的部分按各阶段自己的口径保留。"""
-    if not _cancel_requested("analysis", pid):
-        return False
-    _cancel_clear("analysis", pid)
-    db.update_paper(pid, analysis_status="none", analysis_error=None)
-    _applog(f"析读 {pid}: {where}")
-    return True
 
 def _caps_job(pid: str) -> dict:
     """析读支线：扫出全部图表注并整批翻译。图表区域是纯函数（路径+mtime 缓存），
@@ -1804,6 +1805,84 @@ def _caps_job(pid: str) -> dict:
     pdir = db.get_paper(pid) or {}
     pairs = [(i, f["caption"]) for i, f in enumerate(_figures_for(pid, pdir)) if f.get("caption")]
     return llm.translate_captions(pairs)
+
+def _submit_subtasks(ex, pid: str, paras: list, kind: str, demo: bool,
+                     tfut, cap_fut) -> dict:
+    """骨架落库之后：把其余生成任务排进池子，返回 {future: 名字} 的簿子。
+
+    tfut/cap_fut 是骨架阶段已经发出去的术语/图注任务，并进同一本簿子一起等。
+    一眼卡先发、歇 4 秒再放其余六个并发：带着全文前缀的请求要让服务端把公共前缀
+    落盘（实测几秒后才可命中）。不错峰时六个并发的首拍会各吃一次全文未命中——
+    20 页真论文实测第一拍 0% 命中、白付 11k tokens。术语表同理，且与骨架同发的话
+    两个全文首拍**都**全价未命中（12-13 点那笔 71k 未命中输入的主因之一）：跟着骨架
+    4 秒后发才命中缓存。入参换成非参考文献段落：术语不长在文献表里，前缀还与骨架
+    对齐、命中更彻底。
+    """
+    title = (db.get_paper(pid) or {}).get("title") or ""
+    use = [p for p in paras if not p.get("in_refs")]
+    futs = {}
+    if not demo:
+        futs[ex.submit(llm.extract_terms, title, use)] = "terms"
+        futs[ex.submit(_summary_compute, pid)] = "summary"
+        time.sleep(4)
+    # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
+    todo = (["motive", "principle", "method"] if kind == "research"
+            else ["motive", "principle", "how"]) + ["next", "lens", "doubt"]
+    # 真实模式走 _six_compute（与端点同锁同缓存）：前端在析读一完成就会来要答案，
+    # 两边必须串到同一把锁上，否则同一问生成两遍
+    futs.update({ex.submit(_mock_six, k) if demo else ex.submit(_six_compute, pid, k): k
+                 for k in todo})
+    if not demo:
+        futs[ex.submit(_suggest_compute, pid)] = "suggest"
+    if cap_fut is not None:
+        futs[cap_fut] = "figcaps"
+    if tfut is not None:
+        futs[tfut] = "terms"
+    _analysis_progress[pid] = {"done": 1, "total": 1 + len(futs)}   # 骨架算已完成的 1 项
+    return futs
+
+def _drain_subtasks(pid: str, futs: dict) -> bool:
+    """等这一轮子任务收齐、逐项落库、推进度。返回 False = 论文已被删、别再往下走。
+
+    取消旗一起来就停等（不再写库）；剩下没跑到的那几个交给 finally 里的
+    shutdown(cancel_futures=True) 收。
+    """
+    for fut in as_completed(futs):
+        k = futs[fut]
+        if _cancel_requested("analysis", pid):
+            break
+        try:
+            got = fut.result()
+            if k == "terms":
+                n = _save_terms(pid, got)
+                _applog(f"析读 {pid}: 本篇术语 {n} 条" if n else f"析读 {pid}: 术语这次是空的")
+            elif k == "summary":
+                # _summary_compute 已锁内落库；这里只剩"真没生成出来"的记一句
+                if not (isinstance(got, dict) and got.get("one_line")):
+                    _applog(f"析读 {pid}: 一眼卡这次是空的（速览页会再试一次）")
+            elif k == "suggest":
+                if not (isinstance(got, dict) and got.get("questions")):
+                    _applog(f"析读 {pid}: 推荐问题这次是空的（提问页会再试一次）")
+            elif k == "figcaps":
+                if got:
+                    if _pid_gone(pid):
+                        return False
+                    # 锁内读改写合并落库：懒翻译按坐标存的旧键不被整包覆写抹掉
+                    db.fig_caps_add(pid, got)
+                    _applog(f"析读 {pid}: 图注中文 {len(got)} 条")
+            elif got.get("text") or got.get("items"):
+                if _pid_gone(pid):
+                    _applog(f"析读 {pid}: 论文已删除，丢弃七问·{k}")
+                    return False
+                db.answer_put(pid, k, got)
+            else:
+                _applog(f"析读 {pid}: 七问·{k} 这次是空的")
+        except Exception as e:
+            _applog(f"析读 {pid}: {k} 没生成（{_human_msg(e)}）")
+        d = _analysis_progress.get(pid)
+        if d:
+            d["done"] = min(d.get("total") or 0, d.get("done", 0) + 1)
+    return True
 
 def _run_analysis(pid: str, paras: list):
     ex = None
@@ -1843,66 +1922,9 @@ def _run_analysis(pid: str, paras: list):
         db.update_paper(pid, **upd)
         if _analysis_cancelled(pid, "已取消（骨架完成后，骨架保留）"):
             return
-        futs = {}
-        if not demo:
-            # 一眼卡先发、歇 4 秒再放其余六个并发：带着全文前缀的请求要让服务端把
-            # 公共前缀落盘（实测几秒后才可命中）。不错峰时六个并发的首拍会各吃一次
-            # 全文未命中——20 页真论文实测第一拍 0% 命中、白付 11k tokens。
-            # 术语表同理，且与骨架同发的话两个全文首拍**都**全价未命中（12-13 点那
-            # 笔 71k 未命中输入的主因之一）：跟着骨架 4 秒后发才命中缓存。入参换成
-            # 非参考文献段落：术语不长在文献表里，前缀还与骨架对齐、命中更彻底。
-            futs[ex.submit(llm.extract_terms, title, use)] = "terms"
-            futs[ex.submit(_summary_compute, pid)] = "summary"
-            time.sleep(4)
-        # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
-        todo = (["motive", "principle", "method"] if kind == "research"
-                else ["motive", "principle", "how"]) + ["next", "lens", "doubt"]
-        # 真实模式走 _six_compute（与端点同锁同缓存）：前端在析读一完成就会来要答案，
-        # 两边必须串到同一把锁上，否则同一问生成两遍
-        futs.update({ex.submit(_mock_six, k) if demo else ex.submit(_six_compute, pid, k): k
-                     for k in todo})
-        if not demo:
-            futs[ex.submit(_suggest_compute, pid)] = "suggest"
-        if cap_fut is not None:
-            futs[cap_fut] = "figcaps"
-        if tfut is not None:
-            futs[tfut] = "terms"
-        _analysis_progress[pid] = {"done": 1, "total": 1 + len(futs)}   # 骨架算已完成的 1 项
-        for fut in as_completed(futs):
-            k = futs[fut]
-            if _cancel_requested("analysis", pid):
-                break
-            try:
-                got = fut.result()
-                if k == "terms":
-                    n = _save_terms(pid, got)
-                    _applog(f"析读 {pid}: 本篇术语 {n} 条" if n else f"析读 {pid}: 术语这次是空的")
-                elif k == "summary":
-                    # _summary_compute 已锁内落库；这里只剩"真没生成出来"的记一句
-                    if not (isinstance(got, dict) and got.get("one_line")):
-                        _applog(f"析读 {pid}: 一眼卡这次是空的（速览页会再试一次）")
-                elif k == "suggest":
-                    if not (isinstance(got, dict) and got.get("questions")):
-                        _applog(f"析读 {pid}: 推荐问题这次是空的（提问页会再试一次）")
-                elif k == "figcaps":
-                    if got:
-                        if _pid_gone(pid):
-                            return
-                        # 锁内读改写合并落库：懒翻译按坐标存的旧键不被整包覆写抹掉
-                        db.fig_caps_add(pid, got)
-                        _applog(f"析读 {pid}: 图注中文 {len(got)} 条")
-                elif got.get("text") or got.get("items"):
-                    if _pid_gone(pid):
-                        _applog(f"析读 {pid}: 论文已删除，丢弃七问·{k}")
-                        return
-                    db.answer_put(pid, k, got)
-                else:
-                    _applog(f"析读 {pid}: 七问·{k} 这次是空的")
-            except Exception as e:
-                _applog(f"析读 {pid}: {k} 没生成（{_human_msg(e)}）")
-            d = _analysis_progress.get(pid)
-            if d:
-                d["done"] = min(d.get("total") or 0, d.get("done", 0) + 1)
+        futs = _submit_subtasks(ex, pid, paras, kind, demo, tfut, cap_fut)
+        if not _drain_subtasks(pid, futs):
+            return
         if _analysis_cancelled(pid, "已取消，已完成的部分保留"):
             return
     except Exception as e:
@@ -1974,9 +1996,10 @@ def _resolve_rects(pid: str):
     doc = None
     try:
         for n in db.get_marginalia(pid):
-            if n["rect"] or n["kind"] == "region" or n["id"] in _rect_tried:
+            if n["rect"] or n["kind"] == "region":
                 continue
-            _rect_tried.add(n["id"])
+            if not _rect_mark_tried(n["id"]):
+                continue
             if doc is None:
                 doc = pymupdf.open(src)
             rects = []
@@ -1997,6 +2020,16 @@ def _resolve_rects(pid: str):
             doc.close()
 
 _rect_tried = set()
+_rect_lock = threading.Lock()   # _rect_tried 的锁：GET /marginalia（端点线程）与删篇线程并发翻它
+
+def _rect_mark_tried(nid) -> bool:
+    """这条钉子值不值得试一次补定位：判重与登记同一把锁——并发开两次页边时，
+    两边都读到"没试过"就会各开一遍 PDF 搜同一条（每条只试一次是这里的设计口径）。"""
+    with _rect_lock:
+        if nid in _rect_tried:
+            return False
+        _rect_tried.add(nid)
+        return True
 
 _live_jobs = set()
 _live_lock = threading.Lock()   # _live_jobs 的读写锁：析读 worker、OCR 线程与各端点都会翻这本簿子
@@ -2105,6 +2138,8 @@ def _applog(msg: str):
 
 llm.applog = _applog     # token 账从 print 换成落盘：打包版没有 stdout，
                          # 不注入的话用户"钱花在哪"永远只有平台账单一个答案
+crossref.applog = _applog      # 元数据回填的失败/回填记录：同上，打包版只有网页看不到的 stdout
+engine_install.applog = _applog   # 引擎安装的失败细节（源逐个试、warmup 没做成）：同上
 
 USER_NOTE_KINDS = ("lookup", "region", "note")   # 页边只下发用户钉的三种 kind；老库里 kind 在此之外的存量行不下发
 
@@ -2112,7 +2147,7 @@ USER_NOTE_KINDS = ("lookup", "region", "note")   # 页边只下发用户钉的�
 def marginalia_get(pid: str):
     _paper_or_404(pid)
     def user_notes():
-        return [dict(n, rect=json.loads(n["rect"]) if n["rect"] else None)
+        return [dict(n, rect=_json_of(n["rect"], None))
                 for n in db.get_marginalia(pid) if n["kind"] in USER_NOTE_KINDS]
     notes = user_notes()
     if any(not n["rect"] for n in notes):
@@ -2195,12 +2230,22 @@ def _require_shape(data, keys: tuple, what: str):
         raise HTTPException(503, f"{what}没生成出来，再点一次")
 
 
-def _json_of(raw, fallback=None):
-    """缓存字段里可能存进坏 JSON（老版本/半截写盘）：读的时候一律过这道，别 500。"""
+_JSON_DEFAULT = object()      # _json_of 的哨兵：区分"没给兜底"（回 {}）与"显式要 None"
+
+def _json_of(raw, fallback=_JSON_DEFAULT):
+    """缓存字段里可能存进坏 JSON（老版本/半截写盘）：读的时候一律过这道，别 500。
+
+    fallback 不传 = 坏值/空值回 {}（"当没缓存"，走重生成）；显式传 None = 回 None
+    （页边说"没有 rect 就是 null"这类两态字段）。
+    """
+    if fallback is _JSON_DEFAULT:
+        fallback = {}
+    if not raw:
+        return fallback
     try:
-        return json.loads(raw) if raw else (fallback if fallback is not None else {})
+        return json.loads(raw)
     except (ValueError, TypeError):
-        return fallback if fallback is not None else {}
+        return fallback
 
 
 def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
@@ -2213,10 +2258,10 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
     """
     p = _paper_needing_paras(pid)
     if p[field]:
-        try:
-            return JSONResponse(json.loads(p[field]))
-        except ValueError:
-            pass                      # 坏缓存当没有，走重生成
+        cached_json = _json_of(p[field], None)
+        if cached_json is not None:
+            return JSONResponse(cached_json)
+        # 坏缓存当没有，走重生成
     if cached and cached_value is not None:
         return cached_value
     if precond:                              # 锁外快返：前置不满足就别排在一次真生成后面
@@ -2228,10 +2273,9 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
         if not p:
             _paper_or_404(pid)          # 排队等生成时论文被删：404，别 None 下标炸 500
         if p[field]:
-            try:
-                return JSONResponse(json.loads(p[field]))
-            except ValueError:
-                pass
+            cached_json = _json_of(p[field], None)
+            if cached_json is not None:
+                return JSONResponse(cached_json)
         if cached and cached_value is not None:
             return cached_value
         empty = precond(p) if precond else None
@@ -2271,10 +2315,9 @@ def _summary_compute(pid: str) -> dict:
         if not p:
             _paper_or_404(pid)          # 排队等生成时论文被删：404，别 None 下标炸 500
         if p.get("summary"):
-            try:
-                return json.loads(p["summary"])
-            except ValueError:
-                pass                    # 坏缓存当没有，走重生成
+            cached_json = _json_of(p["summary"], None)
+            if cached_json is not None:
+                return cached_json            # 坏缓存当没有，走重生成
         paras, hits = _summary_material(pid)
         data = llm.summarize(p["title"], paras, hits)
         _require_shape(data, ("one_line", "novelty", "findings", "keywords"), "一眼卡")
@@ -2289,10 +2332,9 @@ def _suggest_compute(pid: str) -> dict:
         if not p:
             _paper_or_404(pid)
         if p.get("suggest"):
-            try:
-                return json.loads(p["suggest"])
-            except ValueError:
-                pass
+            cached_json = _json_of(p["suggest"], None)
+            if cached_json is not None:
+                return cached_json
         _, claims, annos = db.get_analysis(pid)
         data = llm.suggest_questions(p["title"], claims, annos)
         _require_shape(data, ("questions",), "提问建议")
@@ -2403,7 +2445,7 @@ def _save_terms(pid: str, got) -> int:
         db.glossary_put_ai(pid, terms)
     added = db.merge_abbrs(pid, got.get("abbrs") or {})
     if added:
-        print(f"[eggpaper] 本篇缩写补了 {added} 条")
+        _applog(f"[eggpaper] 本篇缩写补了 {added} 条")
     return len(terms)
 
 # text 型演示答案：zh/en 各一段，_mock_six 查表
@@ -2478,6 +2520,11 @@ def _mock_six(key: str) -> dict:
          "ask": _demo_txt("搬到另一类体系要先验证什么？", "What must be validated first in the new setting?")},
     ]}
 
+def _stale_answer(key: str, val) -> bool:
+    """lens/next 带 v 版本号：v<3 的旧口径缓存当"没生成过"（全量/单键两条读路同判据，
+    作废口径只此一处）。"""
+    return key in ("lens", "next") and isinstance(val, dict) and (val.get("v") or 0) < 3
+
 @app.get("/api/papers/{pid}/six-answers")
 def six_answers(pid: str):
     """只读缓存：打开一篇论文时问一次，没生成过的题返回 null。
@@ -2485,10 +2532,7 @@ def six_answers(pid: str):
     _paper_or_404(pid)
     out = {}
     for key, val in (db.answers_all(pid) or {}).items():
-        if key in ("lens", "next") and isinstance(val, dict) and (val.get("v") or 0) < 3:
-            out[key] = None
-        else:
-            out[key] = val
+        out[key] = None if _stale_answer(key, val) else val
     return out
 
 def _six_compute(pid: str, key: str) -> dict:
@@ -2497,7 +2541,7 @@ def _six_compute(pid: str, key: str) -> dict:
     生成，析读一完成前端立即来请求，同一问会真的生成两遍（两遍钱）。"""
     with _key_lock("six:" + pid + ":" + key):
         cached = db.answer_get(pid, key)
-        if cached and key in ("lens", "next") and (cached.get("v") or 0) < 3:
+        if cached and _stale_answer(key, cached):
             cached = None
         if cached:
             return cached
@@ -2603,8 +2647,9 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         if not p:
             _paper_or_404(pid)      # 排队等生成时论文被删：404，别 None 下标炸 500
         if p["citation"] and not refresh:
-            meta = json.loads(p["citation"])
-            return {"meta": meta, "groups": citation.groups(meta)}
+            meta = _json_of(p["citation"])
+            if meta:              # 坏缓存当没有，走重生成（与外层缓存分支同一口径）
+                return {"meta": meta, "groups": citation.groups(meta)}
         src = pdfparse.citation_source(_paper_src_or_404(pid, p))
         raw = llm.extract_citation(p["title"], src)
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
@@ -2754,25 +2799,31 @@ def export_md(pid: str):
     return Response(content=md, media_type="text/markdown; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename=eggpaper-{pid}.md"})
 
+_CSV_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+def _csv_cell(v) -> str:
+    # Excel/WPS 把 =+-@、制表符开头的单元格当公式执行（AI 词条源自 PDF 原文，
+    # 恶意构造的论文能把公式种进词表）：统一前置 ' 中性化
+    v = str(v)
+    return "'" + v if v[:1] in _CSV_FORMULA_LEADS else v
+
+def _csv_response(body: str) -> Response:
+    """术语导出的响应壳（单篇词表与学科库两个端点共用同一套口径）。"""
+    return Response(content=body, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
+
 @app.get("/api/papers/{pid}/glossary/export.csv")
 def glossary_export(pid: str):
     _paper_or_404(pid)
     import csv
     import io
     buf = io.StringIO()
-    buf.write("﻿")
+    buf.write("\ufeff")     # UTF-8 BOM：Excel 打开中文不乱码
     w = csv.writer(buf)
     w.writerow(["term_en", "term_zh", "source"])
-    formula_leads = ("=", "+", "-", "@", "\t", "\r")
-    def _safe_cell(v):
-        # Excel/WPS 把 =+-@、制表符开头的单元格当公式执行（AI 词条源自 PDF 原文，
-        # 恶意构造的论文能把公式种进词表）：统一前置 ' 中性化
-        v = str(v)
-        return "'" + v if v[:1] in formula_leads else v
     for r in db.glossary_list(pid):
-        w.writerow([_safe_cell(r["term_en"]), _safe_cell(r["term_zh"]), _safe_cell(r["source"])])
-    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
+        w.writerow([_csv_cell(r["term_en"]), _csv_cell(r["term_zh"]), _csv_cell(r["source"])])
+    return _csv_response(buf.getvalue())
 
 # ---------------- 图表速览 ----------------
 
@@ -2897,6 +2948,140 @@ def _iou(a, b):
     inter = (a & b).get_area()
     return inter / max(a.get_area() + b.get_area() - inter, 1e-6)
 
+def _page_candidates(page) -> dict:
+    """一页的图表候选素材（纯计算，数值口径见各自的常量）：题注 caps、图元/文字候选
+    cands、正文屏障 blockers、图片 imgs，外加页宽高与天头地脚。同一页只取一遍
+    get_text/get_image_info/get_drawings。"""
+    import pymupdf
+    pw, ph = page.rect.width, page.rect.height
+    dtext = page.get_text("dict")
+    # 图表区域要的是**原始行**（不做连字/空白归一）：归一化会改行宽与行距的相邻判定，
+    # 这份 PDF 的图区是纯函数，动一个数就动全部区域框
+    lines = pdfparse.text_lines(page, clean=False, blocks=dtext.get("blocks", []))
+    two_col = _two_columns(page, lines)
+    lm = min((r.x0 for r, t in lines), default=36.0)
+    rm = max((r.x1 for r, t in lines), default=pw - 36.0)
+    mid = pw / 2
+
+    def colw_of(r):
+        if not two_col:
+            return rm - lm
+        return (mid - 6 - lm) if (r.x0 + r.x1) / 2 < mid else (rm - mid - 6)
+
+    ytop, ybot = FIG_HDR_FOOT, ph - FIG_HDR_FOOT
+    caps, cands, blockers = [], [], []
+    for blk in dtext.get("blocks", []):
+        if blk.get("type") != 0:
+            continue
+        blines = [ln for ln in blk.get("lines", []) if ln.get("spans")]
+        if not blines:
+            continue
+        brect = pymupdf.Rect(blk["bbox"])
+        if brect.y1 < ytop or brect.y0 > ybot:
+            continue
+        rects = [pymupdf.Rect(ln["bbox"]) for ln in blines]
+        texts = ["".join(sp["text"] for sp in ln["spans"]) for ln in blines]
+        cap = _caption_of(texts[0].strip())
+        if cap:
+            cap_txt = re.sub(r"\s+", " ", " ".join(t.strip() for t in texts))
+            caps.append({"rect": brect, "kind": cap[0], "label": cap[1],
+                         "caption": cap_txt})   # 全文，不截断——灯箱图注中文版要完整呈现
+            continue
+        wide = _wide_flags(rects, colw_of, lm, rm)   # O(n²) 邻行扫描，只算一遍
+        if sum(wide) * 2 >= len(rects):
+            blockers.append(brect)
+        else:
+            cands.extend((r, False, w) for r, w in zip(rects, wide))
+    imgs = page.get_image_info()
+    for info in imgs:
+        r = pymupdf.Rect(info["bbox"])
+        if r.width < 12 or r.height < 8 or r.get_area() > 0.85 * pw * ph:
+            continue
+        if r.y1 < ytop or r.y0 > ybot:
+            continue
+        cands.append((r, True, False))
+    for dr in page.get_drawings():
+        r = dr["rect"]
+        if r.width < 5 or (r.height < 3 and r.width < 18) or r.get_area() > 0.85 * pw * ph:
+            continue
+        if r.y1 < ytop or r.y0 > ybot:
+            continue
+        if r.height < 1:
+            r = pymupdf.Rect(r.x0, r.y0 - 0.75, r.x1, r.y1 + 0.75)
+        cands.append((r, True, False))
+    return {"caps": caps, "cands": cands, "blockers": blockers, "imgs": imgs,
+            "pw": pw, "ph": ph, "ytop": ytop, "ybot": ybot, "lm": lm, "rm": rm}
+
+def _drop_rule_pairs(cands: list, blockers: list, lm: float, rm: float) -> list:
+    """整批长横线里成对夹住屏障的（表格框线/页眉线这类排版线，横跨半页以上）整个
+    剔除：它们不是图元，留着会把近邻的题注吸成一个假区域。返回筛过的 cands。"""
+    import pymupdf
+    long_rules = [(i, r) for i, (r, g, w) in enumerate(cands)
+                  if g and r.height <= 4.5 and r.width >= 0.5 * (rm - lm)]
+    drop = set()
+    for i1, r1 in long_rules:
+        for i2, r2 in long_rules:
+            if i2 == i1 or abs(r1.x0 - r2.x0) > 8 or abs(r1.x1 - r2.x1) > 8:
+                continue
+            span = pymupdf.Rect(r1.x0, min(r1.y0, r2.y0), r1.x1, max(r1.y1, r2.y1))
+            if 12 < span.height < 130 and any(
+                    (b & span).get_area() > 0.5 * b.get_area() for b in blockers):
+                drop.update((i1, i2))
+    if not drop:
+        return cands
+    return [c for i, c in enumerate(cands) if i not in drop]
+
+def _pick_regions(pg: dict, pno: int, cands: list) -> list:
+    """从每条题注出发上下各吸收一次紧邻图元，选成区的一边；同页重叠去重，
+    非首页再补"题注都没认到的大图"（首页的大图多是期刊 logo/排版图，不当天图收）。"""
+    import pymupdf
+    pw, ph, ytop, ybot = pg["pw"], pg["ph"], pg["ytop"], pg["ybot"]
+    caps, blockers, imgs = pg["caps"], pg["blockers"], pg["imgs"]
+    entries = []
+    for c in sorted(caps, key=lambda x: x["rect"].y0):
+        up_R, up_g, up_t = _band_fill(True, c["rect"], cands, blockers, ytop)
+        dn_R, dn_g, dn_t = _band_fill(False, c["rect"], cands, blockers, ybot)
+        if up_g or dn_g:
+            pick_up = (c["kind"] == "figure") if up_g == dn_g else up_g > dn_g
+        elif up_t != dn_t:
+            pick_up = up_t > dn_t
+        else:
+            pick_up = (c["kind"] == "figure")
+        R, g, t = (up_R, up_g, up_t) if pick_up else (dn_R, dn_g, dn_t)
+        if g < 250 and t < 18:
+            continue
+        R = (pymupdf.Rect(R.x0 - 3, R.y0 - 3, R.x1 + 3, R.y1 + 3)
+             & pymupdf.Rect(3, 3, pw - 3, ph - 3))
+        if R.width < FIG_MIN_W or R.height < FIG_MIN_H:
+            continue
+        c["region"] = R
+        entries.append(c)
+    entries.sort(key=lambda x: x["rect"].y0)
+    keep = []
+    for e in entries:
+        if any(_iou(e["region"], k["region"]) > 0.45 for k in keep):
+            continue
+        keep.append(e)
+    if pno > 0:
+        for info in imgs:
+            r = pymupdf.Rect(info["bbox"])
+            if r.width < 180 or r.height < 110 or r.get_area() > 0.55 * pw * ph:
+                continue
+            if r.y1 < ytop or r.y0 > ybot:
+                continue
+            if any((rg & r).get_area() > 0.4 * r.get_area() for rg in
+                   [e["region"] for e in keep]):
+                continue
+            keep.append({"region": r, "kind": "figure", "label": "", "caption": ""})
+    out = []
+    for c in keep:
+        r = c["region"]
+        out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
+                    "x1": round(r.x1, 1), "y1": round(r.y1, 1),
+                    "kind": c["kind"], "label": c.get("label") or "",
+                    "caption": c.get("caption") or ""})
+    return out
+
 def _figure_regions(path):
     """一份 PDF 里的全部图表区域。图的位置是**这份 PDF 的纯函数**，
     端点层按 路径+mtime 缓存，同一份文件算一次就够。"""
@@ -2905,124 +3090,9 @@ def _figure_regions(path):
     doc = pymupdf.open(path)
     try:
         for pno in range(len(doc)):
-            page = doc[pno]
-            pw, ph = page.rect.width, page.rect.height
-            dtext = page.get_text("dict")
-            lines = []
-            for blk in dtext.get("blocks", []):
-                if blk.get("type") != 0:
-                    continue
-                for ln in blk.get("lines", []):
-                    if ln.get("spans"):
-                        lines.append((pymupdf.Rect(ln["bbox"]),
-                                      "".join(sp["text"] for sp in ln["spans"])))
-            two_col = _two_columns(page, lines)
-            lm = min((r.x0 for r, t in lines), default=36.0)
-            rm = max((r.x1 for r, t in lines), default=pw - 36.0)
-            mid = pw / 2
-
-            def colw_of(r):
-                if not two_col:
-                    return rm - lm
-                return (mid - 6 - lm) if (r.x0 + r.x1) / 2 < mid else (rm - mid - 6)
-
-            ytop, ybot = FIG_HDR_FOOT, ph - FIG_HDR_FOOT
-            caps, cands, blockers = [], [], []
-            for blk in dtext.get("blocks", []):
-                if blk.get("type") != 0:
-                    continue
-                blines = [ln for ln in blk.get("lines", []) if ln.get("spans")]
-                if not blines:
-                    continue
-                brect = pymupdf.Rect(blk["bbox"])
-                if brect.y1 < ytop or brect.y0 > ybot:
-                    continue
-                rects = [pymupdf.Rect(ln["bbox"]) for ln in blines]
-                texts = ["".join(sp["text"] for sp in ln["spans"]) for ln in blines]
-                cap = _caption_of(texts[0].strip())
-                if cap:
-                    cap_txt = re.sub(r"\s+", " ", " ".join(t.strip() for t in texts))
-                    caps.append({"rect": brect, "kind": cap[0], "label": cap[1],
-                                 "caption": cap_txt})   # 全文，不截断——灯箱图注中文版要完整呈现
-                    continue
-                wide = _wide_flags(rects, colw_of, lm, rm)   # O(n²) 邻行扫描，只算一遍
-                if sum(wide) * 2 >= len(rects):
-                    blockers.append(brect)
-                else:
-                    cands.extend((r, False, w) for r, w in zip(rects, wide))
-            imgs = page.get_image_info()
-            for info in imgs:
-                r = pymupdf.Rect(info["bbox"])
-                if r.width < 12 or r.height < 8 or r.get_area() > 0.85 * pw * ph:
-                    continue
-                if r.y1 < ytop or r.y0 > ybot:
-                    continue
-                cands.append((r, True, False))
-            for dr in page.get_drawings():
-                r = dr["rect"]
-                if r.width < 5 or (r.height < 3 and r.width < 18) or r.get_area() > 0.85 * pw * ph:
-                    continue
-                if r.y1 < ytop or r.y0 > ybot:
-                    continue
-                if r.height < 1:
-                    r = pymupdf.Rect(r.x0, r.y0 - 0.75, r.x1, r.y1 + 0.75)
-                cands.append((r, True, False))
-            long_rules = [(i, r) for i, (r, g, w) in enumerate(cands)
-                          if g and r.height <= 4.5 and r.width >= 0.5 * (rm - lm)]
-            drop = set()
-            for i1, r1 in long_rules:
-                for i2, r2 in long_rules:
-                    if i2 == i1 or abs(r1.x0 - r2.x0) > 8 or abs(r1.x1 - r2.x1) > 8:
-                        continue
-                    span = pymupdf.Rect(r1.x0, min(r1.y0, r2.y0), r1.x1, max(r1.y1, r2.y1))
-                    if 12 < span.height < 130 and any(
-                            (b & span).get_area() > 0.5 * b.get_area() for b in blockers):
-                        drop.update((i1, i2))
-            if drop:
-                cands = [c for i, c in enumerate(cands) if i not in drop]
-
-            entries = []
-            for c in sorted(caps, key=lambda x: x["rect"].y0):
-                up_R, up_g, up_t = _band_fill(True, c["rect"], cands, blockers, ytop)
-                dn_R, dn_g, dn_t = _band_fill(False, c["rect"], cands, blockers, ybot)
-                if up_g or dn_g:
-                    pick_up = (c["kind"] == "figure") if up_g == dn_g else up_g > dn_g
-                elif up_t != dn_t:
-                    pick_up = up_t > dn_t
-                else:
-                    pick_up = (c["kind"] == "figure")
-                R, g, t = (up_R, up_g, up_t) if pick_up else (dn_R, dn_g, dn_t)
-                if g < 250 and t < 18:
-                    continue
-                R = (pymupdf.Rect(R.x0 - 3, R.y0 - 3, R.x1 + 3, R.y1 + 3)
-                     & pymupdf.Rect(3, 3, pw - 3, ph - 3))
-                if R.width < FIG_MIN_W or R.height < FIG_MIN_H:
-                    continue
-                c["region"] = R
-                entries.append(c)
-            entries.sort(key=lambda x: x["rect"].y0)
-            keep = []
-            for e in entries:
-                if any(_iou(e["region"], k["region"]) > 0.45 for k in keep):
-                    continue
-                keep.append(e)
-            if pno > 0:   # 首页的大图多是期刊 logo/排版图，不当天图收
-                for info in imgs:
-                    r = pymupdf.Rect(info["bbox"])
-                    if r.width < 180 or r.height < 110 or r.get_area() > 0.55 * pw * ph:
-                        continue
-                    if r.y1 < ytop or r.y0 > ybot:
-                        continue
-                    if any((rg & r).get_area() > 0.4 * r.get_area() for rg in
-                           [e["region"] for e in keep]):
-                        continue
-                    keep.append({"region": r, "kind": "figure", "label": "", "caption": ""})
-            for c in keep:
-                r = c["region"]
-                out.append({"page": pno, "x0": round(r.x0, 1), "y0": round(r.y0, 1),
-                            "x1": round(r.x1, 1), "y1": round(r.y1, 1),
-                            "kind": c["kind"], "label": c.get("label") or "",
-                            "caption": c.get("caption") or ""})
+            pg = _page_candidates(doc[pno])
+            cands = _drop_rule_pairs(pg["cands"], pg["blockers"], pg["lm"], pg["rm"])
+            out += _pick_regions(pg, pno, cands)
         out.sort(key=lambda e: (e["page"], e["y0"]))
     finally:
         doc.close()
@@ -3071,8 +3141,7 @@ def _figures_for(pid: str, p: dict) -> list:
         except Exception as e:
             msg = f"解析图表失败：{str(e)[:120]}"
             _fig_fail[key] = {"at": time.time(), "msg": msg}
-            while len(_fig_fail) > 16:          # 负缓存也只是个短账本，别无限涨
-                _fig_fail.pop(next(iter(_fig_fail)))
+            fsutil.cap_oldest(_fig_fail, 16)   # 负缓存也只是个短账本，别无限涨
             raise HTTPException(400, msg)
     finally:
         ev.set()
@@ -3080,8 +3149,7 @@ def _figures_for(pid: str, p: dict) -> list:
             _fig_inflight.pop(key, None)
     _fig_cache[key] = out
     _fig_fail.pop(key, None)                    # 这份路径+mtime 又能扫了：负账销掉
-    while len(_fig_cache) > 8:
-        _fig_cache.pop(next(iter(_fig_cache)))
+    fsutil.cap_oldest(_fig_cache, 8)
     return out
 
 @app.get("/api/papers/{pid}/figures")
@@ -3804,9 +3872,9 @@ def translate_full_status(pid: str):
             db.update_paper(pid, mono_path=j["mono"] or "", dual_path="",
                             translate_status="done", translate_error="")
             if old_dual:
-                _rm(old_dual)
+                fsutil.rm_quiet(old_dual)
             if old_mono and old_mono != (j["mono"] or ""):
-                _rm(old_mono)
+                fsutil.rm_quiet(old_mono)
     elif j["status"] == "error" and p["translate_status"] != "error":
         db.update_paper(pid, translate_status="error", translate_error=j["error"])
     return j
@@ -3856,12 +3924,10 @@ def glossary_generate(pid: str):
         return {"items": db.glossary_list(pid), "generated": True, "abbrs": _abbrs_of(pid)}
 
 def _abbrs_of(pid: str) -> dict:
+    """本篇缩写表（缺/坏值都当空表：这是一份纯展示缓存，不值得为它 500）。"""
     row = db.get_paper(pid)
-    try:
-        out = json.loads((row or {}).get("abbrs") or "{}")
-        return out if isinstance(out, dict) else {}
-    except Exception:
-        return {}
+    out = _json_of((row or {}).get("abbrs"))
+    return out if isinstance(out, dict) else {}
 
 @app.delete("/api/glossary/{gid}")
 def glossary_delete(gid: int):
@@ -3894,17 +3960,12 @@ def glossary_global_csv():
     import csv
     import io
     buf = io.StringIO()
-    buf.write("﻿")
+    buf.write("\ufeff")     # UTF-8 BOM：Excel 打开中文不乱码
     w = csv.writer(buf)
     w.writerow(["term_en", "term_zh"])
-    formula_leads = ("=", "+", "-", "@", "\t", "\r")
-    def _safe_cell(v):
-        v = str(v)
-        return "'" + v if v[:1] in formula_leads else v
     for r in db.glossary_global_list():
-        w.writerow([_safe_cell(r["term_en"]), _safe_cell(r["term_zh"])])
-    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
+        w.writerow([_csv_cell(r["term_en"]), _csv_cell(r["term_zh"])])
+    return _csv_response(buf.getvalue())
 
 # ---------------- 库内互引（scite 式）：库里谁引了这篇、引的哪句、什么立场 ----------------
 
@@ -4109,8 +4170,8 @@ async def _boost_pool():
     try:
         from anyio import to_thread
         to_thread.current_default_thread_limiter().total_tokens = 128
-    except Exception:
-        pass
+    except Exception as e:
+        _applog(f"线程池扩容失败（并发任务会挤在默认 40 个令牌上）：{type(e).__name__}: {str(e)[:120]}")
 
 @app.on_event("startup")
 def _mark_ready():

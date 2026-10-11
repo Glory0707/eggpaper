@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { downloadUrl } from '../save'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
 import { engInst, startEngineInstall, onEngineReady } from '../engine'
 import { t, ui, setLang, setDark, isEn } from '../i18n'
@@ -61,10 +62,7 @@ async function moveData() {
 
 /* ---------- 备份：导出的 zip 就是一份数据目录（换机 = 新机装好 → 从备份恢复 → 重启） ---------- */
 function exportBackup() {
-  const a = document.createElement('a')
-  a.href = api.backupExportUrl()
-  a.download = ''
-  a.click()
+  downloadUrl(api.backupExportUrl())
   toast(t('正在打包，完成后自动下载'))
 }
 async function restoreBackup() {

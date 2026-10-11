@@ -1,8 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, store, toast, jumpPara, openPaper, gotoPaperPara } from '../store'
+import { api, askStream, store, toast, jumpPara, openPaper, gotoPaperPara, paperName } from '../store'
 import { confirmBox, inputBox } from '../dialog'
-import { copyWithToast } from '../clip'
+import { copyWithToast, frameBuffer } from '../clip'
 import { t } from '../i18n'
 import MdLite from './MdLite.vue'
 import CompareOverlay from './CompareOverlay.vue'
@@ -15,12 +15,12 @@ const pid = computed(() => store.currentId)
    先按标题在库里认出那篇——模型可能截断长标题，用双向包含兜住——
    认得出就打开它再跳段（位置记忆管回来），认不出就诚实降级成纯文本，不给一个点了没反应的按钮。 */
 function matchPaper(title) {
-  const t = String(title || '').trim().toLowerCase()
-  if (!t) return null
+  const q = String(title || '').trim().toLowerCase()
+  if (!q) return null
   const ps = store.papers || []
   const ti = p => (p.title || '').trim().toLowerCase()
-  return ps.find(p => ti(p) === t)
-      || ps.find(p => { const x = ti(p); return x && (x.includes(t) || t.includes(x)) })
+  return ps.find(p => ti(p) === q)
+      || ps.find(p => { const x = ti(p); return x && (x.includes(q) || q.includes(x)) })
 }
 const citeOk = r => !r.ref || !!matchPaper(r.ref)
 async function onCite(r) {
@@ -125,28 +125,17 @@ async function send(q, pidArg) {
   /* 流式的增量按**帧**合并再落进 DOM。每个 token 写一次响应式状态，就等于每个 token
      重排一次整条 Markdown、再读一次 scrollHeight 决定跟不跟滚——短回答看不出来，
      长回答（几百字以上）就是肉眼可见的卡。合并成"一帧一次"之后它只是更快，字一个不少。 */
-  let buf = '', raf = 0
-  const flush = () => {
-    raf = 0
-    if (!buf) return
-    m.content += buf
-    buf = ''
-    follow()
-  }
-  const queue = t => {
-    buf += t
-    if (!raf) raf = requestAnimationFrame(flush)
-  }
+  const fb = frameBuffer(piece => { m.content += piece; follow() })
   const body = picked.value.length
     ? { question: q, conv_id: id, refs: picked.value }
     : { question: q, conv_id: id }
   store.egg.nod++                      // 蛋注意到你在提问，歪头看一眼
   const h = askStream(reqPid, body, ev => {
-    if (ev.type === 'delta') queue(ev.text)
+    if (ev.type === 'delta') fb.push(ev.text)
     else if (ev.type === 'status') m.hint = t('正在翻 {n} 篇…', { n: ev.n || '' })
-    else if (ev.type === 'done') { flush(); gotDone = true; applyIds(ev) }
+    else if (ev.type === 'done') { fb.flush(); gotDone = true; applyIds(ev) }
     else if (ev.type === 'error') {
-      flush()
+      fb.flush()
       applyIds(ev)
       m.content = (m.content.trim() ? m.content + '\n\n' : '') + '⚠ ' + ev.message
       m.error = ev.message
@@ -161,7 +150,7 @@ async function send(q, pidArg) {
       m.error = e.message
     }
   }
-  flush()                       // 停在中途时，最后不满一帧的那几个字也得留下
+  fb.flush()                    // 停在中途时，最后不满一帧的那几个字也得留下
   ctl = null
   m.streaming = false
   busy.value = false
@@ -250,8 +239,10 @@ const libPapers = ref([])
 const libColls = ref([])
 const libMap = ref({})
 const picked = ref([])          // ['标题', …]——整个文库/分类全选/手选，都是这一份集合
-const allTitles = computed(() => libPapers.value.map(p => (p.title || p.filename || '').trim()).filter(Boolean))
-const libAll = computed(() => allTitles.value.length > 0 && allTitles.value.every(t => picked.value.includes(t)))
+const allTitles = computed(() => libPapers.value.map(p => paperName(p).trim()).filter(Boolean))
+/* 「这些标题是不是都选了」：LibAll 与分类全选两处同一问法 */
+const allPicked = ts => ts.length > 0 && ts.every(t => picked.value.includes(t))
+const libAll = computed(() => allPicked(allTitles.value))
 const citeFilterEl = ref(null)
 
 async function loadLib() {
@@ -288,8 +279,8 @@ function toggleTitle(t) {
 function toggleLibAll() {
   picked.value = libAll.value ? [] : [...allTitles.value]
 }
-function groupTitles(g) { return g.items.map(p => (p.title || p.filename || '').trim()).filter(Boolean) }
-function groupAll(g) { const ts = groupTitles(g); return ts.length > 0 && ts.every(t => picked.value.includes(t)) }
+function groupTitles(g) { return g.items.map(p => paperName(p).trim()).filter(Boolean) }
+function groupAll(g) { return allPicked(groupTitles(g)) }
 function toggleGroup(g) {
   const ts = groupTitles(g)
   const all = ts.every(t => picked.value.includes(t))
@@ -298,7 +289,7 @@ function toggleGroup(g) {
 }
 function pickFirst() {
   const first = groups.value[0]?.items?.[0]
-  if (first) toggleTitle(first.title || first.filename)
+  if (first) toggleTitle(paperName(first))
 }
 const citeCount = computed(() => picked.value.length)
 const citeTitle = computed(() => t('已引用：') + picked.value.slice(0, 5).join(', ') + (picked.value.length > 5 ? '…' : ''))
@@ -320,7 +311,7 @@ function onCmpGoto(c) {
   gotoPaperPara(c.pid, c.n)
 }
 function pickFromPop(p) {
-  toggleTitle((p.title || p.filename || '').trim())
+  toggleTitle(paperName(p).trim())
   nextTick(() => citeFilterEl.value?.focus())
 }
 function openCite() {
@@ -332,8 +323,7 @@ function openCite() {
 function closeCite() { citeOpen.value = false; nextTick(() => inputEl.value?.focus()) }
 
 function autoGrow() {
-  const t = inputEl.value
-  if (!t) return
+  if (!inputEl.value) return
   /* 高度写在下一帧：每敲一个字都同步「置 auto→读 scrollHeight→写高度」是强制的
      布局回读，长问题连续输入时会一卡一卡的 */
   if (growRaf) cancelAnimationFrame(growRaf)
@@ -488,7 +478,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
                   <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
                        stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
                 </span>
-                <span class="t">{{ p.title || p.filename }}</span>
+                <span class="t">{{ paperName(p) }}</span>
                 <span class="tag" v-if="p.analysis_status === 'done'">{{ t('已析读') }}</span>
                 <span class="tag" v-else>{{ t('未析读') }}</span>
               </button>

@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { api, toast } from '../store'
 import { t } from '../i18n'
-import { saveBlob } from '../save'
+import { saveBlob, csvCell } from '../save'
 import { modalFocus } from '../modalFocus'
 
 /* 批量引用表格导出：勾格式（带示例，用户不用懂格式名）→ 每篇一行出 CSV。
@@ -42,10 +42,6 @@ function flip(k) {
   picked.value = s
 }
 
-function csvCell(v) {
-  v = String(v ?? '')
-  return /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
-}
 function close() { if (!busy.value) emit('update:open', false) }
 
 async function doExport() {

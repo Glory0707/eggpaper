@@ -13,6 +13,7 @@ import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import fsutil
 from llm import chat_json, _lang_tail, _doc_system, _kick
 
 # 行维度：键、界面名、给模型的一句话解释
@@ -158,8 +159,7 @@ def extract_all(papers: list, material_of, demo: bool = False, meta: list = None
             if len(_CACHE) > 400:
                 # 触顶**按插入序淘汰最旧的一批**（dict 保序），留 3/4 大头。
                 # 原来是一把 clear()：用户下次打开对比表全表重抽，那全是真金白银
-                for k in list(_CACHE)[:len(_CACHE) - 300]:
-                    _CACHE.pop(k, None)
+                fsutil.cap_oldest(_CACHE, 300)
             _CACHE[ckey] = cells
             return p["id"], cells
         except Exception:

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { api, store, toast, refreshPapers, refreshCollections, openPaper, goHome, lsRemove, gotoPaperPara } from '../store'
+import { api, store, toast, refreshPapers, refreshCollections, openPaper, goHome, lsRemove, gotoPaperPara, paperName } from '../store'
 import { confirmBox, dlg } from '../dialog'
 import { t } from '../i18n'
 import { useEdgeResize } from '../edgeResize'
@@ -49,11 +49,14 @@ const shown = computed(() => {
   }
   const s = store.lib.sort
   const title = p => (p.title || p.filename || '').toLowerCase()
-  const sorted = [...list].sort((a, b) =>
-    s === 'title' ? title(a).localeCompare(title(b))
-    : s === 'year' ? (parseInt(b.year) || 0) - (parseInt(a.year) || 0)
-    : s === 'read' ? String(b.last_read_at || b.created_at || '').localeCompare(String(a.last_read_at || a.created_at || ''))
-    : String(b.created_at || '').localeCompare(String(a.created_at || '')))
+  /* 四档排序各一条比较器：查表比嵌套三元好读，也不会在加档时漏掉一支 */
+  const SORTERS = {
+    title: (a, b) => title(a).localeCompare(title(b)),
+    year: (a, b) => (parseInt(b.year) || 0) - (parseInt(a.year) || 0),
+    read: (a, b) => String(b.last_read_at || b.created_at || '').localeCompare(String(a.last_read_at || a.created_at || '')),
+    added: (a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')),
+  }
+  const sorted = [...list].sort(SORTERS[s] || SORTERS.added)
   return [...sorted, ...extra]
 })
 const hitOf = pid => contentHits.value.find(h => h.id === pid)
@@ -88,7 +91,7 @@ const editId = ref(null)
 const editName = ref('')
 const menuFor = ref(null)        // 打开"归入分类"面板的那篇
 const menuPicked = ref(new Set())  // 勾选暂存：点分类只改这里，点「完成」才一次性提交
-const menuXY = ref({ x: 0, y: 0, up: false })
+const menuXY = ref({ x: 0, y: 0 })
 function openMenu(p, ev) {
   if (menuFor.value === p.id) { menuFor.value = null; return }
   const r = ev.currentTarget.getBoundingClientRect()
@@ -97,7 +100,6 @@ function openMenu(p, ev) {
   menuXY.value = {
     x: Math.min(r.left, window.innerWidth - 232),
     y: up ? r.top - h - 4 : r.bottom + 4,
-    up,
   }
   menuFor.value = p.id
   menuPicked.value = new Set(collOf(p.id))
@@ -250,7 +252,7 @@ const pEditTitle = ref('')
 const pEditEl = ref(null)
 function startEdit(p) {
   pEditId.value = p.id
-  pEditTitle.value = p.title || p.filename || ''
+  pEditTitle.value = paperName(p)
   nextTick(() => { pEditEl.value?.focus(); pEditEl.value?.select() })
 }
 async function commitEdit() {
@@ -331,9 +333,10 @@ async function doDelete() {
 }
 /* 批量归类：点分类名就整批归入并收起——不搞复选框三态（半选的横杠没人看得懂）；
    右侧的 ✓ 只是状态标记：这批已经全在这个分类里 */
-function selCollState(cid) {
+/* 批量归类菜单里的"已全在"标记：只有 all 会被渲染，其余两态不需要区分 */
+function selCollAll(cid) {
   const hits = [...selSet.value].filter(pid => collOf(pid).includes(cid)).length
-  return hits === 0 ? 'none' : hits === selN.value ? 'all' : 'some'
+  return hits > 0 && hits === selN.value
 }
 async function selAddColl(cid) {
   for (const pid of selSet.value) {
@@ -439,15 +442,15 @@ function onCmpGoto(c) {
         <div class="p-acts">
           <button class="p-ren" v-if="!selMode && pEditId !== p.id" :title="t('改名')"
                   @click.stop="startEdit(p)">✎</button>
-          <button class="p-del" :title="t('删除')" @click.stop="del(p.id, p.title || p.filename)">×</button>
+          <button class="p-del" :title="t('删除')" @click.stop="del(p.id, paperName(p))">×</button>
         </div>
         <input v-if="pEditId === p.id" ref="pEditEl" v-model="pEditTitle" class="p-edit"
                @click.stop @dblclick.stop @keydown.enter.prevent="commitEdit"
                @keydown.esc="pEditId = ''" @blur="commitEdit" />
         <button class="p-tag" v-if="!selMode" :title="t('归入分类')"
                 @click.stop="openMenu(p, $event)">+</button>
-        <div class="fn" v-if="pEditId !== p.id" :title="p.title || p.filename"
-             @dblclick="startEdit(p)">{{ p.title || p.filename }}</div>
+        <div class="fn" v-if="pEditId !== p.id" :title="paperName(p)"
+             @dblclick="startEdit(p)">{{ paperName(p) }}</div>
         <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
         <div class="p-hit" v-if="hitOf(p.id)" :title="`${t(WHERE_KEYS[hitOf(p.id).where])} · ${hitOf(p.id).n} 处\n${hitOf(p.id).snippet}`">
           <b>{{ t(WHERE_KEYS[hitOf(p.id).where]) }}</b>{{ hitOf(p.id).snippet }}
@@ -496,7 +499,7 @@ function onCmpGoto(c) {
         <div class="cm-head">{{ t('归入分类 · {n} 篇', { n: selN }) }}</div>
         <button v-for="c in colls" :key="c.id" class="cm-row cm-act" @click="selAddColl(c.id)">
           <span class="cm-name">{{ c.name }}</span>
-          <svg v-if="selCollState(c.id) === 'all'" viewBox="0 0 12 12" width="11" height="11"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg v-if="selCollAll(c.id)" viewBox="0 0 12 12" width="11" height="11"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <button class="cm-row cm-act cm-uncat" @click="selToUncategorized">{{ t('未分类') }}</button>
         <div v-if="!colls.length" class="cm-empty">{{ t('还没有分类') }}</div>

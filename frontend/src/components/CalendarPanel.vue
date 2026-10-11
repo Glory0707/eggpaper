@@ -1,12 +1,15 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { api, store, openPaper, toast } from '../store'
+import { api, store, openPaper, toast, paperName } from '../store'
+import { dayKey, todayKey } from '../day'
 import { t, ui } from '../i18n'
 import { saveBlob } from '../save'
 
 const open = computed(() => store.viewer.calOpen)
 const y = ref(0), m = ref(0)          // 正在看的年/月
 const sel = ref('')                   // 选中的日子 'YYYY-MM-DD'
+/* 月键（YYYY-MM）的补零：与 day.js 的日键不同用途，本文件自用 */
+function pad(n) { return String(n).padStart(2, '0') }
 const days = ref({})                  // { 'YYYY-MM-DD': {reads:[], added:[], plans:[]} }
 const picking = ref(false)            // 「＋」的就地选论文
 const pq = ref('')
@@ -23,9 +26,6 @@ function monthLabel(yy, mm) {
 }
 const label = computed(() => monthLabel(y.value, m.value))
 
-function pad(n) { return String(n).padStart(2, '0') }
-function dayKey(yy, mm, d) { return `${yy}-${pad(mm)}-${pad(d)}` }
-function todayKey() { const d = new Date(); return dayKey(d.getFullYear(), d.getMonth() + 1, d.getDate()) }
 
 /* 月格子：周一开头，前后补空。 */
 const cells = computed(() => {
@@ -72,7 +72,7 @@ async function planIt(p) {
   } catch (e) { toast(e.message); return }
   p.plan_day = sel.value
   const e = (days.value[sel.value] = days.value[sel.value] || {})
-  e.plans = [...(e.plans || []), { id: p.id, title: (p.title || p.filename || '').trim() }]
+  e.plans = [...(e.plans || []), { id: p.id, title: paperName(p).trim() }]
   picking.value = false
   pq.value = ''
 }
@@ -213,7 +213,7 @@ watch(open, v => {
                @keydown.escape.prevent="picking = false" />
         <button class="cal-paper pick" v-for="p in pickList" :key="p.id"
                 :disabled="p.plan_day === sel" @click="planIt(p)">
-          <span class="t">{{ p.title || p.filename }}</span>
+          <span class="t">{{ paperName(p) }}</span>
           <span v-if="p.plan_day === sel" class="ok">✓</span>
         </button>
       </div>

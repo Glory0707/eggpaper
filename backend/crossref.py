@@ -24,6 +24,12 @@ DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"'<>]+")
 _API = os.environ.get("EGGPAPER_CROSSREF_API", "https://api.crossref.org")
 
 
+def applog(msg: str):
+    """本模块的日志出口：默认 stdout；main 启动时替换成 _applog——打包版 console=False
+    没有 stdout，不接上的话"回填为什么没补上"一个字都留不下（与 llm.applog 同款接法）。"""
+    print(msg)
+
+
 def first_doi(text: str) -> str:
     """一段首页文字里的第一个 DOI（尾随标点剥掉，和前端划链接同一手法）。"""
     for m in DOI_RE.finditer(text or ""):
@@ -73,7 +79,7 @@ def lookup(doi: str) -> dict:
         r.raise_for_status()
         return _meta_of(r.json())
     except Exception as e:
-        print(f"[eggpaper] Crossref 查询 {doi} 没成：{type(e).__name__}")
+        applog(f"[eggpaper] Crossref 查询 {doi} 没成：{type(e).__name__}")
         return {}
 
 
@@ -114,9 +120,9 @@ def backfill(pid: str, on_update=None):
                     on_update()
                 except Exception:
                     pass
-            print(f"[eggpaper] Crossref 回填 {pid}：{', '.join(ups)}（doi:{doi[:40]}）")
+            applog(f"[eggpaper] Crossref 回填 {pid}：{', '.join(ups)}（doi:{doi[:40]}）")
     except Exception as e:
-        print(f"[eggpaper] Crossref 回填失败（不影响使用）：{type(e).__name__}: {str(e)[:120]}")
+        applog(f"[eggpaper] Crossref 回填失败（不影响使用）：{type(e).__name__}: {str(e)[:120]}")
 
 
 def _pid_gone_guard(pid: str) -> bool:

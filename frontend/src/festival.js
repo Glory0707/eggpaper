@@ -1,3 +1,4 @@
+import { lsGet } from './ls'
 /* 节日换装：按日期给蛋换上节日装扮（EggMark 的 skin 皮肤名）。
  *
  * 换装窗口与冲突规则（换装草图 v5 定稿）：
@@ -52,8 +53,7 @@ function between(now, from, to) {
 }
 
 export function festivalSkin(now = new Date()) {
-  let manual = ''
-  try { manual = JSON.parse(localStorage.getItem('eggpaper:skin')) || '' } catch { /* 没设过 */ }
+  const manual = lsGet('skin', '')      // 坏值/隐私模式由 lsGet 兜底，别再手写 try
   if (manual) return manual
 
   const y = now.getFullYear()

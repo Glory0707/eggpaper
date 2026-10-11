@@ -23,7 +23,9 @@ async function startDownload() {
     await api.updateDownload({ url: d.value.url, sha256: d.value.sha256, size: d.value.size })
     stopPoll()
     poll.value = setInterval(async () => {
-      const p = await api.updateProgress()
+      let p
+      try { p = await api.updateProgress() }
+      catch { stopPoll(); return }        // 抖动/服务重启：停表，别每半秒甩一个未处理的拒绝
       store.update = { ...store.update, prog: p }
       if (p.state === 'ready' || p.state === 'error') {
         stopPoll()

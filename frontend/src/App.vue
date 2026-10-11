@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, reloadSummary, checkUpdate, loadVersion, startLibraryWatch } from './store'
+import { todayKey } from './day'
+import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, reloadSummary, checkUpdate, loadVersion, startLibraryWatch, paperName, currentPaper } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
@@ -397,8 +398,7 @@ async function poll() {
   if (!store.currentId) return
   try { if (anaBusy.value) await refreshAnalysis() } catch { /* 下一个 3 秒再试 */ }
   try {
-    const p = store.papers.find(x => x.id === store.currentId)
-    if (p && p.translate_status === 'running') await pollTranslate()
+    if (currentPaper.value?.translate_status === 'running') await pollTranslate()
   } catch { /* 同上 */ }
 }
 
@@ -675,7 +675,7 @@ async function bgTranslateTick() {
         await refreshPapers()
         if (pid !== store.currentId) {
           const pp = store.papers.find(x => x.id === pid)
-          toast(t('《{t}》翻译完成', { t: ((pp?.title || pp?.filename) || '').slice(0, 24) }))
+          toast(t('《{t}》翻译完成', { t: paperName(pp).slice(0, 24) }))
         }
       }
     } catch { _bgTran.delete(pid) }
@@ -779,13 +779,12 @@ const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.sta
 const demoOn = computed(() => !!store.settings && (store.settings.mock || !store.settings.provider?.has_key))
 /* 日历图标上的小点：今天已经读过点什么——轻提醒，不弹任何东西 */
 const readToday = computed(() => {
-  const d = new Date()
-  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const day = todayKey()
   return store.papers.some(p => (p.last_read_at || '').startsWith(day))
 })
 function titleOf(pid) {
   const p = store.papers.find(x => x.id === pid)
-  return p ? (p.title || p.filename) : t('正在打开…')
+  return p ? paperName(p) : t('正在打开…')
 }
 async function onSplitMany(ids) {
   /* 多选出来的同屏组是一次多选的整体结果：先清场再逐篇进窗格，不再是追加语义。
@@ -797,8 +796,8 @@ async function onSplitMany(ids) {
     if (r?.full) { toast(t('同屏最多 4 篇')); break }
   }
 }
-const tranSt = computed(() => tranOptimistic.value || store.papers.find(x => x.id === store.currentId)?.translate_status === 'running'
-  ? 'running' : (store.papers.find(x => x.id === store.currentId)?.translate_status || 'none'))
+const tranSt = computed(() => tranOptimistic.value || currentPaper.value?.translate_status === 'running'
+  ? 'running' : (currentPaper.value?.translate_status || 'none'))
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0, cur: [] })
 const tranTick = ref(0)
 let tranTimer = null
@@ -840,12 +839,12 @@ const tranTip = computed(() => {
 
 /* ---------------- 键盘流 ---------------- */
 function onKey(e) {
-  const t = e.target
+  const tg = e.target     // 别叫 t：i18n 的 t() 也在手边，同名遮蔽迟早再咬人
   if (dlg.open) { if (e.key === 'Escape') { e.preventDefault(); dlgCancel() } return }
   /* 焦点在输入框里也同样先处理 Esc 的「退框选」：在框选气泡里打完字按 Esc，
      以前只收气泡不收框选——框选态挂着，纸上点一下又开新选择，看着像卡住了。
      只放行 Esc 这一个键，其余按键照旧留给输入框 */
-  if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) {
+  if (tg && (tg.matches?.('input, textarea, select') || tg.isContentEditable)) {
     if (e.key === 'Escape' && store.viewer.frame) {
       store.viewer.frame = false
       store.escTick++
@@ -921,7 +920,7 @@ function onKey(e) {
       </div>
       <div class="doc-head" v-if="store.paper">
         <div class="t-row">
-          <div class="t">{{ store.paper.title || store.paper.filename }}</div>
+          <div class="t">{{ paperName(store.paper) }}</div>
                     <button class="cite-btn" @click="store.cite.open = true">{{ t('引用') }}</button>
         </div>
       </div>
@@ -1029,7 +1028,7 @@ function onKey(e) {
 
             <Transition name="fade">
               <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏')"
-                @click="store.viewer.railUser = true" aria-label="展开右栏"></button>
+                @click="store.viewer.railUser = true" :aria-label="t('展开右栏')"></button>
             </Transition>
             <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight, overlay: store.railOverlay }">
         <RightRail @analyze="doAnalyze" />

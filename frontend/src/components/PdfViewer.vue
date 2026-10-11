@@ -11,10 +11,10 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, askNotePrefill, paraByIdx, kindZH } from '../store'
+import { api, store, toast, askNotePrefill, paraByIdx, kindZH, paperName } from '../store'
 import { confirmBox } from '../dialog'
 import { lsGet, lsSet } from '../ls'
-import { copyWithToast } from '../clip'
+import { copyWithToast, frameBuffer } from '../clip'
 
 const props = defineProps({ pid: { type: String, required: true } })
 /* 篇级数据自持：多窗格下每个实例只读自己这篇的段落/角色/批注/元信息，
@@ -654,8 +654,8 @@ function quoteSpan(n) {
   const k = n.id + '|' + n.para_idx
   if (!spanCache.has(k)) {
     const p = paraByIdx.value[n.para_idx]
-    const t = anchorText(n)
-    spanCache.set(k, t && p ? lineSpanOf(p, t) : null)
+    const txt = anchorText(n)
+    spanCache.set(k, txt && p ? lineSpanOf(p, txt) : null)
   }
   return spanCache.get(k)
 }
@@ -877,11 +877,10 @@ async function doTranslateSel() {
   try {
     // 字先攒进缓冲、按帧合并上屏（照抄 AskPanel 的做法）：每个 SSE 块都直写状态的话，
     // watch 会跟着每个块强制 refitPop 读一次布局，长译文流式时气泡抖、全页掉帧
-    let buf = '', raf = 0
-    const flush = () => { raf = 0; if (buf) { sel.zh += buf; buf = '' } }
+    const fb = frameBuffer(piece => { sel.zh += piece })
     await translateStream(props.pid, 'selection', { text: sel.text, context: sel.context }, ev => {
-      if (ev.type === 'delta') { buf += ev.text; if (!raf) raf = requestAnimationFrame(flush) }
-      else if (ev.type === 'done') { if (raf) cancelAnimationFrame(raf); flush(); sel.hits = ev.hits || [] }
+      if (ev.type === 'delta') fb.push(ev.text)
+      else if (ev.type === 'done') { fb.flush(); sel.hits = ev.hits || [] }
       else if (ev.type === 'error') { sel.err = ev.message; if (!sel.zh) sel.zh = '⚠ ' + ev.message }
     }).done
   } catch (e) {
@@ -930,11 +929,13 @@ function openMine() {
 }
 let savingMine = false
 async function saveMine() {
-  const t = mine.text.trim()
-  if (!t || savingMine) return      // api.pin 在途时文本还没清空，连点会钉两条一样的
+  /* 局部量别叫 t：i18n 的 t() 就在同一个词法域里，名字一遮，下面 catch 里那句
+     t('没写上：{m}') 就变成"对字符串调用函数"——钉页边失败时永远只弹全局兜底提示 */
+  const txt = mine.text.trim()
+  if (!txt || savingMine) return    // api.pin 在途时文本还没清空，连点会钉两条一样的
   savingMine = true
   try {
-    await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: t, para_idx: sel.paraIdx,
+    await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: txt, para_idx: sel.paraIdx,
                                page: sel.page, kind: 'note' })
   } catch (e) { toast(t('没写上：{m}', { m: e.message })); return }
   finally { savingMine = false }
@@ -1000,9 +1001,11 @@ function scrollToY(y, instant = false) {
   sc.scrollTo({ top: y, behavior: instant || far ? 'auto' : 'smooth' })
 }
 
+let searchSeq = 0        // 重入守卫：整本分片扫描很慢，旧一轮回来时不能盖掉新结果
 async function runSearch() {
   const q = searchQ.value.trim()
   if (q.length < 2) { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; return }
+  const seq = ++searchSeq
   searchBusy.value = true
   const prev = lastSearchQ === q && searchAt.value >= 0 ? searchHits.value[searchAt.value] : null
   const hits = []
@@ -1017,6 +1020,7 @@ async function runSearch() {
     for (const h of findAllRects(el, q)) hits.push({ ...h, gi: it.gi, k: scale.value })
     if ((idx & 15) === 15) await new Promise(r => setTimeout(r, 0))   // 大部头分片扫描：每 16 页让出主线程，别把输入卡死
   }
+  if (seq !== searchSeq) return          // 期间又搜了一轮：这份结果过期，丢掉
   hits.sort((a, b) => (a.gi - b.gi) || (a.y - b.y))
   searchHits.value = hits
   lastSearchQ = q
@@ -1117,9 +1121,9 @@ function jumpQuote(n) {
 }
 
 function jumpBack() {
-  const t = backStack.pop()
-  if (t != null) {
-    scroller()?.scrollTo({ top: t, behavior: 'smooth' })   // 卸载后迟到的调用：没有滚动容器就作罢
+  const top = backStack.pop()
+  if (top != null) {
+    scroller()?.scrollTo({ top, behavior: 'smooth' })   // 卸载后迟到的调用：没有滚动容器就作罢
     backChip.value = false
     return
   }
@@ -1237,7 +1241,7 @@ async function finishShot(sel) {
         fr.onload = () => res(String(fr.result).split(',')[1])
         fr.readAsDataURL(blob)
       })
-      name = (await api.screenshotSave(paperMeta.value?.title || paperMeta.value?.filename || '', pageNum.value, b64)).name
+      name = (await api.screenshotSave(paperName(paperMeta.value), pageNum.value, b64)).name
     }
     toast(name ? t('已复制 · 已保存 {n}', { n: name }) : t('已复制到剪贴板'))
   } catch (e) {
@@ -1345,6 +1349,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopShot()   // 截图/框选模式中窗格被关掉：window 上的 capture 监听必须跟着摘，否则常驻泄漏
+  frameDragStop?.(); frameDragStop = null
   if (store.viewerApi === viewerApiObj) store.viewerApi = null   // 活动窗格卸载了，快捷键别再打进来
   docClaims.delete(claimTok)   // 不撤的话，这窗格用过的 doc 会被 LRU 逐出循环永久豁免
   selStream?.abort()
@@ -1365,6 +1370,7 @@ onBeforeUnmount(() => {
 })
 
 const frameRect = ref(null)
+let frameDragStop = null      // 框选拖拽的摘监听器（见 startFrameDrag）
 
 function cropItem(it, r) {
   const canvas = canvases.value[it.gi]
@@ -1397,10 +1403,14 @@ function startFrameDrag(e, it) {
   const pt = ev => ({ x: ev.clientX - base.left, y: ev.clientY - base.top })
   const p0 = pt(e)
   const move = ev => { const p = pt(ev); frameRect.value = { x0: p0.x, y0: p0.y, x1: p.x, y1: p.y, gi: it.gi } }
-  const stop = () => {
+  /* stop 提升到实例作用域：拖拽途中窗格被卸载（关窗格/切同屏）时，卸载钩子要能把
+     document 上的监听一起摘掉——只存在闭包里的话没人够得着，监听会常驻泄漏，
+     还会继续往已卸载的实例里写 frameRect */
+  frameDragStop = () => {
     document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up)
     window.removeEventListener('blur', stop)
   }
+  const stop = () => frameDragStop?.()
   const up = ev => {
     stop()
     const rr = frameRect.value
@@ -1479,10 +1489,10 @@ watch(() => store.visPrefill, pf => {
 
 /* 点空白处收起浮层；Esc 交给 store.escTick */
 function onDocDown(e) {
-  const t = e.target
-  if (!t?.closest) return
-  if (vis.visible && !t.closest('.vis-pop')) closeVis()
-  if (sel.visible && !t.closest('.sel-pop')) closeSel()
+  const tg = e.target
+  if (!tg?.closest) return
+  if (vis.visible && !tg.closest('.vis-pop')) closeVis()
+  if (sel.visible && !tg.closest('.sel-pop')) closeSel()
 }
 watch(() => store.escTick, () => {
   closeSel()
@@ -1496,15 +1506,15 @@ watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 32
 /* 换版面/换对开姿势：命中框先清掉——里面存的是旧布局的 gi 与页坐标，重排期间
    画出来会落在错的页上。渲染收尾会按新文字层自动重搜（见 renderAll 末尾），
    查询词不动，用户看到的是「结果跟着版面刷新」。 */
-watch(() => store.viewer.variant, () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
-watch(() => store.viewer.spread, () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
+watch([() => store.viewer.variant, () => store.viewer.spread],
+      () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
 watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
-watch(paras, () => { spanCache.clear() })
+watch(paras, () => { spanCache.clear(); anchorCache.clear() })
 watch(() => store.jump, applyJump)
 watch(() => store.viewer.layers, () => measureNotes(), { deep: true })    // 图层开关只动页边卡，画布不用重画
 watch(() => store.reflowTick, () => reflow())
 watch(mnotes, (n, o) => {
-  spanCache.clear()
+  spanCache.clear(); anchorCache.clear()
   if (n.length && (!o || n.length > o.length)) {
     freshNotes.value = true
     setTimeout(() => (freshNotes.value = false), 1600)

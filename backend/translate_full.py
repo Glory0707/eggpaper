@@ -42,7 +42,9 @@ import sys
 import threading
 import time
 
+import fsutil    # 静默删文件的小工具：与 main/engine_install/update 共用同一份
 import llm     # 只借 human_error 把失败翻成人话（llm 不反向依赖本模块，无环）
+import pdfparse  # 页数：只为 len(doc) 开一遍文档的调用点收口（pdfparse 不反向依赖本模块）
 
 JOBS = {}
 _RUNNING = {}
@@ -387,13 +389,6 @@ def write_glossary_csv(path: str, rows: list) -> bool:
     except OSError:
         return False
 
-def _remove_quiet(path: str):
-    """清产物用：文件不在/被占用都无所谓，别让扫尾因它失败。"""
-    try:
-        os.remove(path)
-    except OSError:
-        pass
-
 def _no_window():
     """(creationflags, startupinfo)：让子进程**不要**开出控制台窗口。
 
@@ -416,7 +411,7 @@ def sweep_key_copies(page_root: str):
     for dirpath, _dirs, files in os.walk(page_root):
         for fn in files:
             if fn.startswith(".pdf2zh-") and fn.endswith(".json"):
-                _remove_quiet(os.path.join(dirpath, fn))
+                fsutil.rm_quiet(os.path.join(dirpath, fn))
 
 def _sweep_home_config():
     """pdf2zh_next 可能把这次运行收到的设置（含 key）自动落盘到 ~/.config/pdf2zh 的
@@ -431,7 +426,7 @@ def _sweep_home_config():
             low = fn.lower()
             if low.startswith("config.v") and (low.endswith(".toml") or low.endswith(".toml.temp")) \
                     and "default" not in low:
-                _remove_quiet(os.path.join(cfg_dir, fn))
+                fsutil.rm_quiet(os.path.join(cfg_dir, fn))
     except Exception:
         pass
 
@@ -486,6 +481,7 @@ def kill_orphan_procs(out_dir: str) -> int:
               "-and $_.CommandLine.ToLower().Contains('" + needle + "') } | "
               "ForEach-Object { $_.ProcessId }")
     flags, si = _no_window()
+    enum = None
     try:
         enum = subprocess.Popen(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
@@ -493,7 +489,17 @@ def kill_orphan_procs(out_dir: str) -> int:
             text=True, encoding="utf-8", errors="replace",
             creationflags=flags, startupinfo=si)
         out, _ = enum.communicate(timeout=15)
-    except Exception:
+    except Exception as e:
+        # 枚举超时/起不来也要把 powershell 收掉：communicate 超时**不杀**子进程，
+        # 不收的话它一直挂着，用户每删一篇就再堆一个。返回值语义不变（0 = 这次
+        # 没追杀到孤儿），但留一行日志——静默吞异常会让"追杀不生效"永远查不出来。
+        if enum is not None:
+            try:
+                enum.kill()
+                enum.wait(timeout=5)
+            except Exception:
+                pass
+        llm.applog(f"[eggpaper] 孤儿 pdf2zh 枚举失败（跳过一次追杀）：{type(e).__name__}: {str(e)[:120]}")
         return 0
     me = os.getpid()
     killed = 0
@@ -577,18 +583,29 @@ BATCH_PAGES_LLM = 2      # LLM 服务（openai 等）一次译几页：每页都
 LLM_SERVICES = {"openai", "deepseek", "zhipu", "silicon", "modelscope",
                 "gemini", "grok", "groq"}
 
+# 两条通道的页级参数各一档："这个服务过不过模型"的判据只在这里出现一次——
+# 原来三个单行函数各写一遍 `service in LLM_SERVICES`，改档位容易漏掉一处。
+_PAGE_PROFILE = {
+    True: {"workers": PAGE_WORKERS_LLM, "timeout": PAGE_TIMEOUT * 2, "batch": BATCH_PAGES_LLM},
+    False: {"workers": PAGE_WORKERS_FREE, "timeout": PAGE_TIMEOUT, "batch": BATCH_PAGES},
+}
+
+def _page_profile(service: str) -> dict:
+    """这次翻译走哪一档页级参数：LLM 家族（每页都真过模型）与非 LLM 免费通道。"""
+    return _PAGE_PROFILE[service in LLM_SERVICES]
+
 def _page_workers(service: str) -> int:
-    return PAGE_WORKERS_LLM if service in LLM_SERVICES else PAGE_WORKERS_FREE
+    return _page_profile(service)["workers"]
 
 def _page_timeout(service: str) -> float:
-    return PAGE_TIMEOUT * 2 if service in LLM_SERVICES else PAGE_TIMEOUT
+    return _page_profile(service)["timeout"]
 
 def _page_dir(out_dir: str, pno: int, t: int) -> str:
     return os.path.join(out_dir, ".pages", f"p{pno}-{t}")
 
 def _batch_size(service: str) -> int:
     """一批译几页：LLM 服务 2（页数要中途真的动，见 BATCH_PAGES_LLM），免费服务 8。"""
-    return BATCH_PAGES_LLM if service in LLM_SERVICES else BATCH_PAGES
+    return _page_profile(service)["batch"]
 
 def _plan_batches(pending: list, size: int = BATCH_PAGES) -> list:
     """把待译页号切成批次，size=一批几页（免费服务 8、LLM 服务 2，见 BATCH_PAGES_LLM）。
@@ -769,7 +786,7 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
         for stale in os.listdir(out_dir):
             if stale.endswith("-dual.pdf") or (
                     stale.endswith(".dual.pdf") and stale != os.path.basename(mono)):
-                _remove_quiet(os.path.join(out_dir, stale))
+                fsutil.rm_quiet(os.path.join(out_dir, stale))
         return {"mono": mono}, list(tail)
     if not any("单页超时" in t for t in tail):
         tail.append(f"单页失败（退出码 {proc.poll()}）")
@@ -785,6 +802,101 @@ def _pdf_complete(path: str) -> bool:
             return b"%%EOF" in f.read()
     except OSError:
         return False
+
+def _prescan_reuse(out_dir: str, n: int, stem: str) -> dict:
+    """预扫描续译：把上次已经译好的页直接复用，返回 {0 基页号: {"mono","at"}}。
+
+    批目录名是批首页（1 基，worker 写 p{batch[0]+1}-…），一份产物覆盖整批。
+    **必须按批映射**：老写法把 p9 目录里的 8 页产物当成"第 9 页"，组装时 at=None
+    会取到产物最后一页——重启复用把第 16 页插到第 9 页的位置（实测续译复用 3/24
+    就是它）。区间产物第 i 页对应原文第 a+i 页；整本产物（ml==n，老引擎形态）页号即位置。
+    """
+    results = {}
+    for a in range(1, n + 1):
+        for t in range(PAGE_TRIES):
+            pdir = _page_dir(out_dir, a, t)
+            got = _page_done(pdir, stem)
+            if not got:
+                continue
+            try:
+                ml = pdfparse.page_count(got["mono"])
+            except Exception:
+                break               # 产物读不动：当这页没有，重译
+            if ml == n:
+                for p in range(n):
+                    results[p] = {"mono": got["mono"], "at": p}
+            else:
+                for p in range(a - 1, min(a - 1 + ml, n)):
+                    results[p] = {"mono": got["mono"], "at": p - (a - 1)}
+            break
+    return results
+
+def _assemble(out_dir: str, pdf_path: str, n: int, results: dict, mono_name: str,
+              dual_name: str, j: dict, say, pid: str, service: str) -> tuple:
+    """组装成品：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文 派生）。
+
+    返回 (成品路径, 失败页号列表)；中途放弃（全部页都没成/被取消）返回 ("", [])——
+    放弃的原因已经写进 j（status=error/none），调用方看到空路径直接 return 即可。
+    """
+    import pymupdf
+    mono_path = os.path.join(out_dir, mono_name or "mono.pdf")
+    failed = []
+    src = pymupdf.open(pdf_path)
+    mono = pymupdf.open()
+    prods: dict = {}     # 批产物路径 → 已打开的文档：8 页一批时同一文件要取 8 页，
+    try:                 # 逐页重开一遍是纯浪费（doc.open 顺带解析 xref，几十毫秒/次）
+        def _prod_of(p):
+            d = prods.get(p)
+            if d is None:
+                d = pymupdf.open(p)
+                prods[p] = d
+            return d
+        for pno in range(n):
+            got = results.get(pno)
+            ok = False
+            if got:
+                try:
+                    m = _prod_of(got["mono"])
+                    at = got.get("at")
+                    at = min(pno, len(m) - 1) if at is None else max(0, min(int(at), len(m) - 1))
+                    mono.insert_pdf(m, from_page=at, to_page=at)
+                    ok = True
+                except Exception:
+                    prods.pop(got["mono"], None)   # 坏产物别留在缓存里反复炸
+                    pass
+            if not ok:
+                failed.append(pno + 1)
+                mono.insert_pdf(src, from_page=pno, to_page=pno)
+        if n and not results:
+            j.update(status="error",
+                     error=f"所有页面都没译成（{service} 连不上或被限流）。"
+                           "到「设置 → 全文翻译服务」换一个再试。")
+            say(f"全文翻译失败 {pid}：全部页面失败")
+            return "", []
+        if j.get("_abort"):
+            j.update(status="none", error="")   # 组装途中删了篇/点了停止：别把成品写进已删的目录
+            return "", []
+        # 原子落盘：半截的成品不该被任何人读到（认领/GET 都看 %%EOF，临时名不冒充成品）
+        mono.save(mono_path + ".part", garbage=4, deflate=True)
+        for _try in range(3):
+            try:
+                os.replace(mono_path + ".part", mono_path)
+                break
+            except OSError:
+                if _try == 2:
+                    raise       # 旧 mono 还被浏览器响应占着句柄：等它放手再换名，
+                time.sleep(1.5) # 别把整场已经译完的活儿标成失败
+        for stale in dict.fromkeys(("dual.pdf", dual_name)):
+            if stale:
+                fsutil.rm_quiet(os.path.join(out_dir, stale))
+    finally:
+        src.close(); mono.close()
+        for d in prods.values():
+            try:
+                d.close()
+            except Exception:
+                pass
+    return mono_path, failed
 
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "",
@@ -832,14 +944,13 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         except Exception:
             pass
         try:
-            import pymupdf
             os.makedirs(out_dir, exist_ok=True)
             if fresh:
                 # 重译 = 连缓存一起清：页级产物、成品、双语缓存都不要了
                 shutil.rmtree(page_root, ignore_errors=True)
                 for stale in dict.fromkeys(("mono.pdf", "dual.pdf", mono_name, dual_name)):
                     if stale:
-                        _remove_quiet(os.path.join(out_dir, stale))
+                        fsutil.rm_quiet(os.path.join(out_dir, stale))
             try:
                 sig = json.dumps({"m": int(os.path.getmtime(pdf_path)),
                                   "s": os.path.getsize(pdf_path)})
@@ -865,36 +976,13 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 if write_glossary_csv(gp, glossary_rows):
                     glossary_csv = gp
                     say(f"全文翻译 {pid}: 术语表 {len(glossary_rows)} 条注入全文翻译")
-            with pymupdf.open(pdf_path) as doc:
-                n = len(doc)
+            n = pdfparse.page_count(pdf_path)
             if n == 0:
                 j.update(status="error", error="PDF 没有可翻译的页面")
                 say(f"全文翻译失败 {pid}：0 页")
                 return
             stem = os.path.splitext(os.path.basename(pdf_path))[0]
-            # 预扫描续译：批目录名是批首页（1 基，worker 写 p{batch[0]+1}-…），一份产物
-            # 覆盖整批。**必须按批映射**：老写法把 p9 目录里的 8 页产物当成"第 9 页"，
-            # 组装时 at=None 会取到产物最后一页——重启复用把第 16 页插到第 9 页的位置
-            # （实测续译复用 3/24 就是它）。区间产物第 i 页对应原文第 a+i 页；整本产物
-            # （ml==n，老引擎形态）页号即位置。
-            for a in range(1, n + 1):
-                for t in range(PAGE_TRIES):
-                    pdir = _page_dir(out_dir, a, t)
-                    got = _page_done(pdir, stem)
-                    if not got:
-                        continue
-                    try:
-                        with pymupdf.open(got["mono"]) as m:
-                            ml = len(m)
-                    except Exception:
-                        break
-                    if ml == n:
-                        for p in range(n):
-                            results[p] = {"mono": got["mono"], "at": p}
-                    else:
-                        for p in range(a - 1, min(a - 1 + ml, n)):
-                            results[p] = {"mono": got["mono"], "at": p - (a - 1)}
-                    break
+            results = _prescan_reuse(out_dir, n, stem)
             if results:
                 say(f"全文翻译 {pid}: 复用上次已译好的 {len(results)}/{n} 页，只译剩下的")
             j["pages"] = [len(results), n]
@@ -955,8 +1043,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     # pdf2zh 对 --pages 的产物有两种形态：全文（只有选中的页被译了）或只含选中页。
                     # 记下每页在产物里的真实位置，组装时按它取，别猜。
                     try:
-                        with pymupdf.open(got["mono"]) as m:
-                            ml = len(m)
+                        ml = pdfparse.page_count(got["mono"])
                     except Exception:
                         ml = 0
                     with lock:
@@ -1000,64 +1087,11 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 j.update(status="none", error="")      # 用户主动取消，不算一次失败
                 return
 
-            # ---- 组装：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文
-            mono_path = os.path.join(out_dir, mono_name or "mono.pdf")
-            failed = []
-            src = pymupdf.open(pdf_path)
-            mono = pymupdf.open()
-            prods: dict = {}     # 批产物路径 → 已打开的文档：8 页一批时同一文件要取 8 页，
-            try:                 # 逐页重开一遍是纯浪费（doc.open 顺带解析 xref，几十毫秒/次）
-                def _prod_of(p):
-                    d = prods.get(p)
-                    if d is None:
-                        d = pymupdf.open(p)
-                        prods[p] = d
-                    return d
-                for pno in range(n):
-                    got = results.get(pno)
-                    ok = False
-                    if got:
-                        try:
-                            m = _prod_of(got["mono"])
-                            at = got.get("at")
-                            at = min(pno, len(m) - 1) if at is None else max(0, min(int(at), len(m) - 1))
-                            mono.insert_pdf(m, from_page=at, to_page=at)
-                            ok = True
-                        except Exception:
-                            prods.pop(got["mono"], None)   # 坏产物别留在缓存里反复炸
-                            pass
-                    if not ok:
-                        failed.append(pno + 1)
-                        mono.insert_pdf(src, from_page=pno, to_page=pno)
-                if n and not results:
-                    j.update(status="error",
-                             error=f"所有页面都没译成（{service} 连不上或被限流）。"
-                                   "到「设置 → 全文翻译服务」换一个再试。")
-                    say(f"全文翻译失败 {pid}：全部页面失败")
-                    return
-                if j.get("_abort"):
-                    j.update(status="none", error="")   # 组装途中删了篇/点了停止：别把成品写进已删的目录
-                    return
-                # 原子落盘：半截的成品不该被任何人读到（认领/GET 都看 %%EOF，临时名不冒充成品）
-                mono.save(mono_path + ".part", garbage=4, deflate=True)
-                for _try in range(3):
-                    try:
-                        os.replace(mono_path + ".part", mono_path)
-                        break
-                    except OSError:
-                        if _try == 2:
-                            raise       # 旧 mono 还被浏览器响应占着句柄：等它放手再换名，
-                        time.sleep(1.5) # 别把整场已经译完的活儿标成失败
-                for stale in dict.fromkeys(("dual.pdf", dual_name)):
-                    if stale:
-                        _remove_quiet(os.path.join(out_dir, stale))
-            finally:
-                src.close(); mono.close()
-                for d in prods.values():
-                    try:
-                        d.close()
-                    except Exception:
-                        pass
+            # ---- 组装（见 _assemble）：盘上只落译文版（省盘：双语是它的两倍大）
+            mono_path, failed = _assemble(out_dir, pdf_path, n, results, mono_name,
+                                          dual_name, j, say, pid, service)
+            if not mono_path:
+                return
 
             done_note = (note or "") + (f"（第 {', '.join(map(str, failed))} 页没译成，保留原文）"
                                         if failed else "")

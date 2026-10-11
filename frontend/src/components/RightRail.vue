@@ -1,4 +1,6 @@
 <script setup>
+import { copyBlob, blobToDataURL } from '../clip'
+import { downloadUrl } from '../save'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, jumpPara, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
          paperEpoch, samePaper, reloadSummary, gotoPaperPara } from '../store'
@@ -100,9 +102,6 @@ async function stopAnalyzeHere() {
   try { await api.analysisCancel(store.currentId) } catch { /* 同上 */ }
 }
 
-const parasOfRole = roles => store.paras.filter(p => roles.includes(annoRole(p.idx)))
-const annoRole = idx => store.analysis.annotations[String(idx)]?.role
-const annoOf = idx => store.analysis.annotations[String(idx)] || {}
 function anchorsOf(claim) {
   return claim.anchors
     .map(idx => ({ idx, anno: store.analysis.annotations[String(idx)], para: paraByIdx.value[idx] }))
@@ -156,7 +155,7 @@ async function maybeGenTerms(mine = paperEpoch()) {
     const r = await api.glossaryGen(store.currentId)
     if (!samePaper(mine)) return
     terms.value = r.items || []
-    if (r.abbrs) store.paper.abbrs = JSON.stringify(r.abbrs)   // 缩写是同一批的产物
+    if (r.abbrs && store.paper) store.paper.abbrs = JSON.stringify(r.abbrs)   // 缩写是同一批的产物
   } catch (e) {
     if (samePaper(mine)) toast(t('术语没生成：{m}', { m: e.message }))
   } finally { termsBusy.value = false }
@@ -380,8 +379,7 @@ async function loadFigures() {
 async function askFigure(f) {
   try {
     const url = api.figureUrl(store.currentId, f, 150)
-    const blob = await (await fetch(url)).blob()
-    const img = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob) })
+    const img = await blobToDataURL(await (await fetch(url)).blob())
     figIdx.value = -1
     const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
     store.visPrefill = {
@@ -397,18 +395,13 @@ function figJump(f) {
 
 /* 写笔记要贴图：把这张裁剪图复制/存下来，不用再截图 */
 async function copyFig() {
-  try {
-    const blob = await (await fetch(api.figureUrl(store.currentId, lightbox.value, 200))).blob()
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
-    toast(t('图片已复制'))
-  } catch { toast(t('复制失败')) }
+  const blob = await (await fetch(api.figureUrl(store.currentId, lightbox.value, 200))).blob()
+  const ok = await copyBlob(blob)
+  toast(ok ? t('图片已复制') : t('复制失败'))
 }
 function downloadFig() {
   const name = (lightbox.value.label || lightbox.value.caption || 'figure').replace(/[\s/]+/g, '_').slice(0, 40)
-  const a = document.createElement('a')
-  a.href = api.figureUrl(store.currentId, lightbox.value, 300)
-  a.download = `fig_p${lightbox.value.page + 1}_${name}.png`
-  a.click()
+  downloadUrl(api.figureUrl(store.currentId, lightbox.value, 300), `fig_p${lightbox.value.page + 1}_${name}.png`)
 }
 
 /* 术语表是全库共用的，但"跳去原文"这件事**只对本文出现过的词成立**：
@@ -580,16 +573,8 @@ async function saveToGlobal(term) {
                 </div>
               </template>
 
-                            <template v-else-if="s.k === 'q5'">
-                <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
-                  <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
-                  <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
-                  <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
-                </div>
-                <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
-              </template>
-
-                            <template v-else-if="s.k === 'q6'">
+              <!-- ⑤⑥ 两块渲染同一个形态（条目列表，数据各自在 six[s.gen]）：合成一块 -->
+              <template v-else-if="s.k === 'q5' || s.k === 'q6'">
                 <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
                   <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />

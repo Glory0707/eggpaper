@@ -375,7 +375,7 @@ def extract_terms(title: str, paras: list) -> dict:
     clean = _clean_terms(data.get("terms"))
     kept = _only_in_text(clean, paras)
     if len(kept) < len(clean):
-        print("[eggpaper] 术语过滤：正文里找不到的 %d 条已丢" % (len(clean) - len(kept)))
+        applog("[eggpaper] 术语过滤：正文里找不到的 %d 条已丢" % (len(clean) - len(kept)))
     return {"terms": kept, "abbrs": _clean_abbrs(data.get("abbrs"))}
 
 def norm_text(s: str) -> str:

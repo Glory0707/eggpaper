@@ -25,7 +25,6 @@
 **装完要预热**：with-assets 包资产内置，`--warmup` 只做本地校验（无网也秒过）；万一
 失败不挡安装，翻译时引擎会自己按需补。
 """
-import hashlib
 import os
 import re
 import shutil
@@ -37,6 +36,14 @@ import zipfile
 import httpx
 
 import appinfo
+import fsutil    # 静默删文件/流式 sha256：与 main/translate_full/update 共用同一份
+
+
+def applog(msg: str):
+    """本模块的日志出口：默认 stdout；main 启动时替换成 _applog——打包版 console=False
+    没有 stdout，不接上的话"引擎安装到底卡在哪"一个字都留不下（与 llm.applog 同款接法）。"""
+    print(msg)
+
 
 ENGINE_URL = os.environ.get(
     "EGGPAPER_ENGINE_URL",
@@ -106,8 +113,11 @@ def _warmup(exe: str):
                     os.rename(zp, zp + ".installed")
                 except OSError:
                     pass
-    except Exception:
-        pass
+    except Exception as e:
+        # warmup 失败不挡安装（装完的状态照旧推进到 done），但留一行痕：不然后面翻译
+        # 每批都白付 10-20 秒资产重哈希时，没人知道是这一步没跑成
+        applog(f"[eggpaper] 引擎预热失败（不挡安装，翻译时引擎会自己按需补）："
+               f"{type(e).__name__}: {str(e)[:160]}")
 
 def settle_assets() -> int:
     """旧版装的引擎没赶上 _warmup 的「zip 改名收起」（或当时 warmup 失败）：
@@ -133,7 +143,8 @@ def settle_assets() -> int:
             except OSError:
                 pass
         return n
-    except Exception:
+    except Exception as e:
+        applog(f"[eggpaper] 资产包归档（settle_assets）没做成，跳过：{type(e).__name__}: {str(e)[:160]}")
         return 0
 
 def _partial_dir() -> str:
@@ -153,13 +164,21 @@ def _set(**kw):
     with _lock:
         _prog.update(kw)
     if kw.get("state") == "done":
-        _find_cache["at"] = 0.0      # 新引擎刚落地：find_installed 的缓存别拿着旧空值骗人
+        _invalidate_find_cache()     # 新引擎刚落地：find_installed 的缓存别拿着旧空值骗人
 
 def cancel():
     """用户喊停：断点留着，下次（换源、重开应用）从断点接着下。"""
     _cancel.set()
 
 _find_cache = {"at": 0.0, "path": ""}
+_find_lock = threading.Lock()    # _find_cache 的读写锁：端点线程（engine_path → find_installed）
+                                 # 与后台安装/清扫线程（换装、回滚、启动清扫）并发翻这本簿子
+
+def _invalidate_find_cache():
+    """引擎目录树刚动过：find_installed 的结果立刻失效（10 秒 TTL 里可能还躺着旧结论）。
+    只置 at=0，不递归 find_installed——调用点自己决定什么时候重查。"""
+    with _find_lock:
+        _find_cache["at"] = 0.0
 
 def find_installed() -> str:
     """在 engines/ 里找 pdf2zh.exe（递归：官方 zip 解压出来是带版本号的子目录）。
@@ -175,8 +194,9 @@ def find_installed() -> str:
     import glob
     import time as _time
     now = _time.time()
-    if now - _find_cache["at"] < 10:
-        return _find_cache["path"]
+    with _find_lock:
+        if now - _find_cache["at"] < 10:
+            return _find_cache["path"]
     cands = []
     root = install_dir()
     if os.path.isdir(root):
@@ -194,8 +214,9 @@ def find_installed() -> str:
                 mt = 0.0
             return (engine_version(p), mt)
         got = max(cands, key=_key)
-    _find_cache["at"] = now
-    _find_cache["path"] = got
+    with _find_lock:
+        _find_cache["at"] = now
+        _find_cache["path"] = got
     return got
 
 def _exe_under(root: str) -> str:
@@ -233,7 +254,7 @@ def sweep_leftovers(max_age: float = 7 * 86400) -> list:
         else:
             try:
                 os.rename(old, install_dir())   # 正式目录没引擎：上面的 .old 是唯一可用副本
-                _find_cache["at"] = 0.0         # 刚把目录挪回来，find_installed 缓存别给旧结论
+                _invalidate_find_cache()        # 刚把目录挪回来，find_installed 缓存别给旧结论
                 cleaned.append("pdf2zh.old → pdf2zh（恢复可用引擎）")
             except OSError:
                 pass
@@ -280,13 +301,6 @@ def _sources() -> list:
     out.append((ENGINE_URL, "官方直连"))
     return out
 
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for blk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(blk)
-    return h.hexdigest()
-
 def _safe_extract_all(zf: zipfile.ZipFile, dest: str):
     """解压，但**拒绝越界路径**（zip-slip）。带 ../ 的条目能把文件写到目标目录外，
     这个 zip 是从网上下的（还可能来自用户自填的镜像地址），必须挡住。"""
@@ -308,11 +322,8 @@ def _unpack(zpath: str):
     final = install_dir()
     old = final + ".old"
     try:
-        if ENGINE_SHA256 and _sha256(zpath).lower() != ENGINE_SHA256.lower():
-            try:
-                os.remove(zpath)
-            except OSError:
-                pass
+        if ENGINE_SHA256 and fsutil.sha256_file(zpath).lower() != ENGINE_SHA256.lower():
+            fsutil.rm_quiet(zpath)
             _set(state="error", error="下载校验不对，已删除，可重试")
             return
         shutil.rmtree(tmp_root, ignore_errors=True)
@@ -326,7 +337,7 @@ def _unpack(zpath: str):
         if os.path.isdir(final):
             os.rename(final, old)
         os.rename(ex_dir, final)
-        _find_cache["at"] = 0.0     # 刚换了目录树：先失效缓存再找——TTL 里可能还躺着
+        _invalidate_find_cache()    # 刚换了目录树：先失效缓存再找——TTL 里可能还躺着
         exe = find_installed()      # 装前那次「没装」的旧结论，快装完（<10s）时实测踩中
         if not exe:
             # 这套新目录里没有 exe：不能用。旧引擎还在 .old 里，原样放回来
@@ -334,7 +345,7 @@ def _unpack(zpath: str):
             if os.path.isdir(old):
                 try:
                     os.rename(old, final)
-                    _find_cache["at"] = 0.0
+                    _invalidate_find_cache()
                 except OSError:
                     pass
             _set(state="error", error="包里没有 pdf2zh.exe")
@@ -351,7 +362,7 @@ def _unpack(zpath: str):
         if not os.path.isdir(final) and os.path.isdir(old):
             try:
                 os.rename(old, final)
-                _find_cache["at"] = 0.0
+                _invalidate_find_cache()
             except OSError:
                 pass
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
@@ -501,10 +512,7 @@ def _download_parallel(url: str, zpath: str, total: int) -> str:
             with open(p, "rb") as f:
                 shutil.copyfileobj(f, out)
     for p in parts:
-        try:
-            os.remove(p)
-        except OSError:
-            pass
+        fsutil.rm_quiet(p)
     return ""
 
 def _install(urls):
@@ -535,11 +543,8 @@ def _install(urls):
             return
         _set(src="校验/解压")
         _unpack(zpath)
-        try:
-            os.remove(zpath)
-            os.remove(zpath + ".part")
-        except OSError:
-            pass
+        fsutil.rm_quiet(zpath)
+        fsutil.rm_quiet(zpath + ".part")
     except Exception as e:
         shutil.rmtree(tmp_root, ignore_errors=True)
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
@@ -586,9 +591,6 @@ def _from_zip(zip_path: str, cleanup: bool = False):
             return
         _unpack(zip_path)
         if cleanup:
-            try:
-                os.remove(zip_path)     # ~600MB 的包：装完就收，别在 .upload 里常驻
-            except OSError:
-                pass
+            fsutil.rm_quiet(zip_path)   # ~600MB 的包：装完就收，别在 .upload 里常驻
     except Exception as e:
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")

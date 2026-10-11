@@ -16,8 +16,8 @@ export const store = reactive({
   currentId: null,
   paper: null,
   paras: [],
-  analysis: { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' },
-  marginalia: { notes: [] },
+  analysis: emptyAnalysis(),
+  marginalia: emptyMarginalia(),
   summary: null,
   summaryErr: '',
   settings: null,
@@ -63,15 +63,18 @@ export const store = reactive({
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
 
   get narrow() { return this.vw < 1180 },
+  /* 双语·对开：屏宽全给左右两页，右栏让位。railRight 与 railOverlay 都要判这一条，
+     以前同一条式子抄两遍（改一处漏一处就会「有种姿势收不干净」）。 */
+  get dualSpread() { return this.viewer.variant === 'dual' && this.viewer.spread === 'spread' },
   get railRight() {
-    if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
+    if (this.dualSpread) return false
     return this.viewer.railUser
   },
   /* 多窗格（对比读两篇）也要能提问/看七问/导出：右栏改浮层盖上来，不再硬收——
      原来是 getter 硬 false，「展开右栏」成了死按钮。 */
   get railOverlay() {
     if (this.openIds.length <= 1) return false
-    if (this.viewer.variant === 'dual' && this.viewer.spread === 'spread') return false
+    if (this.dualSpread) return false
     return this.viewer.railUser && !this.narrow
   },
 })
@@ -176,6 +179,22 @@ export async function refreshCollections() {
    为什么要有它：一眼卡/七问/方法卡都是**秒级**的模型调用，用户"打开 A 看一眼
    就点 B"时，A 的答案会落在 B 上（B 的速览页显示 A 的发现、A 的角色套到 B 的段落上），
    而 store.openPaper 是手写清场的——漏一个字段就漏一个洞。 */
+/* 按篇状态的两个空壳：初始值、换篇、出错三条路都要摆出同形的骨架。手写字面量
+   迟早漏字段（漏了 evidence_qs 就是模板里一个 undefined 的小坑）。 */
+export function emptyAnalysis(extra = {}) {
+  return { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '', ...extra }
+}
+export function emptyMarginalia() { return { notes: [] } }
+
+/* 当前活动篇在 papers 里的那条记录（顶栏标题、译文/双语按钮的可用性都看它）。 */
+export const currentPaper = computed(() => store.papers.find(p => p.id === store.currentId) || null)
+
+/* 显示名：title 可能是空串（元数据没补齐），退回文件名。20 处调用点是同一个口径，
+   各写一份 `p.title || p.filename` 时，加一层兜底（如「（无标题）」）就得挨个改。 */
+export function paperName(p, fallback = '') {
+  return ((p && (p.title || p.filename)) || '') || fallback
+}
+
 export function paperEpoch() { return store.epoch }
 export function samePaper(mine) { return store.epoch === mine }
 
@@ -188,8 +207,8 @@ export function goHome() {
   store.epoch++
   store.paper = null
   store.paras = []
-  store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-  store.marginalia = { notes: [] }
+  store.analysis = emptyAnalysis()
+  store.marginalia = emptyMarginalia()
   store.readingPara = null
   store.summary = null
   store.summaryErr = ''
@@ -261,8 +280,8 @@ export async function activatePaper(pid, applyVariant = true) {
     if (ui.lang === 'en') store.viewer.variant = 'original'   // 英文模式没有译文/双语
   }
   store.paras = []
-  store.analysis = { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '' }
-  store.marginalia = { notes: [], pid }
+  store.analysis = emptyAnalysis()
+  store.marginalia = { ...emptyMarginalia(), pid }
   store.readingPara = null
   store.summary = null
   store.summaryErr = ''
@@ -288,48 +307,49 @@ store.activatePaper = activatePaper
 store.addPane = addPane
 store.closePane = closePane
 
-export async function refreshAnalysis() {
+/* 按篇取数的同构骨架：钉住取数那一刻的篇，回来时还是同一篇才落状态。
+   骨架/批注/一眼卡三处本来是同一段手抄三遍——漏一次比对，上一篇的数据就会盖到
+   这一篇上（这类竞态只在快速换篇时可见，最难查）。取数失败的处理交给调用方：
+   骨架与批注是"篇没了就静下来"，一眼卡是"记下错误"。 */
+async function fetchPaperData(fetchFn, apply, onErr) {
   if (!store.currentId) return
-  const mine = store.epoch
-  let a
+  const pid = store.currentId
+  const mine = paperEpoch()
+  let data
   try {
-    a = await api.analysis(store.currentId)
-  } catch {
-    return        // 那一篇已经不在了（批量删除的竞态）：静下来，别冒 404 的 toast
+    data = await fetchFn(pid)
+  } catch (e) {
+    if (samePaper(mine)) onErr?.(e)
+    return
   }
-  if (store.epoch !== mine) return             // 回来时已经换篇：这是上一篇的骨架，丢掉
-  Object.assign(store.analysis, a)
-  try { store.paper = await api.paper(store.currentId) } catch { return }   // 同步 abbrs 等字段
-  refreshPapers()
+  if (!samePaper(mine)) return
+  apply(data)
+}
+
+export async function refreshAnalysis() {
+  // 取数失败（那一篇已经不在了，批量删除的竞态）就静下来，别冒 404 的 toast
+  await fetchPaperData(api.analysis, async a => {
+    Object.assign(store.analysis, a)
+    try { store.paper = await api.paper(store.currentId) } catch { return }   // 同步 abbrs 等字段
+    refreshPapers()
+  })
 }
 
 export async function refreshMarginalia() {
-  if (!store.currentId) return
-  const mine = store.epoch
-  let m
-  try {
-    m = await api.marginalia(store.currentId)
-  } catch {
-    return        // 同上：篇没了就不刷
-  }
-  if (store.epoch !== mine) return             // 同上：别把上一篇的批注装到这篇上
-  Object.assign(store.marginalia, { notes: m.notes || [], pid: store.currentId })
+  await fetchPaperData(api.marginalia, m => {
+    Object.assign(store.marginalia, { notes: m.notes || [], pid: store.currentId })
+  })
 }
 
 /* 重新析读会把一眼卡一并作废（它是旧主张的产物），所以析读完成后要重新取一次。
    取的过程本身会触发生成，页面上就是"正在写一眼卡…"再转一圈——这是对的，
    总比留一张对不上新主张的卡片好。 */
 export async function reloadSummary() {
-  if (!store.currentId) return
-  const mine = paperEpoch()
+  // 生成隔着一次 LLM 调用，期间可能已换到别的论文：A 的摘要不能落到 B 的速览页上
   store.summary = null
   store.summaryErr = ''
-  // 生成隔着一次 LLM 调用，期间可能已换到别的论文：A 的摘要不能落到 B 的速览页上
-  try {
-    const sum = await api.summary(store.currentId)
-    if (samePaper(mine)) store.summary = sum
-  }
-  catch (e) { if (samePaper(mine)) store.summaryErr = e.message }
+  await fetchPaperData(api.summary, sum => { store.summary = sum },
+                       e => { store.summaryErr = e.message })
 }
 
 /* 页边卡上的「问 ↗」：质疑这条批注的问题直接带进提问面板并发出去。

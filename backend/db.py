@@ -190,11 +190,28 @@ def q_insert(sql: str, params=()) -> int:
 def new_id() -> str:
     return uuid.uuid4().hex[:10]
 
+def _now() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+def _safe_json(raw, fallback):
+    """读侧 JSON 兜底（写侧一律 json.dumps）：NULL/空串/坏 JSON 一律回 fallback。
+
+    老库与外部写入会留下 NULL（json.loads(None) 是 TypeError）和半截坏值；读的时候
+    不过这道，一个坏值就把端点打成 500。fallback 逐调用点给：[]、{}、None 各按
+    各自的"没有"口径，见各调用处的注释。
+    """
+    if not raw:
+        return fallback
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return fallback
+
 # ---------- papers ----------
 
 def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int, authors: str = "") -> str:
     q("INSERT INTO papers(id, filename, title, path, n_pages, authors, created_at) VALUES(?,?,?,?,?,?,?)",
-      (pid, filename, title, path, n_pages, authors, time.strftime("%Y-%m-%d %H:%M:%S")), commit=True)
+      (pid, filename, title, path, n_pages, authors, _now()), commit=True)
     return pid
 
 def list_papers():
@@ -439,22 +456,16 @@ def _plain_cites(v):
 def answers_all(pid: str) -> dict:
     out = {}
     for r in q("SELECT key, json FROM answers WHERE paper_id=?", (pid,)):
-        try:
-            # 读侧容 NULL（老库/外部写入；json.loads(None) 是 TypeError）——与 qa_history 同口径。
-            # "null" 解析成 None = 这一问没有缓存，前端按"没生成过"处理（不会拿空壳当真答案）
-            out[r["key"]] = _plain_cites(json.loads(r["json"] or "null"))
-        except ValueError:
-            pass
+        # 读侧容 NULL（老库/外部写入）——与 qa_history 同口径。"null" 解析成 None =
+        # 这一问没有缓存，前端按"没生成过"处理（不会拿空壳当真答案）
+        out[r["key"]] = _plain_cites(_safe_json(r["json"], None))
     return out
 
 def answer_get(pid: str, key: str):
     rows = q("SELECT json FROM answers WHERE paper_id=? AND key=?", (pid, key))
     if not rows:
         return None
-    try:
-        return _plain_cites(json.loads(rows[0]["json"] or "null"))
-    except ValueError:
-        return None
+    return _plain_cites(_safe_json(rows[0]["json"], None))
 
 def answers_clear(pid: str):
     q("DELETE FROM answers WHERE paper_id=?", (pid,), commit=True)
@@ -472,7 +483,7 @@ def collections_list():
 
 def collection_add(name: str) -> int:
     return q_insert("INSERT INTO collections(name, created_at) VALUES(?,?)",
-                    (name[:60], time.strftime("%Y-%m-%d %H:%M:%S")))
+                    (name[:60], _now()))
 
 def collection_rename(cid: int, name: str):
     q("UPDATE collections SET name=? WHERE id=?", (name[:60], cid), commit=True)
@@ -601,10 +612,7 @@ def fig_caps(pid: str) -> dict:
     """灯箱图注的中文翻译缓存（"页:x0:y0" → 译文）。图不算析读产物，换模式不清。"""
     rows = q("SELECT fig_caps FROM papers WHERE id=?", (pid,))
     raw = rows[0]["fig_caps"] if rows else None
-    try:
-        return json.loads(raw) if raw else {}
-    except Exception:
-        return {}
+    return _safe_json(raw, {})
 
 def fig_caps_add(pid: str, entries: dict):
     """往图注缓存里并进几条。读-合并-写必须同一把锁：灯箱两张图并发懒翻译，
@@ -616,10 +624,7 @@ def fig_caps_add(pid: str, entries: dict):
         row = c.execute("SELECT fig_caps FROM papers WHERE id=?", (pid,)).fetchone()
         if not row:
             return
-        try:
-            cur = json.loads(row["fig_caps"]) if row["fig_caps"] else {}
-        except Exception:
-            cur = {}
+        cur = _safe_json(row["fig_caps"], {})
         if not isinstance(cur, dict):
             cur = {}
         cur.update(entries)
@@ -664,7 +669,7 @@ def glossary_add(pid: str, term_en: str, term_zh: str, source: str = "manual") -
         c = _get()
         row = c.execute(
             "SELECT id FROM glossary WHERE paper_id=? AND term_en=?", (pid, term_en)).fetchone()
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        now = _now()
         if row:
             c.execute("UPDATE glossary SET term_zh=? WHERE id=?", (term_zh, row["id"]))
             c.commit()
@@ -687,7 +692,7 @@ def glossary_put_ai(pid: str, terms: list):
             "INSERT INTO glossary(paper_id, term_en, term_zh, source, created_at)"
             " VALUES(?,?,?,?,?)",
             [(pid, t["en"], t["zh"], "ai",
-              time.strftime("%Y-%m-%d %H:%M:%S")) for t in terms])
+              _now()) for t in terms])
         _get().commit()
 
 def merge_abbrs(pid: str, abbrs: dict) -> int:
@@ -704,10 +709,7 @@ def merge_abbrs(pid: str, abbrs: dict) -> int:
         row = c.execute("SELECT abbrs FROM papers WHERE id=?", (pid,)).fetchone()
         if not row:
             return 0
-        try:
-            cur = json.loads(row["abbrs"] or "{}")
-        except Exception:
-            cur = {}
+        cur = _safe_json(row["abbrs"], {})
         if not isinstance(cur, dict):
             cur = {}
         for k, v in abbrs.items():
@@ -751,7 +753,7 @@ def glossary_global_add(term_en: str, term_zh: str, note: str = "") -> int:
         c = _get()
         row = c.execute("SELECT id FROM glossary_global WHERE term_en=? COLLATE NOCASE",
                         (term_en,)).fetchone()
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        now = _now()
         if row:
             c.execute("UPDATE glossary_global SET term_zh=? WHERE id=?", (term_zh, row["id"]))
             c.commit()
@@ -780,11 +782,8 @@ def cite_ctx_all(pid: str) -> dict:
     """{citing_id: hits}——hits 是含 stance 的语境列表。"""
     out = {}
     for r in q("SELECT citing_id, hits FROM cite_ctx WHERE paper_id=?", (pid,)):
-        try:
-            # NULL 容错同 qa_history：解析成 None 的调用方都按"没缓存"回落重判（真值取 or）
-            out[r["citing_id"]] = json.loads(r["hits"] or "null")
-        except ValueError:
-            pass
+        # NULL/坏 JSON 容错同 qa_history：解析成 None 的调用方都按"没缓存"回落重判（真值取 or）
+        out[r["citing_id"]] = _safe_json(r["hits"], None)
     return out
 
 def cite_ctx_put(pid: str, citing_id: str, hits):
@@ -792,9 +791,6 @@ def cite_ctx_put(pid: str, citing_id: str, hits):
       (pid, citing_id, json.dumps(hits, ensure_ascii=False)), commit=True)
 
 # ---------- QA ----------
-
-def _now() -> str:
-    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 NEW_CONV = "新对话"      # 默认会话名：比对（自动改标题的判定）与写入共用这一个口径
 
@@ -889,8 +885,8 @@ def qa_history(pid: str, conv_id: int = None, limit: int = 200):
     else:
         rows = q("SELECT role, content, citations, id, conv_id FROM (SELECT * FROM qa_messages "
                  "WHERE paper_id=? ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (pid, limit))
-    # 写侧一律 json.dumps；读侧容 NULL（老库/外部写入留下的历史行，json.loads(None) 会炸 500）
-    return [dict(r, citations=json.loads(r["citations"] or "[]")) for r in rows]
+    # 写侧一律 json.dumps；读侧容 NULL/坏值（老库/外部写入留下的历史行会炸 500）
+    return [dict(r, citations=_safe_json(r["citations"], [])) for r in rows]
 
 def qa_drop_last_assistant(pid: str, conv_id: int):
     """重新生成 = 把最后一条回答删掉，连同它的用户问题一起交回前端重问。
@@ -936,13 +932,6 @@ def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, ki
     return q_insert("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect) "
                     "VALUES(?,?,?,?,?,?,?)",
                     (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None))
-
-def marginalia_delete(mid: int, pid: str = None):
-    """pid 给了就校验归属：URL 是 A 篇、mid 是 B 篇的卡，删 B 就是越权（对抗轮实锤）。"""
-    if pid is None:
-        q("DELETE FROM marginalia WHERE id=?", (mid,), commit=True)
-        return
-    q("DELETE FROM marginalia WHERE id=? AND paper_id=?", (mid, pid), commit=True)
 
 def marginalia_delete_count(mid: int, pid: str) -> bool:
     """带归属校验的删除。True=可删（含幂等：mid 本就不存在，前端重试/换页竞态都无害）；

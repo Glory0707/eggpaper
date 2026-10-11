@@ -164,7 +164,7 @@ def citation_source(path: str) -> str:
     try:
         out = []
         for pno in range(min(2, len(doc))):
-            lines = [ln["text"] for ln in _page_lines(doc[pno])]
+            lines = [ln["text"] for ln in text_lines(doc[pno])]
             out += lines[:110] if pno == 0 else lines[:6] + lines[-6:]
         md = doc.metadata or {}
         head = [f"{k}: {md[k]}" for k in ("title", "author", "subject", "keywords") if md.get(k)]
@@ -177,9 +177,40 @@ def citation_source(path: str) -> str:
     finally:
         doc.close()
 
-def _page_lines(page: pymupdf.Page):
+def page_count(path: str) -> int:
+    """PDF 页数。只为 len(doc) 开一遍文档的调用点收口到这里（用完就关）。"""
+    doc = pymupdf.open(path)
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+def text_lines(page: pymupdf.Page, clean: bool = True, blocks: list = None):
+    """页面内容行，两个口径收在一处（别让各调用点的手抄版漂开）：
+
+    clean=True（段落抽取）：跳过全空白行、按 _clean 归一（连字符/空白），行带
+    bbox 与字号；
+    clean=False（图表区域判定）：行里有 spans 就原样拼成 (Rect, text)，**不做任何
+    归一**——归一化会改行宽与行距的相邻判定，图表区域是这份 PDF 的纯函数，
+    动一个数就动全部区域框。
+
+    blocks：调用方已经取过 page.get_text("dict")["blocks"] 时传进来复用，
+    省一遍整页抽取。
+    """
+    if blocks is None:
+        blocks = page.get_text("dict")["blocks"]
+    if not clean:
+        out = []
+        for blk in blocks:
+            if blk.get("type") != 0:
+                continue
+            for ln in blk.get("lines", []):
+                if ln.get("spans"):
+                    out.append((pymupdf.Rect(ln["bbox"]),
+                                "".join(sp["text"] for sp in ln["spans"])))
+        return out
     lines = []
-    for b in page.get_text("dict")["blocks"]:
+    for b in blocks:
         if b["type"] != 0:
             continue
         for line in b["lines"]:
@@ -206,7 +237,7 @@ def extract_paragraphs(path: str) -> list:
             page = doc[pno]
             ph, pw = page.rect.height, page.rect.width
             raw = []
-            for ln in _page_lines(page):
+            for ln in text_lines(page):
                 if WATERMARK.match(ln["text"]) or PURE_NUM.match(ln["text"]):
                     continue
                 if ln["bbox"][3] < 55 or ln["bbox"][1] > ph - 55:
