@@ -308,7 +308,7 @@ def search_content(kw: str, limit: int = 30):
     add(q("SELECT id AS paper_id, summary AS text FROM papers WHERE summary LIKE ? ESCAPE '\\'", (pat,)), "glance", True)
     add(q("SELECT paper_id, json AS text FROM answers WHERE json LIKE ? ESCAPE '\\'", (pat,)), "seven", True)
     add(q("SELECT paper_id, text FROM claims WHERE text LIKE ? ESCAPE '\\'", (pat,)), "claims")
-    add(q("SELECT paper_id, content AS text FROM qa_messages WHERE content LIKE ? ESCAPE '\\'", (pat,)), "qa")
+    add(q("SELECT paper_id, content AS text FROM qa_messages WHERE content LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "qa")
     add(q("SELECT paper_id, text FROM paragraphs WHERE text LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "body")
     if not out:
         return []
@@ -386,6 +386,14 @@ def supersede(new_pid: str, old_pid: str) -> dict:
     """
     stats = {"pins": 0, "pins_lost": 0}
     with _txn() as c:
+        # reading_log(day,paper_id)、paper_collections(paper_id,coll_id)、cite_ctx(paper_id,citing_id)
+        # 是复合主键：新篇若已有同 key 的行（同一天读过、放进过同一个分类），UPDATE 撞 PK
+        # 会把整个事务掀掉回滚——论文成僵尸。先删旧篇里"新篇已有"的那些行：同一天保留新篇
+        # 那份、同一个分类保留新篇那份，合并结果就是并集去重。幂等：重跑一遍无行可删。
+        for t, k in (("reading_log", "day"), ("paper_collections", "coll_id"),
+                     ("cite_ctx", "citing_id")):
+            c.execute(f"DELETE FROM {t} WHERE paper_id=? AND {k} IN "
+                      f"(SELECT {k} FROM {t} WHERE paper_id=?)", (old_pid, new_pid))
         for t in ("conversations", "qa_messages", "glossary", "reading_log",
                   "paper_collections", "cite_ctx"):
             c.execute(f"UPDATE {t} SET paper_id=? WHERE paper_id=?", (new_pid, old_pid))
@@ -432,7 +440,9 @@ def answers_all(pid: str) -> dict:
     out = {}
     for r in q("SELECT key, json FROM answers WHERE paper_id=?", (pid,)):
         try:
-            out[r["key"]] = _plain_cites(json.loads(r["json"]))
+            # 读侧容 NULL（老库/外部写入；json.loads(None) 是 TypeError）——与 qa_history 同口径。
+            # "null" 解析成 None = 这一问没有缓存，前端按"没生成过"处理（不会拿空壳当真答案）
+            out[r["key"]] = _plain_cites(json.loads(r["json"] or "null"))
         except ValueError:
             pass
     return out
@@ -442,7 +452,7 @@ def answer_get(pid: str, key: str):
     if not rows:
         return None
     try:
-        return _plain_cites(json.loads(rows[0]["json"]))
+        return _plain_cites(json.loads(rows[0]["json"] or "null"))
     except ValueError:
         return None
 
@@ -629,6 +639,10 @@ def fail_analysis(pid: str, error: str):
 
 def get_analysis(pid: str):
     paper = get_paper(pid)
+    if not paper:
+        # 取行与取析读之间被删（删篇竞态）：回 None 状态让端点自己判 404，
+        # 别让 paper["analysis_status"] 的 None 下标把端点炸成 500
+        return None, [], {}
     rows = [{"id": r["cid"], "text": r["text"], "anchors": json.loads(r["anchors"])}
             for r in q("SELECT cid, text, anchors FROM claims WHERE paper_id=?", (pid,))]
     # 按编号的数字部分排（C2 在 C10 前面）：字典序会把 10+ 条主张排成 C1,C10,C11,…,C2
@@ -767,7 +781,8 @@ def cite_ctx_all(pid: str) -> dict:
     out = {}
     for r in q("SELECT citing_id, hits FROM cite_ctx WHERE paper_id=?", (pid,)):
         try:
-            out[r["citing_id"]] = json.loads(r["hits"])
+            # NULL 容错同 qa_history：解析成 None 的调用方都按"没缓存"回落重判（真值取 or）
+            out[r["citing_id"]] = json.loads(r["hits"] or "null")
         except ValueError:
             pass
     return out

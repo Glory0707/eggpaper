@@ -162,7 +162,10 @@ input[type='text'], input[type='password'], textarea, select {
   outline: none;
   transition: border-color var(--t-fast) var(--ease-smooth), box-shadow var(--t-fast) var(--ease-smooth);
 }
-input[type='text']:focus, input[type='password']:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input[type='text']:focus, input[type='password']:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* 键盘聚焦补一圈实线：上面那条 outline:none 特异度压过了全局 :focus-visible，
+   文本框以前只剩 12% 的柔光，键盘用户在输入框之间找不到焦点 */
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 1px; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 5px;
@@ -170,9 +173,14 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
   border: 1px solid var(--hairline); border-radius: 2px;
   background: var(--card-2); color: var(--ink-2); cursor: default;
 }
+/* 「一眼卡」的关键词是按钮（点了在文中查找）：别吃 .chip 的 default 光标 */
+.chip.kw-chip { cursor: pointer; }
+.chip.kw-chip:hover { border-color: var(--accent-line); color: var(--accent-deep); background: var(--accent-soft); }
 
 .app { display: flex; flex-direction: column; height: 100%; }
-.main { display: flex; flex: 1; min-height: 0; }
+/* position:relative 是给 .rail-tab 当定位基准的：不设的话它的 50% 按视口算，
+   比内容区真正的中线高 28px（顶栏那半截高） */
+.main { display: flex; flex: 1; min-height: 0; position: relative; }
 
 .topbar {
   position: relative;
@@ -484,7 +492,7 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 .paper-item .p-edit {
   width: 100%; margin: 0; padding: 0 3px;
   border: 1px solid var(--accent-line); border-radius: 3px;
-  background: var(--card-2); color: var(--ink-1);
+  background: var(--card-2); color: var(--ink);
   font-size: var(--fs-sm); line-height: 1.6;
 }
 .paper-item .p-edit:focus { outline: none; }
@@ -493,7 +501,9 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
   width: 15px; height: 15px; border-radius: 3px; flex-shrink: 0;
   border: 1.5px solid rgba(var(--ink-rgb), 0.32); background: var(--card);
   display: inline-flex; align-items: center; justify-content: center;
-  color: transparent; transition: all var(--t-fast) var(--ease-smooth);
+  color: transparent;
+  transition: background var(--t-fast) var(--ease-smooth), border-color var(--t-fast) var(--ease-smooth),
+              color var(--t-fast) var(--ease-smooth);
 }
 .p-check.on { background: var(--accent-deep); border-color: var(--accent-deep); color: #fff; }
 .p-check.dis { opacity: 0.35; }
@@ -503,7 +513,8 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
   flex: 0 0 auto; cursor: pointer; padding: 4px 10px; border-radius: 4px;
   border: 1px solid transparent; background: none; color: var(--ink-2);
   font-size: var(--fs-sm); white-space: nowrap;
-  transition: all var(--t-fast) var(--ease-smooth);
+  transition: background var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth),
+              border-color var(--t-fast) var(--ease-smooth);
 }
 .lib-multi:hover, .lib-multi.on { background: var(--accent-soft); color: var(--accent-deep); }
 .lib-multi.on { border-color: var(--accent-line); }
@@ -517,8 +528,11 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 .sel-bar .s-n { font-size: var(--fs-xs); color: var(--ink-2); white-space: nowrap; }
 .sel-bar .s-n.zero { color: var(--ink-3); }
 .sel-bar .s-done { font-size: var(--fs-xs); padding: 3px 10px; margin-left: auto; }
-.sel-bar .s-actions { display: flex; gap: 4px; flex: 1 1 100%; }
-.sel-bar .s-actions button { font-size: var(--fs-xs); padding: 3px 8px; flex: 1; white-space: nowrap; }
+/* 动作条本身允许折行：文库栏能拖到 236px，五个动作一行放不下就换行。
+   flex-basis:auto + 不设 min-width 是关键——按钮自动最小宽度就是标签宽度
+   （nowrap），放不下时整颗换行、不会把字挤出框 */
+.sel-bar .s-actions { display: flex; gap: 4px; flex: 1 1 100%; flex-wrap: wrap; }
+.sel-bar .s-actions button { font-size: var(--fs-xs); padding: 3px 8px; flex: 1 1 auto; white-space: nowrap; }
 .sel-bar .s-actions button:disabled { opacity: 0.4; cursor: default; }
 .sel-bar .s-actions .s-danger:hover { color: var(--vermilion); border-color: var(--vermilion); }
 .coll-menu.sel-coll { position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 20; }
@@ -527,6 +541,12 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 .plist-enter-active { transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out); }
 .plist-enter-from { opacity: 0; transform: translateY(5px); }
 .plist-leave-active { display: none; }
+
+/* 提问页的消息块：发出/答完轻浮入场，以前是硬弹出（与 rail 列表同款手感） */
+.qa-msg-enter-active { transition: opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out); }
+.qa-msg-enter-from { opacity: 0; transform: translateY(6px); }
+.qa-msg-leave-active { display: none; }
+.qa-msg-move { transition: transform var(--t-base) var(--ease-smooth); }
 
 /* 多文献同屏：2/3 篇横排、4 篇四宫格；活动窗格标题条亮 accent 底线 */
 .panes { flex: 1; min-width: 0; min-height: 0; display: grid; gap: 1px; background: var(--hairline); overflow: hidden;
@@ -783,7 +803,9 @@ input[type='text']:focus, input[type='password']:focus, textarea:focus { border-
 body.rail-resizing .rail-wrap { transition: none; }
 body.rail-resizing { cursor: col-resize; user-select: none; }
 .rail-right {
-  width: 100%; height: 100%; position: relative;
+  /* 内容按展开宽度定宽：收起动画只裁不挤——宽度过渡期间纸面在变宽，
+     面板里的字不该跟着逐帧重排（那是"挤压"，不是"滑出"） */
+  width: var(--rail-w, 336px); height: 100%; position: relative;
   background: var(--card); border-left: 1px solid var(--hairline);
   display: flex; flex-direction: column; min-height: 0;
 
@@ -792,6 +814,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   --fs-sm: calc(12.8px * var(--fs-scale));
   --fs-xs: calc(11px * var(--fs-scale));
 }
+/* 浮层化的右栏（多窗格 / 窄窗）：栏宽就是内容宽，用 100% 跟着走 */
+.rail-wrap.overlay .rail-right { width: 100%; }
+@media (max-width: 1179px) { .rail-wrap .rail-right { width: 100%; } }
 
 .rail-grip {
   position: absolute; left: 0; top: 0; bottom: 0; width: 9px; z-index: 96;
@@ -826,6 +851,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   padding: 11px 0 10px; text-align: center; color: var(--ink-3);
   background: transparent; border: none; border-radius: 0;
   border-bottom: 2px solid transparent;
+  /* 四页签切换要有过渡：顶栏三态有滑块，这里以前是硬切 */
+  transition: color var(--t-fast) var(--ease-smooth), border-color var(--t-base) var(--ease-smooth);
 }
 .rtabs .rt:hover { transform: none; box-shadow: none; background: rgba(var(--ink-rgb), 0.06); }
 .rtabs .rt.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
@@ -925,31 +952,26 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   text-align: left; line-height: 1.5; white-space: normal;
 }
 
+/* 术语行：「英文 → 中文」当一句话排（短行一行放下，长了在词界/字间断），
+   动作图标收在右端一个小块里。以前 en/zh 各占一列、三颗图标各抢一次 auto 边距，
+   窄栏下英文被撕成两行、中文断出孤字（"项目-位置绑/定"），行高也参差 */
 .term-row {
   display: flex; align-items: baseline; gap: 8px;
   padding: 8px 4px 9px; line-height: 1.5;
   border-bottom: 1px solid var(--hairline-soft);
 }
-.term-row .t-en {
-  font-size: var(--fs-sm); color: var(--ink-2); font-weight: 600;
-  flex: 1 1 52%; min-width: 0; overflow-wrap: anywhere;
-}
-.term-row .t-arrow { flex: 0 0 auto; color: var(--ink-3); font-size: var(--fs-xs); }
-.term-row .t-zh { font-size: var(--fs-sm); flex: 1 1 40%; min-width: 0; }
-.term-row .t-del { flex: 0 0 auto; margin-left: auto; border: none; background: none; color: var(--ink-3); font-size: var(--fs-md); padding: 0 3px; }
+.term-row .t-main { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); }
+.term-row .t-en { color: var(--ink-2); font-weight: 600; }
+.term-row .t-arrow { color: var(--ink-3); font-size: var(--fs-xs); margin: 0 5px; }
+.term-row .t-zh { color: var(--ink); }
+.term-row .t-acts { flex: 0 0 auto; display: flex; align-items: baseline; gap: 1px; margin-left: auto; }
+.term-row .t-acts button, .term-row .t-act { border: none; background: none; color: var(--ink-3); padding: 0 3px; }
+.term-row .t-go { font-size: var(--fs-xs); text-decoration: underline; text-underline-offset: 2px; text-decoration-style: dotted; }
+.term-row .t-no { font-size: var(--fs-xs); }
+.term-row .t-add { font-size: var(--fs-md); }
+.term-row .t-del { font-size: var(--fs-md); }
+.term-row .t-go:hover, .term-row .t-add:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
 .term-row .t-del:hover { color: var(--vermilion); box-shadow: none; transform: none; }
-
-.term-row .t-add { flex: 0 0 auto; margin-left: auto; border: none; background: none; color: var(--ink-3); font-size: var(--fs-md); padding: 0 3px; }
-.term-row .t-add:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
-
-.term-row .t-go {
-  flex: 0 0 auto; margin-left: auto; border: none; background: none; padding: 0 3px;
-  color: var(--ink-3); font-size: var(--fs-xs); text-decoration: underline;
-  text-underline-offset: 2px; text-decoration-style: dotted;
-}
-.term-row .t-go:hover { color: var(--accent-deep); box-shadow: none; transform: none; }
-
-.term-row .t-no { flex: 0 0 auto; margin-left: auto; color: var(--ink-3); font-size: var(--fs-xs); padding: 0 3px; }
 .t-empty { font-size: var(--fs-xs); color: var(--ink-3); padding: 10px 4px 12px; line-height: 1.7; }
 
 .term-form { display: flex; gap: 6px; margin-bottom: 10px; }
@@ -959,9 +981,6 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .abbr-list { max-height: 200px; overflow-y: auto; margin-top: 2px; }
 .abbr-list .term-row { padding: 6px 4px; }
-
-.abbr-list .term-row .t-en { flex: 0 1 auto; }
-.abbr-list .term-row .t-zh { flex: 1 1 auto; }
 .abbr-list .term-row:last-child { border-bottom: none; }
 
 .empty { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); }
@@ -983,6 +1002,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .reading .r-line { font-size: var(--fs-md); color: var(--ink-2); }
 
 .r-dots { display: inline-block; animation: dots 1.4s steps(4) infinite; width: 18px; text-align: left; }
+/* 省略号要真会动：四拍把「…」逐点 clip 出来——动画名以前没有对应 keyframes，
+   长等待里这行字看着像卡死 */
+@keyframes dots { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 .reading .r-bar { height: 2px; background: var(--hairline-soft); margin-top: 10px; overflow: hidden; }
 .reading .r-bar i {
   display: block; height: 100%; width: 30%; background: var(--accent);
@@ -1107,7 +1129,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .keys-card {
   /* 跟着右栏宽走：右栏可拖到 760px，钉死 372px 会被压在栏上 */
   position: fixed; z-index: 480; right: calc(var(--rail-w, 336px) + 36px); top: 76px;
-  width: 300px; background: var(--card-2);
+  width: 300px; max-width: calc(100vw - 32px); background: var(--card-2);
   border: 1px solid var(--hairline); border-radius: 5px;
   box-shadow: var(--shadow-pop); padding: 14px 16px;
 }
@@ -1180,19 +1202,23 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   pointer-events: none;
 }
 .read-prog i {
-  display: block; width: 100%; background: var(--accent); opacity: 0.4;
-  border-radius: 0 0 2px 2px; transition: height 200ms var(--ease-smooth);
+  /* 滚动每帧都在改这根线的长度：scaleY 留在合成层上，不再每帧触发布局 */
+  display: block; width: 100%; height: 100%; background: var(--accent); opacity: 0.4;
+  border-radius: 0 0 2px 2px; transform-origin: top;
+  transition: transform 200ms var(--ease-smooth);
 }
 
 .back-chip {
-  bottom: 62px;
+  bottom: 96px;
   z-index: 210; display: flex; gap: 6px; align-items: center;
   background: var(--ink); color: var(--card);
   border: none; border-radius: 4px; font-size: var(--fs-sm); padding: 7px 14px;
 }
 
 .toast {
-  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+  /* 底缘的浮层是一条栈：缩放条 18–52 / 提示气泡 58–88 / 查找条与返回钮 96 起。
+     以前气泡和缩放条同在 26px，报错长条会把缩放条从中截断，两边各剩半截 */
+  position: fixed; bottom: 58px; left: 50%; transform: translateX(-50%);
   z-index: 600; background: var(--ink); color: var(--card);
   font-size: var(--fs-sm); padding: 9px 16px; border-radius: 4px;
   box-shadow: var(--shadow-pop);
@@ -1338,7 +1364,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .zoom-bar .zb-page em { font-family: var(--mono); font-size: var(--fs-xs); font-style: normal; color: var(--ink-3); }
 
 .find-bar {
-  bottom: 62px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  bottom: 96px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 4px; box-shadow: var(--shadow-pop);
 }
@@ -1370,7 +1396,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   line-height: 1; padding: 0 2px; margin-left: auto;
 }
 .vis-pop .vp-x:hover { color: var(--ink); box-shadow: none; transform: none; }
-.vis-img { width: 100%; max-height: 180px; object-fit: contain; background: #fff; border: 1px solid var(--hairline-soft); border-radius: 2px; }
+/* 选区的实拍图：按 CSS 尺寸 1:1 摆（小选区不放大——放大后每行字都被框沿切一刀，
+   看着像渲染坏了）；大选区由 max-width 收进气泡 */
+.vis-img { display: block; margin: 0 auto; width: auto; max-width: 100%; max-height: 260px; background: #fff; border: 1px solid var(--hairline-soft); border-radius: 2px; }
 
 .vis-pop { width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 110px); display: flex; flex-direction: column; overflow-y: auto; }
 .vis-pop .vp-state { font-size: var(--fs-sm); color: var(--ink-3); margin-top: 8px; }
@@ -1402,7 +1430,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
     box-shadow: -10px 0 30px -14px rgba(var(--wash-rgb), 0.32);
   }
   .rail-wrap.collapsed { box-shadow: none; }
-  .rail-tab { position: fixed; top: 50%; }
+  /* 窄窗里右栏是 fixed 浮层（top:56 → 底），它的中线比视口 50% 低 28px——
+     手柄钉在视口中点会偏高半截顶栏（.main 中线同理，见 .main 的 position） */
+  .rail-tab { position: fixed; top: calc(50% + 28px); }
   .topbar { gap: 10px; }
   .wordmark .name { font-size: var(--fs-xl); }
 }
@@ -1545,11 +1575,16 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .coll-add:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
 
 .paper-item .p-tag {
+  /* 「归入分类」跟改名/删除同一套口径：悬浮才现身。常显的话列表左缘是一列 +，
+     看着像可展开的树（这不是树） */
   position: absolute; left: 1px; top: 50%; transform: translateY(-50%); z-index: 2;
   font-size: var(--fs-sm); line-height: 1;
   padding: 2px 5px; border-radius: 3px;
   border: 1px solid transparent; background: transparent; color: var(--ink-3);
+  opacity: 0; transition: opacity var(--t-fast) var(--ease-smooth);
 }
+.paper-item:hover .p-tag, .paper-item .p-tag:focus-visible { opacity: 1; }
+@media (hover: none) { .paper-item .p-tag { opacity: 1; } }
 .paper-item .p-tag:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent-line); }
 .coll-menu {
   /* Teleport 到 body 后与 lib-panel(250)/modal-mask(500) 同栈比较，60 会被文库面板整个盖死 */
@@ -1881,9 +1916,10 @@ html.dark .vis-img { background: #fff; }
 .toc-row .toc-p { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
 
 .md, .qa-msg .q-body, .cal-paper, .paper-item .fn, .ce-v, .six-txt,
-.claim-item .c-txt, .gap-row .g-txt,
+.claim-item .c-txt, .gap-row .g-txt, .cc-quote, .mg-note .mg-body,
 .sel-pop .sp-zh, .sp-hits .chip, .ev-row .e-note,
-.cal-paper, .t-zh, .p-author { overflow-wrap: anywhere; }
+.cal-paper, .term-row .t-main, .p-author, .mg-note .mg-quote,
+.lb-cap, .zot-list .z-title { overflow-wrap: anywhere; }
 
 @keyframes imgIn { from { opacity: 0; } }
 .lightbox img { animation: imgIn 200ms var(--ease-out) both; }
@@ -1892,6 +1928,12 @@ html.dark .vis-img { background: #fff; }
   position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);
   width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
 }
+
+/* 里层滚动容器滚到底不要把滚轮接力给外层（看批注时论文自己往下跑）：
+   与书桌共存的浮层/面板统一 contain */
+.paper-list, .rbody, .qa-scroll, .abbr-list, .toc-list, .zot-list, .cmp-scroll,
+.coll-list, .upd-notes, .cite-list, .cite-pop, .md .md-twrap,
+.mg-note.expanded .mg-body, .mg-note .mg-quote.all { overscroll-behavior: contain; }
 
 /* ---------- 从 Zotero 导入（文库拖放区长按唤起） ---------- */
 .zot-modal { width: min(620px, 92vw); display: flex; flex-direction: column; }
@@ -1937,7 +1979,7 @@ html.dark .vis-img { background: #fff; }
   padding: 11px 14px 11px 16px; border-bottom: 1px solid var(--hairline); flex-shrink: 0;
 }
 .demo-flag {
-  font-style: normal; font-size: 10px; margin-left: 7px; padding: 0 4px; border-radius: 3px;
+  font-style: normal; font-size: calc(10px * var(--fs-scale)); margin-left: 7px; padding: 0 4px; border-radius: 3px;
   border: 1px solid var(--accent-line); color: var(--accent-deep);
 }
 .cmp-actions { display: flex; gap: 8px; align-items: center; }
@@ -1966,14 +2008,15 @@ html.dark .vis-img { background: #fff; }
 /* 对比弹窗第一步：选维度 / 立列（顶部切口径） */
 .cmp-pick { padding: 18px 22px 20px; overflow-y: auto; }
 .cmp-mode { display: inline-flex; margin-bottom: 16px; border: 1px solid var(--hairline); border-radius: 15px; padding: 2px; }
-.cmp-mode button { border: none; background: none; border-radius: 12px; padding: 4px 14px; font-size: var(--fs-sm); color: var(--ink-3); transition: all var(--t-fast) var(--ease-smooth); }
+.cmp-mode button { border: none; background: none; border-radius: 12px; padding: 4px 14px; font-size: var(--fs-sm); color: var(--ink-3); transition: background var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth); }
 .cmp-mode button.on { background: var(--accent-soft); color: var(--accent-deep); font-weight: 600; }
 .cmp-dims { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .cmp-dim {
   display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
   font-size: var(--fs-sm); color: var(--ink-2);
   border: 1px solid var(--hairline); border-radius: 15px; padding: 6px 14px;
-  transition: all var(--t-fast) var(--ease-smooth); user-select: none;
+  transition: background var(--t-fast) var(--ease-smooth), color var(--t-fast) var(--ease-smooth),
+              border-color var(--t-fast) var(--ease-smooth); user-select: none;
 }
 .cmp-dim:hover { border-color: var(--accent-line); color: var(--ink); }
 .cmp-dim.on { border-color: var(--accent-deep); background: var(--accent-soft); color: var(--accent-deep); }
@@ -2017,8 +2060,7 @@ html.dark .vis-img { background: #fff; }
 .cmp-col-add:hover { border-color: var(--accent-line); color: var(--accent-deep); box-shadow: none; transform: none; }
 
 /* 库内互引（scite 式）：谁引了这篇、哪句、什么立场。三色沿用全站语义——
-   支持=靛青（强调）/ 质疑=朱红（当心）/ 提及=中灰（外围） */
-.cc-paper { margin-bottom: 10px; }
+   支持=靛青（强调）/ 质疑=朱红（当心）/ 提及=中灰（外围） */.cc-paper { margin-bottom: 10px; }
 .cc-title {
   display: block; width: 100%; text-align: left; border: none; background: none;
   font-size: var(--fs-sm); font-weight: 650; color: var(--ink); padding: 2px 0;
@@ -2038,7 +2080,3 @@ html.dark .vis-img { background: #fff; }
 .cc-stance.support { color: var(--accent-deep); background: var(--accent-soft); }
 .cc-stance.contrast { color: var(--vermilion-deep); background: rgba(184, 70, 46, .08); }
 .cc-stance.mention { color: var(--ink-3); background: var(--paper-deep); }
-
-/* 术语行里「收进学科库」的 ☆：只有第一个 auto 边距元素吃空隙，后面跟死间距 */
-.term-row .t-go + .t-add, .term-row .t-no + .t-add { margin-left: 6px; }
-.term-row .t-add + .t-del { margin-left: 0; }

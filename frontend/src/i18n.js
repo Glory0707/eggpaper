@@ -168,7 +168,7 @@ const EN = {
   '渲染失败：{m}': 'Render failed: {m}',
 
   '你 · ': 'You · ',
-  '眉批「{kind}」：「{note}」（引文：“{quote}”）。站得住吗？依据在哪？[¶{n}]': 'Margin note "{kind}": "{note}" (quoting "{quote}"). Does it hold? Where is the evidence? [¶{n}]',
+  '页边批注「{kind}」：「{note}」（引文：“{quote}”）。站得住吗？依据在哪？[¶{n}]': 'Margin note "{kind}": "{note}" (quoting "{quote}"). Does it hold? Where is the evidence? [¶{n}]',
   '问题': 'Questions',
   '速览': 'Overview',
   '术语': 'Glossary',
@@ -364,7 +364,7 @@ const EN = {
   '测试中…': 'Testing…',
   '测试连接': 'Test connection',
   '图层': 'Layers',
-  '我的眉批': 'My marginalia',
+  '页边批注': 'Marginalia',
   '迁移数据目录': 'Move data folder',
   '全部数据将迁到 {p}，重启后生效': 'All data will move to {p} — restart to apply',
 

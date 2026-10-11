@@ -417,9 +417,17 @@ function downloadFig() {
    并把它们排在前面——一眼能看出哪些是这篇的词。归一化用 find.js 的 normText
    （引文对齐用的同一套折叠规则），两处各写一份迟早改出"术语查不到"。 */
 const paperNorm = computed(() => normText(store.paras.map(p => p.text || '').join(' ')))
+/* 归一化结果按词缓存：以前比较器里每次都要重算 normText + 全文 includes，
+   术语一多、每敲一下筛选都在做 n log n 次这事 */
+const inPaperCache = new Map()
+watch(paperNorm, () => inPaperCache.clear())
 function inPaper(t) {
-  const q = normText(t?.term_en)
-  return q.length >= 3 && paperNorm.value.includes(q)
+  const en = t?.term_en || ''
+  if (inPaperCache.has(en)) return inPaperCache.get(en)
+  const q = normText(en)
+  const hit = q.length >= 3 && paperNorm.value.includes(q)
+  inPaperCache.set(en, hit)
+  return hit
 }
 const termsFiltered = computed(() => {
   const f = termFilter.value.trim().toLowerCase()
@@ -697,11 +705,11 @@ async function saveToGlobal(term) {
           <div class="mono-label" style="margin-bottom:6px">{{ t('本文缩写 · {n}', { n: abbrList.length }) }}</div>
           <div class="abbr-list">
             <div class="term-row" v-for="a in abbrList" :key="a.en">
-              <span class="t-en" :title="a.en">{{ a.en }}</span>
-              <span class="t-arrow">→</span>
-              <span class="t-zh" :title="a.zh">{{ a.zh }}</span>
-              <button class="t-add" :title="t('收进术语表')"
-                      @click="saveAbbr(a)">＋</button>
+              <span class="t-main"><span class="t-en" :title="a.en">{{ a.en }}</span><span class="t-arrow">→</span><span class="t-zh" :title="a.zh">{{ a.zh }}</span></span>
+              <span class="t-acts">
+                <button class="t-add" :title="t('收进术语表')"
+                        @click="saveAbbr(a)">＋</button>
+              </span>
             </div>
           </div>
         </div>
@@ -718,14 +726,14 @@ async function saveToGlobal(term) {
         <p class="t-empty" v-else-if="!termsBusy && terms.length && !termsFiltered.length">{{ t('没有匹配的词') }}</p>
         <TransitionGroup name="plist" tag="div">
           <div v-for="term in termsFiltered" :key="term.id" class="term-row">
-            <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>
-            <span class="t-arrow">→</span>
-            <span class="t-zh">{{ term.term_zh }}</span>
-            <button v-if="inPaper(term)" class="t-go" :title="t('在文中查找')"
-                    @click="findTerm(term.term_en)">↗</button>
-            <span v-else class="t-no" :title="t('本文未出现这个词')">—</span>
-            <button class="t-add" :title="t('收进学科库')" @click="saveToGlobal(term)">☆</button>
-            <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
+            <span class="t-main"><span class="t-en" :title="term.term_en">{{ term.term_en }}</span><span class="t-arrow">→</span><span class="t-zh" :title="term.term_zh">{{ term.term_zh }}</span></span>
+            <span class="t-acts">
+              <button v-if="inPaper(term)" class="t-go" :title="t('在文中查找')"
+                      @click="findTerm(term.term_en)">↗</button>
+              <span v-else class="t-no" :title="t('本文未出现这个词')">—</span>
+              <button class="t-add" :title="t('收进学科库')" @click="saveToGlobal(term)">☆</button>
+              <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
+            </span>
           </div>
         </TransitionGroup>
 
@@ -740,10 +748,10 @@ async function saveToGlobal(term) {
         </div>
         <p class="t-empty" v-if="!gterms.length">{{ t('学科库是空的') }}</p>
         <div v-for="term in gterms" :key="'g' + term.id" class="term-row">
-          <span class="t-en" :title="term.term_en">{{ term.term_en }}</span>
-          <span class="t-arrow">→</span>
-          <span class="t-zh">{{ term.term_zh }}</span>
-          <button class="t-del" @click="delGterm(term.id)" :title="t('删除')">×</button>
+          <span class="t-main"><span class="t-en" :title="term.term_en">{{ term.term_en }}</span><span class="t-arrow">→</span><span class="t-zh" :title="term.term_zh">{{ term.term_zh }}</span></span>
+          <span class="t-acts">
+            <button class="t-del" @click="delGterm(term.id)" :title="t('删除')">×</button>
+          </span>
         </div>
       </template>
       </div>

@@ -198,6 +198,13 @@ def find_installed() -> str:
     _find_cache["path"] = got
     return got
 
+def _exe_under(root: str) -> str:
+    """root 下有没有引擎 exe（绕过 find_installed 的 10 秒缓存：清扫/回滚要看的是盘上真相）。"""
+    import glob
+    if not os.path.isdir(root):
+        return ""
+    return next(iter(glob.glob(os.path.join(root, "**", "pdf2zh.exe"), recursive=True)), "")
+
 def sweep_leftovers(max_age: float = 7 * 86400) -> list:
     """启动清扫：升级换装与断点下载的残骸（2026-10-10 用户口径：更新只留最新，
     别把别人电脑的文件越堆越大）。
@@ -205,6 +212,8 @@ def sweep_leftovers(max_age: float = 7 * 86400) -> list:
     - pdf2zh.old / pdf2zh.tmp：换装中途的残骸。_unpack 是「旧目录 rename 成 .old →
       新目录就位 → 删 .old」，那最后一删可能被杀软/僵尸 pdf2zh 的文件锁静默挡掉
       （ignore_errors）——正常路径删不掉的，启动时再试一遍；.tmp 是解压中途崩的。
+      **删 .old 前必须先确认正式目录里真有引擎**：换装半途失败时 .old 是唯一可用
+      副本（新目录没就位），无脑删 = 用户得重下 600MB——这时把 .old 恢复成正式名。
     - pdf2zh.partial：断点下载的家。**新鲜的留着**（7 天内：600MB 的断点，重试还能
       接着下）；过期的删——换版本之后旧断点永远续不上了，留着纯属占地。
 
@@ -215,12 +224,24 @@ def sweep_leftovers(max_age: float = 7 * 86400) -> list:
             return []
     root = os.path.dirname(install_dir())
     cleaned = []
-    for name in ("pdf2zh.old", "pdf2zh.tmp"):
-        p = os.path.join(root, name)
-        if os.path.isdir(p):
-            shutil.rmtree(p, ignore_errors=True)
-            if not os.path.isdir(p):
-                cleaned.append(name)
+    old = os.path.join(root, "pdf2zh.old")
+    if os.path.isdir(old):
+        if _exe_under(install_dir()):
+            shutil.rmtree(old, ignore_errors=True)
+            if not os.path.isdir(old):
+                cleaned.append("pdf2zh.old")
+        else:
+            try:
+                os.rename(old, install_dir())   # 正式目录没引擎：上面的 .old 是唯一可用副本
+                _find_cache["at"] = 0.0         # 刚把目录挪回来，find_installed 缓存别给旧结论
+                cleaned.append("pdf2zh.old → pdf2zh（恢复可用引擎）")
+            except OSError:
+                pass
+    tmp = os.path.join(root, "pdf2zh.tmp")
+    if os.path.isdir(tmp):
+        shutil.rmtree(tmp, ignore_errors=True)
+        if not os.path.isdir(tmp):
+            cleaned.append("pdf2zh.tmp")
     partial = _partial_dir()
     if os.path.isdir(partial):
         now = time.time()
@@ -277,8 +298,15 @@ def _safe_extract_all(zf: zipfile.ZipFile, dest: str):
     zf.extractall(dest)
 
 def _unpack(zpath: str):
-    """校验 → 解开 → 换到正式目录。下载装和本地文件装走的是同一段。"""
+    """校验 → 解开 → 换到正式目录。下载装和本地文件装走的是同一段。
+
+    换装口径：old 里的旧引擎**只有等新目录验证过关（找得到 pdf2zh.exe）才删**。
+    半途失败（新目录没就位/新包里没有 exe）就把 old 回滚回正式名——不然盘上
+    只剩一个 .old，启动清扫把它一删，用户唯一能用的引擎就没了（重下 600MB）。
+    """
     tmp_root = install_dir() + ".tmp"
+    final = install_dir()
+    old = final + ".old"
     try:
         if ENGINE_SHA256 and _sha256(zpath).lower() != ENGINE_SHA256.lower():
             try:
@@ -294,24 +322,38 @@ def _unpack(zpath: str):
         os.makedirs(ex_dir, exist_ok=True)
         with zipfile.ZipFile(zpath) as zf:
             _safe_extract_all(zf, ex_dir)
-        final = install_dir()
-        old = final + ".old"
         shutil.rmtree(old, ignore_errors=True)
         if os.path.isdir(final):
             os.rename(final, old)
         os.rename(ex_dir, final)
-        shutil.rmtree(old, ignore_errors=True)
-        shutil.rmtree(tmp_root, ignore_errors=True)
         _find_cache["at"] = 0.0     # 刚换了目录树：先失效缓存再找——TTL 里可能还躺着
         exe = find_installed()      # 装前那次「没装」的旧结论，快装完（<10s）时实测踩中
         if not exe:
+            # 这套新目录里没有 exe：不能用。旧引擎还在 .old 里，原样放回来
+            shutil.rmtree(final, ignore_errors=True)
+            if os.path.isdir(old):
+                try:
+                    os.rename(old, final)
+                    _find_cache["at"] = 0.0
+                except OSError:
+                    pass
             _set(state="error", error="包里没有 pdf2zh.exe")
             return
+        shutil.rmtree(old, ignore_errors=True)     # 新引擎验证过关，才轮到删旧的
+        shutil.rmtree(tmp_root, ignore_errors=True)
         shutil.rmtree(_partial_dir(), ignore_errors=True)   # 装好了，断点没用了
         _warmup(exe)
         _set(state="done", path=exe)
     except Exception as e:
         shutil.rmtree(tmp_root, ignore_errors=True)
+        # 换装半途失败：正式目录没就位而 .old 还在 → 回滚，别把唯一可用的旧引擎
+        # 留在残骸状态（下次启动的清扫会把它当垃圾收走）
+        if not os.path.isdir(final) and os.path.isdir(old):
+            try:
+                os.rename(old, final)
+                _find_cache["at"] = 0.0
+            except OSError:
+                pass
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
 
 _PARALLEL_CONNS = 4      # 分段并行下载的连接数：镜像普遍按单连接限速，4 段约 3~4 倍

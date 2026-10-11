@@ -74,6 +74,22 @@ async def _local_only(request: Request, call_next):
         return JSONResponse({"detail": "非本机来源已拒绝"}, status_code=403)   # 兜住无 Origin 的跨站导航 GET
     return await call_next(request)
 
+@app.middleware("http")
+async def _cap_upload_size(request: Request, call_next):
+    """上传体先看 content-length 再决定收不收：**必须在路由之前拦**——`file: UploadFile`
+    的参数解析发生在端点函数体之前（整包先被 multipart 收进 starlette 的暂存文件），
+    端点里再判等于已经白收完一遍。超限直接 413 人话，用户不用白等几分钟上传。
+    没有 content-length（chunked）的走端点里的流式上限，那边边收边判。"""
+    if request.method == "POST" and request.url.path == "/api/papers":
+        try:
+            clen = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            clen = 0
+        if clen > _MAX_UPLOAD + (1 << 20):     # 表单边界/字段名那点开销宽限 1MB
+            return JSONResponse({"detail": "PDF 太大（超过 500MB），先拆分或压缩再导入"},
+                                status_code=413)
+    return await call_next(request)
+
 READY = threading.Event()
 DEFAULT_PORT = 8430          # 与 desktop.py 的 PORTS[0] 一致：改默认端口时两处一起动
 
@@ -195,8 +211,8 @@ def _backfill_pdf_hashes():
             if h:
                 try:
                     db.update_paper(pid, pdf_hash=h)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _applog(f"指纹回填 {pid} 失败：{_human_msg(e)}")
             time.sleep(2)
 
     threading.Thread(target=work, daemon=True).start()
@@ -438,8 +454,8 @@ def _paper_src(pid: str, p: dict) -> str:
             try:
                 if src:
                     db.update_paper(pid, path=alt)
-            except Exception:
-                pass
+            except Exception as e:
+                _applog(f"路径自愈 {pid}: path 字段改不回库内副本（{_human_msg(e)}）")
             return alt
     return src or os.path.join(d, "paper.pdf")
 
@@ -454,7 +470,6 @@ def _paper_src_or_404(pid: str, p: dict) -> str:
 @app.on_event("startup")
 def _startup():
     _apply_pending_restore()   # 必须最先生效：换的是数据目录的内容，db 还没被碰过
-    _sweep_old_data_dirs()
     config.ensure_dirs()
     os.makedirs(PAPERS_DIR, exist_ok=True)
     _migrate_paper_layout()
@@ -465,6 +480,7 @@ def _startup():
         # 指纹回填都是分钟级的大库重活——留在 startup 里，用户看到的就是
         # 白屏干等几分钟。搬去后台：界面先起来，这些活几秒内默默跟上。
         try:
+            _sweep_old_data_dirs()   # 可能 rmtree 掉几个 GB 的旧数据目录：别挡在 uvicorn accept 前面
             _repair_paper_paths()
             try:
                 for pid in os.listdir(PAPERS_DIR):
@@ -477,8 +493,8 @@ def _startup():
                 gone = engine_install.sweep_leftovers()
                 if gone:
                     _applog("引擎残骸已清：" + "、".join(gone))
-            except Exception:
-                pass
+            except Exception as e:
+                _applog(f"引擎残骸清扫失败（不影响启动）：{_human_msg(e)}")
             _clear_zombie_jobs()
             _backfill_pdf_hashes()
         except Exception:
@@ -497,8 +513,8 @@ def _startup():
             # 「全文翻译」的第一下付这笔账（前端按钮的即时反馈就靠 POST 快速返回）
             svc = (cfg["pdf2zh"].get("service") or "bing").strip()
             translate_full.choose_service(svc, _pdf2zh_env(svc, cfg)[1])
-        except Exception:
-            pass
+        except Exception as e:
+            _applog(f"引擎/服务预热失败（不影响使用，点翻译时会重试）：{_human_msg(e)}")
     threading.Thread(target=_warm_engine, daemon=True).start()
 
 def _apply_pending_restore():
@@ -554,18 +570,32 @@ def _apply_pending_restore():
 def _sweep_old_data_dirs():
     """恢复落地后的旧目录，若上个会话没删完（落地后马上退出，删除线程跟着死了），
     启动时顺手清掉。恢复的暂存目录（.restore）同理：标记写下去之前被杀的话它就一直
-    在盘上（几百 MB），标记还在（这次启动就要用它落地）时别碰。"""
+    在盘上（几百 MB），标记还在（这次启动就要用它落地）时别碰。
+
+    另外回收数据目录里的上传残渣（.upload-*.tmp）：上传中途进程被杀（崩溃/装新版重启）
+    会把它整份留在盘上，没人扫的话天长日久越积越多。只删超过 1 天的：正在写的临时文件
+    mtime 每块都在刷新，1 天阈值误伤不到活的请求。"""
     base = os.path.dirname(config.DATA_DIR)
     name = os.path.basename(config.DATA_DIR)
     try:
         leftovers = [d for d in os.listdir(base) if d.startswith(name + ".old-")
                      or d == name + ".restore"]
     except OSError:
-        return
+        leftovers = []
     if os.path.isfile(os.path.join(config.DATA_DIR, "pending_restore.json")):
         leftovers = [d for d in leftovers if not d.endswith(".restore")]
     for d in leftovers:
         shutil.rmtree(os.path.join(base, d), ignore_errors=True)
+    try:
+        stale = time.time() - 86400
+        for fn in os.listdir(config.DATA_DIR):
+            fp = os.path.join(config.DATA_DIR, fn)
+            if fn.startswith(".upload-") and fn.endswith(".tmp") \
+                    and os.path.isfile(fp) and os.path.getmtime(fp) < stale:
+                _rm(fp)
+                _applog(f"回收上传残渣：{fn}")
+    except OSError:
+        pass
 
 _TRASH_PREFIX = ".trash-"
 
@@ -1177,8 +1207,8 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
     try:
         if not _align_names(pid):     # 标题/作者刚提取完：夹名、文件名立刻对齐可读名
             _late_align(pid)          # 当场挪不动（杀软攥着刚落的 PDF）交给保洁追平
-    except Exception:
-        pass
+    except Exception as e:
+        _applog(f"导入对齐 {pid} 失败（标题照存，下次启动的迁移会再对一次）：{_human_msg(e)}")
     db.replace_paragraphs(pid, paras)
     _ensure_paper_type(pid)
     crossref.kick(pid, on_update=lambda _pid=pid: _align_names(_pid))     # 按首页 DOI 联网补元数据（后台线程，失败安静；补到作者/年份就把夹名再对齐一拍）
@@ -1198,7 +1228,10 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
         db.update_paper(pid, analysis_status="queued", analysis_error=None)
         threading.Thread(target=_ocr_then_analyze, args=(pid, path, auto), daemon=True).start()
     else:
-        db.update_paper(pid, analysis_status="done")
+        # 没有文字层、OCR 引擎也没装：这不是"已析读"，如实报空态（装引擎后重新析读即可）。
+        # 报 done 是假成功——书架显示"已析读"、点进去却什么都没有
+        db.update_paper(pid, analysis_status="error",
+                        analysis_error="这份 PDF 没有文字层（多半是扫描件），装上 OCR 引擎后重新析读即可")
     return {"paper": row, "n_paragraphs": len(paras),
             "n_captions": sum(1 for p in paras if p["caption"]),
             "no_text": not paras}
@@ -1224,7 +1257,7 @@ def _ocr_then_analyze(pid: str, path: str, auto: bool = True):
         db.update_paper(pid, analysis_status="none", analysis_error=None)
 
     with _q_lock:
-        _live_jobs.add(("analysis", pid))
+        _job_start("analysis", pid)
     t0 = time.time()
     try:
         try:
@@ -1280,9 +1313,10 @@ def _attach_same_title(out: dict, pid: str) -> dict:
 _MAX_UPLOAD = 500 * 1024 * 1024   # 论文 PDF 的合理上限：防手滑上传整个硬盘，也防内存被顶穿
 
 @app.post("/api/papers")
-async def upload(file: UploadFile = File(...)):
+async def upload(request: Request, file: UploadFile = File(...)):
     # 分块落盘：以前 chunks 攒满再 b"".join，峰值两份 500MB 驻留在**事件循环线程**上，
     # 攒的那一拍整个服务（含正在流的问答）一起停摆。现在 4MB 一块边收边写临时文件。
+    # content-length 的预检在 _cap_upload_size 中间件里（要赶在 multipart 解析之前）。
     import uuid as _uuid
     tmp = os.path.join(config.DATA_DIR, f".upload-{_uuid.uuid4().hex}.tmp")
     size, head = 0, b""
@@ -1355,9 +1389,12 @@ def import_path(body: dict):
     if not src.lower().endswith(".pdf"):
         raise HTTPException(400, "eggpaper 只认 PDF")
     name, size = os.path.basename(src), os.path.getsize(src)
-    pid, pid_dir, base = _new_paper_dir(name)
-    dest = os.path.join(pid_dir, f"{base}.pdf")
     with _import_lock:
+        # 建目录必须与判重、落盘同在一把锁里（与上传路径同一写法）：目录名是按撞名
+        # 现找的，锁外 check-then-act 会让两个并存请求拿到同一个目录，失败方
+        # _discard_paper_dir 一把 rmtree 掉赢家刚落盘的 PDF
+        pid, pid_dir, base = _new_paper_dir(name)
+        dest = os.path.join(pid_dir, f"{base}.pdf")
         try:
             pdf_hash = _copy_with_hash(src, dest)   # 边复制边算指纹：别把几百 MB 的文件整读两遍
         except OSError as e:
@@ -1395,19 +1432,26 @@ def supersede_paper(pid: str, body: dict):
         # 不再往被替换掉的 pid 白烧 LLM 或插回孤儿行
         _deleted_pids.add(old["id"])
     _cancel_request("analysis", old["id"])
-    with _key_lock("translate:" + old["id"]):
-        if translate_full.cancel(old["id"], paper_dir(old["id"])):
-            _applog(f"替换 {old['id']}：终止了还在跑的全文翻译")
-        stats = db.supersede(pid, old["id"])
-        with _dir_lock:
-            d = _dir_cache.pop(old["id"], None)
-        if d:
-            _rm(os.path.join(PAPERS_DIR, d))
-        shutil.rmtree(paper_dir(old["id"]), ignore_errors=True)   # 缓存漏了也要兜底删
+    try:
+        with _key_lock("translate:" + old["id"]):
+            if translate_full.cancel(old["id"], paper_dir(old["id"])):
+                _applog(f"替换 {old['id']}：终止了还在跑的全文翻译")
+            stats = db.supersede(pid, old["id"])
+            with _dir_lock:
+                d = _dir_cache.pop(old["id"], None)
+            if d:
+                _rm(os.path.join(PAPERS_DIR, d))
+            shutil.rmtree(paper_dir(old["id"]), ignore_errors=True)   # 缓存漏了也要兜底删
+    except Exception:
+        # 迁移没成（DB 整体回滚了）：旧篇还在，把"视同已删"的护栏撤回——
+        # 不撤的话这篇在本进程里从此 _pid_gone，新生成的析读/七问结果会被永久静默丢弃
+        with _deleted_lock:
+            _deleted_pids.discard(old["id"])
+        raise
     try:
         _align_names(pid)   # 同题旧版让位腾出了干净名：新篇立刻从 `… (2)` 升回干净名
-    except Exception:
-        pass
+    except Exception as e:
+        _applog(f"替换后对齐 {pid} 失败（名字下轮启动会再对一次）：{_human_msg(e)}")
     return stats
 
 @app.get("/api/open-request")
@@ -1433,8 +1477,8 @@ def paper_meta(pid: str, body: dict):
     try:
         if not _align_names(pid):     # 可信元数据回填完，盘上名字跟着对齐
             _late_align(pid)
-    except Exception:
-        pass
+    except Exception as e:
+        _applog(f"元数据回填后对齐 {pid} 失败（名字下轮启动会再对一次）：{_human_msg(e)}")
     return {"paper": db.get_paper(pid)}
 
 @app.post("/api/papers/{pid}/title")
@@ -1616,12 +1660,20 @@ def _pid_gone(pid: str) -> bool:
     with _deleted_lock:
         return pid in _deleted_pids
 
+def _forget_pid_locks(pid: str):
+    """删篇收尾：把按篇取的互斥锁簿子里的死键清掉（键的口径一律是 `…:<pid>[:…]`）——
+    不回收的话，一个删过几百篇的会话会把死 pid 的锁对象永远留在内存里。只清簿子里的
+    登记，还在等旧锁的线程拿到的还是同一个对象，行为不变。"""
+    for k in [k for k in list(_key_locks) if pid in k.split(":")]:
+        _key_locks.pop(k, None)
+
 @app.delete("/api/papers/{pid}")
 def delete_paper(pid: str):
     p = _paper_or_404(pid)      # 404 守卫；path 字段留给收尾删库内文件用
     with _deleted_lock:
-        _deleted_pids.add(pid)
+        _deleted_pids.add(pid)   # 有意的守卫：在跑的析读/七问线程靠它不再往死篇写孤儿行
     _lines_probe_done.discard(pid)
+    _rect_tried.difference_update(n["id"] for n in db.get_marginalia(pid))   # 钉子行要没了，补定位的死键顺手收掉
     with _key_lock("translate:" + pid):
         _cancel_request("analysis", pid)      # 已发出的 LLM 调用跑完这一拍就收，不再续下一拍
         d = paper_dir(pid)                    # purge 前算好：之后 DB 没了，只剩兜底解析
@@ -1629,15 +1681,18 @@ def delete_paper(pid: str):
         if translate_full.cancel(pid, d):
             _applog(f"删论文 {pid}：同时终止了还在跑的全文翻译")
         shutil.rmtree(d, ignore_errors=True)
-        for _ in range(6):
-            if not os.path.exists(d):
-                break
-            # 刚落盘的 PDF 会被杀软/索引器攥几秒（WinError 32，文件级共享锁）：
-            # 这几拍是当场收走文件夹的唯一机会，放弃就只剩下次启动的孤儿清扫
-            time.sleep(0.5)
-            shutil.rmtree(d, ignore_errors=True)
-        if os.path.exists(d):
-            _late_rm_paper_dir(pid, p, d)
+    for _ in range(6):
+        if not os.path.exists(d):
+            break
+        # 刚落盘的 PDF 会被杀软/索引器攥几秒（WinError 32，文件级共享锁）：这几拍是
+        # 当场收走文件夹的唯一机会。**等待在锁外做**：锁里 sleep 最多 3 秒，会把同篇
+        # 的其它操作（翻译收尾/变体生成）一起串行堵住——文件锁跟锁里在办的事无关。
+        time.sleep(0.5)
+        shutil.rmtree(d, ignore_errors=True)
+    if os.path.exists(d):
+        _late_rm_paper_dir(pid, p, d)
+    translate_full.JOBS.pop(pid, None)      # 翻译任务登记簿：篇都没了，条目别再留着
+    _forget_pid_locks(pid)
 
 def _late_rm_paper_dir(pid: str, p: dict, d: str):
     """当场没收成功的文件夹交给后台保洁：每 2 秒试一次、封顶 60 秒。杀软松手就收走。
@@ -1888,10 +1943,12 @@ def analyze(pid: str):
 def analysis(pid: str):
     p = _paper_or_404(pid)
     status, claims, annos = db.get_analysis(pid)
+    if status is None:               # 两次取行之间被删：诚实 404，别回半个空壳
+        raise HTTPException(404, "论文不存在")
     if status in ("running", "queued") and not _analysis_inflight(pid):
         db.update_paper(pid, analysis_status="none")
         status = "none"
-    eqs = json.loads(p["evidence_qs"]) if p.get("evidence_qs") else {}
+    eqs = _json_of(p.get("evidence_qs"))
     return {"status": status, "error": p["analysis_error"], "claims": claims, "annotations": annos,
             "evidence_qs": eqs, "progress": _analysis_progress.get(pid)}
 
@@ -1942,7 +1999,19 @@ def _resolve_rects(pid: str):
 _rect_tried = set()
 
 _live_jobs = set()
-_live_lock = threading.Lock()
+_live_lock = threading.Lock()   # _live_jobs 的读写锁：析读 worker、OCR 线程与各端点都会翻这本簿子
+
+def _job_start(kind: str, pid: str):
+    with _live_lock:
+        _live_jobs.add((kind, pid))
+
+def _job_live(kind: str, pid: str) -> bool:
+    with _live_lock:
+        return (kind, pid) in _live_jobs
+
+def _job_done(kind: str, pid: str):
+    with _live_lock:
+        _live_jobs.discard((kind, pid))
 
 # ---- 长任务取消：协作式。线程在阶段边界查探针，查到就不再写库、状态归回"没做过"。
 _cancel_flags: set = set()        # (kind, pid)：旗子按任务种类隔离，取消析读不误杀同篇的翻译
@@ -1961,12 +2030,6 @@ def _cancel_clear(kind: str, pid: str):
         _cancel_flags.discard((kind, pid))
 
 _analysis_progress: dict = {}   # pid -> {"done": n, "total": m}：析读子任务计数，给"已完成 n/m 项"用
-
-def _job_live(kind: str, pid: str) -> bool:
-    return (kind, pid) in _live_jobs
-
-def _job_done(kind: str, pid: str):
-    _live_jobs.discard((kind, pid))
 
 # ---------------- 析读队列：一次导入多篇时，一篇一篇地读 ----------------
 _q_lock = threading.Lock()
@@ -2004,33 +2067,39 @@ def _analysis_loop():
             continue
         with _q_lock:
             _analysis_pending.discard(pid)
-            _live_jobs.add(("analysis", pid))
+            _job_start("analysis", pid)
         db.update_paper(pid, analysis_status="running", analysis_error=None)
         try:
             _run_analysis(pid, paras)
         finally:
             _job_done("analysis", pid)
 
+_applog_lock = threading.Lock()
+
 def _applog(msg: str):
     """往 app.log 写一行。打包版（console=False）没有 stdout，print 出去的东西一个字都留不下——
     而"这次到底花了多久、卡在哪一段"恰恰是用户最常问的。和 window.py 写的是同一份日志。
-    文件超过 1MB 就截到尾部的 1/4：日志只增不删的话，跑上一年能吃掉几十 MB。"""
+    文件超过 1MB 就截到尾部的 1/4：日志只增不删的话，跑上一年能吃掉几十 MB。
+
+    轮转是"读旧-截短-改写"三步，多线程同时跨过 1MB 线时互相截断会把刚写的一行整段吃掉
+    （丢的还常是 token 账）——整段读改写+追加都进同一把锁。"""
     try:
         d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, "app.log")
-        try:
-            if os.path.getsize(path) > 1_000_000:
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    f.seek(-250_000, 2)
-                    f.readline()
-                    tail = f.read()
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write("[eggpaper] （日志超 1MB，只保留最近一段）\n" + tail)
-        except OSError:
-            pass
-        with open(path, "a", encoding="utf-8") as f:
-            f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+        with _applog_lock:
+            try:
+                if os.path.getsize(path) > 1_000_000:
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        f.seek(-250_000, 2)
+                        f.readline()
+                        tail = f.read()
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write("[eggpaper] （日志超 1MB，只保留最近一段）\n" + tail)
+            except OSError:
+                pass
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
     except OSError:
         pass
 
@@ -2961,16 +3030,31 @@ def _figure_regions(path):
 
 _fig_cache = {}
 _fig_inflight = {}
+_fig_fail: dict = {}          # (src,mtime) -> {"at": ts, "msg": 人话}：坏 PDF 的负缓存
+_FIG_FAIL_TTL = 300           # 5 分钟内不重扫：图表扫描是整本 O(n²) 邻行匹配，坏 PDF 每次都重跑纯属烧 CPU
 
 def _figures_for(pid: str, p: dict) -> list:
-    """这篇论文的图表区域列表（内存缓存按"路径+mtime"记账，画一次到处用）。"""
+    """这篇论文的图表区域列表（内存缓存按"路径+mtime"记账，画一次到处用）。
+
+    失败也记一笔负缓存（短 TTL）：打不开/解析炸的 PDF 不然每个请求都重跑一遍整本扫描。
+    负缓存绝不覆盖成功结果——成功路径先查缓存、失败单独一本账。"""
     src = _paper_src_or_404(pid, p)
     try:
         key = (src, os.path.getmtime(src))
     except OSError:
         key = (src, 0)
+
+    def _bad() -> str:
+        bad = _fig_fail.get(key)
+        if bad and time.time() - bad["at"] < _FIG_FAIL_TTL:
+            return bad["msg"]
+        return ""
+
     if key in _fig_cache:
         return _fig_cache[key]
+    msg = _bad()
+    if msg:
+        raise HTTPException(400, msg)
     ev = _fig_inflight.setdefault(key, threading.Event())
     mine = _fig_inflight[key] is ev
     if not mine:
@@ -2978,16 +3062,24 @@ def _figures_for(pid: str, p: dict) -> list:
         ev.wait(120)
         if key in _fig_cache:
             return _fig_cache[key]
+        msg = _bad()             # 先跑的那个失败了：负缓存直接复用，不重扫
+        if msg:
+            raise HTTPException(400, msg)
     try:
         try:
             out = _figure_regions(src)
         except Exception as e:
-            raise HTTPException(400, f"解析图表失败：{str(e)[:120]}")
+            msg = f"解析图表失败：{str(e)[:120]}"
+            _fig_fail[key] = {"at": time.time(), "msg": msg}
+            while len(_fig_fail) > 16:          # 负缓存也只是个短账本，别无限涨
+                _fig_fail.pop(next(iter(_fig_fail)))
+            raise HTTPException(400, msg)
     finally:
         ev.set()
         if mine:
             _fig_inflight.pop(key, None)
     _fig_cache[key] = out
+    _fig_fail.pop(key, None)                    # 这份路径+mtime 又能扫了：负账销掉
     while len(_fig_cache) > 8:
         _fig_cache.pop(next(iter(_fig_cache)))
     return out
@@ -3004,7 +3096,10 @@ def _mostly_cjk(t: str) -> bool:
 @app.get("/api/papers/{pid}/fig_caption")
 def fig_caption(pid: str, idx: int = 0):
     """灯箱图注的中文版：懒翻译一次落库（db.fig_caps），之后进页面读缓存不花钱。
-    英文界面不打这层（原文就是用户要的语言）；英文界面没有模型时回原文。"""
+    英文界面不打这层（原文就是用户要的语言）；英文界面没有模型时回原文。
+
+    同一张图快速点两次会发两次模型调用：per-key 锁内重读缓存（与 _gen_card 同款），
+    后到的那次命中刚落库的译文直接返回。"""
     p = _paper_or_404(pid)
     figs = _figures_for(pid, p)
     if idx < 0 or idx >= len(figs):
@@ -3014,17 +3109,20 @@ def fig_caption(pid: str, idx: int = 0):
             or (config.load().get("ui_lang") or "zh") != "zh"):
         return {"zh": cap, "original": cap}
     key = f'{figs[idx]["page"]}:{figs[idx]["x0"]}:{figs[idx]["y0"]}'
-    caps = db.fig_caps(pid)
-    hit = caps.get(str(idx)) or caps.get(key)   # 析读时按编号存；旧版懒翻译按坐标存——两把钥匙都认
-    if hit:
-        return {"zh": hit, "original": cap}
-    hits = _hits_merged(db.glossary_hit(pid, cap), cap)
-    msgs = llm.translate_caption_messages(cap, hits)
-    zh = llm.chat(msgs, max_tokens=6000, temperature=0.2, scene="图注").strip()
-    if zh:
-        # 锁内读改写：灯箱两张图并发懒翻译时，后写覆盖前写会丢掉一条译文缓存
-        db.fig_caps_add(pid, {key: zh, str(idx): zh})
-    return {"zh": zh or cap, "original": cap}
+    with _key_lock("figcap:" + pid + ":" + key):
+        caps = db.fig_caps(pid)
+        hit = caps.get(str(idx)) or caps.get(key)   # 析读时按编号存；旧版懒翻译按坐标存——两把钥匙都认
+        if hit:
+            return {"zh": hit, "original": cap}
+        hits = _hits_merged(db.glossary_hit(pid, cap), cap)
+        msgs = llm.translate_caption_messages(cap, hits)
+        # no_think 与 translate_captions（析读批译）同口径：同一任务两条路，思考开着
+        # 会对同一条图注多花一个数量级的钱
+        zh = llm.chat(msgs, max_tokens=6000, temperature=0.2, no_think=True, scene="图注").strip()
+        if zh:
+            # 锁内读改写：灯箱两张图并发懒翻译时，后写覆盖前写会丢掉一条译文缓存
+            db.fig_caps_add(pid, {key: zh, str(idx): zh})
+        return {"zh": zh or cap, "original": cap}
 
 
 @app.get("/api/papers/{pid}/toc")
@@ -3218,6 +3316,31 @@ def _gather_others(question: str, cand: list) -> list:
                 out.append(r)
     return out
 
+def _qa_add_revive(pid: str, role: str, content: str, conv_id: int, question: str) -> tuple:
+    """会话在流式中途被删时的落库兜底：qa_add 返回 0（会话没了）就重建一摊会话再写一次。
+
+    答案不能因为用户删了个会话就静默蒸发——SSE 里只回 assistant_id: null 的话，
+    用户看着满屏刚生成的字，历史里却一个字都没有。重建的会话用提问前 30 字当标题
+    （与 _autotitle 同一口味）。论文自己已被删（pid 进了 _deleted_pids）时不重建：
+    那只会插出一条谁也看不到的孤儿会话。仍写不进去返回 (0, 原会话号)。
+    返回 (消息 id, 实际落进的会话号)：调用方要拿会话号告诉前端新家在哪。
+    """
+    aid = db.qa_add(pid, role, content, conv_id=conv_id)
+    if aid:
+        return aid, conv_id
+    if _pid_gone(pid):
+        return 0, conv_id
+    try:
+        cid = db.conv_create(pid, (question or "").strip().replace("\n", " ")[:30] or db.NEW_CONV)
+        aid = db.qa_add(pid, role, content, conv_id=cid)
+        if aid:
+            _applog(f"问答 {pid}: 会话 {conv_id} 已被删，{role} 消息改存到新会话 {cid}")
+            return aid, cid
+        _applog(f"问答 {pid}: 会话 {conv_id} 已被删、新会话 {cid} 也没写进 {role} 消息")
+    except Exception as e:
+        _applog(f"问答 {pid}: 会话 {conv_id} 已被删且重建失败（{_human_msg(e)}），{role} 消息没能落库")
+    return 0, conv_id
+
 def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
 
@@ -3261,16 +3384,23 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
         ans = "".join(buf)
         if not ans.strip():
             raise RuntimeError("模型这次没返回内容")
-        aid = db.qa_add(pid, "assistant", ans, conv_id=conv_id)
+        aid, conv_used = _qa_add_revive(pid, "assistant", ans, conv_id, question)
         _autotitle(pid, conv_id, question, not any(h["role"] == "user" for h in hist))
-        # 会话在流式中途被删时 qa_add 返回 0：0 号行不存在，别把假 id 发给前端当真
-        yield _sse({"type": "done", "user_id": uid or None, "assistant_id": aid or None})
+        if not aid:
+            # 会话被删、重建也没写成：答案真没落库，如实报错，别拿 assistant_id: null 冒充"存好了"
+            yield _sse({"type": "error", "message": "答案没能存进对话（会话可能刚被删了），换一摊对话重问一次",
+                        "user_id": uid or None, "assistant_id": None})
+            return
+        yield _sse({"type": "done", "user_id": uid or None, "assistant_id": aid,
+                    "conv_id": conv_used if conv_used != conv_id else None})
     except Exception as e:
         hint = _human_msg(e)
         ans = "".join(buf)
-        aid = db.qa_add(pid, "assistant", (ans + "\n\n⚠ " + hint) if ans.strip() else "⚠ " + hint,
-                        conv_id=conv_id)
-        yield _sse({"type": "error", "message": hint, "user_id": uid or None, "assistant_id": aid or None})
+        aid, conv_used = _qa_add_revive(pid, "assistant",
+                                        (ans + "\n\n⚠ " + hint) if ans.strip() else "⚠ " + hint,
+                                        conv_id, question)
+        yield _sse({"type": "error", "message": hint, "user_id": uid or None, "assistant_id": aid or None,
+                    "conv_id": conv_used if aid and conv_used != conv_id else None})
 
 @app.get("/api/library/overview")
 def library_overview():
@@ -3328,15 +3458,35 @@ def qa_history(pid: str, conv_id: int = None):
 @app.post("/api/papers/{pid}/qa-save")
 def qa_save(pid: str, body: dict):
     """用户中途"停止生成"：把已经吐出来的半截答案存下来。
-    返回两端 id，前端据此把"删除/重新生成"接回真实的行上。"""
+    返回两端 id，前端据此把"删除/重新生成"接回真实的行上。
+
+    会话在流式中途被删：既不写进死会话（会留孤儿），也不把半截答案丢掉——
+    另起一摊会话存下，新会话号回给前端（它得跟着搬，删除/重生成才对得上号）。
+    属于别的论文的会话一律 404（与 /ask 同口径，跨篇写入不放行）。"""
     _paper_or_404(pid)
     content = (body.get("content") or "").strip()
     if not content:
         return {"ok": False}
-    conv_id = _valid_conv(pid, body.get("conv_id"))
+    raw = body.get("conv_id")
+    conv_id = None
+    if raw:
+        cid = _int_arg(raw, 404, "会话不存在")
+        c = db.conv_get(cid)
+        if c and c["paper_id"] != pid:
+            raise HTTPException(404, "会话不存在")
+        conv_id = cid if c else None            # 会话已删：不写死会话，下面另起一摊
+    created = False
+    if not conv_id:
+        if _pid_gone(pid):
+            raise HTTPException(404, "会话不存在")
+        conv_id = db.conv_create(pid, content.replace("\n", " ")[:30] or db.NEW_CONV)
+        created = True
+        _applog(f"问答 {pid}: 原会话已删，半截答案改存到新会话 {conv_id}")
     aid = db.qa_add(pid, "assistant", content, conv_id=conv_id)
     return {"ok": True,
-            "assistant_id": aid, "user_id": db.qa_last_user_id(pid, conv_id) if conv_id else None}
+            "assistant_id": aid or None,
+            "conv_id": conv_id if (aid and created) else None,
+            "user_id": db.qa_last_user_id(pid, conv_id) if (aid and conv_id) else None}
 
 @app.post("/api/papers/{pid}/regenerate")
 def qa_regenerate(pid: str, body: dict):

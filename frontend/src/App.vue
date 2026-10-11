@@ -842,7 +842,16 @@ const tranTip = computed(() => {
 function onKey(e) {
   const t = e.target
   if (dlg.open) { if (e.key === 'Escape') { e.preventDefault(); dlgCancel() } return }
-  if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) return
+  /* 焦点在输入框里也同样先处理 Esc 的「退框选」：在框选气泡里打完字按 Esc，
+     以前只收气泡不收框选——框选态挂着，纸上点一下又开新选择，看着像卡住了。
+     只放行 Esc 这一个键，其余按键照旧留给输入框 */
+  if (t && (t.matches?.('input, textarea, select') || t.isContentEditable)) {
+    if (e.key === 'Escape' && store.viewer.frame) {
+      store.viewer.frame = false
+      store.escTick++
+    }
+    return
+  }
   if (showSettings.value) {
     if (e.key === 'Escape') { e.preventDefault(); showSettings.value = false }
     return

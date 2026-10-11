@@ -110,9 +110,17 @@ async function send(q, pidArg) {
   gotDone = false
   await nextTick(); scrollBottom(false)
   const id = convId.value
+  /* 会话在流式中途被删时，服务端会把答案改存到一个新会话并回报它的号：
+     前端得跟着搬过去（切 convId 会重载这批消息），否则"删除/重新生成"
+     指着旧会话发请求，全是对不上号的 404 */
+  const adoptConv = ev => {
+    if (!ev?.conv_id || ev.conv_id === convId.value || pid.value !== reqPid) return
+    convId.value = ev.conv_id
+  }
   const applyIds = ev => {
     if (ev.user_id) um.id = ev.user_id
     if (ev.assistant_id) m.id = ev.assistant_id
+    adoptConv(ev)
   }
   /* 流式的增量按**帧**合并再落进 DOM。每个 token 写一次响应式状态，就等于每个 token
      重排一次整条 Markdown、再读一次 scrollHeight 决定跟不跟滚——短回答看不出来，
@@ -159,7 +167,7 @@ async function send(q, pidArg) {
   busy.value = false
   if (!gotDone && m.content.trim() && !m.error) {
     api.qaSave(reqPid, { conv_id: id, content: m.content })
-       .then(r => { if (r?.assistant_id) applyIds({ user_id: r.user_id, assistant_id: r.assistant_id }) })
+       .then(r => { if (r?.assistant_id) applyIds({ user_id: r.user_id, assistant_id: r.assistant_id, conv_id: r.conv_id }) })
        .catch(() => {})
   }
   loadConvs(true)      // 标题和更新时间会变
@@ -326,9 +334,18 @@ function closeCite() { citeOpen.value = false; nextTick(() => inputEl.value?.foc
 function autoGrow() {
   const t = inputEl.value
   if (!t) return
-  t.style.height = 'auto'
-  t.style.height = Math.min(168, Math.max(30, t.scrollHeight)) + 'px'
+  /* 高度写在下一帧：每敲一个字都同步「置 auto→读 scrollHeight→写高度」是强制的
+     布局回读，长问题连续输入时会一卡一卡的 */
+  if (growRaf) cancelAnimationFrame(growRaf)
+  growRaf = requestAnimationFrame(() => {
+    growRaf = 0
+    const el = inputEl.value
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(168, Math.max(30, el.scrollHeight)) + 'px'
+  })
 }
+let growRaf = 0
 function onKey(e) {
   if (e.isComposing || e.keyCode === 229) return
   if (citeOpen.value) {
@@ -422,6 +439,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         </div>
       </div>
 
+      <TransitionGroup name="qa-msg">
       <div v-for="(m, i) in msgs" :key="m.id || 'm' + i" class="qa-msg" :class="m.role">
         <div class="q-role">{{ m.role === 'user' ? t('你') : 'EGGPAPER' }}</div>
         <template v-if="m.role === 'assistant'">
@@ -437,6 +455,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
           <button @click="delMsg(i)">{{ t('删除') }}</button>
         </div>
       </div>
+      </TransitionGroup>
 
       <Transition name="fade">
         <button class="qa-tobottom" v-if="!atBottom && msgs.length" @click="scrollBottom()">{{ t('回到底部 ↓') }}</button>

@@ -156,7 +156,10 @@ def extract_all(papers: list, material_of, demo: bool = False, meta: list = None
             budget = min(4000, 600 + 160 * len(keys))
             cells = _norm(chat_json(msgs, max_tokens=budget, scene="数据对比"), keys, n_paras=len(paras))
             if len(_CACHE) > 400:
-                _CACHE.clear()
+                # 触顶**按插入序淘汰最旧的一批**（dict 保序），留 3/4 大头。
+                # 原来是一把 clear()：用户下次打开对比表全表重抽，那全是真金白银
+                for k in list(_CACHE)[:len(_CACHE) - 300]:
+                    _CACHE.pop(k, None)
             _CACHE[ckey] = cells
             return p["id"], cells
         except Exception:

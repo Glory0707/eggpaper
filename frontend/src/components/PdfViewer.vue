@@ -99,7 +99,7 @@ const parasByPage = computed(() => {
   return m
 })
 /* 页边摆哪些批注：读者自己钉的（查译/框选答疑/自己写的批注）是**读者资产**，
-   唯一的开关是设置里的「我的眉批」——默认显示，想收起去设置里点一下。 */
+   唯一的开关是设置里的「页边批注」——默认显示，想收起去设置里点一下。 */
 const USER_KINDS = new Set(['lookup', 'region', 'note'])
 const notesShown = computed(() => {
   const mineOn = store.viewer.layers.mine !== false
@@ -379,7 +379,24 @@ function measure() {
   if (!sc || !first) return
   const perRow = sheets.value[0].items.length
   const gutter = gutterW.value + gutterPad.value
-  fitScale.value = (sc.clientWidth - 60 - gutter - (perRow === 2 ? 20 : 0)) / (first.w * perRow)
+  /* 可用宽从 DOM 实读（.desk-inner 的左右内边距 + 对开时的列间距），再留 20px
+     滚动条/取整余量：这些数字以前是 60/20 两个魔法数，样式一改「适宽」就悄悄算偏，
+     页边卡被挤出视口 */
+  const inner = sc.querySelector('.desk-inner')
+  let padX = 40
+  if (inner) {
+    const cs = getComputedStyle(inner)
+    padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+  }
+  let gap = 18
+  if (perRow === 2 && inner) {
+    const row = inner.querySelector('.spread-row')
+    if (row) {
+      const rs = getComputedStyle(row)
+      gap = parseFloat(rs.columnGap) || parseFloat(rs.gap) || 18
+    }
+  }
+  fitScale.value = (sc.clientWidth - padX - 20 - gutter - (perRow === 2 ? gap : 0)) / (first.w * perRow)
   pageFitScale.value = (sc.clientHeight - 56) / first.h
 }
 
@@ -1344,10 +1361,12 @@ function cropItem(it, r) {
   const off = document.createElement('canvas')
   off.width = Math.max(2, sw); off.height = Math.max(2, sh)
   off.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, off.width, off.height)
-  return off.toDataURL('image/jpeg', 0.85)
+  /* 裁出来的是设备像素（DPR 倍）。气泡里要按 CSS 尺寸摆（1:1），不然小选区被
+     拉大 1.4 倍、框沿正好切在字中间，看着像渲染坏了 */
+  return { url: off.toDataURL('image/jpeg', 0.85), cssW: Math.round(r.x1 - r.x0) }
 }
 
-const vis = reactive({ visible: false, x: 0, y: 0, img: '', question: '', answer: '', busy: false, err: '',
+const vis = reactive({ visible: false, x: 0, y: 0, img: '', imgW: 0, question: '', answer: '', busy: false, err: '',
                        page: 0, paraIdx: 0, rect: null })
 
 /* 气泡长高不出屏的钳位（见 refitPop 注释）。写在三个 reactive 都声明之后。 */
@@ -1386,7 +1405,7 @@ function startFrameDrag(e, it) {
     visSeq++    // 新选区顶掉旧的：在途的上一单答案别再写回来
     Object.assign(vis, { visible: true, x: Math.min(window.innerWidth - 410, ev.clientX + 12),
                          y: Math.min(window.innerHeight - 340, Math.max(64, ev.clientY - 60)),
-                         img, question: t('解释选区里的内容。'), answer: '', busy: false, err: '',
+                         img: img.url, imgW: img.cssW, question: t('解释选区里的内容。'), answer: '', busy: false, err: '',
                          page: it.origPage, paraIdx,
                          rect: it.origPage >= 0 ? { x0: x0 / s, y0: y0 / s, x1: x1 / s, y1: y1 / s } : null })
   }
@@ -1439,7 +1458,7 @@ watch(() => store.visPrefill, pf => {
   if (!pf) return
   visSeq++    // 同上：新气泡顶掉旧的
   Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(midX.value || window.innerWidth / 2) - 190), y: 90,
-                       img: pf.img, question: pf.question || t('讲解这张图。'), answer: '', busy: false, err: '',
+                       img: pf.img, imgW: 0, question: pf.question || t('讲解这张图。'), answer: '', busy: false, err: '',
                        page: pf.page ?? 0, paraIdx: pf.paraIdx ?? 0, rect: pf.rect ?? null })
   store.visPrefill = null
   askVisual()
@@ -1480,6 +1499,9 @@ watch(mnotes, (n, o) => {
 watch(store.marginalia, m => {
   if (m.pid === props.pid && m.notes) mnotes.value = m.notes
 })
+/* 页边卷轴出现/消失会改变可用宽度：适宽/适页下要重算一次比例，否则纸面 + 页边
+   一起超宽（钉完批注卡片被挤出视口——以前得再点一次「适宽」才回来） */
+watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow() })
 </script>
 
 <template>
@@ -1575,7 +1597,7 @@ watch(store.marginalia, m => {
 
         <div class="stage-line" v-if="ready && rendering"><i /></div>
 
-        <div class="read-prog" v-if="ready" :style="{ left: deskRightX + 'px' }"><i :style="{ height: progPct * 100 + '%' }" /></div>
+        <div class="read-prog" v-if="ready" :style="{ left: deskRightX + 'px' }"><i :style="{ transform: 'scaleY(' + progPct + ')' }" /></div>
 
         <Transition name="fade">
     <div v-if="ready" class="desk-float zoom-bar" :style="{ left: midX + 'px', maxWidth: floatMax }"
@@ -1665,7 +1687,7 @@ watch(store.marginalia, m => {
         <span class="mono-label">{{ t('选区问 AI') }}</span>
         <button class="vp-x" :title="t('关闭')" @click="closeVis">×</button>
       </div>
-      <img class="vis-img" :src="vis.img" />
+      <img class="vis-img" :src="vis.img" :style="vis.imgW ? { width: vis.imgW + 'px' } : null" />
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" @keydown.escape="closeVis" :placeholder="t('问这个选区…')" />
       <div class="sp-actions">

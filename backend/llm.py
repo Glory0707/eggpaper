@@ -1,6 +1,7 @@
 """LLM 适配层：任意 OpenAI 兼容端点；无 key 时进入演示模式（启发式假数据，跑通全流程）。"""
 import json
 import re
+import time
 
 import httpx
 
@@ -56,6 +57,11 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             if r.status_code >= 500:
                 last_err = RuntimeError(f"模型服务暂时不可用（{r.status_code}），稍后再试")
                 continue
+            if r.status_code == 429:
+                # 429 是唯一必然瞬时的错误：短退避后重试，别把限流直接砸给用户
+                last_err = RuntimeError("模型服务限流了（429），等一会儿再试")
+                time.sleep(1.5)
+                continue
             if r.status_code == 400 and budget > 2048 and \
                     "max_tokens" in (r.text or ""):
                 # 有的供应商输出上限低于我们给的 16k，400 里点名 max_tokens——
@@ -91,6 +97,8 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
     首字时间从 ~8s 压到 ~1.5s；不认识这个字段的端点会忽略它，所以坏了也不伤。
     stream_options：让末块带回 usage——没有它，问答/划词这些流式调用永远没有
     token 账（钱花了不知道花在哪）；个别端点不认这个参数时降级重开一次。
+    5xx/429：服务端打嗝/限流是瞬时的，短退避后**重开一次**；但已经吐过字的流不能再
+    重开——前端会收到半截+重来两段。连接级错误（TransportError）同理。
     """
     cfg = _require_live()
     payload = {"model": cfg["provider"]["model"], "messages": messages,
@@ -98,38 +106,61 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
                "stream_options": {"include_usage": True}}
     if no_think:
         payload["thinking"] = {"type": "disabled"}
+    emitted = False          # 已经吐过字：中途断流只能如实报错，不能重开
+    last_err = None
     for with_usage in (True, False):
         if not with_usage:
             payload.pop("stream_options", None)
-        with _http.stream(
-            "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
-            json=payload, timeout=httpx.Timeout(600, connect=20),
-        ) as r:
-            if with_usage and r.status_code == 400 and \
-                    "stream_options" in r.read().decode("utf-8", "replace"):
-                continue
-            r.raise_for_status()
-            for raw in r.iter_lines():
-                if not raw:
+        retried = False
+        while True:
+            try:
+                with _http.stream(
+                    "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
+                    json=payload, timeout=httpx.Timeout(600, connect=20),
+                ) as r:
+                    if with_usage and r.status_code == 400 and \
+                            "stream_options" in r.read().decode("utf-8", "replace"):
+                        break        # 这个端点不认 stream_options：降级重开（外层循环下一轮）
+                    if r.status_code == 429 or r.status_code >= 500:
+                        last_err = RuntimeError(
+                            f"模型服务暂时不可用（HTTP {r.status_code}），稍后再试")
+                        if not retried and not emitted:
+                            retried = True
+                            time.sleep(1.5)
+                            continue
+                        raise last_err
+                    r.raise_for_status()
+                    for raw in r.iter_lines():
+                        if not raw:
+                            continue
+                        line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
+                        if line == "[DONE]":
+                            break
+                        if not line:
+                            continue
+                        try:
+                            j = json.loads(line)
+                        except ValueError:
+                            continue
+                        choices = j.get("choices") or [{}]
+                        delta = choices[0].get("delta") or {}
+                        piece = delta.get("content") or ""
+                        if piece:
+                            emitted = True
+                            yield piece
+                        # include_usage 时末块带 usage：流式调用也有 token 账（没带的端点就没了）
+                        _log_cache(j.get("usage") or {}, scene)
+                    return
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                last_err = e
+                if not retried and not emitted:
+                    retried = True
+                    time.sleep(1.5)
                     continue
-                line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
-                if line == "[DONE]":
-                    break
-                if not line:
-                    continue
-                try:
-                    j = json.loads(line)
-                except ValueError:
-                    continue
-                choices = j.get("choices") or [{}]
-                delta = choices[0].get("delta") or {}
-                piece = delta.get("content") or ""
-                if piece:
-                    yield piece
-                # include_usage 时末块带 usage：流式调用也有 token 账（没带的端点就没了）
-                _log_cache(j.get("usage") or {}, scene)
-            break
+                raise
+    if last_err is not None and not emitted:
+        raise last_err
 
 def _log_cache(usage: dict, scene: str):
     """每次模型调用记一行 token 账：输入多少、缓存命中多少、输出多少（含思考）。
@@ -224,8 +255,10 @@ def chat_json(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
     try:
         return parse_json(raw)
     except Exception:
-        raw2 = chat(messages + [{"role": "assistant", "content": raw[-tail:]},
-                                {"role": "user", "content": _JSON_RETRY_NOTE}],
+        # 上次输出为空/全空白时别带空 assistant 消息重发：严格端点拿空 content 换回 400，
+        # 本来的坏 JSON 重试反而变成别的错误。锚尾 message 只在真有内容时才拼
+        anchor = [{"role": "assistant", "content": raw[-tail:]}] if raw.strip() else []
+        raw2 = chat(messages + anchor + [{"role": "user", "content": _JSON_RETRY_NOTE}],
                     max_tokens=max_tokens, temperature=temperature,
                     no_think=no_think, timeout=timeout, scene=scene)
         return parse_json(raw2)
@@ -416,6 +449,12 @@ def human_error(exc: Exception) -> str:
     low = (exc.__class__.__name__ + " " + msg).lower()
     if "429" in msg or "too many requests" in low:
         return "模型服务限流了（429），等一会儿再试"
+    # 5xx：网关/服务端打嗝（HTTPStatusError 的原文是一整句英文 + URL，用户读不出所以然）。
+    # 判据仍带类名/短语，别被消息里恰好出现的 500 误伤（如 token 计数、模型名）
+    m5 = next((c for c in ("500", "502", "503", "504")
+               if c in msg and ("http" in low or "server error" in low)), "")
+    if m5:
+        return f"模型服务暂时不可用（HTTP {m5}），过一会儿再试"
     if "401" in msg or "unauthorized" in low or "invalid api key" in low:
         return "API KEY 无效或过期（401），去设置里检查"
     if "402" in msg or "insufficient" in low or "quota" in low:
@@ -821,7 +860,11 @@ def translation_user(text: str, context: str = "") -> str:
             "化学式、公式、代码、数字、单位、变量、引用标记保留原样；人名不译；只输出译文。\n")
     if context:
         user += f"[上下文：{context[:600]}]\n\n"
-    return user + f"[待翻译]\n{text[:4000]}"
+    # 超长按句界截断（硬切会把最后一个词劈成两半，长段落静默半译）；截断点留 "…" 明示未完
+    cut = _clip_para(text, 4000)
+    if len(cut) < len(text):
+        cut += "…"
+    return user + f"[待翻译]\n{cut}"
 
 def translate_caption_messages(text: str, hits: list = None) -> list:
     """图注翻译：查译同款风格，但图注是一条完整的说明文——模型见它长就想摘要
@@ -900,8 +943,25 @@ def mock_analyze(paras: list) -> dict:
 
 # ---------------- 方法卡（可复现 protocol）/ 谱系卡（综述导览） ----------------
 
+def _clean_card_refs(data: dict, paras: list) -> dict:
+    """卡片类输出（方法卡/谱系卡）的 ¶n 引用过一道范围校验：steps 句尾的 [¶999]
+    在 UI 里是可点角标，越界点过去是死跳转。只剔引用本身，不丢整条步骤。"""
+    if not isinstance(data, dict):
+        return data
+    valid = {p["idx"] for p in paras}
+    steps = data.get("steps")
+    if isinstance(steps, list):
+        clean = []
+        for s in steps:
+            if not isinstance(s, str):
+                continue
+            c = _filter_para_refs(s, valid)
+            clean.append(c or s)      # 整条只剩引用（病态输出）时退回原文，别交出空步骤
+        data = dict(data, steps=clean)
+    return data
+
 def method_card(title: str, paras: list) -> dict:
-    return chat_json([
+    data = chat_json([
         {"role": "system", "content": _doc_system(title, paras,
             "【任务：整理方法卡】你是研究方法专家。把论文的方法部分整理成可复现的 protocol 卡，只输出 JSON："
             '{"goal":"<这套方法要达成什么，≤40字>",'
@@ -915,12 +975,13 @@ def method_card(title: str, paras: list) -> dict:
             "不要 markdown 代码块，不要解释。" + _lang_tail())},
         {"role": "user", "content": _kick("整理这张方法卡")},
     ], max_tokens=6000, temperature=0.3, no_think=True, scene="方法卡")
+    return _clean_card_refs(data, paras)
 
 def survey_card(title: str, paras: list) -> dict:
     """谱系卡：综述版的方法卡。字段与 method_card 同一套 key（前端同一块渲染），
     语义换成导览——普适于任何领域，**不预设数据集/基准**：它梳理了什么就写什么，
     没有的东西（没有数据集、没有参数）就整段留空，绝不硬凑。"""
-    return chat_json([
+    data = chat_json([
         {"role": "system", "content": _doc_system(title, paras,
             "【任务：整理谱系卡】你在为一篇综述做一张『谱系卡』——读者 30 秒看懂这篇综述把领域名梳理成了什么样子。"
             "只输出 JSON："
@@ -936,6 +997,7 @@ def survey_card(title: str, paras: list) -> dict:
             "不要 markdown 代码块，不要解释。" + _lang_tail())},
         {"role": "user", "content": _kick("整理这张谱系卡")},
     ], max_tokens=6000, temperature=0.3, no_think=True, scene="谱系卡")
+    return _clean_card_refs(data, paras)
 
 # ---------------- 引用信息 ----------------
 
@@ -1010,8 +1072,32 @@ def vision_ask(image_dataurl: str, question: str) -> str:
 def _paras_block(items: list, cap: int = 600) -> str:
     return "\n".join(f"¶{p['idx']} {(p.get('text') or '')[:cap]}" for p in items)
 
-def _items(raw) -> dict:
-    """三个生成题共用的清洗：lead/text/ask 三个字段，没有 text 的一条不留。"""
+# 段落引用（¶n）的范围校验：七问/方法卡的输出文本直接进 UI，前端的 ¶n 是可点跳转，
+# 模型编的 ¶999 点过去是死引用（骨架路径早有 `n in valid` 过滤，这几处补齐）。
+_BRACKET_REFS = re.compile(r"[\[［]\s*¶\s*(\d+(?:\s*[,，、]\s*¶?\s*\d+)*)\s*[\]］]")
+_BARE_REFS = re.compile(r"¶\s*(\d+)")
+
+def _filter_para_refs(text: str, valid: set) -> str:
+    """剔掉越界的 ¶n 引用——只丢引用本身，别丢整句。带方括号的按数字逐个判
+    （[¶3,¶999] 留 [¶3]；全是坏的就连括号一起撤）。"""
+    if not text or not valid:
+        return text
+
+    def fix_bracket(m):
+        nums = [int(x) for x in re.findall(r"\d+", m.group(1))]
+        ok = [n for n in dict.fromkeys(nums) if n in valid]
+        return "[¶" + ", ".join(str(n) for n in ok) + "]" if ok else ""
+
+    out = _BRACKET_REFS.sub(fix_bracket, text)
+    out = _BARE_REFS.sub(lambda m: m.group(0) if int(m.group(1)) in valid else "", out)
+    if out != text:     # 真剔过引用才收拾残迹：句尾孤零零的逗号/双空格清掉
+        out = re.sub(r"[ \t]{2,}", " ", out)
+        out = out.rstrip("，,、;；:： \t")
+    return out
+
+def _items(raw, valid: set = None) -> dict:
+    """三个生成题共用的清洗：lead/text/ask 三个字段，没有 text 的一条不留。
+    valid 给了就把 text/ask 里越界的 ¶n 引用剔掉（¶999 在 UI 里是死跳转）。"""
     items = []
     for it in (raw or []):
         if not isinstance(it, dict):
@@ -1019,9 +1105,14 @@ def _items(raw) -> dict:
         text = str(it.get("text") or "").strip()[:300]
         if not text:
             continue
+        if valid:
+            text = _filter_para_refs(text, valid)
+            if not text:
+                continue          # 整条只剩编造的引用：宁缺勿滥
+        ask = str(it.get("ask") or "").strip()[:80]
         items.append({"lead": str(it.get("lead") or "").strip()[:20],
                       "text": text,
-                      "ask": str(it.get("ask") or "").strip()[:80]})
+                      "ask": _filter_para_refs(ask, valid) if valid else ask})
     return {"items": items[:3]}
 
 # text 型生成题（①②③与综述组织问）共用的输出约束与骨架：同一次调用、同一种清洗。
@@ -1041,7 +1132,8 @@ def _short_answer(title: str, paras: list, ask: str, payload: str) -> dict:
         {"role": "system", "content": _doc_system(title, paras, ask + _CITE_TAIL + _lang_tail())},
         {"role": "user", "content": payload + "\n\n" + _kick("回答这一问题")},
     ], max_tokens=3000, temperature=0.3, scene="七问")
-    return {"text": str(data.get("text") or "").strip()[:500]}
+    text = str(data.get("text") or "").strip()[:500]
+    return {"text": _filter_para_refs(text, {p["idx"] for p in paras})}
 
 def answer_motive(title: str, paras: list, gaps: list, backgrounds: list, claims: list) -> dict:
     """①「要解决什么、为什么」：原来的①②两问（要解决什么 / 为什么要解决）各吃一遍
@@ -1123,7 +1215,7 @@ def answer_next(title: str, paras: list, limits: list, exts: list, claims: list)
             '"ask":"<顺着这条往下问的一句话，≤40字>"}]}，不要代码块。' + _lang_tail())},
         {"role": "user", "content": payload + "\n\n" + _kick("给出接下来的方向")},
     ], max_tokens=4000, temperature=0.45, scene="七问")
-    out = _items(data.get("items"))
+    out = _items(data.get("items"), {p["idx"] for p in paras})
     out["v"] = 3
     return out
 
@@ -1157,7 +1249,7 @@ def answer_doubt(title: str, paras: list, limits: list, claims: list, kind: str 
             '"ask":"<拿去追问模型的一句话，≤40字>"}]}，不要代码块。' + _lang_tail())},
         {"role": "user", "content": payload + "\n\n" + _kick("给出这篇值得警惕的地方")},
     ], max_tokens=4000, temperature=0.4, scene="七问")
-    out = _items(data.get("items"))
+    out = _items(data.get("items"), {p["idx"] for p in paras})
     out["v"] = 1
     return out
 
@@ -1184,6 +1276,6 @@ def answer_lens(title: str, one_line: str, claims: list, paras: list) -> dict:
             f"论文标题：{title or ''}\n一句话：{one_line or ''}\n\n"
             "[主张]\n" + _claims_lines(claims) + "\n\n" + _kick("给出三个学科视角")},
     ], max_tokens=4000, temperature=0.6, scene="七问")
-    items = _items(data.get("items"))
+    items = _items(data.get("items"), {p["idx"] for p in paras})
     items["v"] = 3
     return items

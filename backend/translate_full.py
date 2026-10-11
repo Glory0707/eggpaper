@@ -42,6 +42,8 @@ import sys
 import threading
 import time
 
+import llm     # 只借 human_error 把失败翻成人话（llm 不反向依赖本模块，无环）
+
 JOBS = {}
 _RUNNING = {}
 _PROBE = {}
@@ -49,6 +51,21 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _PROG = re.compile(r"(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 AUTH_FAILS = ("authentication fails", "invalid api key", "incorrect api key",
               "401 - ", "unauthorized", "invalid_api_key", "api key is required")
+# 引擎取字体/模型资源失败（BabelDOC 的 warmup 阶段，与实际用哪家翻译服务无关）：
+# 本机此刻连不上它列的资源站（github raw / huggingface / modelscope，取最快的那家）。
+# 这不是"这一页坏了"——整篇每一页都会卡在同一处，每页各试两遍只是把时间耗光。
+# 2026-10-11 实测：代理停掉后 huggingface 超时，16 页的翻译在 8 分钟里一页都没成。
+# 只认"带网络超时特征"的那一种：同一句前缀也可能是 home 缓存并发撞车的 NameError
+# （见 _run_version 文档），那种是重试就能好的，不该按网络问题收工。
+_ASSET_FAILS = ("all upstreams failed", "failed to get fastest upstream")
+_ASSET_NET_HINTS = ("timeout", "timed out", "connect", "connection", "getaddrinfo", "ssl", "proxy")
+_ASSET_HINT = ("翻译引擎取字体/模型资源失败：连不上它的资源站（GitHub / HuggingFace / "
+               "ModelScope）。检查网络或开代理后重新点翻译——不必等，整篇都会卡在同一处")
+
+def _is_asset_net_fail(low: str) -> bool:
+    if any(k in low for k in _ASSET_FAILS):
+        return True
+    return "asset coroutine failed" in low and any(h in low for h in _ASSET_NET_HINTS)
 
 PROBE_TIMEOUT = 2.5
 PROBE_TTL = 600
@@ -688,11 +705,13 @@ def _pages_count(pages: str) -> int:
 
 def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
               envs: dict, proc_reg: list, auth_out: list, engine: str = "",
-              glossary_csv: str = "") -> tuple:
+              glossary_csv: str = "", asset_out: list = None) -> tuple:
     """翻译一页（或一个页区间）。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
     proc_reg：正在跑的进程都登记进来，删论文时 cancel() 能把它们掐掉。
     auth_out：一旦在输出里看到鉴权失败就**立刻**杀进程并记到这里——
     pdf2zh 对 401 是无限重试，等它自己结束要磨到天荒地老。
+    asset_out：同理，看到"取字体/模型资源失败"也立刻收工（见 _ASSET_FAILS）：
+    整台机器现在够不到引擎的资源站，这一页和下一页都卡在同一处，重试纯属把时间耗光。
 
     为什么收"页区间"：pdf2zh 每次冷启动要全套依赖 import（2.x 还要加载 onnx 模型），
     一页一进程时 30 页 = 30 次纯开销。按 4 页一批冷启动摊薄；批里单页坏了拆成单页
@@ -727,6 +746,13 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
             low = line.lower()
             if any(k in low for k in AUTH_FAILS):
                 auth_out.append(f"{service} 服务的 key 不对（pdf2zh 报鉴权失败）：{line[-160:]}")
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                continue
+            if asset_out is not None and _is_asset_net_fail(low):
+                asset_out.append(_ASSET_HINT)
                 try:
                     proc.kill()
                 except Exception:
@@ -875,6 +901,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             _RUNNING[pid] = procs
             lock = threading.Lock()
             auth_error = []
+            asset_error = []
 
             def worker(batch: list):
                 try:
@@ -887,16 +914,16 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 别让一页坏页连坐同批的没坏页。"""
                 a, b = batch[0] + 1, batch[-1] + 1
                 label = str(a) if a == b else f"{a}-{b}"
-                got, tail, auth_out = None, [], []
+                got, tail, auth_out, asset_out = None, [], [], []
                 for t in range(PAGE_TRIES):
-                    if auth_error or j.get("_abort"):
+                    if auth_error or asset_error or j.get("_abort"):
                         return
                     # 全局闸：这里排队的是"引擎进程"而不是线程——同一时刻全库最多
                     # ENGINE_PROCS_CAP 个 pdf2zh 在跑，跨篇也不会超。
                     # 目录创建必须在拿到槽、过了取消复查**之后**：否则删篇+排队期间
                     # 会把 .pages 目录复活成幽灵（pdf2zh 的 cwd 还指着它时 rmtree 也删不掉）
                     with _SLOTS:
-                        if auth_error or j.get("_abort"):
+                        if auth_error or asset_error or j.get("_abort"):
                             return
                         pdir_t = _page_dir(out_dir, a, t)
                         os.makedirs(pdir_t, exist_ok=True)
@@ -908,12 +935,17 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                             j["current"] = [*(j.get("current") or []), label]
                         try:
                             got, tail = _run_page(pdf_path, label, pdir_t, service, extra,
-                                                  envs, procs, auth_out, engine, glossary_csv)
+                                                  envs, procs, auth_out, engine, glossary_csv,
+                                                  asset_out)
                         finally:
                             with lock:
                                 j["current"] = [x for x in (j.get("current") or []) if x != label]
                     if auth_out:
                         auth_error.append(auth_out[0])
+                        return
+                    if asset_out:
+                        # 取资源失败：整篇同病，收工别再逐页重试
+                        asset_error.append(asset_out[0])
                         return
                     if got:
                         if t > 0:
@@ -956,6 +988,14 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 j.update(status="error", error=auth_error[0])
                 say(f"全文翻译失败 {pid}：{auth_error[0]}")
                 return
+            if not results and asset_error:
+                # 一页都没译成且原因是"取资源失败"：整篇都会卡在同一处，如实报错收工
+                # （已译出的页不浪费——断点续译照旧，下次点翻译从剩下的页继续）
+                j.update(status="error", error=asset_error[0])
+                say(f"全文翻译失败 {pid}：{asset_error[0]}")
+                return
+            if asset_error:
+                say(f"全文翻译 {pid}：部分页没译成——{asset_error[0]}")
             if j.pop("_abort", None):
                 j.update(status="none", error="")      # 用户主动取消，不算一次失败
                 return
@@ -1026,7 +1066,8 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             say(f"全文翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
                  f" · {len(results)}/{n} 页" + (f" · 失败页 {failed}" if failed else ""))
         except Exception as e:
-            j.update(status="error", error=f"{type(e).__name__}: {str(e)[-400:]}")
+            hint = llm.human_error(e)      # 界面直接显示这行：走统一口径，别把 "OSError: [Errno 28]…" 原文甩给用户
+            j.update(status="error", error=hint[:400])
             say(f"全文翻译失败 {pid}：{type(e).__name__}: {str(e)[-300:]}")
         finally:
             _RUNNING.pop(pid, None)

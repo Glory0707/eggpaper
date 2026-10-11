@@ -29,6 +29,7 @@ import time
 import httpx
 
 import appinfo
+import llm     # 只借 human_error：下载失败也按统一口径说人话
 
 _cache = {}
 _lock = threading.Lock()
@@ -50,6 +51,12 @@ def _ver_tuple(v: str):
 def newer(latest: str, current: str) -> bool:
     return _ver_tuple(latest) > _ver_tuple(current)
 
+def _human(e: Exception) -> str:
+    """更新语境的人话：公用口径（llm.human_error）里指"模型服务"的两处换成更新源的说法，
+    其余照旧（认不出的异常仍带类名+短讯，保留可诊断性）。"""
+    return (llm.human_error(e).replace("模型服务", "更新源")
+            .replace("检查网络与 base_url", "检查网络与更新源地址"))
+
 def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
     """读更新源，回答"有没有新版本"。网络只是"查一下"，失败一律当"没有更新"处理——
     这是打开软件时的一次安静探测，不该让任何人看到一个报错弹窗。
@@ -69,7 +76,7 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
         r.raise_for_status()
         info = r.json()
     except Exception as e:
-        out = {"ok": False, "reason": f"{type(e).__name__}: {str(e)[:120]}", "current": cur,
+        out = {"ok": False, "reason": _human(e)[:120], "current": cur,
                "has_update": False}
         with _lock:
             _cache[feed_url] = {"at": time.time(), "data": out, "ttl": _FAIL_TTL_H}
@@ -148,7 +155,9 @@ def download(url: str, sha256: str = "", size: int = 0):
         os.replace(part, out)
         _set(state="ready", path=out, pct=100)
     except Exception as e:
-        _set(state="error", error=f"{type(e).__name__}: {str(e)[:160]}")
+        # 界面直接显示这行：走统一人话口径（"OSError: [Errno 28] No space left…" 这种原文
+        # 不该甩给用户）
+        _set(state="error", error=_human(e)[:160])
 
 def start_download(url: str, sha256: str = "", size: int = 0):
     # 检查+占位同一把锁：拆开的话两个相邻请求双双通过，两条线程写同一个文件互截断
