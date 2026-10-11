@@ -874,7 +874,8 @@ def qa_history(pid: str, conv_id: int = None, limit: int = 200):
     else:
         rows = q("SELECT role, content, citations, id, conv_id FROM (SELECT * FROM qa_messages "
                  "WHERE paper_id=? ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (pid, limit))
-    return [dict(r, citations=json.loads(r["citations"])) for r in rows]
+    # 写侧一律 json.dumps；读侧容 NULL（老库/外部写入留下的历史行，json.loads(None) 会炸 500）
+    return [dict(r, citations=json.loads(r["citations"] or "[]")) for r in rows]
 
 def qa_drop_last_assistant(pid: str, conv_id: int):
     """重新生成 = 把最后一条回答删掉，连同它的用户问题一起交回前端重问。
