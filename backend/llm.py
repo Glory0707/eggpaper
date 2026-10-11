@@ -535,7 +535,8 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
         {"role": "user", "content": _kick("分析这篇论文的论证结构")},
     ]
     # 坏 JSON 的重试统一走 chat_json（锚尾 400 字足够对上截断点）
-    data = chat_json(msgs, max_tokens=16000, temperature=0.2, tail=400, scene="骨架")
+    data = chat_json(msgs, max_tokens=16000, temperature=0.2, tail=400, scene="骨架",
+                     no_think=True)
     valid = {p["idx"] for p in paras}
 
     claims_raw = data.get("claims") or []
@@ -676,7 +677,7 @@ def summarize(title: str, paras: list, hits=None) -> dict:
             '"keywords":["<3~5个关键词>"]}'
             "不要 markdown 代码块，不要解释。" + _gloss_block(hits) + _lang_tail())},
         {"role": "user", "content": _kick("生成这张一眼卡")},
-    ], max_tokens=4000, temperature=0.3, scene="一眼卡")
+    ], max_tokens=4000, temperature=0.3, no_think=True, scene="一眼卡")
 
 # ---------------- 问答 ----------------
 
@@ -937,7 +938,8 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
 
     **并发为什么是 6**（实测定的，别凭感觉调）：这篇 48 段的论文 = 4 块，
     3 并发要排两波、端到端 53 秒；6 并发一波就完、~36 秒。单块的耗时由模型决定
-    （实测 DeepSeek 带思考 ~36 秒/块，其中七成 token 花在思考上），**墙钟时间 = 波数 × 单块时间**，
+    （带思考时代实测 ~36 秒/块、七成 token 花在思考上；调用处已关思考，此数偏大），
+    **墙钟时间 = 波数 × 单块时间**，
     所以能压的只有波数。再往上加并发收益就有限了（还容易被服务端限流），
     真正要更快只能减块数或减单块输出量，那是产品取舍（实测数字就写在上面的常量旁）。
     """
@@ -955,7 +957,7 @@ def analyze_marginalia(title: str, paras: list, on_chunk=None, kind: str = "rese
         ]
         # 要 JSON 的统一走 chat_json：坏 JSON 带纠错说明重发，成功率高于原样重滚；
         # 块级失败由 wave 的二遍补跑兜底，这里抛出去是对的
-        data = chat_json(msgs, max_tokens=16000, temperature=0.3, scene="眉批")
+        data = chat_json(msgs, max_tokens=16000, temperature=0.3, scene="眉批", no_think=True)
         return data.get("notes", []) if isinstance(data, dict) else []
 
     total = len(chunks)
@@ -1111,7 +1113,7 @@ def method_card(title: str, paras: list) -> dict:
             "（Sc₂O₃、10⁻⁷、Oₛ），不要 LaTeX、不要 $…$、不要用下划线代替下标。"
             "不要 markdown 代码块，不要解释。" + _lang_tail())},
         {"role": "user", "content": _kick("整理这张方法卡")},
-    ], max_tokens=6000, temperature=0.3, scene="方法卡")
+    ], max_tokens=6000, temperature=0.3, no_think=True, scene="方法卡")
 
 def survey_card(title: str, paras: list) -> dict:
     """谱系卡：综述版的方法卡。字段与 method_card 同一套 key（前端同一块渲染），
@@ -1132,7 +1134,7 @@ def survey_card(title: str, paras: list) -> dict:
             "没提到的东西不要编。化学式与上下标用 Unicode 字符（Sc₂O₃、10⁻⁷），不要 LaTeX。"
             "不要 markdown 代码块，不要解释。" + _lang_tail())},
         {"role": "user", "content": _kick("整理这张谱系卡")},
-    ], max_tokens=6000, temperature=0.3, scene="谱系卡")
+    ], max_tokens=6000, temperature=0.3, no_think=True, scene="谱系卡")
 
 # ---------------- 引用信息 ----------------
 
