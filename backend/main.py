@@ -44,7 +44,7 @@ import translate_full
 import update
 import zotero
 
-app = FastAPI(title="eggpaper", version="0.1.0")
+app = FastAPI(title="eggpaper", version=appinfo.version())
 app.add_middleware(CORSMiddleware,
                    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost)(:\d+)?$",
                    allow_methods=["*"], allow_headers=["*"])
