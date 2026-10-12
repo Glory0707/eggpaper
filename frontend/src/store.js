@@ -151,8 +151,10 @@ export async function refreshPapers() {
    没有它，开久了的窗口拿着陈旧列表去拖拽归类，就会撞「论文不存在」——
    那篇多半在别的窗口被删了，这个页面永远不知道。 */
 let _libV = ''
+let _libWatch = 0
 export function startLibraryWatch() {
-  setInterval(async () => {
+  if (_libWatch) return             // 重挂（HMR/多壳）不再叠一条 5 秒轮询：清单只会越跑越多
+  _libWatch = setInterval(async () => {
     if (document.hidden) return       // 挂后台不刷；回来那一拍 v 对不上会自动补一次刷新
     try {
       const { v } = await api.libraryVersion()
@@ -218,6 +220,13 @@ export async function openPaper(pid) {
   /* 多窗格模式下，文库/投递来的"打开这篇"= **替换活动窗格**（双开不打回单篇）；
      单篇时 = 整屏换成这一篇。 */
   if (store.openIds.length > 1 && store.openIds.includes(store.currentId)) {
+    if (store.openIds.includes(pid)) {
+      // 要打开的这篇已经在别的窗格里（比如点了一条跨篇引用，指向同屏的另一篇）：
+      // 切过去就行。替换的话 openIds 会出现两个同 pid 的窗格——:key 撞车、
+      // 同一章纸渲染两遍，后面对这个 pid 的批量操作还会一次命中两格
+      if (store.currentId !== pid) await activatePaper(pid, false)
+      return
+    }
     store.openIds[store.openIds.indexOf(store.currentId)] = pid
     await activatePaper(pid, false)      // 全局 variant 保持：另一窗格的姿势不被打扰
     return

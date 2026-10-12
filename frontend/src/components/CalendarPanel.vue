@@ -65,11 +65,15 @@ function togglePick() {
   if (picking.value) nextTick(() => pickInput.value?.focus())
   else pq.value = ''
 }
+let planBusy = false
 async function planIt(p) {
-  if (p.plan_day === sel.value) return
+  /* plan_day 是**响应回来之后**才写的：双击的两下都落在写入之前的窗口里，
+     各发一次 plan、本地列表插出两条同名条目（刷新才消失）。 */
+  if (p.plan_day === sel.value || planBusy) return
+  planBusy = true
   try {
     await api.plan(p.id, sel.value)
-  } catch (e) { toast(e.message); return }
+  } catch (e) { toast(e.message); return } finally { planBusy = false }
   p.plan_day = sel.value
   const e = (days.value[sel.value] = days.value[sel.value] || {})
   e.plans = [...(e.plans || []), { id: p.id, title: paperName(p).trim() }]
@@ -170,7 +174,7 @@ watch(open, v => {
         <span v-if="!c" class="cal-cell blank" />
         <button v-else class="cal-cell"
                 :class="{ today: c.key === todayKey(), sel: c.key === sel }"
-                :title="(c.plans ? t('待读 {n} 篇 · ', { n: c.plans }) : '') + (c.reads || c.added
+                :title="(c.plans ? t('待读 {n} 篇', { n: c.plans }) + ' · ' : '') + (c.reads || c.added
                   ? t('读过 {r} 篇 · 新入库 {a} 篇', { r: c.reads, a: c.added }) : '')"
                 @click="sel = c.key">
           <span class="n">{{ c.d }}</span>

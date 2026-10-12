@@ -148,13 +148,17 @@ onBeforeUnmount(() => {
 async function createColl() {
   const n = newName.value.trim()
   if (!n) { adding.value = false; return }
+  /* 输入框上的 keydown.enter 与 blur 会各来一次（Enter 提交后紧接着失焦）：
+     名字和 adding 都要在**发请求前**收掉，不然第二次调用拿同一个名字再插一遍
+     ——集合列表里出现两条同名分类（collAdd 是纯 INSERT，后端不判重）。
+     同文件 doRename/commitEdit 就是这个口径（清键在前，await 在后）。 */
+  newName.value = ''
+  adding.value = false
   try {
     const r = await api.collAdd(n)
     await refreshCollections()
     store.lib.coll = r.id        // 新建完直接切过去，符合"我建它就是要往里放东西"
   } catch (e) { toast(e.message) }
-  newName.value = ''
-  adding.value = false
 }
 function startRename(c) { editId.value = c.id; editName.value = c.name; nextTick(() => document.querySelector('.coll-edit')?.select()) }
 async function doRename(c) {
@@ -451,7 +455,7 @@ function onCmpGoto(c) {
         <div class="fn" v-if="pEditId !== p.id" :title="paperName(p)"
              @dblclick="startEdit(p)">{{ paperName(p) }}</div>
         <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
-        <div class="p-hit" v-if="hitOf(p.id)" :title="`${t(WHERE_KEYS[hitOf(p.id).where])} · ${hitOf(p.id).n} 处\n${hitOf(p.id).snippet}`">
+        <div class="p-hit" v-if="hitOf(p.id)" :title="`${t(WHERE_KEYS[hitOf(p.id).where])} · ${t('{n} 处', { n: hitOf(p.id).n })}\n${hitOf(p.id).snippet}`">
           <b>{{ t(WHERE_KEYS[hitOf(p.id).where]) }}</b>{{ hitOf(p.id).snippet }}
         </div>
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>

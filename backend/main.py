@@ -116,6 +116,13 @@ async def _any_error(request, exc):
     _applog(f"[eggpaper] {request.url.path} 出错 → {hint}")   # 打包版没有 stdout：走 _applog 才留得下痕
     return JSONResponse({"detail": hint}, status_code=500)
 
+@app.exception_handler(OverflowError)
+async def _too_big(request, exc):
+    """超大整数：客户端拿 10**30 当 id/序号送进来，SQLite 绑参数当场 OverflowError。
+    这是客户端输入的问题，回 400 人话；不拦的话它冒充服务端 500，日志里也看不出是参数坏。"""
+    _applog(f"[eggpaper] {request.url.path} 数值超界：{exc}")
+    return JSONResponse({"detail": "参数数值超出范围"}, status_code=400)
+
 @app.exception_handler(RequestValidationError)
 async def _bad_params(request, exc):
     """参数不合法时 FastAPI 默认回一坨 422 的数组，前端那句 detail 展示不了。
@@ -679,11 +686,18 @@ def _clear_zombie_jobs():
     for col, kind in (("analysis_status", "analysis"),
                       ("translate_status", "translate")):
         rows = db.q(f"SELECT id FROM papers WHERE {col} IN ('running','queued')")
+
+        def alive(x: str) -> bool:
+            if kind == "analysis":
+                # 析读的活口有两个真相源：在跑的线程 + 排队还没被 loop 接走的。
+                # 只看 _job_live 会把"已入队、loop 还没取到"的篇当僵尸归零——
+                # 晚启动清扫能跑好几分钟，这期间导入的篇正好落在这个窗口里
+                return _analysis_inflight(x)
+            return _job_live(kind, x) or translate_full.job(x)["status"] in ("running", "queued")
+
         # 晚启动清扫与本进程刚接的新任务有竞争窗：活着的任务（含本进程已在跑的翻译）
         # 不能归零，否则界面状态闪回"没做过"，诱发重复点击
-        stale = [r["id"] for r in rows
-                 if not _job_live(kind, r["id"])
-                 and translate_full.job(r["id"])["status"] not in ("running", "queued")]
+        stale = [r["id"] for r in rows if not alive(r["id"])]
         if not stale:
             continue
         qmarks = ",".join("?" * len(stale))
@@ -964,20 +978,38 @@ def _stage_restore(src: str):
                 if not info.filename.endswith("/") and parts[0] not in _BACKUP_SKIP_DIRS \
                         and ".." not in parts and "/".join(parts) not in _RESTORE_SKIP_FILES:
                     target = os.path.join(staged, *parts)
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    with z.open(info) as fsrc, open(target, "wb") as fdst:
-                        shutil.copyfileobj(fsrc, fdst, 1 << 20)
+                    try:
+                        os.makedirs(os.path.dirname(target), exist_ok=True)
+                        with z.open(info) as fsrc, open(target, "wb") as fdst:
+                            shutil.copyfileobj(fsrc, fdst, 1 << 20)
+                    except OSError as e:
+                        # 备份是在别的系统/别的路径规则下打的：条目名可能撞上 Windows
+                        # 的非法字符（? | 保留名 CON/…）或超长路径，open 当场 OSError。
+                        # 这不是"服务器坏了"，是这份备份这份文件解不开——400 人话 +
+                        # 把半截暂存目录收掉（留着它，下次恢复会从一堆残骸上再解一遍）
+                        shutil.rmtree(staged, ignore_errors=True)
+                        raise HTTPException(400, f"备份里有这份系统解不开的文件名"
+                                                 f"（{parts[-1][:60]}）：{_human_msg(e)}")
     try:
         with open(os.path.join(config.DATA_DIR, "pending_restore.json"), "w", encoding="utf-8") as f:
             json.dump({"staged": staged}, f)
     except OSError as e:
         raise HTTPException(500, f"写恢复标记失败：{_human_msg(e)}")
 
+def _no_install_while_translating():
+    """换装会把引擎目录从正在跑的 pdf2zh 脚下 rename 走：模块懒加载失败、批次神秘报错，
+    exe 被占用还会在盘上留下删不掉的 .old（升级链路的其他病灶都从这儿长出来）。
+    正在翻译就拒绝，口径与"改数据目录要先停下载"一致：顺序得由用户定，但得说人话。"""
+    for jpid, j in list(translate_full.JOBS.items()):
+        if (j or {}).get("status") in ("running", "queued"):
+            raise HTTPException(400, "正在全文翻译，结束后再安装/升级引擎")
+
 @app.post("/api/pdf2zh/install")
 def pdf2zh_install(body: dict = None):
     """一键把引擎装到用户机器上。不给 url 就走内置源表（更新源同源 → 镜像 → 官方直连，
     自动换源+续传+校验，见 engine_install）；给了 url 就只用这一个（测试/局域网用）。"""
     url = str(((body or {}).get("url") or "")).strip()
+    _no_install_while_translating()
     return engine_install.start(url)
 
 @app.get("/api/pdf2zh/install-status")
@@ -996,6 +1028,7 @@ async def pdf2zh_install_from_file(file: UploadFile = File(...)):
     下好一份引擎包，和安装包一起发给别人，对方在这里选那个文件即可（零基础）。"""
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(400, "要选 .zip 文件")
+    _no_install_while_translating()
     updir = engine_install.install_dir() + ".upload"
     os.makedirs(updir, exist_ok=True)
     # 随机名：固定 engine.zip 的话，并发上传会当场截断正在解压的那一份
@@ -1027,14 +1060,22 @@ def version_info():
     return {"version": appinfo.version(), "packaged": update.is_packaged(),
             "data_dir": config.DATA_DIR, "quitting": _QUITTING["user"]}
 
+def _cache_hours(cfg: dict) -> float:
+    """更新缓存小时数来自用户配置文件：空/坏值/"6h" 这种写法都不该让"查更新"整个 500，
+    坏值退回默认 6 小时（合理范围外也退回——负数和天文数字都会让缓存逻辑失真）。"""
+    try:
+        h = float(cfg.get("cache_hours") or 6)
+    except (TypeError, ValueError):
+        return 6.0
+    return h if 0 < h <= 24 * 30 else 6.0
+
 @app.get("/api/update/check")
 def update_check(force: bool = False):
     """查更新源。force=false 时只读缓存不联网（打开软件时的那次安静探测走这条）。
     更新源留空 = 用内置的 Gitee 源（用户零配置）；想彻底关掉检查用「自动检查」开关。"""
     cfg = config.load().get("update", {})
-    feed = cfg.get("feed_url") or config.DEFAULTS["update"]["feed_url"]
-    return update.check(feed, force=force,
-                        cache_hours=float(cfg.get("cache_hours") or 6))
+    feed = str(cfg.get("feed_url") or config.DEFAULTS["update"]["feed_url"])
+    return update.check(feed, force=force, cache_hours=_cache_hours(cfg))
 
 @app.post("/api/update/download")
 def update_download(body: dict):
@@ -1042,8 +1083,8 @@ def update_download(body: dict):
     POST），收调用方自给的 url 等于"引导下载任意 exe"——install 有目录护栏，
     在 download 这头把链截断。sha256/size 同样以更新源为准，不信任调用方。"""
     cfg = config.load().get("update", {})
-    feed = cfg.get("feed_url") or config.DEFAULTS["update"]["feed_url"]
-    info = update.check(feed, force=False, cache_hours=float(cfg.get("cache_hours") or 6))
+    feed = str(cfg.get("feed_url") or config.DEFAULTS["update"]["feed_url"])
+    info = update.check(feed, force=False, cache_hours=_cache_hours(cfg))
     url = (body or {}).get("url") or ""
     if not (info.get("ok") and info.get("url")) or url != info["url"]:
         raise HTTPException(400, "下载地址与更新源不符，请重试")
@@ -1243,6 +1284,8 @@ def _ocr_then_analyze(pid: str, path: str, auto: bool = True):
 
     登记成 ("analysis", pid) 的在跑任务：analysis 端点有"状态说 queued 但进程里没活 =
     上次被中断"的惰性检测，OCR 这一段不登记的话刚导入的篇会被它误杀回 none。
+    这里再登记一次是给**导入路径**兜底（导入时线程由 import 自己起，端点里没有登记点）；
+    analyze 端点已经在锁内登记过了，重复 add 幂等无害。
     取消旗在 OCR 里**逐页**生效（识别是分钟级的，整本跑完才看旗等于没给取消）；
     _job_done 挪到最后的 finally——先撤登记再排析读的话，惰性检测会在毫秒窗里
     把刚排上的 queued 误归零。
@@ -1411,7 +1454,8 @@ _pending_open = {"pid": None}
 @app.post("/api/papers/{pid}/supersede")
 def supersede_paper(pid: str, body: dict):
     """版本升级：pid（刚导入的那份）顶掉旧篇 old_pid——软资产跟迁、旧篇删除。"""
-    old = _paper_or_404((body or {}).get("old_pid") or "")
+    old_pid = (body or {}).get("old_pid")
+    old = _paper_or_404(old_pid if isinstance(old_pid, str) else "")
     new = _paper_or_404(pid)
     if old["id"] == pid:
         raise HTTPException(400, "新旧是同一篇")
@@ -1423,16 +1467,26 @@ def supersede_paper(pid: str, body: dict):
         # 不再往被替换掉的 pid 白烧 LLM 或插回孤儿行
         _deleted_pids.add(old["id"])
     _cancel_request("analysis", old["id"])
+    with _lines_probe_lock:
+        _lines_probe_done.discard(old["id"])
     try:
         with _key_lock("translate:" + old["id"]):
-            if translate_full.cancel(old["id"], paper_dir(old["id"])):
+            old_dir = paper_dir(old["id"])   # **purge 前**算好：DB 行一删，paper_dir 只剩
+            # 兜底解析（读不到 path 字段），按可读名建的目录它认不出来——旧 PDF/译文
+            # 就永远留在盘上，还占着干净名让新篇升不回去（delete_paper 同款教训）
+            if translate_full.cancel(old["id"], old_dir):
                 _applog(f"替换 {old['id']}：终止了还在跑的全文翻译")
             stats = db.supersede(pid, old["id"])
             with _dir_lock:
-                d = _dir_cache.pop(old["id"], None)
-            if d:
-                fsutil.rm_quiet(os.path.join(PAPERS_DIR, d))
-            shutil.rmtree(paper_dir(old["id"]), ignore_errors=True)   # 缓存漏了也要兜底删
+                _dir_cache.pop(old["id"], None)
+            shutil.rmtree(old_dir, ignore_errors=True)
+            _applog(f"替换 {old['id']}：旧目录 {old_dir} "
+                    f"{'已清掉' if not os.path.exists(old_dir) else '删不动，交后台保洁'}"
+                    f"（新版会接着升回干净名）")
+            if os.path.exists(old_dir):
+                _late_rm_paper_dir(old["id"], old, old_dir)   # 杀软/索引器攥着：交后台保洁
+            translate_full.JOBS.pop(old["id"], None)
+            _forget_pid_locks(old["id"])
     except Exception:
         # 迁移没成（DB 整体回滚了）：旧篇还在，把"视同已删"的护栏撤回——
         # 不撤的话这篇在本进程里从此 _pid_gone，新生成的析读/七问结果会被永久静默丢弃
@@ -1515,13 +1569,26 @@ def _require_paras(pid: str) -> None:
         raise HTTPException(400, NO_TEXT)
 
 
+_SQLITE_INT_MAX = 2 ** 63 - 1
+
+def _s_arg(v) -> str:
+    """JSON body 里的字符串字段：非字符串一律当"没给"（回空串），别 str() 硬转。
+
+    {"note": 123} 硬转会把它当批注存进去（"123"），而 {"note": {}} 直接
+    AttributeError 冒成 500。口径统一：不是字符串 = 空 = 该报"不能为空"就报 400。"""
+    return v.strip() if isinstance(v, str) else ""
+
 def _int_arg(v, status: int, msg: str) -> int:
     """请求参数里的裸 int：坏值回一句人话，别让 ValueError 冒成 500 被误译成模型错误。
-    非整数一律拒绝：1.5 截成 1 是"悄悄译错段"，比 400 糟糕得多（bool 是 int 的子类，也拒）。"""
+    非整数一律拒绝：1.5 截成 1 是"悄悄译错段"，比 400 糟糕得多（bool 是 int 的子类，也拒）。
+    超出 64 位整数范围的也要拦：SQLite 绑参数直接 OverflowError——客户端送一个
+    10**30 就能换来一个 500 和满屏堆栈，其实该是 400。"""
     if isinstance(v, bool):
         raise HTTPException(status, msg)
     if isinstance(v, int):
-        return v
+        if -_SQLITE_INT_MAX <= v <= _SQLITE_INT_MAX:
+            return v
+        raise HTTPException(status, msg)
     try:
         f = float(v)
     except (TypeError, ValueError):
@@ -1697,9 +1764,13 @@ def _late_rm_paper_dir(pid: str, p: dict, d: str):
     threading.Thread(target=work, daemon=True).start()
     with _dir_lock:
         _dir_cache.pop(pid, None)
-    fsutil.rm_quiet(p["path"])
-    fsutil.rm_quiet(p["dual_path"]); fsutil.rm_quiet(p.get("mono_path"))
-    return {"ok": True}
+    # 夹子还被攥着时，先把里面的文件删掉（夹空了后续 rmdir 也轻）。**只删夹子里的**：
+    # path 字段万一指着外部原件（历史遗留行的口径），那是用户自己的文件，不碰
+    d_norm = os.path.normcase(os.path.abspath(d))
+    for k in ("path", "dual_path", "mono_path"):
+        v = p.get(k) or ""
+        if v and os.path.normcase(os.path.dirname(os.path.abspath(v))) == d_norm:
+            fsutil.rm_quiet(v)
 
 _key_locks: dict = {}
 
@@ -1708,10 +1779,29 @@ def _key_lock(key: str) -> threading.Lock:
     同一 key 的生成任务并发请求在这里排队，拿锁的一方真生成，后到者重读缓存直接返回。"""
     return _key_locks.setdefault(key, threading.Lock())
 
-def _pdf_or_404(path: str, msg: str) -> FileResponse:
+class _SafeFile(FileResponse):
+    """PDF 单文件响应：删论文/换版本与下载/翻页请求赛跑时（另一窗口正在删这篇），
+    starlette 是**发送响应时**才 stat 文件的——文件那时已经没了就抛 RuntimeError，
+    用户看到的是一句 500。头还没发出去就当场降级成 404 人话；已经发了一半的
+    （stat 过了、open 之前才消失）只能静默收场，任何方案都改不了已定的状态码。"""
+    async def __call__(self, scope, receive, send):
+        started = [False]
+        async def track(message):
+            if message["type"] == "http.response.start":
+                started[0] = True
+            await send(message)
+        try:
+            await super().__call__(scope, receive, track)
+        except (FileNotFoundError, RuntimeError):
+            if started[0]:
+                return
+            await JSONResponse({"detail": "文件不存在（这篇可能刚被删除或替换）"},
+                               status_code=404)(scope, receive, send)
+
+def _pdf_or_404(path: str, msg: str) -> _SafeFile:
     """盘上有就服务这个 PDF，没有就按调用方口径 404（三种变体各有各的人话）。"""
     if path and os.path.exists(path):
-        return FileResponse(path, media_type="application/pdf")
+        return _SafeFile(path, media_type="application/pdf")
     raise HTTPException(404, msg)
 
 @app.get("/api/papers/{pid}/pdf")
@@ -1935,6 +2025,11 @@ def analyze(pid: str):
             if _analysis_inflight(pid):
                 return {"status": p["analysis_status"] or "queued"}
             db.update_paper(pid, analysis_status="queued", analysis_error=None)
+            # 登记必须在锁内、起线程**之前**做完：放在 _ocr_then_analyze 里（线程被
+            # 调度到才登记）的话，双击的两下都看到"没人在跑"，各起一个 OCR 线程——
+            # 两个进程扫同一份 PDF，先完成的 _job_done 又会在另一个还在跑时清掉登记，
+            # /analysis 端点于是把状态归零、按钮复活，能再叠第三个
+            _job_start("analysis", pid)
             threading.Thread(target=_ocr_then_analyze, args=(pid, _paper_src(pid, p)), daemon=True).start()
         return {"status": "queued"}
     # 查互斥与占位排队必须同锁：拆开就有 TOCTOU——两边都过了检查再各自启动，照样互相清缓存
@@ -2083,6 +2178,10 @@ def _analysis_loop():
                 return
             pid, paras = _analysis_q.get_nowait()
         if _pid_gone(pid):
+            # 死篇也要把排队登记摘干净：留着它，"这篇在排队"就永远是"真"，
+            # 同名 pid 的任何未来查询都会被骗（登记簿还白涨一个条目）
+            with _q_lock:
+                _analysis_pending.discard(pid)
             continue
         with _q_lock:
             _analysis_pending.discard(pid)
@@ -2163,8 +2262,8 @@ def translate_cancel(pid: str):
 def pin_lookup(pid: str, body: dict):
     """把查译/段译/框选答疑/自己写的批注钉到页边（用户资产，持久化）。"""
     _paper_or_404(pid)
-    quote = str(body.get("quote") or "").strip()
-    note = (body.get("note") or "").strip()
+    quote = _s_arg(body.get("quote"))
+    note = _s_arg(body.get("note"))
     if not quote or not note:
         raise HTTPException(400, "quote 与 note 不能为空")
     para_idx = _int_arg(body.get("para_idx") or 0, 400, "para_idx 得是整数")
@@ -2174,7 +2273,7 @@ def pin_lookup(pid: str, body: dict):
         page = int(body.get("page") or 0)
     except (TypeError, ValueError):
         page = 0
-    if (body.get("kind") or "").strip() == "note":
+    if (body.get("kind") or "") == "note":
         return {"id": db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
                                         kind="note")}
     rect = body.get("rect") or None
@@ -2186,14 +2285,8 @@ def pin_lookup(pid: str, body: dict):
     if rect:
         return {"id": db.marginalia_add(pid, para_idx, page, quote[:200],
                                         note[:600], kind="region", rect=rect)}
-    dup = db.q("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
-               (pid, para_idx))
-    if dup:
-        db.q("UPDATE marginalia SET note=?, quote=? WHERE id=?", (note[:600], quote[:200], dup[0]["id"]), commit=True)
-        return {"id": dup[0]["id"]}
-    mid = db.marginalia_add(pid, para_idx, page, quote[:200], note[:600],
-                            kind="lookup")
-    return {"id": mid}
+    dup = db.marginalia_upsert_lookup(pid, para_idx, page, quote[:200], note[:600])
+    return {"id": dup}
 
 @app.delete("/api/papers/{pid}/marginalia/{mid}")
 def marginalia_remove(pid: str, mid: int):
@@ -2363,7 +2456,7 @@ def ask_visual(body: dict):
     image = body.get("image") or ""
     if not image.startswith("data:image"):
         raise HTTPException(400, "缺少图像数据")
-    question = (body.get("question") or "").strip() or "解释这张图/公式。"
+    question = _s_arg(body.get("question")) or "解释这张图/公式。"
     if _demo_mode():
         return {"answer": "〔演示模式〕视觉问答需要配置视觉模型。"}
     ans = llm.vision_ask(image, question)
@@ -2559,7 +2652,8 @@ def compare_papers(body: dict):
     cols（自定义列口径）：用户自定义列 [{label, hint?}]，给了它就抽纯自定义列；
     没有 cols 照旧六维勾选。两种口径同一入口，篇数都钳 12——每篇各一次调用，
     成本只随篇数走，口径不该影响上限。"""
-    ids = [str(x) for x in ((body or {}).get("ids") or [])]
+    raw_ids = (body or {}).get("ids")
+    ids = [x for x in raw_ids if isinstance(x, str)] if isinstance(raw_ids, list) else []
     ids = list(dict.fromkeys(ids))       # 重复 id 去重保序：同一篇抽两次 = 重复列 + 白花的缓存键
     ids = ids[:12]
     if len(ids) < 2:
@@ -2652,7 +2746,8 @@ def cite_table(body: dict):
     **不触发任何模型调用**——没识别过刊头的那几篇如实标 recognized=false，
     让前端提示用户补识别，而不是悄悄为几十篇各花一次调用。
     """
-    ids = (body or {}).get("ids") or []
+    raw_ids = (body or {}).get("ids")
+    ids = [x for x in raw_ids if isinstance(x, str)] if isinstance(raw_ids, list) else []
     out = []
     for pid in ids[:200]:
         p = db.get_paper(pid)
@@ -3113,16 +3208,22 @@ def _figures_for(pid: str, p: dict) -> list:
     msg = _bad()
     if msg:
         raise HTTPException(400, msg)
-    ev = _fig_inflight.setdefault(key, threading.Event())
-    mine = _fig_inflight[key] is ev
-    if not mine:
-        # 已经有人在算这份图表：等它，别双份跑 O(n²) 邻行扫描
-        ev.wait(120)
+    mine_ev = threading.Event()
+    prev = _fig_inflight.setdefault(key, mine_ev)
+    if prev is not mine_ev:
+        # 已经有人在算这份图表：等它，别双份跑 O(n²) 邻行扫描。
+        # 判据必须拿"自己新建的那份"去比——setdefault 返回的是现有值，拿它比永远
+        # 相等，等待段会整个变成死代码（这正是修之前的形态，两个窗格同开一篇就双份烧 CPU）
+        prev.wait(120)
         if key in _fig_cache:
             return _fig_cache[key]
         msg = _bad()             # 先跑的那个失败了：负缓存直接复用，不重扫
         if msg:
             raise HTTPException(400, msg)
+        # 等超时、先跑者还没出结果（超大的 PDF）：不陪等了，自己接管起一轮重算，
+        # 用自己这份旗子。极端情形多算一遍，好过整个请求陪着挂死
+        mine_ev = threading.Event()
+        _fig_inflight[key] = mine_ev
     try:
         try:
             out = _figure_regions(src)
@@ -3131,14 +3232,15 @@ def _figures_for(pid: str, p: dict) -> list:
             _fig_fail[key] = {"at": time.time(), "msg": msg}
             fsutil.cap_oldest(_fig_fail, 16)   # 负缓存也只是个短账本，别无限涨
             raise HTTPException(400, msg)
+        # 先落缓存（含负账销号）再唤醒等待者：他们醒来第一件事就是查缓存，
+        # 反过来的话会看到"没有结果也没有失败"又各自重算一遍
+        _fig_cache[key] = out
+        _fig_fail.pop(key, None)                # 这份路径+mtime 又能扫了：负账销掉
+        fsutil.cap_oldest(_fig_cache, 8)
+        return out
     finally:
-        ev.set()
-        if mine:
-            _fig_inflight.pop(key, None)
-    _fig_cache[key] = out
-    _fig_fail.pop(key, None)                    # 这份路径+mtime 又能扫了：负账销掉
-    fsutil.cap_oldest(_fig_cache, 8)
-    return out
+        mine_ev.set()
+        _fig_inflight.pop(key, None)
 
 @app.get("/api/papers/{pid}/figures")
 def figures(pid: str):
@@ -3467,14 +3569,16 @@ def library_overview():
 @app.post("/api/papers/{pid}/ask")
 def ask(pid: str, body: dict):
     p = _paper_or_404(pid)
-    question = (body.get("question") or "").strip()
+    question = _s_arg(body.get("question"))
     if not question:
         raise HTTPException(400, "问题不能为空")
     question = question[:20000]      # 天文数字的粘贴别原样进库进模型
     _require_paras(pid)
     conv_id = _valid_conv(pid, body.get("conv_id")) or db.conv_list(pid)[0]["id"]
     ref_pids = []
-    for t in (body.get("refs") or []):
+    for t in (body.get("refs") if isinstance(body.get("refs"), list) else []):
+        if not isinstance(t, str):
+            continue
         pid2 = _paper_by_title(t)
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
@@ -3488,13 +3592,13 @@ def conversations(pid: str):
 @app.post("/api/papers/{pid}/conversations")
 def conversation_new(pid: str, body: dict = None):
     _paper_or_404(pid)
-    return {"id": db.conv_create(pid, (body or {}).get("title") or db.NEW_CONV)}
+    return {"id": db.conv_create(pid, (_s_arg((body or {}).get("title")) or db.NEW_CONV)[:60])}
 
 @app.patch("/api/conversations/{cid}")
 def conversation_patch(cid: int, body: dict):
     if not db.conv_get(cid):
         raise HTTPException(404, "会话不存在")
-    db.conv_rename(cid, str(body.get("title") or db.NEW_CONV).strip() or db.NEW_CONV)
+    db.conv_rename(cid, (_s_arg(body.get("title")) or db.NEW_CONV)[:200])
     return {"ok": True}
 
 @app.delete("/api/conversations/{cid}")
@@ -3520,7 +3624,7 @@ def qa_save(pid: str, body: dict):
     另起一摊会话存下，新会话号回给前端（它得跟着搬，删除/重生成才对得上号）。
     属于别的论文的会话一律 404（与 /ask 同口径，跨篇写入不放行）。"""
     _paper_or_404(pid)
-    content = (body.get("content") or "").strip()
+    content = _s_arg(body.get("content"))
     if not content:
         return {"ok": False}
     raw = body.get("conv_id")
@@ -3642,11 +3746,11 @@ def _translate_sse(text: str, context: str, hits: list):
 @app.post("/api/papers/{pid}/translate-selection")
 def translate_selection(pid: str, body: dict):
     _paper_or_404(pid)
-    text = (body.get("text") or "").strip()
+    text = _s_arg(body.get("text"))
     if not text:
         raise HTTPException(400, "没有选中文本")
     hits = _hits_merged(db.glossary_hit(pid, text), text)
-    context = body.get("context", "")
+    context = _s_arg(body.get("context"))
     return _sse_response(_translate_sse(text, context, hits))
 
 @app.post("/api/papers/{pid}/translate-para")
@@ -3918,7 +4022,11 @@ def _abbrs_of(pid: str) -> dict:
     return out if isinstance(out, dict) else {}
 
 @app.delete("/api/glossary/{gid}")
-def glossary_delete(gid: int):
+def glossary_delete(gid: int, pid: str = ""):
+    """删术语。带 pid 就校验归属（批注那边同款越权实锤过）：术语 id 全库自增，
+    陈旧页面拿 A 篇的 id 打到 B 篇的行上会删错人；不带 pid 的老客户端照旧放行。"""
+    if pid and not db.glossary_delete_owned(gid, pid):
+        raise HTTPException(403, "这个术语不属于这篇论文")
     db.glossary_delete(gid)
     return {"ok": True}
 

@@ -70,12 +70,17 @@ async function loadSix() {
   } catch { /* 没缓存很正常 */ }
   const wanted = ['motive', 'principle', 'next', 'lens', 'doubt'].concat(isReview.value ? ['how'] : ['method'])
   for (const k of wanted) {
-    if (six[k] || sixBusy[k]) continue
-    sixBusy[k] = true
+    /* 在途标记要带"是哪一篇的"：只存 true/false 的话，换篇时上一编的请求还挂着
+       （这几问是慢的真生成，窗口以秒计），loop 看到 sixBusy[k] 就跳过——新篇的
+       问题停在"未生成"，而且没有任何点击能再触发（只有换篇/重析读会重跑）。
+       用一次性 token 标记：只拦"同篇同问答的在途"，旧篇的 finally 也只撤自己的账。 */
+    const tok = { pid: store.currentId }
+    if (six[k] || sixBusy[k]?.pid === store.currentId) continue
+    sixBusy[k] = tok
     api.sixAnswer(store.currentId, k)
       .then(v => { if (samePaper(mine)) six[k] = v })
       .catch(() => { /* 没配 key / 模型不给：保持"未生成" */ })
-      .finally(() => { sixBusy[k] = false })
+      .finally(() => { if (sixBusy[k] === tok) sixBusy[k] = undefined })
   }
 }
 function openMethod() {
@@ -174,7 +179,7 @@ async function addTerm() {
 }
 async function delTerm(id) {
   try {
-    await api.glossaryDelete(id)
+    await api.glossaryDelete(id, store.currentId)
   } catch (e) { toast(e.message); return }
   loadTerms()
 }
@@ -326,7 +331,7 @@ const lightbox = computed(() => (figIdx.value >= 0 ? figures.value[figIdx.value]
 const lbLoaded = ref(false)
 /* 图注中文：灯箱打开时懒翻译一次（后端落库），本会话内按 idx 记住 */
 const capZh = ref({})
-const capPending = ref(false)
+const capPending = ref(0)      // 计数式在途标记：快速翻图时多个请求同时在飞
 const capText = computed(() => lightbox.value ? (capZh.value[figIdx.value] || lightbox.value.caption || '') : '')
 /* 长图注不值得挂成图下一根居中的文字墙：超过一段话的量就切成「左图右注」两栏 */
 const capLong = computed(() => capText.value.length > 200)
@@ -345,12 +350,15 @@ watch(() => store.currentId, () => { capZh.value = {} })
 async function fetchCap(i) {
   const lb = figures.value[i]
   if (!lb || !lb.caption || capZh.value[i] !== undefined || isEn()) return
-  capPending.value = true
+  const mine = paperEpoch()
+  capPending.value++
   try {
     const r = await api.figCaption(store.currentId, i)
-    if (r.zh && r.zh !== lb.caption) capZh.value = { ...capZh.value, [i]: r.zh }
+    /* epoch 必须查：换篇那一拍 capZh 清了，旧篇的译文晚到就会写进新篇的 map——
+       新篇同序号的那张图显示的是上一篇的图注译文，还因为"已有值"永不再取 */
+    if (samePaper(mine) && r.zh && r.zh !== lb.caption) capZh.value = { ...capZh.value, [i]: r.zh }
   } catch { /* 没模型/失败就留在原文 */ }
-  capPending.value = false
+  finally { capPending.value-- }     // 计数式：快速翻图时后来的请求不会把前一个的进度抹掉
 }
 function figStep(d) {
   if (figures.value.length < 2) return
@@ -375,7 +383,11 @@ async function loadFigures() {
     if (!samePaper(mine)) return
     figures.value = r.figures || []
   } catch { /* 无图论文静默 */ }
-  figuresLoading.value = false
+  finally {
+    // 换篇后旧请求返回时要把 spinner 关掉（那一拍 figures 已被清）——不关的话
+    // 新篇的速览页永远停在"正在找图表…"，而数据其实早就该到了
+    figuresLoading.value = false
+  }
 }
 async function askFigure(f) {
   try {
@@ -658,7 +670,7 @@ async function saveToGlobal(term) {
             </div>
             <div class="ce-row" v-if="mcMore && methodCard.notes"><span class="ce-k">{{ t(isReview ? '入门' : '注意') }}</span><span class="ce-v">{{ prettyChem(methodCard.notes) }}</span></div>
             <button v-if="!mcMore && methodCard.steps.length > MC_STEPS" class="blk-more" @click="mcMore = true">
-              {{ t('展开全部') }} {{ methodCard.steps.length }} {{ t(isReview ? '条' : '步') }}<span v-if="methodCard.notes"> · {{ t(isReview ? '入门' : '注意') }}</span>
+              {{ t('展开全部') }} {{ t(isReview ? '{n} 条' : '{n} 步', { n: methodCard.steps.length }) }}<span v-if="methodCard.notes"> · {{ t(isReview ? '入门' : '注意') }}</span>
             </button>
           </div>
         </div>
@@ -767,7 +779,7 @@ async function saveToGlobal(term) {
       </div>
       <div class="lb-cap" v-if="lightbox.caption" @click.stop>
         <span>{{ capText }}</span>
-        <span class="lb-cap-wait" v-if="capPending && !capZh[figIdx]">{{ t('正在翻译图注…') }}</span>
+        <span class="lb-cap-wait" v-if="capPending > 0 && !capZh[figIdx]">{{ t('正在翻译图注…') }}</span>
       </div>
       <div class="lb-actions" @click.stop>
         <span class="mono-label">{{ t(lightbox.kind === 'table' ? '表' : '图') }} · {{ figIdx + 1 }} / {{ figures.length }} · {{ t('第 {p} 页', { p: lightbox.page + 1 }) }}</span>

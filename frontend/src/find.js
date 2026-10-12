@@ -30,7 +30,13 @@ export function lineSpanOf(para, quote) {
   for (let li = 0; li < lines.length; li++) {
     for (const ch of lines[li].text || '') {
       const c = ch.toLowerCase()
-      if (c.length === 1 && KEEP.test(c)) { acc += c; owner.push(li) }
+      /* 折叠规则必须与 normText 逐字一致（含连字展开）——这里漏连字的话，
+         ﬁ 在 acc 里被整字丢掉、而 q 里已展开成 "fi"：两边不是一个字母表，
+         indexOf 永远 -1，引文高亮在这条路上整个落空（DOM 那条路有同款折叠） */
+      const lig = LIG[c]
+      if (lig) {
+        for (const lc of lig) { acc += lc; owner.push(li) }
+      } else if (c.length === 1 && KEEP.test(c)) { acc += c; owner.push(li) }
     }
   }
   const at = acc.indexOf(q)

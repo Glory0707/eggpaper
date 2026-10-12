@@ -62,7 +62,7 @@ async function loadConvs(keep = false) {
   if (!keep && !convs.value.some(c => c.id === convId.value)) convId.value = convs.value[0]?.id ?? null
 }
 async function loadMsgs() {
-  if (!pid.value || !convId.value) { msgs.value = []; return }
+  if (!pid.value || !convId.value) { msgs.value = []; loading.value = false; return }
   if (busy.value) return
   const reqPid = pid.value
   const reqCid = convId.value
@@ -73,7 +73,11 @@ async function loadMsgs() {
     if (pid.value !== reqPid || convId.value !== reqCid) return
     msgs.value = r.messages || []
   } catch { msgs.value = [] }
-  loading.value = false
+  finally {
+    // 早退那一拍（换篇/换会话）也要把 loading 放下——否则 empty 恒为 false，
+    // 面板是一片既不显示空态、也不显示 spinner 的空白，直到下一次成功加载才恢复
+    if (pid.value === reqPid && convId.value === reqCid) loading.value = false
+  }
   await nextTick()
   scrollBottom(false)
 }
@@ -185,11 +189,19 @@ async function regen() {
     await send(r.question, reqPid)
   } catch (e) { toast(e.message) } finally { regenBusy = false }
 }
+let delBusy = false
 async function delMsg(i) {
+  if (delBusy) return          // 双击：第二下会落在顶上来的另一条上，删掉用户没点的那条
   const m = msgs.value[i]
   if (!m) return
-  if (m.id) { try { await api.qaDeleteOne(convId.value, m.id) } catch (e) { toast(e.message); return } }
-  msgs.value.splice(i, 1)
+  delBusy = true
+  try {
+    if (m.id) { try { await api.qaDeleteOne(convId.value, m.id) } catch (e) { toast(e.message); return } }
+    // 按下标找回来删：等响应这一拍列表可能已经变过（重生成/新消息插进来），
+    // 直接 splice(i) 会删到别的消息
+    const at = msgs.value.indexOf(m)
+    if (at >= 0) msgs.value.splice(at, 1)
+  } finally { delBusy = false }
 }
 async function copy(m) {
   await copyWithToast(m.content || '', t('已复制'))
@@ -199,10 +211,12 @@ let convBusy = false
 async function newConv() {
   if (convBusy) return          // 连点"+"会建出一排看不见的"新对话"
   convBusy = true
+  const reqPid = pid.value
   try {
-    const r = await api.convNew(pid.value)
+    const r = await api.convNew(reqPid)
     await loadConvs(true)
-    convId.value = r.id
+    if (pid.value !== reqPid) return    // 等会话的空当换了篇：这个新会话不属于现在这摊，
+    convId.value = r.id                 // 落下去会让选择器指向别篇的会话（值对不上任何一项）
     msgs.value = []
     await nextTick(); inputEl.value?.focus()
   } catch (e) { toast(e.message) } finally { convBusy = false }
@@ -240,7 +254,7 @@ const libPapers = ref([])
 const libColls = ref([])
 const libMap = ref({})
 const picked = ref([])          // ['标题', …]——整个文库/分类全选/手选，都是这一份集合
-const allTitles = computed(() => libPapers.value.map(p => paperName(p).trim()).filter(Boolean))
+const allTitles = computed(() => libPapers.value.map(titleKey).filter(Boolean))
 /* 「这些标题是不是都选了」：LibAll 与分类全选两处同一问法 */
 const allPicked = ts => ts.length > 0 && ts.every(t => picked.value.includes(t))
 const libAll = computed(() => allPicked(allTitles.value))
@@ -280,7 +294,10 @@ function toggleTitle(t) {
 function toggleLibAll() {
   picked.value = libAll.value ? [] : [...allTitles.value]
 }
-function groupTitles(g) { return g.items.map(p => paperName(p).trim()).filter(Boolean) }
+/* 引用选择器的键：**paperName(p).trim()**，一处生成、处处比对。
+   以前勾选高亮拿的是裸 p.title（有空白/缺标题时不等于键），点上去计数涨了、勾却不亮 */
+function titleKey(p) { return paperName(p).trim() }
+function groupTitles(g) { return g.items.map(titleKey).filter(Boolean) }
 function groupAll(g) { return allPicked(groupTitles(g)) }
 function toggleGroup(g) {
   const ts = groupTitles(g)
@@ -290,7 +307,7 @@ function toggleGroup(g) {
 }
 function pickFirst() {
   const first = groups.value[0]?.items?.[0]
-  if (first) toggleTitle(paperName(first))
+  if (first) toggleTitle(titleKey(first))
 }
 const citeCount = computed(() => picked.value.length)
 const citeTitle = computed(() => t('已引用：') + picked.value.slice(0, 5).join(', ') + (picked.value.length > 5 ? '…' : ''))
@@ -312,7 +329,7 @@ function onCmpGoto(c) {
   gotoPaperPara(c.pid, c.n)
 }
 function pickFromPop(p) {
-  toggleTitle(paperName(p).trim())
+  toggleTitle(titleKey(p))
   nextTick(() => citeFilterEl.value?.focus())
 }
 function openCite() {
@@ -344,7 +361,9 @@ function onKey(e) {
     else if (e.key === 'Enter') { e.preventDefault(); pickFirst() }
     return
   }
-  if (e.key === '/') { e.preventDefault(); openCite(); return }
+  /* "/" 只当"空输入框里的引用快捷入口"：问题里本来就有斜杠（and/or、A/B、10/20）
+     时要能正常打出来——不看内容就拦，那个字符永远进不了输入框 */
+  if (e.key === '/' && !text.value.trim()) { e.preventDefault(); openCite(); return }
   if (e.key !== 'Enter') return
   if (e.shiftKey) return
   e.preventDefault()
@@ -390,7 +409,7 @@ onMounted(async () => {
   if (pending) { const pf = pending; pending = null; await nextTick(); applyPrefill(pf) }
   else nextTick(() => inputEl.value?.focus({ preventScroll: true }))
 })
-onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey); document.removeEventListener('pointerdown', onDocPointer) })
+onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); document.removeEventListener('keydown', onDocKey); document.removeEventListener('pointerdown', onDocPointer) })
 </script>
 
 <template>
@@ -473,7 +492,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
                 </span>
                 <span class="t">{{ g.name }}</span>
               </button>
-              <button v-for="p in g.items" :key="p.id" class="cite-item" :class="{ on: isOn(p.title) }"
+              <button v-for="p in g.items" :key="p.id" class="cite-item" :class="{ on: isOn(titleKey(p)) }"
                       @click="pickFromPop(p)">
                 <span class="box">
                   <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"

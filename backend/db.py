@@ -248,17 +248,36 @@ def find_duplicate(filename: str, size: int, pdf_hash: str = ""):
     （下载两次、文件管理器里复制一份）不该占第二份库空间——两篇论文意味着两遍通读、
     两份译文、两倍磁盘。指纹由导入方算好传进来；旧库的论文指纹是空的，回填线程
     （main 启动时）会慢慢补齐，补上之后这把钥匙就全库都好使了。
+
+    "文件名 + 字节数"这把钥匙**必须再对一次内容**：同名同大小但内容是另一份 PDF
+    （arXiv 重排、批量重生成的文件名常撞）会误判成重复——新文件被静默丢弃、
+    用户拿到的是旧论文。对内容就是算一次库内那份的指纹（只在撞名场景发生），
+    顺手把旧库缺的指纹补上。
     """
     if pdf_hash:
         for r in q("SELECT id FROM papers WHERE pdf_hash=?", (pdf_hash,)):
             return r["id"]
     # 先让 SQL 把范围缩到同名，再逐个 stat 核对字节数（path 可能是 NULL/坏值，stat 炸了就跳过）
-    for r in q("SELECT id, path FROM papers WHERE filename=?", (filename,)):
+    for r in q("SELECT id, path, pdf_hash FROM papers WHERE filename=?", (filename,)):
         try:
-            if os.path.getsize(r["path"]) == size:
-                return r["id"]
+            if os.path.getsize(r["path"]) != size:
+                continue
         except (OSError, TypeError, ValueError):
             continue
+        if not pdf_hash:
+            return r["id"]           # 导入方没给指纹（老口径的调用）：维持宽松判重
+        have = (r["pdf_hash"] or "").strip()
+        if not have:
+            import fsutil            # 惰性导入：撞名时才走这条路，正常判重不受影响
+            have = fsutil.sha256_file(r["path"], quiet=True) or ""
+            if have:
+                try:
+                    q("UPDATE papers SET pdf_hash=? WHERE id=?", (have, r["id"]), commit=True)
+                except Exception:
+                    pass
+        if have == pdf_hash:
+            return r["id"]
+        # 同名同大小、内容不同：不是同一份，继续看别的同名候选
     return None
 
 def papers_missing_hash():
@@ -685,6 +704,19 @@ def glossary_add(pid: str, term_en: str, term_zh: str, source: str = "manual") -
 def glossary_delete(gid: int):
     q("DELETE FROM glossary WHERE id=?", (gid,), commit=True)
 
+def glossary_delete_owned(gid: int, pid: str) -> bool:
+    """带归属校验的删除（同 marginalia_delete_count 的口径）：True=已删/本就不在；
+    False=行存在但属于别篇——DELETE 条件里带 paper_id，判定与删除一条语句，无 TOCTOU。
+    术语 id 是全库自增的：一个陈旧页面拿着 A 篇的 id 打到 B 篇的行上，不带校验就删错人。"""
+    with _lock:
+        c = _get()
+        row = c.execute("SELECT paper_id FROM glossary WHERE id=?", (gid,)).fetchone()
+        if row and row["paper_id"] != pid:
+            return False
+        c.execute("DELETE FROM glossary WHERE id=? AND paper_id=?", (gid, pid))
+        c.commit()
+        return True
+
 def glossary_put_ai(pid: str, terms: list):
     """把模型发掘出来的术语整批写进这一篇（替换上一批 AI 词，读者的手写词不动）。"""
     with _lock:
@@ -933,6 +965,28 @@ def marginalia_add(pid: str, para_idx: int, page: int, quote: str, note: str, ki
     return q_insert("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect) "
                     "VALUES(?,?,?,?,?,?,?)",
                     (pid, para_idx, page, quote, kind, note, json.dumps(rect) if rect else None))
+
+def marginalia_upsert_lookup(pid: str, para_idx: int, page: int, quote: str, note: str) -> int:
+    """查译卡的"同段只留一条"：查到就改、没有才插，查与写在**同一把锁**里完成。
+
+    端点里先 SELECT 再 INSERT 的写法是 check-then-act：连点两下、或两个窗格同时
+    钉同一段，两个请求都看到"没有旧卡"，各插一条，页边就出现两张一模一样的查译卡。
+    glossary_add 修过同一课（见其注释），这里补齐。"""
+    with _lock:
+        c = _get()
+        row = c.execute("SELECT id FROM marginalia WHERE paper_id=? AND kind='lookup' AND para_idx=?",
+                        (pid, para_idx)).fetchone()
+        if row:
+            c.execute("UPDATE marginalia SET note=?, quote=?, page=? WHERE id=?",
+                      (note, quote, page, row["id"]))
+            c.commit()
+            return row["id"]
+        cur = c.execute("INSERT INTO marginalia(paper_id, para_idx, page, quote, kind, note, rect) "
+                        "VALUES(?,?,?,?,'lookup',?,NULL)",
+                        (pid, para_idx, page, quote, note))
+        rowid = cur.lastrowid
+        c.commit()
+        return rowid
 
 def marginalia_delete_count(mid: int, pid: str) -> bool:
     """带归属校验的删除。True=可删（含幂等：mid 本就不存在，前端重试/换页竞态都无害）；

@@ -11,7 +11,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, askNotePrefill, paraByIdx, kindZH, paperName } from '../store'
+import { api, store, toast, askNotePrefill, kindZH, paperName } from '../store'
 import { confirmBox } from '../dialog'
 import { lsGet, lsSet } from '../ls'
 import { copyWithToast, frameBuffer } from '../clip'
@@ -97,6 +97,14 @@ const zoomPct = computed(() => Math.round(scale.value * 100))
 const parasByPage = computed(() => {
   const m = {}
   for (const p of paras.value) (m[p.page] ||= []).push(p)
+  return m
+})
+/* 本窗格的段落表（idx → 段）。多窗格时全局 paraByIdx 跟踪的是**活动篇**，
+   非活动窗格拿它查锚点等于用别篇的段落坐标：引文高亮画到不相干的 y、
+   页边卡回落的位置全乱、跳转跳错行。锚点一律以本窗格自持的 paras 为准。 */
+const byIdx = computed(() => {
+  const m = {}
+  for (const p of paras.value) m[p.idx] = p
   return m
 })
 /* 页边摆哪些批注：读者自己钉的（查译/框选答疑/自己写的批注）是**读者资产**，
@@ -615,7 +623,7 @@ const pageLayouts = computed(() => {
       .filter(n => n.page === it.origPage)
       .map(n => ({ n, anchor: quoteY(n) }))
     if (pendingPara.value != null) {
-      const p = paraByIdx.value[pendingPara.value]
+      const p = byIdx.value[pendingPara.value]
       if (p && p.page === it.origPage)
         cands.push({ n: { id: 'pending', kind: 'lookup', page: it.origPage, quote: (p.text || '').slice(0, 60), note: t('翻译中…') }, anchor: p.bbox.y0 * scale.value, pending: true })
     }
@@ -645,7 +653,7 @@ function anchorText(n) {
   if (!n) return ''
   const k = n.id + '|' + n.para_idx
   if (!anchorCache.has(k)) {
-    const p = paraByIdx.value[n.para_idx]
+    const p = byIdx.value[n.para_idx]
     anchorCache.set(k, (p && n.quote && sentenceAround(p.text, n.quote)) || n.quote || '')
   }
   return anchorCache.get(k)
@@ -654,7 +662,7 @@ function quoteSpan(n) {
   if (!n) return null
   const k = n.id + '|' + n.para_idx
   if (!spanCache.has(k)) {
-    const p = paraByIdx.value[n.para_idx]
+    const p = byIdx.value[n.para_idx]
     const txt = anchorText(n)
     spanCache.set(k, txt && p ? lineSpanOf(p, txt) : null)
   }
@@ -675,7 +683,7 @@ function computeQuoteMarks() {
     const it = pageItem(n.page)
     const el = it && pageEls.value[it.gi]
     if (!el) continue
-    const p = paraByIdx.value[n.para_idx]
+    const p = byIdx.value[n.para_idx]
     const box = p ? { y0: p.bbox.y0 * scale.value, y1: p.bbox.y1 * scale.value } : null
     const r = findQuoteRects(el, anchorText(n), box)
     if (r) { out[n.id] = r.rects; cov[n.id] = r.coverage }
@@ -729,7 +737,7 @@ function quoteY(n) {
   if (m?.length) return m[0].y
   const span = quoteSpan(n)
   if (span) return span.bbox.y0 * scale.value
-  return (paraByIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value
+  return (byIdx.value[n.para_idx]?.bbox.y0 || 0) * scale.value
 }
 const currentHit = computed(() => searchHits.value[searchAt.value] || null)
 /* 查找范围＝当前版面，占位文案把这层语义说出来：原文/译文各自一边，双语两边都在 */
@@ -866,6 +874,7 @@ function focusNote(n) {
 }
 
 let selStream = null       // 进行中的划词翻译：换选区/关气泡时要掐掉，别让它往已关的气泡里写字
+let selSeq = 0             // 每发起一条流 +1：busy 的收尾只认最新那条（被顶掉的老流不许收尾）
 function closeSel() {
   selStream?.abort()
   sel.visible = false
@@ -874,20 +883,25 @@ function closeSel() {
 
 async function doTranslateSel() {
   selStream?.abort()
+  const mine = ++selSeq
   sel.busy = true; sel.err = ''; sel.zh = ''; sel.hits = []
   try {
     // 字先攒进缓冲、按帧合并上屏（照抄 AskPanel 的做法）：每个 SSE 块都直写状态的话，
     // watch 会跟着每个块强制 refitPop 读一次布局，长译文流式时气泡抖、全页掉帧
     const fb = frameBuffer(piece => { sel.zh += piece })
-    await translateStream(props.pid, 'selection', { text: sel.text, context: sel.context }, ev => {
+    /* 流对象要留下（selStream）：换选区/关气泡/再翻译时的 abort() 全指着它——
+       不存的话那几个 abort 是空转的，旧流会一直往同一个 sel 对象上追加，
+       两条流的字混进一个气泡（2026-10-11 审计实锤：selStream 声明后从未赋值） */
+    selStream = translateStream(props.pid, 'selection', { text: sel.text, context: sel.context }, ev => {
       if (ev.type === 'delta') fb.push(ev.text)
       else if (ev.type === 'done') { fb.flush(); sel.hits = ev.hits || [] }
       else if (ev.type === 'error') { sel.err = ev.message; if (!sel.zh) sel.zh = '⚠ ' + ev.message }
-    }).done
+    })
+    await selStream.done
   } catch (e) {
     if (e.name !== 'AbortError') { sel.err = e.message; if (!sel.zh) sel.zh = '⚠ ' + e.message }
   }
-  sel.busy = false
+  if (mine === selSeq) sel.busy = false    // 老流被 abort 后也走到这里：busy 归新流管，别提前放开
 }
 
 let pinning = false
@@ -900,7 +914,7 @@ async function pinSel() {
     try {
       await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
     } catch (e) { toast(t('钉页边失败：{m}', { m: e.message })); return }
-    await refreshM()
+    try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇看看')) }
     closeSel()
   } finally { pinning = false }
 }
@@ -942,7 +956,7 @@ async function saveMine() {
   } catch (e) { toast(t('没写上：{m}', { m: e.message })); return }
   finally { savingMine = false }
   mine.open = false; mine.text = ''
-  await refreshM()
+  try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇看看')) }
   closeSel()
 }
 
@@ -962,7 +976,7 @@ async function unpin(n) {
   try {
     await api.unpin(props.pid, n.id)
   } catch (e) { toast(t('没删成：{m}', { m: e.message })); return }
-  await refreshM()
+  try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇看看')) }
 }
 
 /* ---------------- 阅读器基本功能：缩放 / 页码 / 搜索 ---------------- */
@@ -1006,7 +1020,14 @@ function scrollToY(y, instant = false) {
 let searchSeq = 0        // 重入守卫：整本分片扫描很慢，旧一轮回来时不能盖掉新结果
 async function runSearch() {
   const q = searchQ.value.trim()
-  if (q.length < 2) { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; return }
+  if (q.length < 2) {
+    // 清空查询词：在途的那一轮扫描也要作废（bump seq），不然它跑完照样把命中写回来、
+    // 还把视野跳到某个命中上——查找条已经空了，页上却冒出一堆高亮框
+    searchSeq++
+    searchHits.value = []; searchAt.value = -1; lastSearchQ = ''
+    searchBusy.value = false
+    return
+  }
   const seq = ++searchSeq
   searchBusy.value = true
   const prev = lastSearchQ === q && searchAt.value >= 0 ? searchHits.value[searchAt.value] : null
@@ -1053,7 +1074,11 @@ function gotoHit(i) {
   scrollToY(el.offsetTop + h.rects[0].y * hitK(h) - scroller().clientHeight * 0.3, true)
 }
 function searchStep(d) { if (searchHits.value.length) gotoHit(searchAt.value + d) }
-function closeSearch() { searchOpen.value = false; searchQ.value = ''; searchHits.value = []; searchAt.value = -1; lastSearchQ = '' }
+function closeSearch() {
+  searchSeq++            // 同上：关掉查找条要作废在途扫描——它跑完会跳视野、画高亮
+  searchBusy.value = false
+  searchOpen.value = false; searchQ.value = ''; searchHits.value = []; searchAt.value = -1; lastSearchQ = ''
+}
 /* 命中框的实时比例：框是按测量那一刻的缩放（h.k）量的，页面现在活在 scale 档。
    缩放后的整轮重渲染要好几秒（大 PDF 更久），期间文字层已经是新档、框还是旧档
    的——按比例一换算，框就一直钉在词上，不用等渲染收尾的重跑（同一布局纯放大
@@ -1118,7 +1143,7 @@ function jumpQuote(n) {
   const boxes = markBoxes(n)
   const it = pageItem(n.page)
   if (!it) return
-  const y = boxes.length ? boxes[0].y / scale.value : (n.rect?.y0 ?? paraByIdx.value[n.para_idx]?.bbox.y0 ?? 0)
+  const y = boxes.length ? boxes[0].y / scale.value : (n.rect?.y0 ?? byIdx.value[n.para_idx]?.bbox.y0 ?? 0)
   store.jump = { pid: props.pid, page: n.page, y0: y, y1: y + 1, rects: boxes, at: Date.now() }
 }
 
@@ -1139,7 +1164,7 @@ function jumpBack() {
 }
 
 function paraAbsY(idx) {
-  const p = paraByIdx.value[idx]
+  const p = byIdx.value[idx]
   if (!p) return null
   const it = pageItem(p.page)
   const el = it && pageEls.value[it.gi]
@@ -1176,12 +1201,24 @@ async function translateCurrent() {
 const shotMode = ref(false)
 const shotSel = ref(null)
 const shotBusy = ref(false)
+let shotDrag = null        // 进行中的拖拽监听：收罩（Esc/失焦/卸载）时要连它们一起拆
+function shotDragEnd() {
+  if (!shotDrag) return
+  document.removeEventListener('mousemove', shotDrag.move)
+  document.removeEventListener('mouseup', shotDrag.up)
+  window.removeEventListener('blur', shotDrag.cancel)
+  shotDrag = null
+}
 function startShot() {
   if (shotBusy.value || shotMode.value) return
   shotMode.value = true
   window.addEventListener('keydown', shotEsc, true)
 }
 function stopShot() {
+  /* 拖到一半按 Esc：暗罩收了，但文档上的 mousemove/mouseup 还挂着——用户以为
+     取消了、随手松开鼠标，那个 up 照样按 ≥8px 的选区去截图（还写剪贴板/落盘）。
+     所以收罩必须把这一次拖拽的监听一起拆掉。 */
+  shotDragEnd()
   if (!shotMode.value) return
   shotMode.value = false
   shotSel.value = null
@@ -1198,9 +1235,7 @@ function shotDown(e) {
   const move = ev => { shotSel.value = { x0: p0.x, y0: p0.y, x1: ev.clientX, y1: ev.clientY } }
   const cancel = () => stopShot()
   const up = ev => {
-    document.removeEventListener('mousemove', move)
-    document.removeEventListener('mouseup', up)
-    window.removeEventListener('blur', cancel)
+    shotDragEnd()
     const s = shotSel.value
     shotSel.value = null
     if (!s) return
@@ -1211,6 +1246,7 @@ function shotDown(e) {
     window.removeEventListener('keydown', shotEsc, true)
     finishShot({ x0, y0, x1, y1 })
   }
+  shotDrag = { move, up, cancel }
   document.addEventListener('mousemove', move)
   document.addEventListener('mouseup', up)
   window.addEventListener('blur', cancel)
@@ -1467,20 +1503,30 @@ function visFill(q) {
   })
 }
 
+let pinningVis = false
 async function pinVisual() {
-  if (vis.busy) return
-  if (!vis.answer) await askVisual()
-  if (!vis.answer) return
-  await api.pin(props.pid, {
-    quote: '[选区] ' + vis.question.slice(0, 60), note: vis.answer.slice(0, 560),
-    para_idx: vis.paraIdx, page: vis.page, rect: vis.rect,
-  })
-  await refreshM()
-  closeVis()
+  if (vis.busy || pinningVis) return    // 双击：两条 pin 都带 rect，后端按 region 插入不去重，页边出两张一样的卡
+  pinningVis = true
+  try {
+    if (!vis.answer) await askVisual()
+    if (!vis.answer) return
+    try {
+      await api.pin(props.pid, {
+        quote: '[选区] ' + vis.question.slice(0, 60), note: vis.answer.slice(0, 560),
+        para_idx: vis.paraIdx, page: vis.page, rect: vis.rect,
+      })
+    } catch (e) { toast(t('钉页边失败：{m}', { m: e.message })); return }
+    await refreshM()
+    closeVis()
+  } finally { pinningVis = false }
 }
 
 watch(() => store.visPrefill, pf => {
   if (!pf) return
+  /* 多窗格：每个窗格（每篇）都挂着一个 PdfViewer，这个 prefill 只该被**活动窗格**
+     消费。不判的话先跑到的那个 watch（挂载最早 = 常是旧窗格）会把它吃掉：
+     气泡开在别的窗格上、钉下去还拿 B 图的坐标插进 A 篇。 */
+  if (props.pid !== store.currentId) return
   visSeq++    // 同上：新气泡顶掉旧的
   Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(midX.value || window.innerWidth / 2) - 190), y: 90,
                        img: pf.img, imgW: 0, question: pf.question || t('讲这张图。'), answer: '', busy: false, err: '',

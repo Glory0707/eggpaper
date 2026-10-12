@@ -159,6 +159,7 @@ const EN = {
 
   '没写上：{m}': 'Not saved: {m}',
   '没删成：{m}': 'Could not delete: {m}',
+  '页边卡没刷新，重开这篇看看': 'Margin notes did not refresh — reopen this paper',
   '删这条批注？': 'Delete this note?',
   '译文版打不开，已切回原文': 'The translation could not be opened — back to the original',
   '双语版打不开，已切回原文': 'The dual version could not be opened — back to the original',
@@ -498,6 +499,11 @@ const EN = {
   '导出引用表格': 'Export citation table',
   '基本信息': 'Basics',
   '参考文献条目': 'Reference entries',
+  '文献': 'Paper',
+  '作者 + 年': 'Author + year',
+  'Nature 体': 'Nature style',
+  'APA 7': 'APA 7', 'GB/T 7714': 'GB/T 7714', 'BibTeX': 'BibTeX', 'DOI': 'DOI',   // 专有名词原样
+  '{n} 处': '{n} hits', '{n} 条': '{n} items', '{n} 步': '{n} steps',
   '短引用（PPT / 图注）': 'Short (slides / captions)',
   '导入与链接': 'Import & links',
   '正文括注': 'In-text citation',

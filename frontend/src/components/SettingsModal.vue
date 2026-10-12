@@ -65,7 +65,16 @@ function exportBackup() {
   downloadUrl(api.backupExportUrl())
   toast(t('打包中，完成后自动下载'))
 }
+const restoring = ref(false)
 async function restoreBackup() {
+  /* 双击会连开两个系统选择器、跟着两个确认框——第二次的结果把第一次盖掉，
+     用户以为"选了一份"，其实恢复的是后选的那个。整条链（选文件→确认→恢复）
+     都在途守卫里。 */
+  if (restoring.value) return
+  restoring.value = true
+  try { await _restoreBackup() } finally { restoring.value = false }
+}
+async function _restoreBackup() {
   let path = ''
   try {
     const r = await api.backupPick()
@@ -346,7 +355,7 @@ function save() {
         <button style="margin-left:auto;padding:2px 10px;font-size:var(--fs-sm)"
                 @click="exportBackup">{{ t('导出全库') }}</button>
         <button style="margin-left:6px;padding:2px 10px;font-size:var(--fs-sm)"
-                @click="restoreBackup">{{ t('从备份恢复') }}</button>
+                :disabled="restoring" @click="restoreBackup">{{ t('从备份恢复') }}</button>
       </div>
       <div class="f-line">
         <span class="mono-label" style="margin:0">{{ t('窗口') }}</span>

@@ -309,18 +309,22 @@ function endDrag() {
   deskPet.hungry = false
 }
 
+/* 未捕获的 promise 失败兜底：匿名函数挂上就没法摘，组件重挂（HMR）会叠成 N 份、
+   同一个错弹 N 个 toast。命名化，随卸载摘掉 */
+function onRejection(ev) {
+  const msg = String(ev.reason?.message || ev.reason || t('未知错误'))
+  const now = Date.now()
+  if (msg === _lastErrToast.msg && now - _lastErrToast.at < 30000) return
+  _lastErrToast = { msg, at: now }
+  console.error('[eggpaper] 未处理的失败：', ev.reason)
+  toast(t('出错了：{m}', { m: msg.slice(0, 120) }), 5000)
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('dragend', endDrag)
   window.addEventListener('blur', endDrag)
-  window.addEventListener('unhandledrejection', ev => {
-    const msg = String(ev.reason?.message || ev.reason || t('未知错误'))
-    const now = Date.now()
-    if (msg === _lastErrToast.msg && now - _lastErrToast.at < 30000) return
-    _lastErrToast = { msg, at: now }
-    console.error('[eggpaper] 未处理的失败：', ev.reason)
-    toast(t('出错了：{m}', { m: msg.slice(0, 120) }), 5000)
-  })
+  window.addEventListener('unhandledrejection', onRejection)
   pollTimer = setInterval(poll, 3000)
   startLibraryWatch()         // 文库对账：别的窗口导入/删了，这个页面的列表 5 秒内跟上
   idleTimerId = setInterval(idleTick, 600000)   // 陪伴节拍：平均半小时左右一个小动作
@@ -355,6 +359,7 @@ onUnmounted(() => {
   clearTimeout(greetBootT)
   clearTimeout(idleTimer)
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('unhandledrejection', onRejection)
   window.removeEventListener('dragend', endDrag)
   window.removeEventListener('blur', endDrag)
   window.removeEventListener('resize', petReclamp)
@@ -583,26 +588,29 @@ async function stopTranslate() {
 }
 
 let tranStarting = false
-let tranOptimistic = ref(false)
+/* 乐观态记的是**哪一篇**在起跑（不是 bool）：POST 里的服务预检最长 2.5 秒，
+   这期间切了篇的话，新篇会被一个全局 true 照出一条假的"翻译中 + 停止" */
+let tranOptimistic = ref('')
 let tranStopPending = false
 /* 与后端 translate_full.LLM_SERVICES 同名单：这些服务每页都要真过一遍模型，
  * 全文翻译是分钟级不是秒级——开跑时就说清，别让用户在 0/n 上猜它死没死 */
 async function doTranslateFull() {
   if (!store.currentId || tranSt.value === 'running' || tranStarting) return
+  const pid = store.currentId              // 全程认这一篇：中途切篇不许把停止/续翻打到别篇
   const again = tranSt.value === 'done'
   tranStarting = true
   tranStopPending = false
   /* 乐观态先亮：POST 里可能有一次最坏 2.5 秒的服务预检，按钮要在这之前就
    * 翻成「翻译中」——用户以为没点上再点第二下的双发，比预检本身更贵 */
-  tranOptimistic.value = true
+  tranOptimistic.value = pid
   tranProg.value = { done: 0, total: 0, svc: '', started: Date.now() / 1000 | 0, cur: [] }
   try {
-    const r = await api.translateFull(store.currentId, again)
+    const r = await api.translateFull(pid, again)
     tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0, cur: [] }
     await refreshPapers()
     if (tranStopPending) {       // 开跑前用户就按了停止：现在任务登记上了，把停停实
       tranStopPending = false    // （不能再走 stopTranslate——tranStarting 还没清，会无限记账）
-      api.translateCancel(store.currentId).then(refreshPapers).catch(() => {})
+      api.translateCancel(pid).then(refreshPapers).catch(() => {})   // 停的是刚发起的那篇，不是现在看的
       return
     }
     toast(r.note || t('全文翻译已开始'))
@@ -611,12 +619,12 @@ async function doTranslateFull() {
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
     const st = await api.pdf2zhInstallStatus().catch(() => null)
     if (st && ['downloading', 'unpacking', 'warming'].includes(st.state)) {
-      engResumeId = store.currentId
+      engResumeId = pid
       watchEngine()
     } else {
       toast(t('启动失败：{m}', { m: e.message }))
     }
-  } finally { tranStarting = false; tranOptimistic.value = false }
+  } finally { tranStarting = false; if (tranOptimistic.value === pid) tranOptimistic.value = '' }
 }
 /* 引擎装好后的自动续翻：只续"因为等引擎而停下"的那一篇——设置页手动装的
  * （没记 engResumeId）只收 toast，不冷不丁替用户开翻译反而吓人。 */
@@ -640,7 +648,7 @@ async function pollTranslate() {
   const pid = store.currentId
   const j = await api.translateStatus(pid)
   if (store.currentId !== pid) return      // 等待期间换了篇：旧篇的进度别写进新篇
-  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [], started: tranProg.value.started || j.started || 0 }
+  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [], started: j.started || 0 }
   if (j.status === 'done') {
     tranProg.value = { done: 0, total: 0, svc: '' }
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
@@ -781,19 +789,33 @@ function titleOf(pid) {
   const p = store.papers.find(x => x.id === pid)
   return p ? paperName(p) : t('正在打开…')
 }
+let splitting = false
 async function onSplitMany(ids) {
   /* 多选出来的同屏组是一次多选的整体结果：先清场再逐篇进窗格，不再是追加语义。
      面板不收：多选是连续工作流（同屏完多半接着对比/归类），面板开着才顺手；
-     与导入路径（打开第一篇后收面板让位）语义不同，是有意的。 */
-  store.openIds = []
-  for (const pid of ids) {
-    const r = await store.addPane(pid)
-    if (r?.full) { toast(t('同屏最多 4 篇')); break }
-  }
+     与导入路径（打开第一篇后收面板让位）语义不同，是有意的。
+     守卫是必须的：双击时第二发会在 `store.openIds = []` 清掉第一发刚推进去的
+     窗格，后面的 addPane 又各自撞 paneBusy 空转——屏幕上只剩一两格，无提示。 */
+  if (splitting) return
+  splitting = true
+  try {
+    store.openIds = []
+    for (const pid of ids) {
+      const r = await store.addPane(pid)
+      if (r?.full) { toast(t('同屏最多 4 篇')); break }
+    }
+  } finally { splitting = false }
 }
-const tranSt = computed(() => tranOptimistic.value || currentPaper.value?.translate_status === 'running'
+const tranSt = computed(() => (tranOptimistic.value === store.currentId
+    || currentPaper.value?.translate_status === 'running')
   ? 'running' : (currentPaper.value?.translate_status || 'none'))
 const tranProg = ref({ done: 0, total: 0, svc: '', started: 0, cur: [] })
+/* 换篇把进度整组清掉：started 是"这一篇的任务什么时候开的"，跨篇复用会拿
+   上一轮的锚给新篇当秒表（刚开跑就显示"已用 40 分"）；新篇的值下一次轮询
+   就由服务端的 j.started 填回来 */
+watch(() => store.currentId, () => {
+  tranProg.value = { done: 0, total: 0, svc: '', started: 0, cur: [] }
+})
 const tranTick = ref(0)
 let tranTimer = null
 watch(tranSt, s => {
@@ -840,9 +862,16 @@ function onKey(e) {
      以前只收气泡不收框选——框选态挂着，纸上点一下又开新选择，看着像卡住了。
      只放行 Esc 这一个键，其余按键照旧留给输入框 */
   if (tg && (tg.matches?.('input, textarea, select') || tg.isContentEditable)) {
-    if (e.key === 'Escape' && store.viewer.frame) {
-      store.viewer.frame = false
-      store.escTick++
+    if (e.key === 'Escape') {
+      /* 焦点在输入框里只放行 Esc，其余按键照旧留给输入框。三条出口按层级：
+         框选 > 设置 > 更新卡——设置面板里全是输入框，焦点一进去 Esc 以前是死键，
+         成了唯一关不掉的浮层 */
+      if (store.viewer.frame) { store.viewer.frame = false; store.escTick++ }
+      else if (showSettings.value) { e.preventDefault(); showSettings.value = false }
+      else if (store.update.show && !store.update.installing) {
+        e.preventDefault()
+        store.update = { ...store.update, show: false }
+      }
     }
     return
   }

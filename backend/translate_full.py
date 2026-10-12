@@ -31,6 +31,7 @@
    可能自动落盘的 config.v3.toml 在任务收尾时扫掉（里面有 key 就不该留着）。
 """
 import collections
+import hashlib
 import json
 import os
 import re
@@ -48,6 +49,7 @@ import pdfparse  # 页数：只为 len(doc) 开一遍文档的调用点收口（
 
 JOBS = {}
 _RUNNING = {}
+_WORKERS = {}    # pid -> 这一轮的流水线线程：判"状态说在跑、进程里有没有活"用（见 start）
 _PROBE = {}
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _PROG = re.compile(r"(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
@@ -447,10 +449,7 @@ def cancel(pid: str, out_dir: str = ""):
         j["_abort"] = True
     procs = _RUNNING.get(pid) or []
     for proc in procs:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _kill_tree(proc)     # 连树杀：pdf2zh 2.x 的孙进程命令行不带目录，目录追杀认不出
     orphaned = kill_orphan_procs(out_dir)
     return bool(procs) or orphaned > 0
 
@@ -540,6 +539,31 @@ def _kill_orphan_posix(out_dir: str) -> int:
                 pass
     return killed
 
+def _kill_tree(proc):
+    """把一个引擎进程**连子孙一起**掐掉。
+
+    为什么不能只 proc.kill()：pdf2zh 2.x 的 multiprocessing 子进程命令行里不带本篇
+    目录（kill_orphan_procs 认不出它们），只杀父进程会留下孙进程继续跑。两条实害：
+    ① 孙进程攥着 `.pages` 目录的句柄，收尾的 rmtree 静默失败，垃圾留在用户盘上；
+    ② 它还继承着 stdout 管道写端——`for raw in proc.stdout` 永远等不到 EOF，
+    _run_page 不返回、pool.map 不退出，任务在界面上"翻译中"挂到天荒地老，
+    此后 start() 每次都把这条死任务原样退回（重启才解）。taskkill /T 按进程树收，
+    拿不到就退回 proc.kill()——至少把父进程杀了。"""
+    if proc is None or proc.poll() is not None:
+        return
+    if os.name == "nt":
+        flags, si = _no_window()
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=10, creationflags=flags, startupinfo=si)
+        except Exception:
+            pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
 def adopt_existing(out_dir: str, mono=(), dual=()):
     """盘上已经有"看起来完整"的成品就认领，返回 {"dual","mono"}（缺的一方是空串）或 None。
 
@@ -599,6 +623,30 @@ def _page_workers(service: str) -> int:
 
 def _page_timeout(service: str) -> float:
     return _page_profile(service)["timeout"]
+
+def page_sig(pdf_path: str, service: str, extra: str, engine: str,
+             glossary_rows: list) -> str:
+    """页级缓存的指纹：要覆盖一切"会改变产物"的输入——源文件（mtime+大小）、
+    翻译服务、附加参数、引擎名、术语气息。
+
+    只认源文件的话，换服务（bing→LLM）、改术语表或 options 后再点翻译，旧页会被
+    静默复用：一篇译文里两种姿势混着，术语锁定只在新译的页上生效，用户拿着
+    "术语已锁定"的期待看一份半锁定的文档（2026-10-11 审计实锤）。指纹一变，
+    .pages 整目录作废重译，正是"改了输入就该重来"。
+    """
+    try:
+        gsig = ""
+        if service in LLM_SERVICES and glossary_rows:
+            pairs = sorted((str((r or {}).get("term_en") or ""),
+                            str((r or {}).get("term_zh") or "")) for r in glossary_rows)
+            gsig = hashlib.sha256(
+                json.dumps(pairs, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
+        return json.dumps({"m": int(os.path.getmtime(pdf_path)),
+                           "s": os.path.getsize(pdf_path),
+                           "svc": service, "extra": extra or "",
+                           "eng": engine or "", "g": gsig})
+    except OSError:
+        return ""
 
 def _page_dir(out_dir: str, pno: int, t: int) -> str:
     return os.path.join(out_dir, ".pages", f"p{pno}-{t}")
@@ -739,16 +787,16 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
     tail = collections.deque(maxlen=5)
     flags, si = _no_window()
     proc = None
-    deadline = time.time() + _page_timeout(service) * _pages_count(pages)
+    timeout_hit = []
+    budget = _page_timeout(service) * _pages_count(pages)
+    deadline = time.time() + budget
 
     def _kill_when_stale():
         while proc.poll() is None and time.time() < deadline:
             time.sleep(2)
         if proc.poll() is None:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            timeout_hit.append(True)     # 把超时如实写进 tail：失败原因别一律报"退出码 1"
+            _kill_tree(proc)             # 必须连树杀，见 _kill_tree 的注释（卡死主因）
 
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -764,17 +812,11 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
             low = line.lower()
             if any(k in low for k in AUTH_FAILS):
                 auth_out.append(f"{service} 服务的 key 不对（pdf2zh 报鉴权失败）：{line[-160:]}")
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+                _kill_tree(proc)
                 continue
             if asset_out is not None and _is_asset_net_fail(low):
                 asset_out.append(_ASSET_HINT)
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+                _kill_tree(proc)
                 continue
             tail.append(line)
         proc.wait()
@@ -789,7 +831,9 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
                     stale.endswith(".dual.pdf") and stale != os.path.basename(mono)):
                 fsutil.rm_quiet(os.path.join(out_dir, stale))
         return {"mono": mono}, list(tail)
-    if not any("单页超时" in t for t in tail):
+    if timeout_hit:
+        tail.append(f"单页超时（{int(budget)}s 预算用尽）")
+    elif not any("单页超时" in t for t in tail):
         tail.append(f"单页失败（退出码 {proc.poll()}）")
     return None, list(tail)
 
@@ -914,12 +958,26 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
     派生；空串退回老名 mono/dual.pdf。落名走调用方，这层不认名字只认路径。
     """
     j = job(pid)
+    th = _WORKERS.get(pid)
+    if th is not None:
+        if j["status"] in ("running", "queued") and th.is_alive():
+            # queued 也算在跑：start 同步置 queued、线程稍后才起来——这个窗口里第二次点击
+            # 会再起一条流水线，两个 pdf2zh 写同一个 out_dir
+            return j
+        # 状态已落（done/error）但线程还在收尾：等它把 .pages 清理和进程收尸走完。
+        # 不等的话，新任务写 .pages 的同时旧线程在 rmtree 它——缓存被自己人清掉，
+        # 一页页重译（慢而不坏，但白烧时间）。
+        th.join(timeout=20)
     if j["status"] in ("running", "queued"):
-        # queued 也算在跑：start 同步置 queued、线程稍后才起来——这个窗口里第二次点击
-        # 会再起一条流水线，两个 pdf2zh 写同一个 out_dir
-        return j
+        if th is not None and th.is_alive():
+            return j      # 20 秒还没收完（杀软攥着目录之类）：还当在跑，别叠第二条流水线
+        # 登记簿说有活、进程里却没有对应的线程：上一轮的线程已经没了却没落终态
+        # （卡死在 EOF/回调里的残骸）。不清理的话 start 每次都原样退回这条死任务，
+        # 这篇论文到重启为止再也翻不了。当死任务清掉重开。
+        llm.applog(f"[eggpaper] 全文翻译 {pid}: 状态是 {j['status']} 但没有在跑的线程，重置重开")
+        j.update(status="none", error="", current=[])
 
-    def run():
+    def _pipeline():
         say = log or (lambda _m: None)
         if j.pop("_abort", None):
             # start 返回后、线程还没调度到就被取消（或删论文）：安静收场，别照跑到底
@@ -952,11 +1010,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 for stale in dict.fromkeys(("mono.pdf", "dual.pdf", mono_name, dual_name)):
                     if stale:
                         fsutil.rm_quiet(os.path.join(out_dir, stale))
-            try:
-                sig = json.dumps({"m": int(os.path.getmtime(pdf_path)),
-                                  "s": os.path.getsize(pdf_path)})
-            except OSError:
-                sig = ""
+            sig = page_sig(pdf_path, service, extra, engine, glossary_rows)
             mark = os.path.join(page_root, ".src.json")
             try:
                 with open(mark, encoding="utf-8") as f:
@@ -1114,11 +1168,17 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 sweep_key_copies(page_root)
             _sweep_home_config()
             for proc in procs:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+                _kill_tree(proc)    # 收尾也要连树杀：孙进程漏一个，page_root 就 rmtree 不掉
+            _WORKERS.pop(pid, None)  # 收尾全部走完才撤登记：start() 的 join 等的是这里
+
+    def run():
+        try:
+            _pipeline()
+        finally:
+            _WORKERS.pop(pid, None)  # 早退出口（引擎不可用/取消先到）也必撤登记
 
     j.update(status="queued", error="", pages=[0, 0], current=[])   # 线程还没跑到的窗口期也让 cancel 有归属
-    threading.Thread(target=run, daemon=True).start()
+    th = threading.Thread(target=run, daemon=True)
+    _WORKERS[pid] = th          # 登记在 start 里、不在 run 里：线程被调度前的那一点窗口
+    th.start()                  # 第二次点击也必须看到"有人在跑"，否则会再起一条流水线
     return j

@@ -97,7 +97,7 @@ async function doImport() {
             <i class="p-check" :class="{ on: sel.has(x.key), dis: !x.pdf }">
               <svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </i>
-            <span class="z-title">{{ x.title }}</span>
+            <span class="z-title">{{ x.title === '(无标题)' ? t('(无标题)') : x.title }}</span>
             <span class="z-meta" v-if="x.authors || x.year">{{ x.authors }}<template v-if="x.authors && x.year"> · </template>{{ x.year }}</span>
             <span class="z-nopdf" v-if="!x.pdf">{{ t('无 PDF') }}</span>
           </div>

@@ -100,7 +100,7 @@ export const api = {
   glossary: (pid) => req('GET', `/api/papers/${pid}/glossary`),
   glossaryGen: (pid) => req('POST', `/api/papers/${pid}/glossary/generate`),
   glossaryAdd: (pid, item) => req('POST', `/api/papers/${pid}/glossary`, item),
-  glossaryDelete: (id) => req('DELETE', `/api/glossary/${id}`),
+  glossaryDelete: (id, pid) => req('DELETE', `/api/glossary/${id}?pid=` + encodeURIComponent(pid || '')),
   glossaryGlobal: () => req('GET', '/api/glossary-global'),
   glossaryGlobalAdd: (item) => req('POST', '/api/glossary-global', item),
   glossaryGlobalDelete: (id) => req('DELETE', `/api/glossary-global/${id}`),

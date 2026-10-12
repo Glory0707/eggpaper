@@ -33,7 +33,9 @@ const demo = ref(false)
 const failed = ref('')
 const m = ref('compare')            // 标准维度 compare | 自定义列 extract（浮层内切换）
 
+let runSeq = 0                       // 每轮抽取的序号：关掉/重开/再发起就作废在途的那一轮
 watch(() => props.open, v => {
+  runSeq++                           // 关或开都让上一轮的响应失效（见 run 里的 seq 校验）
   if (!v) return
   m.value = 'compare'
   step.value = 'pick'
@@ -66,14 +68,19 @@ async function run() {
   const cols = extract ? colsReady() : null
   if (extract ? !cols.length : !picked.value.size) return
   step.value = 'run'
+  /* 抽一轮要几十秒：中途关掉浮层、改选中、重开再发起第二轮，第一轮的响应会晚到。
+     不认领序号的话它会把旧选中集的数据盖在新一轮的表格上（表头篇数和列对不上）。 */
+  const seq = ++runSeq
   try {
     const r = await api.compare(props.ids, extract ? null : [...picked.value], cols)
+    if (seq !== runSeq) return
     papers.value = r.papers
     cells.value = r.cells
     dims.value = extract ? (r.dims || []) : DIMS_ALL.filter(d => picked.value.has(d.k))
     demo.value = !!r.demo
     step.value = 'done'
   } catch (e) {
+    if (seq !== runSeq) return
     failed.value = e.message
     step.value = 'fail'
   }
@@ -106,7 +113,7 @@ async function copyMd() {
 }
 /* 系统综述的终点是把表带走：CSV（带 BOM，Excel 直接开不吃乱码）。 */
 function downloadCsv() {
-  const lines = [['文献', ...dims.value.map(d => d.label)]]
+  const lines = [[t('文献'), ...dims.value.map(d => t(d.label))]]
   for (const p of papers.value) {
     lines.push([titleOf(p), ...dims.value.map(d => cells.value[p.id]?.[d.k]?.text || '')])
   }

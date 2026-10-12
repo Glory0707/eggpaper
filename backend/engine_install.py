@@ -25,6 +25,7 @@
 **装完要预热**：with-assets 包资产内置，`--warmup` 只做本地校验（无网也秒过）；万一
 失败不挡安装，翻译时引擎会自己按需补。
 """
+import glob
 import os
 import re
 import shutil
@@ -78,7 +79,7 @@ _cancel = threading.Event()
 def install_dir() -> str:
     return os.path.join(os.path.dirname(appinfo.data_dir()), "engines", "pdf2zh")
 
-from translate_full import _no_window, engine_version   # 子进程藏控制台/版本比较：与 translate_full 共用
+from translate_full import _no_window, _kill_tree, engine_version   # 子进程藏控制台/连树杀/版本比较：与 translate_full 共用同一份（两处各写一份迟早漂移）
 
 def _warmup(exe: str):
     """装完先 `--warmup` 一次：把内置的 offline_assets 包 restore 进缓存并整体校验。
@@ -91,6 +92,11 @@ def _warmup(exe: str):
     warmup 失败不挡安装：状态照旧推进到 done，zip 原样保留。
     """
     _set(state="warming", pct=100)
+    if _cancel.is_set():
+        # 用户在解压期/下载期点了停止，取消旗可能还亮着：预热是可选的加分项，
+        # 不做也能用（翻译时引擎会自己按需补），别为一个取消过的安装再挂 30 分钟
+        applog("[eggpaper] 引擎安装已取消，跳过预热")
+        return
     flags, si = _no_window()
     env = {**os.environ}
     pkg_dir = ""
@@ -103,11 +109,24 @@ def _warmup(exe: str):
     except Exception:
         pass
     try:
-        r = subprocess.run([exe, "--warmup"], capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=1800,
-                           env=env, creationflags=flags, startupinfo=si)
-        if r.returncode == 0 and pkg_dir:
-            import glob
+        # 用 Popen 而不是 subprocess.run：warmup 最长能跑半小时，界面上的
+        # 「停止下载」不该在这段时间变成死键（run 没有插旗的地方）。取消/超时
+        # 都走 **连树杀**——warmup 也是 multiprocessing 启动器，只杀父进程会留
+        # 一群孙进程攥着引擎目录，后续升级的 rmtree/rename 全被它们挡住
+        proc = subprocess.Popen([exe, "--warmup"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                env=env, creationflags=flags, startupinfo=si)
+        deadline = time.time() + 1800
+        while proc.poll() is None:
+            if _cancel.is_set():
+                _kill_tree(proc)
+                applog("[eggpaper] 引擎预热被用户停止（安装已就绪，翻译时引擎会按需补资产）")
+                return
+            if time.time() > deadline:
+                _kill_tree(proc)
+                raise TimeoutError("warmup 超过 30 分钟")
+            time.sleep(1)
+        if proc.returncode == 0 and pkg_dir:
             for zp in glob.glob(os.path.join(pkg_dir, "offline_assets_*.zip")):
                 try:
                     os.rename(zp, zp + ".installed")
@@ -221,7 +240,6 @@ def find_installed() -> str:
 
 def _exe_under(root: str) -> str:
     """root 下有没有引擎 exe（绕过 find_installed 的 10 秒缓存：清扫/回滚要看的是盘上真相）。"""
-    import glob
     if not os.path.isdir(root):
         return ""
     return next(iter(glob.glob(os.path.join(root, "**", "pdf2zh.exe"), recursive=True)), "")
@@ -245,17 +263,30 @@ def sweep_leftovers(max_age: float = 7 * 86400) -> list:
             return []
     root = os.path.dirname(install_dir())
     cleaned = []
-    old = os.path.join(root, "pdf2zh.old")
-    if os.path.isdir(old):
-        if _exe_under(install_dir()):
-            shutil.rmtree(old, ignore_errors=True)
-            if not os.path.isdir(old):
-                cleaned.append("pdf2zh.old")
+    # 正式目录里已经有引擎，这些残骸（.old 与让路用的 .old.<时间戳>）就是垃圾；
+    # 没有引擎的话它们反而是唯一可用的副本——恢复一个回来，别删
+    olds = [os.path.join(root, "pdf2zh.old")]
+    try:
+        olds += sorted(glob.glob(os.path.join(root, "pdf2zh.old.*")))
+    except Exception:
+        pass
+    have_engine = _exe_under(install_dir())
+    for op in olds:
+        if not os.path.isdir(op):
+            continue
+        if have_engine:
+            shutil.rmtree(op, ignore_errors=True)
+            if not os.path.isdir(op):
+                cleaned.append(os.path.basename(op))
         else:
             try:
-                os.rename(old, install_dir())   # 正式目录没引擎：上面的 .old 是唯一可用副本
+                os.rename(op, install_dir())    # 正式目录没引擎：这是唯一可用副本
                 _invalidate_find_cache()        # 刚把目录挪回来，find_installed 缓存别给旧结论
-                cleaned.append("pdf2zh.old → pdf2zh（恢复可用引擎）")
+                cleaned.append(f"{os.path.basename(op)} → pdf2zh（恢复可用引擎）")
+                have_engine = True              # 恢复一个就够，后面的同批当垃圾处理
+                for rest in olds[olds.index(op) + 1:]:
+                    if os.path.isdir(rest):
+                        shutil.rmtree(rest, ignore_errors=True)
             except OSError:
                 pass
     tmp = os.path.join(root, "pdf2zh.tmp")
@@ -263,6 +294,25 @@ def sweep_leftovers(max_age: float = 7 * 86400) -> list:
         shutil.rmtree(tmp, ignore_errors=True)
         if not os.path.isdir(tmp):
             cleaned.append("pdf2zh.tmp")
+    # 上传落盘的暂存区：正常路径装完即删（start_from_zip 的 cleanup），但"上传到一半
+    # 关掉软件"这类中断会留下半截 zip——按年龄扫掉，别让 2GB 的残骸永驻
+    updir = install_dir() + ".upload"
+    if os.path.isdir(updir):
+        now = time.time()
+        for fn in os.listdir(updir):
+            fp = os.path.join(updir, fn)
+            try:
+                if os.path.isfile(fp) and now - os.path.getmtime(fp) > max_age:
+                    os.remove(fp)
+                    cleaned.append(f"pdf2zh.upload/{fn}")
+            except OSError:
+                pass
+        try:
+            if not os.listdir(updir):
+                os.rmdir(updir)
+                cleaned.append("pdf2zh.upload/")
+        except OSError:
+            pass
     partial = _partial_dir()
     if os.path.isdir(partial):
         now = time.time()
@@ -311,20 +361,42 @@ def _safe_extract_all(zf: zipfile.ZipFile, dest: str):
             raise ValueError(f"压缩包里有越界路径：{m.filename[:80]}")
     zf.extractall(dest)
 
-def _unpack(zpath: str):
+def _verify_zip(zpath: str, own: bool = True) -> bool:
+    """按官方哈希验一遍；不对时**把包和分段断点一起清掉**（own=False 的包只报不动）。
+
+    清断点是必须的：分段是"按长度续传"的——内容换了（上游重传、版本换名复用
+    pdf2zh.partial/ 里的旧 .partN）之后，续传只会在旧字节上接着写，拼出来的永远是
+    坏包。不清就成"每次重试都秒失败"的死循环，提示还写着"已删除，可重试"，
+    用户点十次也出不去（.partN 只被 7 天年龄清扫收走）。
+    """
+    if not ENGINE_SHA256:
+        return True
+    if fsutil.sha256_file(zpath).lower() == ENGINE_SHA256.lower():
+        return True
+    if own:
+        fsutil.rm_quiet(zpath)
+        shutil.rmtree(_partial_dir(), ignore_errors=True)
+    return False
+
+def _unpack(zpath: str, own: bool = True):
     """校验 → 解开 → 换到正式目录。下载装和本地文件装走的是同一段。
 
     换装口径：old 里的旧引擎**只有等新目录验证过关（找得到 pdf2zh.exe）才删**。
     半途失败（新目录没就位/新包里没有 exe）就把 old 回滚回正式名——不然盘上
     只剩一个 .old，启动清扫把它一删，用户唯一能用的引擎就没了（重下 600MB）。
+    own：这份 zip 是不是我们自己的（网络下载/上传落盘的临时拷贝）。own=False 的
+    （用户自己挑的文件）校验不过只报错，绝不删用户的文件。
     """
     tmp_root = install_dir() + ".tmp"
     final = install_dir()
     old = final + ".old"
+    bak = old                   # 实际用的备份名：.old 被占时退到带时间戳的
     try:
-        if ENGINE_SHA256 and fsutil.sha256_file(zpath).lower() != ENGINE_SHA256.lower():
-            fsutil.rm_quiet(zpath)
-            _set(state="error", error="下载校验不对，已删除，可重试")
+        if not _verify_zip(zpath, own=own):
+            if own:
+                _set(state="error", error="下载校验不对，已删除，可重试")
+            else:
+                _set(state="error", error="这份包内容校验不对（不是官方引擎包）")
             return
         shutil.rmtree(tmp_root, ignore_errors=True)
         os.makedirs(tmp_root, exist_ok=True)
@@ -333,35 +405,48 @@ def _unpack(zpath: str):
         os.makedirs(ex_dir, exist_ok=True)
         with zipfile.ZipFile(zpath) as zf:
             _safe_extract_all(zf, ex_dir)
+        if _cancel.is_set():
+            # 解压期点了「停止下载」：就当没装（正式目录还没动过一根手指），
+            # 验好的包留在 partial 里，下次点安装秒过下载段
+            shutil.rmtree(tmp_root, ignore_errors=True)
+            _set(state="idle", pct=0, got=0, src="", url="")
+            return
         shutil.rmtree(old, ignore_errors=True)
+        if os.path.exists(old):
+            # 上次的 .old 还占着名字（exe 被杀软/僵尸进程攥着，rmtree 静默失败）：
+            # Windows 的 rename 撞已存在的目标直接 FileExistsError，不让开的话
+            # 每次升级都在这里硬失败，而且包已被删、重试要从头下 600MB。
+            # 换个带时间戳的名字让路，启动清扫认 pdf2zh.old* 前缀。
+            bak = f"{old}.{int(time.time())}"
         if os.path.isdir(final):
-            os.rename(final, old)
+            os.rename(final, bak)
         os.rename(ex_dir, final)
         _invalidate_find_cache()    # 刚换了目录树：先失效缓存再找——TTL 里可能还躺着
         exe = find_installed()      # 装前那次「没装」的旧结论，快装完（<10s）时实测踩中
         if not exe:
-            # 这套新目录里没有 exe：不能用。旧引擎还在 .old 里，原样放回来
+            # 这套新目录里没有 exe：不能用。旧引擎还在备份里，原样放回来
             shutil.rmtree(final, ignore_errors=True)
-            if os.path.isdir(old):
+            if os.path.isdir(bak):
                 try:
-                    os.rename(old, final)
+                    os.rename(bak, final)
                     _invalidate_find_cache()
                 except OSError:
                     pass
             _set(state="error", error="包里没有 pdf2zh.exe")
             return
-        shutil.rmtree(old, ignore_errors=True)     # 新引擎验证过关，才轮到删旧的
+        shutil.rmtree(bak, ignore_errors=True)     # 新引擎验证过关，才轮到删旧的
+        shutil.rmtree(old, ignore_errors=True)     # 历史遗留的 .old 也顺手再试一次
         shutil.rmtree(tmp_root, ignore_errors=True)
         shutil.rmtree(_partial_dir(), ignore_errors=True)   # 装好了，断点没用了
         _warmup(exe)
         _set(state="done", path=exe)
     except Exception as e:
         shutil.rmtree(tmp_root, ignore_errors=True)
-        # 换装半途失败：正式目录没就位而 .old 还在 → 回滚，别把唯一可用的旧引擎
+        # 换装半途失败：正式目录没就位而备份还在 → 回滚，别把唯一可用的旧引擎
         # 留在残骸状态（下次启动的清扫会把它当垃圾收走）
-        if not os.path.isdir(final) and os.path.isdir(old):
+        if not os.path.isdir(final) and os.path.isdir(bak):
             try:
-                os.rename(old, final)
+                os.rename(bak, final)
                 _invalidate_find_cache()
             except OSError:
                 pass
@@ -531,7 +616,11 @@ def _install(urls):
             _set(src=src, url=url)
             why = _download_one(url, zpath)
             if not why:
-                break
+                if _verify_zip(zpath):
+                    break
+                # 这个源给的包哈希不对（镜像发过期的/被改过的内容）：换下一个源，
+                # 别就此认输——官方直连往往是好的。坏包与分段断点已在 _verify_zip 清掉
+                why = "内容校验不对"
             tried.append(f"{src}：{why}")
             _set(tried=list(tried))
             if why == "已停止":
@@ -542,7 +631,7 @@ def _install(urls):
                  error="每个源都没下动——" + "；".join(tried[-3:]) + "。可稍后重试")
             return
         _set(src="校验/解压")
-        _unpack(zpath)
+        _unpack(zpath, own=True)    # 哈希已在循环里验过（own=True 允许它清坏包兜底）
         fsutil.rm_quiet(zpath)
         fsutil.rm_quiet(zpath + ".part")
     except Exception as e:
@@ -578,9 +667,17 @@ def start_from_zip(zip_path: str, cleanup: bool = False) -> dict:
     """
     with _lock:
         if _prog["state"] in ("downloading", "unpacking", "warming"):
-            return dict(_prog)
-        _prog.update(state="unpacking", pct=100, got=0, total=0, error="", url="(本地文件)",
-                     path="", src="本地文件", tried=[])
+            busy = dict(_prog)
+        else:
+            busy = None
+            _prog.update(state="unpacking", pct=100, got=0, total=0, error="", url="(本地文件)",
+                         path="", src="本地文件", tried=[])
+    if busy is not None:
+        # 安装中：这份上传包不会被接收。是我们自己的临时拷贝就当场收掉——上传端点
+        # 只在装完时删它，忙分支一返回就再没人认领，600MB~2GB 的残骸永驻盘上
+        if cleanup:
+            fsutil.rm_quiet(zip_path)
+        return busy
     threading.Thread(target=_from_zip, args=(zip_path, cleanup), daemon=True).start()
     return status()
 
@@ -589,8 +686,13 @@ def _from_zip(zip_path: str, cleanup: bool = False):
         if not os.path.isfile(zip_path):
             _set(state="error", error="文件不存在")
             return
-        _unpack(zip_path)
+        _unpack(zip_path, own=cleanup)
         if cleanup:
             fsutil.rm_quiet(zip_path)   # ~600MB 的包：装完就收，别在 .upload 里常驻
     except Exception as e:
         _set(state="error", error=f"{type(e).__name__}: {str(e)[:200]}")
+    finally:
+        # 取消旗在这里也要收：上一次取消（或取消发生在本次安装期间）留下的旗子
+        # 不清，下一次网络安装会在第一个检查点就自我中止——用户点了安装，界面
+        # 毫秒级弹回 idle，看起来像"点了没反应"
+        _cancel.clear()

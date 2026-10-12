@@ -76,23 +76,35 @@ def check(feed_url: str, force: bool = False, cache_hours: float = 6) -> dict:
                       headers={"Cache-Control": "no-cache"})
         r.raise_for_status()
         info = r.json()
+        # 解析段的任何毛病（feed 回了数组/字符串、size 写成 "41 MB"、代理塞了一个
+        # 登录页的 JSON）都必须落在"没有更新"里：这段以前在 try 外面，一个畸形 feed
+        # 就把"安静探测"变成 500，且不写失败缓存——每次轮询都重打一遍源
+        if not isinstance(info, dict):
+            raise ValueError("更新源返回的不是 JSON 对象")
+        latest = str(info.get("version") or "")
+        url = str(info.get("url") or "")
+        if url and not url.lower().startswith(("http://", "https://")):
+            url = f"{feed_url}/{url.lstrip('/')}"
+        try:
+            size = int(info.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        minv = str(info.get("min_version") or "")
+        data = {
+            "ok": True, "current": cur, "latest": latest,
+            "has_update": bool(latest) and newer(latest, cur),
+            "notes": str(info.get("notes") or "")[:2000], "url": url, "size": size,
+            "sha256": str(info.get("sha256") or "").lower(),
+            "pub_date": str(info.get("pub_date") or ""),
+            "required": bool(minv) and newer(minv, cur),
+            "feed": feed_url,
+        }
     except Exception as e:
         out = {"ok": False, "reason": _human(e)[:120], "current": cur,
                "has_update": False}
         with _lock:
             _cache[feed_url] = {"at": time.time(), "data": out, "ttl": _FAIL_TTL_H}
         return out
-    latest = str(info.get("version") or "")
-    url = str(info.get("url") or "")
-    if url and not url.lower().startswith(("http://", "https://")):
-        url = f"{feed_url}/{url.lstrip('/')}"
-    data = {
-        "ok": True, "current": cur, "latest": latest, "has_update": bool(latest) and newer(latest, cur),
-        "notes": info.get("notes") or "", "url": url, "size": int(info.get("size") or 0),
-        "sha256": (info.get("sha256") or "").lower(), "pub_date": info.get("pub_date") or "",
-        "required": bool(info.get("min_version")) and newer(info["min_version"], cur),
-        "feed": feed_url,
-    }
     with _lock:
         _cache[feed_url] = {"at": time.time(), "data": data, "ttl": cache_hours}
     return data

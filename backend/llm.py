@@ -27,6 +27,31 @@ def _clip_para(text: str, limit: int = 1200) -> str:
     m = max(cut.rfind(s) for s in _SENT_ENDS)
     return cut[:m + 1] if m > limit // 2 else cut
 
+def _json_or_empty(r) -> dict:
+    """响应的 JSON 体；非对象（数组/字符串/解析失败）一律当空对象——调用方按
+    "没内容"走自己的重试/兜底，而不是在这里炸出类型错误。"""
+    try:
+        data = r.json()
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def _first_content(data: dict) -> str:
+    """取 choices[0].message.content 的字符串形态。网关/中转按 OpenAI 协议但字段类型
+    不保证（choices 是 dict、元素是字符串、message 是字符串、content 是数组块）——
+    每一层都过类型闸，取不到就是空串（内容为空 = 交给上层的重试逻辑）。"""
+    choices = data.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    msg = first.get("message") if isinstance(first, dict) else None
+    out = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(out, str):
+        return out
+    if isinstance(out, list):
+        # 新协议的多段内容：只收 text 段
+        return "".join(b.get("text") or "" for b in out
+                       if isinstance(b, dict) and b.get("type") in (None, "text"))
+    return ""
+
 def _require_live() -> dict:
     """非演示模式的配置；演示模式/没配 key 让上层走演示分支（约定信号 RuntimeError("MOCK")）。"""
     cfg = config.load()
@@ -73,13 +98,11 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
         except (httpx.TransportError, httpx.TimeoutException) as e:
             last_err = e
             continue
-        # 200 也可能是网关的错误 JSON / 空 choices：按缺内容走重试与兜底，别拿 KeyError 砸用户
-        try:
-            data = r.json()
-        except ValueError:
-            data = {}
-        choices = data.get("choices") or [{}]
-        out = ((choices[0].get("message") or {}).get("content", "")) or ""
+        # 200 也可能是网关的错误 JSON / 空 choices：按缺内容走重试与兜底，别拿 KeyError 砸用户。
+        # 逐个字段过类型闸：网关回 {"choices": {...}} / ["..."] / message 是字符串 都见过，
+        # 任意一处不是预期类型就 AttributeError/KeyError 冒出去，整条链 500
+        data = _json_or_empty(r)
+        out = _first_content(data)
         _log_cache(data.get("usage") or {}, scene)
         if out.strip():
             return out
@@ -476,11 +499,16 @@ def human_error(exc: Exception) -> str:
 
 def test_connection() -> dict:
     try:
+        _require_live()
+    except RuntimeError:
+        # 只有"没配 key/演示模式"才是这一句；别再拿它兜 chat() 的 RuntimeError——
+        # 供应商 5xx/限流/输出上限也都是 RuntimeError，那样会把"服务端打嗝"
+        # 说成"你没配 key"，用户去改一个根本没坏的设置
+        return {"ok": False, "reply": "演示模式（未配置 API key）"}
+    try:
         out = chat([{"role": "user", "content": "只回复两个字：可用"}], max_tokens=2048,
                    scene="连接测试")
         return {"ok": bool(out.strip()), "reply": out.strip()[:20]}
-    except RuntimeError:
-        return {"ok": False, "reply": "演示模式（未配置 API key）"}
     except Exception as e:
         return {"ok": False, "reply": human_error(e)}
 
@@ -1056,9 +1084,8 @@ def vision_ask(image_dataurl: str, question: str) -> str:
                 timeout=180,
             )
             r.raise_for_status()
-            data = r.json()
-            choices = data.get("choices") or [{}]
-            out = ((choices[0].get("message") or {}).get("content", "")) or ""
+            data = _json_or_empty(r)
+            out = _first_content(data)
             _log_cache(data.get("usage") or {}, "视觉")
             if out.strip():
                 return out

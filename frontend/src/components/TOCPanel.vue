@@ -16,7 +16,11 @@ async function load() {
     if (store.currentId !== pid) return     // 等待期间换了篇：旧目录不落新篇
     toc.value = r.toc || []
   } catch { toc.value = [] }
-  loading.value = false
+  finally {
+    // 先于那一行 early-return 之前把 loading 放下（用 finally 保证）：
+    // 换篇那一拍旧请求直接 return 的话，spinner 会永远转着等不到人来关
+    if (store.currentId === pid) loading.value = false
+  }
 }
 
 function jump(item) {
@@ -30,6 +34,9 @@ watch(open, v => {
   toc.value = []
   load()
 }, { immediate: true })
+// 开着目录换篇（多窗格点另一格）：抽屉不关，但内容必须是新篇的——只监听 open
+// 的话还挂着旧篇目录，点一条会拿旧篇的页码跳到新篇某个不相干的页
+watch(() => store.currentId, () => { if (open.value) { toc.value = []; load() } })
 </script>
 
 <template>
