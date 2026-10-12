@@ -998,6 +998,10 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
         say(f"全文翻译 {pid}: 用引擎 {exe}（{why}）")
         try:
             import engine_install
+            # 先补后收：缓存被清过（home/ 丢了、数据目录搬过家）就把收起的资产包放回 zip 名，
+            # 引擎启动时自己离线恢复——不然只能去它硬编码的资源站现取，国内网络下就是"取资源失败"
+            if engine_install.restore_assets_zip():
+                say(f"全文翻译 {pid}: 资产缓存不全，已把收起的 offline 资产包放回（引擎离线恢复）")
             if engine_install.settle_assets():
                 say(f"全文翻译 {pid}: 收起引擎的 offline 资产包，后续每批省 10-20 秒重哈希")
         except Exception:

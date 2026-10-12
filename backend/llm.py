@@ -1106,21 +1106,98 @@ _BARE_REFS = re.compile(r"¶\s*(\d+)")
 
 def _filter_para_refs(text: str, valid: set) -> str:
     """剔掉越界的 ¶n 引用——只丢引用本身，别丢整句。带方括号的按数字逐个判
-    （[¶3,¶999] 留 [¶3]；全是坏的就连括号一起撤）。"""
+    （[¶3,¶999] 留 [¶3]；全是坏的就连括号一起撤）。全合法时原样返回——别顺手
+    改写格式（每个号码都要留着自己的 ¶，前端靠它逐个认引用）。"""
     if not text or not valid:
         return text
 
     def fix_bracket(m):
         nums = [int(x) for x in re.findall(r"\d+", m.group(1))]
         ok = [n for n in dict.fromkeys(nums) if n in valid]
-        return "[¶" + ", ".join(str(n) for n in ok) + "]" if ok else ""
+        if len(ok) == len(dict.fromkeys(nums)):
+            return m.group(0)
+        return "[¶" + ", ¶".join(str(n) for n in ok) + "]" if ok else ""
 
     out = _BRACKET_REFS.sub(fix_bracket, text)
     out = _BARE_REFS.sub(lambda m: m.group(0) if int(m.group(1)) in valid else "", out)
-    if out != text:     # 真剔过引用才收拾残迹：句尾孤零零的逗号/双空格清掉
+    if out != text:     # 真剔过引用才收拾残迹：双空格、以及标点前多出来的空格（"依据 。"）
         out = re.sub(r"[ \t]{2,}", " ", out)
+        out = re.sub(r"[ \t]+(?=[，,。；;：:！!？?、）)】」』])", "", out)
         out = out.rstrip("，,、;；:： \t")
     return out
+
+# 问答回答的引用校验：同一份实现跑两遍——流式边到边滤（不等收完，用户盯着看呢）+ 落库前。
+# 带《标题》的引用按"那篇"的段落集判；裸 ¶n/[¶n, ¶m] 按当前篇判（复用七问那套清洗）。
+# 标题认不出的引用服务端无从判对错，原样留着（前端自己会把它降级成纯文本）。
+_TITLED_REF = re.compile(r"《([^》]{1,80})》([ \t]*)((?:[\[［]\s*)?¶\s*\d+(?:\s*[,，、]\s*¶?\s*\d+)*(?:\s*[\]］])?)")
+
+def title_key(t: str) -> str:
+    """认篇用的标题归一：空白全去掉、大小写不敏感（模型抄标题常丢空格/换大小写）。"""
+    return re.sub(r"\s+", "", str(t or "")).lower()
+
+def filter_answer_refs(text: str, valid: set, others: dict = None) -> str:
+    """问答回答的 ¶n 范围校验：只丢越界的引用本身，不丢整句（口径同七问）。
+
+    valid = 当前篇的段落号集；others = {标题: 段落号集}（本次一起问的别篇 + 本篇标题，
+    键按原标题传，内部归一）。"""
+    if not text or not valid:
+        return text
+    stash = []
+
+    def take(m):        # 带标题的引用先整个收起来：裸引用那趟不认识标题，会把别篇的号码
+        stash.append(m.group(0))                     # 按本篇判、冤枉掉
+        return "\x00%d\x00" % (len(stash) - 1)
+
+    out = _filter_para_refs(_TITLED_REF.sub(take, text), valid)
+    if stash:
+        pools = {title_key(k): v for k, v in (others or {}).items()}
+        for i, raw in enumerate(stash):
+            m = _TITLED_REF.fullmatch(raw)
+            title, sep, tok = m.group(1), m.group(2), m.group(3)
+            pool = pools.get(title_key(title))
+            if pool is not None:
+                fixed = _filter_para_refs(tok, pool)
+                if fixed != tok:                     # 真剔了才重排；没动就原样放回（别改格式）
+                    raw = ("《%s》" % title) + (sep + fixed if fixed else "")
+            out = out.replace("\x00%d\x00" % i, raw)
+    if out != text:
+        out = re.sub(r"[ \t]{2,}", " ", out)
+        out = re.sub(r"[ \t]+(?=[，,。；;：:！!？?、）)】」』])", "", out)
+        out = out.rstrip("，,、;；:： \t")
+    return out
+
+# 流式上"还可能是半个引用"的尾巴（引用被按 token 切开是常态："¶1"+"99"、"[¶3,"+"¶999]"、
+# "《某篇"+"》¶3"、"["+"¶3]"）：这些先压着不发，凑齐了再判。标题要跟它后面那截一起压着
+# ——标题先放走的话，"《别篇》¶9" 会被当成裸引用按本篇判、冤枉掉。
+# 上限兜底——宁可漏滤一次，不能把正文扣住。
+_REF_TAIL = re.compile(r"《[^》]{0,80}[\s\S]{0,40}$|[\[［]$|[\[［]?\s*¶[\d\s,，、¶\[［\]]{0,40}$")
+_HOLD_CAP = 160
+
+def filter_answer_stream(pieces, valid: set, others: dict = None):
+    """把流式的文字片按引用过滤后转发（口径见 filter_answer_refs）。
+
+    两个流式专属的讲究：① 片尾空白不进过滤器（_filter_para_refs 的收尾清理会把它
+    当"句尾残迹"吃掉，可这只是流的中途，下一片可能接着一句话）；② 半截引用压着等下一片。"""
+    hold = ""
+    for piece in pieces:
+        hold += piece
+        m = _REF_TAIL.search(hold)
+        cut = m.start() if m else len(hold)
+        if len(hold) - cut > _HOLD_CAP:     # 压太久：当普通文字放行
+            cut = len(hold)
+        if cut <= 0:
+            continue
+        seg, hold = hold[:cut], hold[cut:]
+        ws = re.search(r"[ \t]+$", seg)
+        ws = ws.group(0) if ws else ""
+        seg = seg[:len(seg) - len(ws)] if ws else seg
+        text = filter_answer_refs(seg, valid, others) + ws
+        if text:
+            yield text
+    if hold:
+        text = filter_answer_refs(hold, valid, others)
+        if text:
+            yield text
 
 def _items(raw, valid: set = None) -> dict:
     """三个生成题共用的清洗：lead/text/ask 三个字段，没有 text 的一条不留。

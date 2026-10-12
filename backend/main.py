@@ -696,12 +696,15 @@ def _clear_zombie_jobs():
             return _job_live(kind, x) or translate_full.job(x)["status"] in ("running", "queued")
 
         # 晚启动清扫与本进程刚接的新任务有竞争窗：活着的任务（含本进程已在跑的翻译）
-        # 不能归零，否则界面状态闪回"没做过"，诱发重复点击
+        # 不能归零，否则界面状态闪回"没做过"，诱发重复点击。
+        # 条件里再验一次状态：查完清单到这一刻之间任务可能已经跑完（done 写在库里），
+        # 无条件 UPDATE 会把刚写完的 done 一起抹成 none
         stale = [r["id"] for r in rows if not alive(r["id"])]
         if not stale:
             continue
         qmarks = ",".join("?" * len(stale))
-        db.q(f"UPDATE papers SET {col}='none' WHERE id IN ({qmarks})", tuple(stale), commit=True)
+        db.q(f"UPDATE papers SET {col}='none' WHERE id IN ({qmarks}) "
+             f"AND {col} IN ('running','queued')", tuple(stale), commit=True)
         _applog(f"启动清理：{len(stale)} 篇的 {col} 卡在 running/queued，已归零")
 
 def _adopt_orphan_translation():
@@ -2208,8 +2211,11 @@ def _analysis_loop():
                 _analysis_pending.discard(pid)
             continue
         with _q_lock:
-            _analysis_pending.discard(pid)
+            # 先起活、再摘排队登记：`_analysis_inflight` 是"线程活着 or 还在排队"两个真相源
+            # 的或，反过来的话中间会经过"两边都不真"的一瞬——晚启动清僵尸正好扫到这里，
+            # 就把刚接手的任务当僵尸、状态清成 none（界面显示"未析读"，结果其实在跑）
             _job_start("analysis", pid)
+            _analysis_pending.discard(pid)
         db.update_paper(pid, analysis_status="running", analysis_error=None)
         try:
             _run_analysis(pid, paras)
@@ -3523,6 +3529,19 @@ def _qa_add_revive(pid: str, role: str, content: str, conv_id: int, question: st
         _applog(f"问答 {pid}: 会话 {conv_id} 已被删且重建失败（{_human_msg(e)}），{role} 消息没能落库")
     return 0, conv_id
 
+def _ref_pools(p: dict, valid: set, others: list) -> dict:
+    """问答引用校验的"哪一篇"池子：{标题: 段落号集}——本篇 + 本次一起问的别篇。
+    标题认不出的引用服务端无从判对错（见 llm.filter_answer_refs），留着原样给前端。"""
+    pools = {}
+    t = (p.get("title") or "").strip()
+    if t:
+        pools[t] = valid
+    for o in others or []:
+        ot = (o.get("title") or "").strip()
+        if ot:
+            pools[ot] = {x.get("idx") for x in (o.get("paras") or []) if isinstance(x, dict)}
+    return pools
+
 def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
 
@@ -3533,6 +3552,7 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
     uid = db.qa_add(pid, "user", question, conv_id=conv_id)
     hist = db.qa_history(pid, conv_id)[:-1]
     buf = []
+    valid, pools = set(), {}
     try:
         if _demo_mode():
             gen = _mock_stream(question)
@@ -3560,10 +3580,14 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
                                        "paras": db.get_paragraphs(x, with_lines=False)})
             gen = llm.chat_stream(llm.ask_messages(p["title"], paras, ctx, question,
                                                    hits, summary, others), scene="问答")
-        for piece in gen:
+            valid = {pp["idx"] for pp in paras}
+            pools = _ref_pools(p, valid, others)
+        # 每片都过引用校验（带标题的按那篇、裸号按本篇）：越界的 ¶n 不入手，用户就不会
+        # 看见一个点不动的死引用（七问/方法卡早这么做，问答因为走流式一直没补）
+        for piece in llm.filter_answer_stream(gen, valid, pools):
             buf.append(piece)
             yield _sse({"type": "delta", "text": piece})
-        ans = "".join(buf)
+        ans = llm.filter_answer_refs("".join(buf), valid, pools)
         if not ans.strip():
             raise RuntimeError("模型这次没返回内容")
         aid, conv_used = _qa_add_revive(pid, "assistant", ans, conv_id, question)

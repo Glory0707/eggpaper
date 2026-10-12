@@ -166,6 +166,38 @@ def settle_assets() -> int:
         applog(f"[eggpaper] 资产包归档（settle_assets）没做成，跳过：{type(e).__name__}: {str(e)[:160]}")
         return 0
 
+def restore_assets_zip() -> int:
+    """缓存不全时把收起的资产包放回 zip 名，让引擎自己离线恢复（返回放回个数）。
+
+    为什么需要：`_warmup` 成功后会把这个 zip 改名 `.installed` 收起（不然每个引擎进程
+    启动都要把 ~220MB 资产重哈希一遍，每批白付 10-20 秒）。但改名之后引擎就不认它了
+    ——数据目录被清、home/ 缓存丢失时，引擎只能去它硬编码的三个资源站现取（BabelDOC
+    的 FONT_METADATA_URL：github raw / huggingface / modelscope，没有环境变量入口，
+    HF_ENDPOINT 之类一概无效——2026-10-12 读引擎源码确认），国内网络下就是"取资源失败"。
+    放回 zip 名后，引擎启动器见到它会自己 restore 回缓存——离线也能把资产补回来。
+
+    缓存齐全时不动（放回反而让每批多付重哈希的税）；恢复跑过一轮后，下一次翻译开头的
+    settle_assets 见缓存齐全会再把它收起，自愈闭环。"""
+    try:
+        cache = os.path.join(appinfo.data_dir(), "home", ".cache", "babeldoc")
+        if os.path.isfile(os.path.join(cache, "cache.v1.db")) and \
+                all(os.path.isdir(os.path.join(cache, d)) for d in ("models", "fonts", "cmap")):
+            return 0
+        n = 0
+        for zp in glob.glob(os.path.join(install_dir(), "**", "offline_assets_*.zip.installed"),
+                            recursive=True):
+            try:
+                os.rename(zp, zp[: -len(".installed")])
+                n += 1
+            except OSError:
+                pass
+        if n:
+            applog(f"[eggpaper] 资产缓存不全：把 {n} 个 offline 资产包放回 zip 名（引擎离线恢复）")
+        return n
+    except Exception as e:
+        applog(f"[eggpaper] 资产包放回（restore_assets_zip）没做成，跳过：{type(e).__name__}: {str(e)[:160]}")
+        return 0
+
 def _partial_dir() -> str:
     return install_dir() + ".partial"    # 断点的家：稳定目录，start() 重试不清它，装完才清
 

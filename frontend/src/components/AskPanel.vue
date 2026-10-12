@@ -22,7 +22,20 @@ function matchPaper(title) {
   return ps.find(p => ti(p) === q)
       || ps.find(p => { const x = ti(p); return x && (x.includes(q) || q.includes(x)) })
 }
-const citeOk = r => !r.ref || !!matchPaper(r.ref)
+const paraIdxSet = computed(() => new Set((store.paras || []).map(p => p.idx)))
+/* 引用要真落在存在的段上才给按钮：服务端（llm.filter_answer_refs）已把越界的 ¶ 从回答里
+   剔掉，这里再兜一层——旧库存下的回答、流式光标还没扫完的尾巴，都可能带着死引用；
+   点不动的按钮不如诚实给纯文本（与"认不出那篇"同一个降级口径）。 */
+const citeOk = r => {
+  if (r.ref) {
+    const p = matchPaper(r.ref)
+    if (!p) return false
+    if (p.id !== store.currentId) return true    // 别篇的段落集这边没有，认得出篇就当可点
+  }
+  // MdLite 传进来的是渲染 run（号码在 cite 里）；onCite 那边才映射成 n——两种都兜住
+  const n = r.cite !== undefined ? r.cite : r.n
+  return !paraIdxSet.value.size || paraIdxSet.value.has(n)
+}
 async function onCite(r) {
   if (!r || !r.ref) return jumpPara(r && r.n)
   const p = matchPaper(r.ref)
