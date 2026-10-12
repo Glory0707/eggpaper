@@ -6,6 +6,7 @@
 
 - 发布一条龙（VERSION 变更须用户指令，见 §五）：改 `VERSION` → `/d/hermes/uv-python/cpython-3.11.14-windows-x86_64-none/python.exe tools/build_installer.py --notes "…"`（前端构建→图标→冻结→Inno→latest.json 一条命令）。
 - **Gitee 更新源发布三步**（实测闭环，全程 API 化）：① 推 `release/latest.json` 到仓库 `update/latest.json`（浅克隆 + 令牌推送，**推完删克隆**——令牌明文留在 .git/config 里）；② 建 release 走 API：`POST /api/v5/repos/zhouao1207/eggpaper/releases`（tag_name=v<版本>、target_commitish=master）→ `PATCH …/releases/{id}` 补中文说明（POST 时 curl 命令行会把中文搅成 GBK 乱码，body 一律用 python requests/httpx 发）→ `POST …/releases/{id}/attach_files` multipart 传 exe（201 即成，92MB 约两分钟）；③ 闭环验证：匿名 curl raw 清单 → 匿名下载附件比 sha256 → `GET /api/update/check?force=true` 看 has_update。
+- **Gitee 的 `PATCH /releases/{id}` 是整体更新**：只发 body 会 400（messages 说 `tag_name is missing`/`name is missing`）——补中文说明要把 tag_name、name、target_commitish 一起带上。用 httpx 发（中文不乱码），POST 时就能一并带上说明，PATCH 只是兜底/改文案。
 - **Gitee 的 raw 地址现在会 302 到 raw.giteeusercontent.com**：curl 验证要加 `-L`；客户端 update.py 跟随重定向所以无感。
 - **云端版本记录已清场**（0.1.0 基线重开时）：Gitee 的 11 个旧 release（v0.1.41~49/55/56）、同名 tag 与 `update/latest.json` 全删——查更新 404 按「没有更新」处理，降级提示不再出现；发版时按上面三步重建。tag 删除没有 API（DELETE /tags 404），走浅克隆 `git push origin :refs/tags/…`。
 - 发布用的令牌在 Windows 凭据管理器：`git credential fill`（protocol=https、host=gitee.com）程序内取用，不落盘不回显。
@@ -77,6 +78,7 @@
 
 - 代码签名在正式版本发布前不做（2026-09-22 定）："未知发布者"提示由使用指南兜着，等有真实用户量和收入再买证书。
 - mac 仓不定期跟随（2026-09-22 定）：Windows 是唯一主仓，`D:\tools\eggpaper-macos` 不再逐版本同步——攒一批再跟，或用户点名时才跟；mac 自己的 VERSION 独立走，不追 Windows 版本号。
+- **发出去的版本号决定老用户收不收得到**（2026-10-12 实测）：更新提示是逐段数字比大小，`0.1.1` 与 `0.1.56` 比判的是 1 < 56——清洗重开成 0.1.0 基线后发 0.1.1，云端能拉到 feed、`has_update` 却对 0.1.56 的老用户恒为假（本轮用户知情后选了保持 0.1.1，重装走手动下载）。要让应用内的「查更新」够得着老用户，得发一个比现存最大号还大的版本（0.1.57/0.2.0 这种）。
 - **版本号只听用户指令**（2026-09-29 定）：历史版本记录已清场，`VERSION`=0.1.0 重开；此后版本号变更必须用户明示，构建/安装一律沿用 `VERSION` 现值，不自动递增；Gitee feed 发布同样等指令。
 - 界面减法：不放解释性小字；一条信息只住一个房间，别处只给指针（细则见 [visual.md](visual.md)）。判据：删掉这行字，用户会损失什么？
 - 文档同口径：简洁、删陈旧、不留版本流水账；持久经验进本文件。文档对账时每条承诺都当断言核——不一致既可能是文档陈旧，也可能是代码缺口（README 承诺导出七问，代码只导了五问，就是这轮对出来的）。
