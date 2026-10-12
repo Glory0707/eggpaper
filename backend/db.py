@@ -11,7 +11,8 @@ from contextlib import contextmanager
 from config import DATA_DIR
 
 DB_PATH = os.path.join(DATA_DIR, "eggpaper.db")
-_lock = threading.Lock()
+_lock = threading.Lock()          # 写事务串行：所有写路径（含 _txn）都在它里面
+_conn_lock = threading.Lock()     # 只保护共享写连接的**首次初始化**（见 _get）
 _conn = None
 _local = threading.local()
 
@@ -93,31 +94,41 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_papers_hash ON papers(pdf_hash)",
     "CREATE INDEX IF NOT EXISTS idx_papers_created ON papers(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_papers_filename ON papers(filename)",
+    # 分类计数（collections_list / library overview）对每个分类跑一次
+    # WHERE p.coll_id=c.id 的相关子查询；这张关联表此前没有索引，库一大就是逐分类全表扫
+    "CREATE INDEX IF NOT EXISTS idx_paper_colls_coll ON paper_collections(coll_id)",
 )
 
 def _get() -> sqlite3.Connection:
     global _conn
-    if _conn is None:
-        c = sqlite3.connect(DB_PATH, check_same_thread=False)
-        try:
-            c.row_factory = sqlite3.Row
-            c.executescript(SCHEMA)
-            _migrate(c)   # 必须先补列再建索引：idx_qa_msg_conv/idx_papers_hash 的列来自迁移，
-            for stmt in _INDEXES:   # 顺序反了会 OperationalError 被吞，索引从此再也建不上
-                try:
-                    c.execute(stmt)
+    if _conn is not None:
+        return _conn
+    # 首用并发：两个线程同时进来会各建一条连接、各自跑一遍 executescript + _migrate，
+    # 一条连接被丢弃（泄漏），而且两条 DDL 撞在一起就是随机 "database is locked"。
+    # 这里单独一把初始化锁，与 _lock 分开——_get 常在 _lock 里被调用，
+    # 共用一个非可重入锁会当场自锁。
+    with _conn_lock:
+        if _conn is None:
+            c = sqlite3.connect(DB_PATH, check_same_thread=False)
+            try:
+                c.row_factory = sqlite3.Row
+                c.executescript(SCHEMA)
+                _migrate(c)   # 必须先补列再建索引：idx_qa_msg_conv/idx_papers_hash 的列来自迁移，
+                for stmt in _INDEXES:   # 顺序反了会 OperationalError 被吞，索引从此再也建不上
+                    try:
+                        c.execute(stmt)
+                    except sqlite3.OperationalError:
+                        pass
+                try:      # WAL：读写不再互斥全库 fsync；synchronous=NORMAL 够本地应用
+                    c.execute("PRAGMA journal_mode=WAL")
+                    c.execute("PRAGMA synchronous=NORMAL")
                 except sqlite3.OperationalError:
                     pass
-            try:      # WAL：读写不再互斥全库 fsync；synchronous=NORMAL 够本地应用
-                c.execute("PRAGMA journal_mode=WAL")
-                c.execute("PRAGMA synchronous=NORMAL")
-            except sqlite3.OperationalError:
-                pass
-            c.commit()
-        except Exception:
-            c.close()   # 库文件损坏时别把半初始化的连接挂到全局上：那会让之后每个查询
-            raise       # 都死在"no such table"，而不是第一次就报清楚
-        _conn = c
+                c.commit()
+            except Exception:
+                c.close()   # 库文件损坏时别把半初始化的连接挂到全局上：那会让之后每个查询
+                raise       # 都死在"no such table"，而不是第一次就报清楚
+            _conn = c
     return _conn
 
 def _migrate(c: sqlite3.Connection):
@@ -923,16 +934,25 @@ def qa_history(pid: str, conv_id: int = None, limit: int = 200):
 
 def qa_drop_last_assistant(pid: str, conv_id: int):
     """重新生成 = 把最后一条回答删掉，连同它的用户问题一起交回前端重问。
-    返回被删掉的那条用户问题（没有就返回 None）。"""
+    返回被删掉的那条用户问题（没有就返回 None）。
+
+    两个坑都堵在这里：
+    ① 幂等——只认"最新一行是 assistant"这一种形态（那条回答 + 紧邻它前面的用户问题），
+       两条 DELETE 同一个事务。以前取最后两行再从中挑 assistant，重复调用会各删一对；
+       最后两行里没有 assistant 时（流式被掐断留下的孤立 user 行）更糟：
+       _touch_summary_if_covering(..., 0) 里 `>= 0` 恒真，会把一份好端端的会话摘要清掉。
+    ② 删不动就什么都不做：最后一行不是回答（孤立问题/空会话）时直接回 None。"""
     rows = q("SELECT id, role, content FROM qa_messages WHERE paper_id=? AND conv_id=? ORDER BY id DESC LIMIT 2",
              (pid, conv_id))
-    last = next((r for r in rows if r["role"] == "assistant"), None)
-    if last:
-        q("DELETE FROM qa_messages WHERE id=?", (last["id"],), commit=True)
-    prev = next((r for r in rows if r["role"] == "user" and (not last or r["id"] < last["id"])), None)
-    if prev:
-        q("DELETE FROM qa_messages WHERE id=?", (prev["id"],), commit=True)
-    _touch_summary_if_covering(conv_id, last["id"] if last else 0)
+    if not rows or rows[0]["role"] != "assistant":
+        return None
+    last = rows[0]
+    prev = next((r for r in rows[1:] if r["role"] == "user"), None)
+    with _txn() as c:
+        c.execute("DELETE FROM qa_messages WHERE id=?", (last["id"],))
+        if prev:
+            c.execute("DELETE FROM qa_messages WHERE id=?", (prev["id"],))
+    _touch_summary_if_covering(conv_id, last["id"])
     return prev["content"] if prev else None
 
 def _touch_summary_if_covering(conv_id: int, upto: int):

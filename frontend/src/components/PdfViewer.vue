@@ -15,6 +15,7 @@ import { api, store, toast, askNotePrefill, kindZH, paperName } from '../store'
 import { confirmBox } from '../dialog'
 import { lsGet, lsSet } from '../ls'
 import { copyWithToast, frameBuffer } from '../clip'
+import { scrollBehavior } from '../motion'
 
 const props = defineProps({ pid: { type: String, required: true } })
 /* 篇级数据自持：多窗格下每个实例只读自己这篇的段落/角色/批注/元信息，
@@ -732,6 +733,19 @@ function evictFar(skipKeys = null) {
   }
 }
 
+/* 缩放那一拍：纸框尺寸是即时绑定（it.w * scale），位图要等重渲染才跟上，中间
+   至少一拍（防抖 160ms 起）画布还是旧尺寸——纸面右侧/下方留出一条白边，放大时
+   尤其明显。把在册画布的内联尺寸先按新缩放拉到位：位图旧一拍、糊一点，
+   但没有白边、没有错位（重渲染到了就被新位图替换）。 */
+function stretchCanvases() {
+  for (const it of flatItems.value) {
+    const canvas = canvases.value[it.gi]
+    if (!canvas || canvas.width <= 1) continue
+    canvas.style.width = it.w * scale.value + 'px'
+    canvas.style.height = it.h * scale.value + 'px'
+  }
+}
+
 /* 缩放/换排版后，带外的位图还停在旧比例上：尺寸换来换去反正都要重画，
    先撤掉——留着的是错位的图（放大后只占左上角、缩小后溢出纸面）。 */
 function dropFarCanvases() {
@@ -1044,7 +1058,7 @@ function focusNote(n) {
     if (!el || !box) return
     const r = el.getBoundingClientRect()
     if (r.top >= box.top + 6 && r.bottom <= box.bottom - 6) return    // 已经在视野里：不滚
-    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    el.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
   })
 }
 
@@ -1328,7 +1342,7 @@ function jumpQuote(n) {
 function jumpBack() {
   const top = backStack.pop()
   if (top != null) {
-    scroller()?.scrollTo({ top, behavior: 'smooth' })   // 卸载后迟到的调用：没有滚动容器就作罢
+    scroller()?.scrollTo({ top, behavior: scrollBehavior() })   // 卸载后迟到的调用：没有滚动容器就作罢
     backChip.value = false
     return
   }
@@ -1364,7 +1378,7 @@ function step(dir) {
   const y = paraAbsY(target.idx)
   if (y == null) return
   backStack.push(scroller().scrollTop)
-  scroller().scrollTo({ top: y - scroller().clientHeight * 0.3, behavior: 'smooth' })
+  scroller().scrollTo({ top: y - scroller().clientHeight * 0.3, behavior: scrollBehavior() })
 }
 
 async function translateCurrent() {
@@ -1494,31 +1508,80 @@ function findInPaper(q) {
 /* ---------------- 滚动：scroll-spy + 位置记忆 ---------------- */
 
 let spyT = null, saveT = null
+/* 当前是第几页：二分找"最后一个 offsetTop ≤ top"的项。原实现每收到一个 scroll
+   事件就从第 0 项线性走到当前页——滚到第 500 页就是每个事件 500 次版面读数。
+   页元素的 offsetTop 随文档顺序非递减（对开是左右同高，同高取靠后那项，与线性
+   扫描同解），所以二分只花 log(n) 次读数。 */
+function pageIdxAtTop(top) {
+  const items = flatItems.value
+  let lo = 0, hi = items.length - 1, ans = 0
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const el = pageEls.value[items[mid].gi]
+    // 二分的前提是"每一项都挂着页元素"（sheets 全量渲染，正常都成立）。撞上没挂的
+    // （布局切换的中途）就退回线性扫描：线性那版的语义是"跳过没挂的项"，与二分不同解
+    if (!el) return pageIdxLinear(top)
+    if (el.offsetTop <= top) { ans = mid; lo = mid + 1 } else hi = mid - 1
+  }
+  return ans
+}
+function pageIdxLinear(top) {
+  const items = flatItems.value
+  let cur = 0
+  for (let i = 0; i < items.length; i++) {
+    const el = pageEls.value[items[i].gi]
+    if (el && el.offsetTop <= top) cur = i
+    else if (el) break
+  }
+  return cur
+}
+/* "原文页码 → 页元素"索引：与 pageItem 同一套优先级（先认 origPage，再退到
+   mono / 对开的奇数页），一次建表、整趟段落 spy 复用 */
+function pageElIndex() {
+  const m = new Map()
+  for (const it of flatItems.value) {
+    const el = pageEls.value[it.gi]
+    if (el && it.origPage >= 0 && !m.has(it.origPage)) m.set(it.origPage, el)
+  }
+  const fallback = (key, el) => { if (!m.has(key)) m.set(key, el) }
+  for (const it of flatItems.value) {
+    const el = pageEls.value[it.gi]
+    if (!el || it.origPage >= 0) continue
+    if (it.doc === 'mono') fallback(it.page, el)
+    else if (it.doc === 'dual' && it.page % 2 === 1) fallback((it.page - 1) / 2, el)
+  }
+  return m
+}
 function onScroll() {
   updateProg()
   const sc = scroller()
   if (!sc) return          // 卸载后残留的定时器（setTimeout(onScroll, 800) / spyT）还会打一枪
-  const top = sc.scrollTop + 8
-  let cur = 1
-  for (const it of flatItems.value) {
-    const el = pageEls.value[it.gi]
-    if (el && el.offsetTop <= top) cur = origPageOf(it) + 1
-    else if (el) break
-  }
-  if (cur !== pageNum.value) {
-    pageNum.value = cur
-    if (document.activeElement !== pageInputEl.value) pageIn.value = String(cur)
+  const items = flatItems.value
+  if (items.length) {
+    const cur = origPageOf(items[pageIdxAtTop(sc.scrollTop + 8)]) + 1
+    if (cur !== pageNum.value) {
+      pageNum.value = cur
+      if (document.activeElement !== pageInputEl.value) pageIn.value = String(cur)
+    }
   }
   clearTimeout(spyT)
   spyT = setTimeout(() => {
     ensureNear()             // 位图被收掉的页滚回来了：视口附近的先补上（小文档这步是空转）
     const focusY = sc.scrollTop + sc.clientHeight * 0.4
-    let best = null, bestD = 1e9
+    /* 段落 spy：原实现每段都调 paraAbsY，而 paraAbsY 每次都在 flatItems 上线性找三遍页
+       ——600 页 / 600 段一次滚动停顿就是几十万次迭代。这里建表 + 每张页只读一次
+       offsetTop，再按"段落本就按文档顺序排（idx = 页序）"提前收尾：越过焦点后只会更远 */
+    const elOf = pageElIndex()
+    const topOf = new Map()
+    let best = null, bestD = Infinity
     for (const p of paras.value) {
-      const y = paraAbsY(p.idx)
-      if (y == null) continue
-      const d = Math.abs(y - focusY)
+      const el = elOf.get(p.page)
+      if (!el) continue
+      let base = topOf.get(el)
+      if (base === undefined) { base = el.offsetTop; topOf.set(el, base) }
+      const d = Math.abs(base + p.bbox.y0 * scale.value - focusY)
       if (d < bestD) { bestD = d; best = p.idx }
+      else break
     }
     if (props.pid === store.currentId) store.readingPara = best
     clearTimeout(saveT)
@@ -1734,7 +1797,7 @@ watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 32
    查询词不动，用户看到的是「结果跟着版面刷新」。 */
 watch([() => store.viewer.variant, () => store.viewer.spread],
       () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
-watch(scale, () => { doneKeys.clear(); doneTxt.clear(); paintGen++; dropFarCanvases(); scheduleRender(); saveLater() })
+watch(scale, () => { doneKeys.clear(); doneTxt.clear(); paintGen++; stretchCanvases(); dropFarCanvases(); scheduleRender(); saveLater() })
 watch(paras, () => { spanCache.clear(); anchorCache.clear() })
 watch(() => store.jump, applyJump)
 watch(() => store.viewer.layers, () => measureNotes(), { deep: true })    // 图层开关只动页边卡，画布不用重画

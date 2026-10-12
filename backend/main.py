@@ -1,7 +1,9 @@
 """eggpaper 本地服务。唯一出网：用户配置的 LLM API 与 pdf2zh 翻译服务。"""
 import base64
+import collections
 import copy
 import json
+import math
 import os
 import queue
 import re
@@ -307,7 +309,10 @@ def _late_align(pid: str):
                 # 返回 False = 没什么可挪（已对齐）或挪不动到封顶；篇没了也收工
                 if not _align_names(pid) or _pid_gone(pid):
                     return
-            except Exception:
+            except Exception as e:
+                # 原来这里静默 return：名字对不上是"看得见"的小毛病，但它在 30 秒内
+                # 一直失败却一个字都不记，事后完全无从判断（是占用、还是逻辑错）
+                _applog(f"名字对齐 {pid} 中途失败，放弃这一轮（标题照旧，下次启动的迁移再追一次）：{_human_msg(e)}")
                 return
     threading.Thread(target=work, daemon=True).start()
 
@@ -559,14 +564,20 @@ def _apply_pending_restore():
         data = config.DATA_DIR
         old = data + ".old-" + time.strftime("%Y%m%d%H%M%S")
         last = None
-        for _ in range(3):
+        # 6 轮 × 3 秒：上一会话的 pdf2zh/杀毒/资源管理器预览都可能还握着数据目录里的句柄
+        # （Windows 上"有文件被打开"就让整个目录改名失败，WinError 5/32）。原来只等 3 轮，
+        # 杀软实时扫描一轮就能把这 9 秒耗完——那次的结局是"恢复静默没落地，标记留着
+        # 下次启动再来"，用户看到的却是"恢复完成、已重启"。等久一点，别把十几秒算成失败。
+        for attempt in range(6):
             try:
                 os.rename(data, old)
                 last = None
                 break
             except OSError as e:
-                last = e               # 上一会话的 pdf2zh/杀毒可能还握着句柄：等一轮再试
-                time.sleep(3)
+                last = e
+                if attempt < 5:
+                    _applog(f"备份恢复落地：数据目录改名被占用（第 {attempt + 1} 次），3 秒后重试：{e}")
+                    time.sleep(3)
         if last is not None:
             raise last                 # 标记留在原地，下次启动重试
         try:
@@ -574,7 +585,14 @@ def _apply_pending_restore():
         except OSError:
             os.rename(old, data)      # 顶不上就回滚，库里还是原样
             raise
-        os.remove(mark)               # 落地成功才撕标记：中途失败留着，重启后重试
+        # 撕标记：标记文件本身就在数据目录里，刚跟着旧目录一起被改名搬走了，
+        # 所以要到 old 里去删——原路径此刻指的是新目录、文件不在那儿，os.remove 必抛
+        # FileNotFoundError，整段就被下面的 except 兜住：日志写"落地失败"（其实已成功），
+        # home/ 资产的回搬与旧目录的清理也一并被跳过。删不掉不算失败：old 反正要删。
+        try:
+            os.remove(os.path.join(old, "pending_restore.json"))
+        except OSError:
+            pass
         home_old = os.path.join(old, "home")
         if os.path.isdir(home_old) and not os.path.exists(os.path.join(data, "home")):
             try:
@@ -1223,6 +1241,18 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
             pass
         raise HTTPException(400, f"PDF 读不了：{_human_msg(e)}")
     db.create_paper(pid, filename, title, path, n_pages, authors)
+    # 建行之后的每一步都可能抛（写段落/判类型/起析读线程）。调用方在异常里只删了
+    # papers/<pid>/ 目录，行还在库里——书架上因此会留下一篇"点开只有 PDF_GONE"的
+    # 僵尸论文（析读还会报"没有文字层"）。这一整段包起来：失败连行一起撤。
+    try:
+        return _ingest_finish(pid, path, pdf_hash, paras)
+    except Exception:
+        db.purge_paper(pid)
+        raise
+
+
+def _ingest_finish(pid: str, path: str, pdf_hash: str, paras: list) -> dict:
+    """建行之后的收尾（对齐可读名、写段落、判类型、按设置起析读/OCR）。"""
     if pdf_hash:
         db.update_paper(pid, pdf_hash=pdf_hash)
     try:
@@ -1441,7 +1471,7 @@ def import_path(body: dict):
         if dup:
             fsutil.rm_quiet(dest)
             _discard_paper_dir(pid, pid_dir)   # 刚建的空文件夹顺手收掉
-            _pending_open["pid"] = dup
+            _pending_open_push(dup)
             return {"paper": db.get_paper(dup), "duplicate": True}
         try:
             out = _ingest(pid, name, dest, pdf_hash)
@@ -1449,10 +1479,26 @@ def import_path(body: dict):
             _discard_paper_dir(pid, pid_dir)   # 坏文件别留空论文目录
             raise
         _attach_same_title(out, pid)
-    _pending_open["pid"] = pid
+    _pending_open_push(pid)
     return out
 
-_pending_open = {"pid": None}
+# 待打开的论文：**保持顺序的队列**。桌面入口把「双击的每一个文件」都 POST 给同一个实例
+# （一次选中两个 PDF 双击就是两条），窗口侧每 3 秒轮询取一条。原来只有一个槽位、
+# 后写覆盖：两个窗口同时轮询时一个拿到、另一个永远拿不到（"另一篇不弹"），
+# 而"最新的那条覆盖前一条"还会让先导入那篇彻底丢掉打开机会。
+# 上限 3 条：页面关着时的积压不做无限回放（回来时连开十几篇是灾难）。
+_pending_order = collections.deque(maxlen=3)
+
+
+def _pending_open_push(pid):
+    _pending_order.append(pid)
+
+
+def _pending_open_pop():
+    try:
+        return _pending_order.popleft()
+    except IndexError:
+        return None
 
 @app.post("/api/papers/{pid}/supersede")
 def supersede_paper(pid: str, body: dict):
@@ -1504,9 +1550,7 @@ def supersede_paper(pid: str, body: dict):
 
 @app.get("/api/open-request")
 def open_request():
-    pid = _pending_open["pid"]
-    _pending_open["pid"] = None
-    return {"pid": pid, "quitting": _QUITTING["user"]}
+    return {"pid": _pending_open_pop(), "quitting": _QUITTING["user"]}
 
 @app.get("/api/zotero/items")
 def zotero_items():
@@ -1761,9 +1805,14 @@ def _late_rm_paper_dir(pid: str, p: dict, d: str):
                 if any(os.path.normcase(os.path.dirname(r["path"] or "")) == os.path.normcase(d)
                        for r in db.q("SELECT path FROM papers")):
                     return
-            except Exception:
+            except Exception as e:
+                _applog(f"收旧论文夹 {d} 查库失败，放弃这一轮（目录留在盘上，用户看得见也删得掉）：{_human_msg(e)}")
                 return
             shutil.rmtree(d, ignore_errors=True)
+        if os.path.exists(d):
+            # 60 秒都没删掉（多半是杀软/阅读器一直攥着句柄）：留一行日志，
+            # 否则盘上凭空多出一个占空间的旧目录，用户无从知道它是什么
+            _applog(f"旧论文夹 60 秒内没删掉，留在盘上：{d}")
     threading.Thread(target=work, daemon=True).start()
     with _dir_lock:
         _dir_cache.pop(pid, None)
@@ -1973,6 +2022,11 @@ def _drain_subtasks(pid: str, futs: dict) -> bool:
                     # 锁内读改写合并落库：懒翻译按坐标存的旧键不被整包覆写抹掉
                     db.fig_caps_add(pid, got)
                     _applog(f"析读 {pid}: 图注中文 {len(got)} 条")
+                else:
+                    # 限流/超时/坏 JSON 都在 translate_captions 里被收敛成 {}，原先只在
+                    # got 非空时记日志——翻译挂了用户在灯箱里只看到英文图注，
+                    # 事后翻 app.log 一个字都没有，"没图注"还是"翻译失败"分不出来
+                    _applog(f"析读 {pid}: 图注中文这次没生成（这篇没图注，或翻译被限流/解析失败——界面用英文原注）")
             elif got.get("text") or got.get("items"):
                 if _pid_gone(pid):
                     _applog(f"析读 {pid}: 论文已删除，丢弃七问·{k}")
@@ -2216,9 +2270,20 @@ def _analysis_loop():
             # 就把刚接手的任务当僵尸、状态清成 none（界面显示"未析读"，结果其实在跑）
             _job_start("analysis", pid)
             _analysis_pending.discard(pid)
-        db.update_paper(pid, analysis_status="running", analysis_error=None)
         try:
+            # 状态写入放进 try：这一句自己抛（磁盘满 / database is locked）时，原先线程
+            # 当场死、finally 之外没人摘登记簿——("analysis", pid) 永久留在 _live_jobs 里，
+            # 这篇从此"永远在跑"：/analyze 直接返回、界面一直排队，只能重启才解。
+            db.update_paper(pid, analysis_status="running", analysis_error=None)
             _run_analysis(pid, paras)
+        except Exception as e:
+            # 崩了要留痕：打包版没有 stdout，线程里的异常连一个字都留不下（前台只看到
+            # "通读中…"永远转）。状态落到 error，用户看得见也能重试。
+            _applog(f"析读 {pid} 线程异常：{_human_msg(e)}")
+            try:
+                db.update_paper(pid, analysis_status="error", analysis_error=_human_msg(e))
+            except Exception:
+                pass
         finally:
             _job_done("analysis", pid)
 
@@ -2538,8 +2603,10 @@ def _gen_six(p: dict, key: str):
         # 管线期 lens 与 summary 并行生成，调用方传入的快照里 summary 还是 None——
         # 照抄快照会让「换个学科」永远拿不到那句话，还被 v=2 缓存固化。现场重读一次。
         p = db.get_paper(pid) or p
-    s = json.loads(p["summary"]) if p.get("summary") else {}
-    return llm.answer_lens(p["title"], s.get("one_line", ""), claims, paras)
+    # 缓存字段一律走 _json_of：老版本/半截写盘会留下坏 JSON，直接 json.loads 会让
+    # 这一问独自 500，错误还会被 human_error 归成"模型没按约定格式回"（甩给模型）
+    s = _json_of(p.get("summary"))
+    return llm.answer_lens(p["title"], (s or {}).get("one_line", ""), claims, paras)
 
 def _demo_terms(title, paras) -> dict:
     return {"terms": [{"en": "demo term", "zh": "演示术语", "kind": "method"}], "abbrs": {}}
@@ -3338,6 +3405,12 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
             raise HTTPException(404, f"页码越界：这篇只有 {len(doc)} 页")
         if not (36 <= dpi <= 400):
             raise HTTPException(400, "dpi 只支持 36–400")
+        # 坐标必须是有限数：Pydantic 放行 nan/inf，而 Rect 不校验、
+        # clip.is_empty（x0>=x1）与 clip.width<4 对 nan 恒为 False——nan 会一路进
+        # get_pixmap，喂给底层的 fz_round_rect 是未定义行为（原生巨幅 bbox / 500）
+        coords = (x0, y0, x1, y1)
+        if not all(math.isfinite(c) for c in coords):
+            raise HTTPException(400, "截图坐标不合法")
         clip = pymupdf.Rect(x0, y0, x1, y1) & doc[page].rect
         if clip.is_empty or clip.width < 4 or clip.height < 4:
             raise HTTPException(400, "截图范围太小")
@@ -3436,13 +3509,18 @@ RECON_SYSTEM = """你在为一次跨论文的提问挑选相关文献。给你�
 挑出与问题最相关的篇目（最多 8 篇，按相关度从高到低）。只输出一个 JSON 数组（元素是编号整数），
 不要输出任何别的文字；一篇都不相关就输出 []。"""
 
-def _paper_by_title(title: str):
+def _title_index():
+    """一次拿全库的（行, 规范化标题）：refs 里每一条都调 _paper_by_title 的话，
+    每条都把整个库列一遍（N+1 的全表捞），refs 长度还没上限。"""
+    return [(r, (r["title"] or "").strip().lower()) for r in db.list_papers()]
+
+def _paper_by_title(title: str, index=None):
     """按标题找论文（大小写不敏感）。全等优先；其次唯一包含；都不中返回 None。
     跨文献提问的《标题》引用是模型/用户手打的，容得起一点点不齐，但不该撞错篇。"""
     t = (title or "").strip().lower()
     if not t:
         return None
-    norm = [(r, (r["title"] or "").strip().lower()) for r in db.list_papers()]
+    norm = _title_index() if index is None else index
     for r, rt in norm:
         if rt == t:
             return r["id"]
@@ -3566,14 +3644,18 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
             cand = [x for x in (ref_pids or []) if x != pid]
             if len(cand) > 3:
                 # 引用可能带着已删除的 pid：get_paper 回 None，先滤掉再侦察
-                cand = _recon_pick(question, [p for p in map(db.get_paper, cand) if p]) or cand[:3]
+                cand = _recon_pick(question, [p for p in map(db.get_paper, cand) if p]) or cand[:4]
             if len(cand) > 4:
                 # 分层取材：候选多于 4 篇，全文装不下——先逐篇抽相关段落，作答只见摘录。
                 # 取材是分钟内但可感的等待，先发一条状态让"在等"看得见
                 yield _sse({"type": "status", "mode": "gather", "n": min(len(cand), 8)})
                 others = _gather_others(question, cand)
             else:
-                for x in cand[:3]:
+                # 恰好 4 篇原来会**静默**丢掉第 4 篇（这里切的是 [:3]，而上面走的是"多于 4
+                # 才取材"）——读数与 README 的口径都是"超过 4 篇才转为逐篇取材"。
+                # 装的预算是按篇数均分的（llm.ask_messages：每篇 60000/篇数），多带一篇
+                # 只是每篇少给一点，不会撑爆上下文。
+                for x in cand[:4]:
                     o = db.get_paper(x)
                     if o:
                         others.append({"title": o.get("title") or o.get("filename") or "未命名",
@@ -3624,10 +3706,10 @@ def ask(pid: str, body: dict):
     _require_paras(pid)
     conv_id = _valid_conv(pid, body.get("conv_id")) or db.conv_list(pid)[0]["id"]
     ref_pids = []
-    for t in (body.get("refs") if isinstance(body.get("refs"), list) else []):
-        if not isinstance(t, str):
-            continue
-        pid2 = _paper_by_title(t)
+    titles = [t for t in (body.get("refs") if isinstance(body.get("refs"), list) else []) if isinstance(t, str)]
+    index = _title_index() if titles else None      # 建一次表，整批 refs 共用
+    for t in titles:
+        pid2 = _paper_by_title(t, index)
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
     return _sse_response(_stream_answer(p, conv_id, question, ref_pids), keep_alive=True)
@@ -3900,6 +3982,20 @@ def _pdf2zh_env(service: str, cfg: dict):
         return envs, "api.deepseek.com"
     return {}, ""
 
+def _translate_flavor(service: str, cfg: dict) -> str:
+    """页级缓存指纹里"换模型/换端点"那一维。key 一定不能进（每人自己的、还会变），
+    relay 的本地 base_url 也不能进（端口每进程都变，进去等于每轮都作废缓存）——
+    只取"哪个模型 + 哪个上游端点"，那才是会改变译文风格与术语口径的东西。
+    bing/google/deepl 不吃 prompt，没有模型这一维，回空串。"""
+    if service not in translate_full.LLM_SERVICES:
+        return ""
+    prov = cfg.get("provider") or {}
+    model = (prov.get("model") or "").strip()
+    base = (prov.get("base_url") or "").strip()
+    u = urlparse(base)
+    host = (u.hostname or "") + (f":{u.port}" if u.port else "")
+    return f"{service}|{model}|{host}"
+
 def _claim_existing_translation(pid: str) -> dict:
     """认领已经写完的成品译文：pdf2zh 是独立进程，可能在本进程启动**之后**才把
     成品写完，没人认领界面上就永远停在「全文翻译」。有成品就登记 dual/mono、
@@ -3988,6 +4084,7 @@ def translate_full_start(pid: str, force: bool = False):
         translate_full.start(pid, src, paper_dir(pid), used,
                              cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                              note=note, engine=engine,
+                             flavor=_translate_flavor(used, cfg),
                              glossary_rows=glossary_rows, fresh=force,
                              mono_name=f"{nb}（译文）.pdf", dual_name=f"{nb}（双语）.pdf")
         db.update_paper(pid, translate_status="running", translate_error="")

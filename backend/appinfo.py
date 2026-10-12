@@ -114,6 +114,23 @@ def data_dir() -> str:
         return port
     return legacy
 
+def _merge_move(src: str, dst: str):
+    """把 src 挪到 dst 名下。dst 已存在时**递归合并**，而不是 shutil.move 的
+    "整个塞进 dst 里面"：目标侧若已有一个同名子目录（以前指过这个目录、手工拷过一份、
+    上次迁移中途断了），move 会把它塞成 papers/papers/…——DB 里的 path 还指着外层，
+    整库文件在盘上"消失"（到处 PDF_GONE），_repair_paper_paths 也救不回。
+    同名项保留目标侧那份（用户数据不做覆盖），源侧剩下的留给用户自己看。"""
+    if not os.path.exists(dst):
+        shutil.move(src, dst)
+        return
+    if os.path.isdir(src) and os.path.isdir(dst):
+        for name in os.listdir(src):
+            _merge_move(os.path.join(src, name), os.path.join(dst, name))
+        try:
+            os.rmdir(src)          # 只收空壳；还有没搬成的项就留着
+        except OSError:
+            pass
+
 def migrate_if_needed():
     """按指针把旧数据搬去新位置。必须在任何模块打开数据库**之前**调用。
 
@@ -135,14 +152,13 @@ def migrate_if_needed():
         s = os.path.join(src, name)
         d = os.path.join(ptr, name)
         if os.path.isdir(s):
-            shutil.move(s, d)
+            _merge_move(s, d)
         elif os.path.isfile(s):
             os.replace(s, d)
     src_eng = os.path.join(os.path.dirname(src), "engines")
     if os.path.isdir(src_eng):
         dst_eng = os.path.join(os.path.dirname(ptr), "engines")
-        if not os.path.isdir(dst_eng):
-            shutil.move(src_eng, dst_eng)
+        _merge_move(src_eng, dst_eng)
 
 def version() -> str:
     """版本号只有一个来源：仓库根的 VERSION 文件（打包时一并带上）。"""

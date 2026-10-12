@@ -273,18 +273,28 @@ function cheerEgg() {
    深夜它另有躺平睡觉、翻译时它在埋头干活，这两种状态不打盹。 */
 const dozing = ref(false)
 const IDLE_MS = 180000
-let idleTimer = 0
+let idleTimer = 0, wakeAt = 0
 function napCheck() {
   if (sleepEgg.value || tranSt.value === 'running') return
   dozing.value = true
 }
+/* 空转计时器最多每秒重设一次：pointermove 是每帧都来的，原先每次鼠标移动都
+   clearTimeout + setTimeout 重建一个 3 分钟的定时器（高频移动下每秒上千次分配）；
+   真正的唤醒动作（蛋抖一下）仍然即时，不受节流影响 */
 function wakeEgg() {
-  clearTimeout(idleTimer)
-  idleTimer = setTimeout(napCheck, IDLE_MS)
   if (dozing.value) {
     dozing.value = false
     topPet.wobbleOnce(); deskPet.wobbleOnce()
+    wakeAt = performance.now()
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(napCheck, IDLE_MS)
+    return
   }
+  const now = performance.now()
+  if (now - wakeAt < 1000) return
+  wakeAt = now
+  clearTimeout(idleTimer)
+  idleTimer = setTimeout(napCheck, IDLE_MS)
 }
 
 /* ---------------- 拖入导入 ----------------
@@ -559,10 +569,10 @@ watch(() => store.analysis.status, (n, o) => {
   }
 })
 
-let anaStarting = false
+const anaStarting = ref(false)
 async function doAnalyze() {
-  if (!store.currentId || anaBusy.value || anaStarting) return
-  anaStarting = true        // POST 在途、状态还没翻成 running 的窗口里，双击不该再发一条
+  if (!store.currentId || anaBusy.value || anaStarting.value) return
+  anaStarting.value = true   // POST 在途、状态还没翻成 running 的窗口里，双击不该再发一条
   try {
     analyzeReq = { id: store.currentId, at: Date.now() }
     await api.analyze(store.currentId)
@@ -571,7 +581,7 @@ async function doAnalyze() {
       topPet.rollOnce(); reloadSummary()
       store.viewer.railUser = true
     }
-  } finally { anaStarting = false }
+  } finally { anaStarting.value = false }
 }
 
 /* 长任务的「停止」：后端是协作式取消，析读在阶段边界收手（已生成的部分保留），
@@ -777,6 +787,14 @@ async function saveSettings(body) {
 }
 
 const anaBusy = computed(() => ['running', 'queued'].includes(store.analysis.status))
+/* 按钮文案与禁用态都要认"点了但状态还没翻"的那一拍：全文翻译那边有 tranStarting，
+   析读原先只有一份非响应式的守卫——POST 在途时按钮既不 disabled 也没变字，
+   连点两下看着像没反应（第二下其实被静默吃掉了）。两份口径现在一致。 */
+const anaLabel = computed(() => {
+  if (store.analysis.status === 'queued') return t('排队中…')
+  if (store.analysis.status === 'running' || anaStarting.value) return t('通读中…')
+  return store.analysis.status === 'done' ? t('重新析读') : t('析读')
+})
 /* 演示模式 = 没配 key 或勾了演示。界面上不标注的话，新用户拿到一手假数据
    还以为是 AI 就这水平——常驻一枚小徽标，点了直达设置。 */
 const demoOn = computed(() => !!store.settings && (store.settings.mock || !store.settings.provider?.has_key))
@@ -972,9 +990,8 @@ function onKey(e) {
         </button>
         <button v-if="tranSt === 'running'" class="ghost" @click="stopTranslate"
                 :title="t('已译的页会保留')">{{ t('停止') }}</button>
-        <button class="primary" @click="doAnalyze" :disabled="anaBusy">
-          {{ store.analysis.status === 'queued' ? t('排队中…') : (store.analysis.status === 'running' ? t('通读中…')
-             : (store.analysis.status === 'done' ? t('重新析读') : t('析读'))) }}
+        <button class="primary" @click="doAnalyze" :disabled="anaBusy || anaStarting">
+          {{ anaLabel }}
         </button>
         <button v-if="anaBusy" class="ghost" @click="stopAnalyze"
                 :title="t('已生成的内容会保留')">{{ t('停止') }}</button>

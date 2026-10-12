@@ -123,7 +123,7 @@ function downloadCsv() {
 </script>
 
 <template>
-  <Transition name="fade" appear>
+  <Transition name="pop" appear>
     <div class="cmp-mask" ref="maskEl" v-if="open" tabindex="-1" @keydown="onKey" @click.self="closeClick">
       <div class="cmp-panel">
         <div class="cmp-head">

@@ -5,6 +5,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, store, toast, jumpTo, jumpPara, paraByIdx, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR,
          paperEpoch, samePaper, reloadSummary, gotoPaperPara } from '../store'
 import { useEdgeResize } from '../edgeResize'
+import { scrollBehavior } from '../motion'
 import { normText } from '../find'
 import { prettyChem } from '../chem'
 import { t, isEn } from '../i18n'
@@ -96,7 +97,7 @@ function gotoSix(k) {
   setTimeout(() => {
     const i = SIX.findIndex(s => s.k === k)
     const el = rbodyEl.value?.querySelectorAll('.six')[i]
-    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    if (el) el.scrollIntoView({ block: 'start', behavior: scrollBehavior() })
   }, 120)
 }
 function askIt(q) {
@@ -177,10 +178,16 @@ async function addTerm() {
   termForm.value = { term_en: '', term_zh: '' }
   loadTerms()
 }
+let delTermBusy = false
 async function delTerm(id) {
+  /* 同 addTerm 的守卫：删除要等一次往返，行还在列表上时连点第二下会打两个 DELETE，
+     第二个回来变 404 弹一条无意义的报错 */
+  if (delTermBusy) return
+  delTermBusy = true
   try {
     await api.glossaryDelete(id, store.currentId)
   } catch (e) { toast(e.message); return }
+  finally { delTermBusy = false }
   loadTerms()
 }
 function onPrefill() {
@@ -482,8 +489,12 @@ async function addGterm() {
   gform.value = { term_en: '', term_zh: '' }
   loadGterms()
 }
+let delGtermBusy = false
 async function delGterm(id) {
+  if (delGtermBusy) return      // 同上：连点两次的第二发会变成 404
+  delGtermBusy = true
   try { await api.glossaryGlobalDelete(id) } catch (e) { toast(e.message); return }
+  finally { delGtermBusy = false }
   loadGterms()
 }
 async function saveToGlobal(term) {

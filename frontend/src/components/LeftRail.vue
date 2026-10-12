@@ -519,11 +519,15 @@ function onCmpGoto(c) {
       </div>
     </div>
     </Transition>
+    <!-- 拖放区与选择条是同一块位置的两副面孔：进多选时一个淡出、一个滑入，
+         别让前者"啪"地消失（动效只做了一半） -->
+    <Transition name="hint-swap">
     <div class="drop-hint" :class="{ over, hot: zotArmed }" v-show="!selMode"
          @mousedown="hintDown" @mouseup="hintUp" @mouseleave="hintUp" @click="hintClick"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
       {{ t('拖入 PDF 或点击导入') }}
     </div>
+    </Transition>
     <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFile" />
     <ZoteroDialog v-model:open="zotOpen" @imported="onZotImported" />
     <CompareOverlay :open="cmpOpen" :ids="cmpIds" @close="cmpOpen = false" @goto="onCmpGoto" />

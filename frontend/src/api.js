@@ -176,11 +176,14 @@ export const ROLE_ZH = {
   control: '对照参比', boilerplate: '标准流程', extension: '优化拓展', limitation: '让步局限',
 }
 const KIND_ZH = { lookup: '查译', region: '选区问答', note: '批注' }
+/* 论证色带：写死的十六进制在暗色主题下会反向——深灰混进黑底（隐形）、浅灰在暗底上刺眼。
+   与 ROLE_TEXT_COLOR 同一个口径，改成主题变量：四档由强到弱的灰阶交给 token 定，
+   色带在哪个主题下都自洽 */
 export const ROLE_COLOR = {
-  claim: '#1d4e5f',                                                    // 唯一彩色：核心主张
-  evidence: '#57534a', gap: '#57534a',                                 // 深灰：论证主干
-  control: '#8e8a80', extension: '#8e8a80', limitation: '#8e8a80',      // 中灰：外围与让步
-  background: '#c9c4ba', boilerplate: '#c9c4ba',                       // 浅灰：铺垫与标准流程
+  claim: 'var(--accent)',                                              // 唯一彩色：核心主张
+  evidence: 'var(--ink-2)', gap: 'var(--ink-2)',                       // 深灰：论证主干
+  control: 'var(--ink-3)', extension: 'var(--ink-3)', limitation: 'var(--ink-3)',  // 中灰：外围与让步
+  background: 'var(--hairline)', boilerplate: 'var(--hairline)',       // 浅灰：铺垫与标准流程
 }
 export const ROLE_TEXT_COLOR = {
   claim: 'var(--accent-deep)', evidence: 'var(--ink)', gap: 'var(--ink)',

@@ -103,22 +103,3 @@ async function doExport() {
     </div>
   </Transition>
 </template>
-
-<style scoped>
-.cite-modal { width: min(560px, 92vw); }
-.cite-body { max-height: 56vh; overflow-y: auto; padding: 4px 4px 8px; }
-.cite-grp { margin-bottom: 10px; }
-.cite-grp-name { font-size: var(--fs-xs); color: var(--ink-3); margin: 8px 6px 4px; }
-.cite-row {
-  display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: 6px;
-  cursor: pointer;
-}
-.cite-row:hover { background: var(--paper-2, rgba(0, 0, 0, 0.03)); }
-.cite-row.on { background: rgba(29, 78, 95, 0.07); }
-.cite-row input { margin-top: 2px; }
-.c-fmt { font-weight: 600; font-size: var(--fs-sm); color: var(--ink); white-space: nowrap; }
-.c-ex {
-  font-size: var(--fs-xs); color: var(--ink-3); overflow: hidden;
-  white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left;
-}
-</style>

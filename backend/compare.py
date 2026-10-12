@@ -11,6 +11,7 @@
 """
 import hashlib
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fsutil
@@ -122,6 +123,25 @@ def _mock(paper: dict, meta: list) -> dict:
 # 材料指纹盖住"重新析读后内容变了"的情况：主张文本或段数一变，缓存自动失效。
 _CACHE: dict = {}
 
+# 同一个格子（同篇、同维度集、同材料）并发只抽一次：缓存是"先查后写"，
+# 两个窗口同时打开同一张对比表 / 连点"开始对比"时，同一篇会被抽两遍——那是真金白银。
+# 与 _CACHE 同生命周期：缓存上限收表时顺手把没人用的锁摘掉。
+_CACHE_LOCKS: dict = {}
+_CACHE_LOCKS_GUARD = threading.Lock()
+
+def _cell_lock(key):
+    with _CACHE_LOCKS_GUARD:
+        lk = _CACHE_LOCKS.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _CACHE_LOCKS[key] = lk
+        return lk
+
+def _prune_cell_locks():
+    with _CACHE_LOCKS_GUARD:
+        for k in [k for k, lk in _CACHE_LOCKS.items() if k not in _CACHE and not lk.locked()]:
+            _CACHE_LOCKS.pop(k, None)
+
 def _material_sig(claims: list, n_paras: int) -> str:
     h = hashlib.md5()
     for c in (claims or []):
@@ -149,22 +169,27 @@ def extract_all(papers: list, material_of, demo: bool = False, meta: list = None
         hit = _CACHE.get(ckey)
         if hit is not None:
             return p["id"], hit
-        # 标题回落用空串不用文件名：析读管线就是 title or ""，两边一致前缀才命中
-        msgs = _messages(p.get("title") or "", paras, claims, annos, meta)
-        try:
-            # 输出预算随维度数走：12 个维度一格约百 token，1600 的死数会在大表上
-            # 静默截断 JSON（格变成"抽取失败"）；封顶防跑飞
-            budget = min(4000, 600 + 160 * len(keys))
-            cells = _norm(chat_json(msgs, max_tokens=budget, scene="数据对比"), keys, n_paras=len(paras))
-            if len(_CACHE) > 400:
-                # 触顶**按插入序淘汰最旧的一批**（dict 保序），留 3/4 大头。
-                # 原来是一把 clear()：用户下次打开对比表全表重抽，那全是真金白银
-                fsutil.cap_oldest(_CACHE, 300)
-            _CACHE[ckey] = cells
-            return p["id"], cells
-        except Exception:
-            return p["id"], {k: {"text": "抽取失败，可重试",
-                                 "ref": None} for k in keys}
+        with _cell_lock(ckey):
+            hit = _CACHE.get(ckey)         # 等锁这一拍里别人可能已经抽好了
+            if hit is not None:
+                return p["id"], hit
+            # 标题回落用空串不用文件名：析读管线就是 title or ""，两边一致前缀才命中
+            msgs = _messages(p.get("title") or "", paras, claims, annos, meta)
+            try:
+                # 输出预算随维度数走：12 个维度一格约百 token，1600 的死数会在大表上
+                # 静默截断 JSON（格变成"抽取失败"）；封顶防跑飞
+                budget = min(4000, 600 + 160 * len(keys))
+                cells = _norm(chat_json(msgs, max_tokens=budget, scene="数据对比"), keys, n_paras=len(paras))
+                if len(_CACHE) > 400:
+                    # 触顶**按插入序淘汰最旧的一批**（dict 保序），留 3/4 大头。
+                    # 原来是一把 clear()：用户下次打开对比表全表重抽，那全是真金白银
+                    fsutil.cap_oldest(_CACHE, 300)
+                    _prune_cell_locks()
+                _CACHE[ckey] = cells
+                return p["id"], cells
+            except Exception:
+                return p["id"], {k: {"text": "抽取失败，可重试",
+                                     "ref": None} for k in keys}
 
     with ThreadPoolExecutor(max_workers=min(3, max(1, len(papers)))) as ex:
         futs = [ex.submit(one, p) for p in papers]

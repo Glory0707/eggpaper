@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { api, askStream, store, toast, jumpPara, openPaper, gotoPaperPara, paperName } from '../store'
 import { confirmBox, inputBox } from '../dialog'
 import { copyWithToast, frameBuffer } from '../clip'
+import { scrollBehavior } from '../motion'
 import { t } from '../i18n'
 import MdLite from './MdLite.vue'
 import CompareOverlay from './CompareOverlay.vue'
@@ -56,6 +57,11 @@ const scrollEl = ref(null)
 const atBottom = ref(true)
 let ctl = null                   // 当前流：{abort, done}
 let gotDone = false
+/* 消息的列表 key：本地流水号，**不随落库回传的 id 变**。以前 key 用 m.id || 'm' + i，
+   答完那一拍 applyIds 把 id 换成服务端行号 → TransitionGroup 认为换了一条消息，
+   整条问答卸载重挂：入场动画重放一次，用户在答案上正在着的划选/复制被清掉
+   （失败分支 assistant_id 为 None 时 key 又不变，同一交互两种行为） */
+let msgSeq = 0
 
 const curConv = computed(() => convs.value.find(c => c.id === convId.value) || null)
 /* 选择器里只列"问过话的"会话 + 当前这一摊。
@@ -107,7 +113,7 @@ function onScroll() {
 function scrollBottom(smooth = true) {
   const el = scrollEl.value
   if (!el) return
-  el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+  el.scrollTo({ top: el.scrollHeight, behavior: scrollBehavior(smooth) })
   atBottom.value = true
 }
 function follow() { if (atBottom.value) { const el = scrollEl.value; if (el) el.scrollTop = el.scrollHeight } }
@@ -121,9 +127,9 @@ async function send(q, pidArg) {
   if (pid.value !== reqPid) { busy.value = false; return }   // 等会话的空当换了篇：这次发送作罢
   text.value = ''
   await nextTick(); autoGrow(); inputEl.value?.focus()
-  const um = reactive({ role: 'user', content: q })
+  const um = reactive({ uid: ++msgSeq, role: 'user', content: q })
   msgs.value.push(um)
-  const m = reactive({ role: 'assistant', content: '', streaming: true, error: '' })
+  const m = reactive({ uid: ++msgSeq, role: 'assistant', content: '', streaming: true, error: '' })
   msgs.value.push(m)
   gotDone = false
   await nextTick(); scrollBottom(false)
@@ -195,6 +201,9 @@ async function regen() {
     const r = await api.qaRegenerate(reqPid, reqCid)
     // 等待期间换了篇/换了会话：别 pop 新地方的消息，更别把旧篇的问题发进新篇
     if (pid.value !== reqPid || convId.value !== reqCid) return
+    // 服务端说"没有可重生成的那条"（最后一行不是回答）：本地别跟着 pop，
+    // 否则界面少了一条、库里还在——回拉一次历史，以库为准
+    if (!r || !r.question) { await loadMsgs(); return }
     while (msgs.value.length && msgs.value[msgs.value.length - 1].role !== 'user') msgs.value.pop()
     msgs.value.pop()
     await nextTick()
@@ -463,7 +472,7 @@ onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); docu
       </div>
 
       <TransitionGroup name="qa-msg">
-      <div v-for="(m, i) in msgs" :key="m.id || 'm' + i" class="qa-msg" :class="m.role">
+      <div v-for="(m, i) in msgs" :key="m.uid ?? m.id ?? 'm' + i" class="qa-msg" :class="m.role">
         <div class="q-role">{{ m.role === 'user' ? t('你') : 'EGGPAPER' }}</div>
         <template v-if="m.role === 'assistant'">
                     <div v-if="m.streaming && !m.content" class="q-body md qa-wait">{{ m.hint || t('正在想…') }}</div>

@@ -67,7 +67,8 @@ async function copy(row) {
 </script>
 
 <template>
-  <Transition name="fade">
+  <!-- 与另一处引用弹窗（CiteExport）、对话框、设置同一收入场：同为模态，别一个淡入一个浮起 -->
+  <Transition name="pop">
     <div class="modal-mask" v-if="store.cite.open && store.paper" @click.self="store.cite.open = false" ref="maskEl">
       <div class="modal cite">
         <div class="modal-head">

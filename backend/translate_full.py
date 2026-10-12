@@ -625,7 +625,7 @@ def _page_timeout(service: str) -> float:
     return _page_profile(service)["timeout"]
 
 def page_sig(pdf_path: str, service: str, extra: str, engine: str,
-             glossary_rows: list) -> str:
+             glossary_rows: list, flavor: str = "") -> str:
     """页级缓存的指纹：要覆盖一切"会改变产物"的输入——源文件（mtime+大小）、
     翻译服务、附加参数、引擎名、术语气息。
 
@@ -644,7 +644,11 @@ def page_sig(pdf_path: str, service: str, extra: str, engine: str,
         return json.dumps({"m": int(os.path.getmtime(pdf_path)),
                            "s": os.path.getsize(pdf_path),
                            "svc": service, "extra": extra or "",
-                           "eng": engine or "", "g": gsig})
+                           "eng": engine or "", "g": gsig,
+                           # f = 哪个模型 + 哪个上游端点。同一个服务名下换模型/换端点，
+                           # 旧页会被整页复用 → 一份成品里两种模型风格、两套术语口径混排，
+                           # 界面还照报"术语已锁定"（2026-10-13 审计）
+                           "f": flavor or ""})
     except OSError:
         return ""
 
@@ -946,7 +950,7 @@ def _assemble(out_dir: str, pdf_path: str, n: int, results: dict, mono_name: str
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "",
           glossary_rows: list = None, fresh: bool = False,
-          mono_name: str = "", dual_name: str = "") -> dict:
+          mono_name: str = "", dual_name: str = "", flavor: str = "") -> dict:
     """按页流水线翻译全文：进度=完成页数，坏页回退原文，一页卡不住整份文档。
 
     glossary_rows：本篇术语表（[{term_en, term_zh}, …]）。非空且服务是 LLM 家族时
@@ -1014,7 +1018,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 for stale in dict.fromkeys(("mono.pdf", "dual.pdf", mono_name, dual_name)):
                     if stale:
                         fsutil.rm_quiet(os.path.join(out_dir, stale))
-            sig = page_sig(pdf_path, service, extra, engine, glossary_rows)
+            sig = page_sig(pdf_path, service, extra, engine, glossary_rows, flavor)
             mark = os.path.join(page_root, ".src.json")
             try:
                 with open(mark, encoding="utf-8") as f:
@@ -1105,6 +1109,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         ml = pdfparse.page_count(got["mono"])
                     except Exception:
                         ml = 0
+                    unmapped = 0
                     with lock:
                         for p in batch:
                             if ml == n:
@@ -1112,9 +1117,21 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                             elif ml == len(batch):
                                 at = p - (a - 1)             # 只含区间：按批内顺序排
                             else:
-                                at = min(p, max(0, ml - 1))
+                                # 页数既不是整本也不是批长：位置无从得知。原先是
+                                # min(p, ml-1)——多页一起指到同一张产物页，装出来的成品里
+                                # 出现**重复页**、一声不响（与 _prescan_reuse 修过的
+                                # "第 16 页插到第 9 页位置"同源）。认得出位置的按批内顺序
+                                # 先认下，认不出的如实判失败、这页留原文：宁可少一页译文，
+                                # 也不给一页错的。
+                                at = p - (a - 1) if 0 <= p - (a - 1) < ml else None
+                            if at is None:
+                                unmapped += 1
+                                continue
                             results[p] = {"mono": got["mono"], "at": at}
                         j["pages"] = [len(results), n]
+                    if unmapped:
+                        say(f"全文翻译 {pid}: 第 {label} 页这批的产物页数 {ml} 与整本 {n} / 批长 "
+                            f"{len(batch)} 都对不上，{unmapped} 页保留原文（不猜位置，免得成品里出现重复页）")
                     return
                 if len(batch) > 1:
                     say(f"全文翻译 {pid}: 第 {label} 页整批两次都没成，拆成单页再各试一遍")

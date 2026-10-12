@@ -6,7 +6,6 @@
   --paper-deep: #f6f6f5;
   --card: #ffffff;
   --card-2: #ffffff;
-  --veil: rgba(255, 255, 255, 0.86);
   --care-wash: transparent;
 
   --ink: #1d1b17;
@@ -32,8 +31,6 @@
   --ok: #2e7d43;
   --vermilion-deep: #9d3a25;
 
-  --r-claim: #1d4e5f;
-
   --fs-scale: 1;
   --fs-xl: calc(15px * var(--fs-scale));
   --fs-md: calc(13px * var(--fs-scale));
@@ -57,21 +54,26 @@
 
   --shadow-pop: 0 2px 3px rgba(29, 27, 23, 0.1), 0 14px 36px -10px rgba(29, 27, 23, 0.26);
   --shadow-page: 0 1px 2px rgba(29, 27, 23, 0.14), 0 10px 28px -12px rgba(29, 27, 23, 0.24);
+
+  /* 彩蛋装扮（节日换装的矢量画）的"墨与纸"：颜色原本写死在 SVG 属性里，
+     暗色主题下近黑的线条直接融进卡片（围巾/学士帽/铅笔那几套几乎看不见）。
+     装扮取这三枚变量，其余彩色（朱砂、靛、绿）本身在两种底上都成立 */
+  --egg-ink: #1d1b17;
+  --egg-ink-2: #55524a;
+  --egg-pale: #f6f6f5;
+  --egg-hi: rgba(255, 255, 255, 0.4);
 }
 
 html[data-care='mung'] {
   --paper: #e4f2e6; --paper-deep: #daedde; --card: #ddf0e1; --card-2: #ecf7ee;
-  --veil: rgba(228, 242, 230, 0.86);
   --care-wash: rgba(199, 237, 204, 0.9);
 }
 html[data-care='cyan'] {
   --paper: #e2f2f2; --paper-deep: #d8ebeb; --card: #dceeee; --card-2: #e9f4f4;
-  --veil: rgba(226, 242, 242, 0.86);
   --care-wash: rgba(204, 232, 232, 0.9);
 }
 html[data-care='sand'] {
   --paper: #f6f6ea; --paper-deep: #efefe0; --card: #f1f1dd; --card-2: #f8f8ea;
-  --veil: rgba(246, 246, 234, 0.86);
   --care-wash: rgba(245, 245, 220, 0.9);
 }
 html[data-care='mung'], html[data-care='cyan'], html[data-care='sand'] { --ink-3: #5e5a51; }
@@ -182,7 +184,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 .main { display: flex; flex: 1; min-height: 0; position: relative; }
 
 .topbar {
-  position: relative;
+  /* 显式层级：破壳层（.hatch，z-index 70）是"纸面的装载遮罩"，不该把顶栏一起盖住——
+     以前顶栏是 z-index:auto，装载那几秒里整条顶栏被盖住且点不动，而同屏的左右栏
+     （.rail-wrap / .rail-grip 有正 z-index）却能点：同一层界面出现两种可点性。
+     80 高于破壳层、低于抽屉（210）与弹窗（500+），遮罩关系不变 */
+  position: relative; z-index: 80;
   display: flex; align-items: center; gap: 16px;
   height: 56px; padding: 0 14px;
   background: var(--card);
@@ -494,7 +500,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
   background: var(--card-2); color: var(--ink);
   font-size: var(--fs-sm); line-height: 1.6;
 }
-.paper-item .p-edit:focus { outline: none; }
+/* 改名框平时就带 accent 边框，原来 :focus 把 outline 也一并去掉 →
+   键盘用户在列表里看不出焦点落在哪个输入框，补一圈实线（与全局 :focus-visible 同款） */
+.paper-item .p-edit:focus { outline: 2px solid var(--accent-deep); outline-offset: 1px; }
 /* 多选：勾选框（文库行、Zotero 导入列表共用） */
 .p-check {
   width: 15px; height: 15px; border-radius: 3px; flex-shrink: 0;
@@ -539,7 +547,10 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 .plist-move { transition: transform var(--t-base) var(--ease-smooth); }
 .plist-enter-active { transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out); }
 .plist-enter-from { opacity: 0; transform: translateY(5px); }
-.plist-leave-active { display: none; }
+/* 入库/搜索过滤时的收场：原来 leave 直接 display:none，条目是"啪"地消失、
+   剩下的忽然往上一跳；给 110ms 的淡出让出场的走完，plist-move 再把余下的推上来 */
+.plist-leave-active { transition: opacity var(--t-fast) var(--ease-smooth), transform var(--t-fast) var(--ease-smooth); }
+.plist-leave-to { opacity: 0; transform: translateX(-6px); }
 
 /* 提问页的消息块：发出/答完轻浮入场，以前是硬弹出（与 rail 列表同款手感） */
 .qa-msg-enter-active { transition: opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out); }
@@ -580,6 +591,15 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
   transition: border-color var(--t-fast), background var(--t-fast);
 }
 .drop-hint:hover, .drop-hint.over { border-color: var(--accent-deep); background: var(--accent-soft); color: var(--accent-deep); }
+/* 拖放区 ↔ 选择条互换（同一块位置的两副面孔）：淡出的一拍把它脱出文档流，
+   否则两块同时占位、中间的列表被挤一下再弹回来 */
+.hint-swap-leave-active {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; margin: 0;
+  transition: opacity var(--t-fast) var(--ease-smooth);
+}
+.hint-swap-leave-to { opacity: 0; }
+.hint-swap-enter-active { transition: opacity var(--t-base) var(--ease-out); }
+.hint-swap-enter-from { opacity: 0; }
 
 /* 时段问候：取景框纸卡，淡入浮起、角标展开、下沉淡出；纯展示不挡操作。
    框随文字收紧（padding 小、圆角小），留白克制 */
@@ -626,7 +646,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 }
 .hatch-line i {
   display: block; height: 100%; background: var(--accent); opacity: 0.8; border-radius: 1px;
-  transition: width 260ms var(--ease-smooth);
+  transition: width var(--t-base) var(--ease-smooth);
 }
 .hatch-word {
   font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.16em;
@@ -789,7 +809,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 .rail-wrap {
   width: var(--rail-w, 336px); flex-shrink: 0; overflow: hidden;
   transition: width var(--t-slow) var(--ease-smooth);
-  position: relative;
+  /* 75：站在破壳层（70）之上——右栏是独立于纸面的内容，装载时不跟着变灰屏 */
+  position: relative; z-index: 75;
 }
 .rail-wrap.collapsed { width: 0; }
 body.rail-resizing .rail-wrap { transition: none; }
@@ -1056,7 +1077,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   text-align: left; white-space: normal; background: transparent;
   border: none; border-radius: 3px; padding: 6px 8px; cursor: pointer;
 }
-.cite-row:hover { background: var(--card-2); }
+.cite-row:hover { background: var(--btn-hover); }
 .cite-row .cr-k { flex: 0 0 104px; font-size: var(--fs-xs); font-weight: 600; color: var(--ink-2); }
 .cite-row .cr-k i {
   display: block; font-style: normal; font-weight: 400;
@@ -1068,6 +1089,23 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .cite-row .cr-cp { flex: 0 0 auto; opacity: 0; font-size: var(--fs-xs); color: var(--ink-3); }
 .cite-row:hover .cr-cp { opacity: 1; color: var(--accent); }
+
+/* 引用格式导出弹窗（CiteExport）——原先它自带一份 <style scoped>，是全项目唯一一处
+   组件私有样式，且里面的 --paper-2 全项目没有定义：hover 底色恒为写死的 3% 黑
+   （暗色主题下等于没有），选中态也是写死的浅色 accent（暗色下不可见）。
+   样式按纪律收进这里，颜色走主题变量 */
+.cite-modal { width: min(560px, 92vw); }
+.cite-body { max-height: 56vh; overflow-y: auto; padding: 4px 4px 8px; }
+.cite-grp { margin-bottom: 10px; }
+.cite-grp-name { font-size: var(--fs-xs); color: var(--ink-3); margin: 8px 6px 4px; }
+.cite-row .c-fmt { flex: none; font-weight: 600; font-size: var(--fs-sm); color: var(--ink); white-space: nowrap; }
+/* 反面样例（西文在前、中文在后）：direction: rtl 让省略号落在行首，尾部的年份/DOI 看得见 */
+.cite-row .c-ex {
+  flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--ink-3);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left;
+}
+.cite-row.on { background: var(--accent-soft); }
+.cite-row input { margin-top: 2px; }
 .cite-foot {
   display: flex; align-items: center; justify-content: flex-end; gap: 12px;
   margin-top: 15px; padding-top: 12px;
@@ -1141,7 +1179,10 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .md .md-gap { height: 8px; }
 .md .md-h { font-weight: 650; letter-spacing: -0.005em; margin-top: 12px; }
 .md .md-l1 { font-size: var(--fs-xl); margin-top: 14px; }
-.md .md-l2 { font-size: var(--fs-md); }
+/* 标题不得小于正文：以前 md-l2 挂在 --fs-md 上，右栏里与正文同大、主区里比正文还小
+   （h3/h4 走 .md-h 是正文号），四级标题的视觉顺序是反的。挂在"读的一档"上，
+   与正文齐平、比 h1 小一档，层级靠字重与上间距表达 */
+.md .md-l2 { font-size: var(--fs-read); }
 .md .md-h:first-child { margin-top: 0; }
 .md .md-li { padding-left: 15px; text-indent: -11px; margin-top: 3px; }
 .md .md-li::before { content: '·'; color: var(--ink-3); margin-right: 6px; }
@@ -1155,7 +1196,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--hairline); padding: 3px 8px;
   text-align: left; vertical-align: top;
 }
-.md .md-table th { font-weight: 650; background: var(--veil, rgba(0, 0, 0, 0.04)); }
+.md .md-table th { font-weight: 650; background: var(--paper-deep); }
 .md code {
   font-family: var(--mono); font-size: 0.92em; padding: 1px 4px; border-radius: 2px;
   background: var(--code-bg); color: var(--ink);
@@ -1186,7 +1227,10 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   /* 底缘浮层一条栈，谁也不压谁：缩放条 18–52 / 查找条 58–93 / 返回钮 100 起 /
      提示气泡 138 起（最瞬时的那个放最上）。以前气泡与缩放条同在 26px，报错长条会把
      缩放条从中截断；查找条则挂在 96 给气泡让位，底缘空出一大截、看着像飘在正文中间 */
-  position: fixed; bottom: 138px; left: 50%; transform: translateX(-50%);
+  /* 用独立 translate 而不是 transform: translateX(-50%) 居中：pop 入场动画动的就是
+     transform，会被 keyframe 整体替换——入场那 200ms 里左缘停在视口 50%、动画结束
+     再瞬移回中线（每条提示都抖一下）。同 .desk-float / .qa-tobottom 的写法 */
+  position: fixed; bottom: 138px; left: 50%; translate: -50% 0;
   z-index: 600; background: var(--ink); color: var(--card);
   font-size: var(--fs-sm); padding: 9px 16px; border-radius: 4px;
   box-shadow: var(--shadow-pop);
@@ -1218,7 +1262,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .claim-item:first-of-type { border-top: none; }
 .claim-item .c-head { display: flex; gap: 7px; align-items: flex-start; }
-.claim-item .c-id { font-family: var(--mono); font-size: var(--fs-xs); color: #fff; background: var(--r-claim); padding: 2px 6px; border-radius: 2px; flex-shrink: 0; letter-spacing: 0.08em; margin-top: 2px; }
+.claim-item .c-id { font-family: var(--mono); font-size: var(--fs-xs); color: #fff; background: var(--accent-btn); padding: 2px 6px; border-radius: 2px; flex-shrink: 0; letter-spacing: 0.08em; margin-top: 2px; }
 .claim-item .c-txt { font-family: var(--sans); font-weight: 650; font-size: var(--fs-read); line-height: 1.55; letter-spacing: -0.005em; flex: 1; }
 
 .fig-strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
@@ -1605,7 +1649,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .six-a { padding: 6px 0 13px 24px; }
 
-.six-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 210ms var(--ease-out); }
+.six-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--t-base) var(--ease-out); }
 .six-fold.open { grid-template-rows: 1fr; }
 .six-fold > .six-fold-in { overflow: clip; min-height: 0; }   /* clip：容器永远不可滚动，拖选到边界也不会把答案卷走 */
 .six-txt { font-size: var(--fs-read); line-height: 1.74; color: var(--ink); }
@@ -1680,7 +1724,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .upd-notes.muted { color: var(--ink-3); }
 .upd-prog { margin-bottom: 12px; }
 .upd-bar { height: 4px; border-radius: 2px; background: var(--hairline); overflow: hidden; }
-.upd-bar i { display: block; height: 100%; background: var(--accent); transition: width 200ms var(--ease-smooth); }
+.upd-bar i { display: block; height: 100%; background: var(--accent); transition: width var(--t-base) var(--ease-smooth); }
 .upd-pct { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); margin-top: 5px; }
 .upd-note { font-size: var(--fs-sm); line-height: 1.7; color: var(--ink-2); margin-bottom: 10px; }
 .upd-note.err { color: var(--vermilion); }
@@ -1698,7 +1742,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .eng-card .eng-track i {
   display: block; height: 100%; background: var(--accent);
-  transition: width 300ms var(--ease-smooth);
+  transition: width var(--t-base) var(--ease-smooth);
 }
 .eng-card .eng-sub { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.6; }
 .eng-card .eng-btns { display: flex; gap: 8px; margin-top: 9px; }
@@ -1727,7 +1771,8 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   padding: 6px 12px; border: none; background: transparent; cursor: pointer;
   font-size: var(--fs-sm); color: var(--ink);
 }
-.cite-item:hover { background: var(--card-2); }
+/* hover 底色原先是 --card-2：浅色主题下 --card 与 --card-2 都是纯白，悬停看不见任何反馈 */
+.cite-item:hover { background: var(--btn-hover); }
 .cite-item .box {
   width: 13px; height: 13px; border: 1.4px solid var(--ink-3); border-radius: 3px; flex: none;
   display: inline-flex; align-items: center; justify-content: center; color: transparent;
@@ -1739,6 +1784,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 .cite-item.lib { border-bottom: 1px dashed var(--hairline); border-radius: 0; }
 .cite-item.lib .t { font-weight: 600; }
+/* 分类全选行（模板里叫 .ga，此前全项目没有这条规则）：和单篇论文同权时，
+   组名看起来像"又一篇文献"。给一条浅色底带当组头，与它下面那几篇分开 */
+.cite-item.ga { background: var(--paper-deep); color: var(--ink-2); font-weight: 650; }
 
 html.dark {
   /* 中性黑：跟系统黑夜模式一个口径——底是黑、字是白，不再带暖棕（纸面永远白，见 .page 覆盖） */
@@ -1746,7 +1794,6 @@ html.dark {
   --paper-deep: #0a0a0b;
   --card: #171719;
   --card-2: #1f1f22;
-  --veil: rgba(10, 10, 11, 0.88);
   --ink: #ececee;
   --ink-2: #b8b8bd;
   --ink-3: #8f8f96;
@@ -1772,6 +1819,12 @@ html.dark {
 
   --shadow-pop: 0 2px 3px rgba(0, 0, 0, 0.45), 0 14px 36px -10px rgba(0, 0, 0, 0.62);
   --shadow-page: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px -12px rgba(0, 0, 0, 0.58);
+
+  /* 装扮的墨与纸跟着主题对调：暗底上装扮应该是"浅线描深色块"，否则线条消失 */
+  --egg-ink: #ececee;
+  --egg-ink-2: #b8b8bd;
+  --egg-pale: #171719;
+  --egg-hi: rgba(23, 23, 25, 0.35);
 }
 
 html.dark button.primary { background: var(--accent-btn); border-color: var(--accent-btn); }
@@ -1884,7 +1937,7 @@ html.dark .vis-img { background: #fff; }
 .claim-item .c-txt, .cc-quote, .mg-note .mg-body,
 .sel-pop .sp-zh, .sp-hits .chip, .ev-row .e-note,
 .cal-paper, .term-row .t-main, .p-author, .mg-note .mg-quote,
-.lb-cap, .zot-list .z-title { overflow-wrap: anywhere; }
+.lb-cap, .zot-list .z-title, .card-eye .ce-one { overflow-wrap: anywhere; }
 
 @keyframes imgIn { from { opacity: 0; } }
 .lightbox img { animation: imgIn 200ms var(--ease-out) both; }
@@ -1935,7 +1988,7 @@ html.dark .vis-img { background: #fff; }
 }
 .cmp-panel {
   background: var(--card); border: 1px solid var(--hairline); border-radius: 8px;
-  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-pop);
   width: min(1080px, 94vw); max-height: 88vh;
   display: flex; flex-direction: column; overflow: hidden;
 }
