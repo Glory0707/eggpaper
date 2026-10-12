@@ -4,7 +4,7 @@
 
 ## 一、构建 · 发布 · 重装验证
 
-- 发布一条龙：改 `VERSION` → `/d/hermes/uv-python/cpython-3.11.14-windows-x86_64-none/python.exe tools/build_installer.py --notes "…"`（前端构建→图标→冻结→Inno→latest.json 一条命令）。
+- 发布一条龙（VERSION 变更须用户指令，见 §五）：改 `VERSION` → `/d/hermes/uv-python/cpython-3.11.14-windows-x86_64-none/python.exe tools/build_installer.py --notes "…"`（前端构建→图标→冻结→Inno→latest.json 一条命令）。
 - **Gitee 更新源发布三步**（实测闭环，全程 API 化）：① 推 `release/latest.json` 到仓库 `update/latest.json`（浅克隆 + 令牌推送，**推完删克隆**——令牌明文留在 .git/config 里）；② 建 release 走 API：`POST /api/v5/repos/zhouao1207/eggpaper/releases`（tag_name=v<版本>、target_commitish=master）→ `PATCH …/releases/{id}` 补中文说明（POST 时 curl 命令行会把中文搅成 GBK 乱码，body 一律用 python requests/httpx 发）→ `POST …/releases/{id}/attach_files` multipart 传 exe（201 即成，92MB 约两分钟）；③ 闭环验证：匿名 curl raw 清单 → 匿名下载附件比 sha256 → `GET /api/update/check?force=true` 看 has_update。
 - **Gitee 的 raw 地址现在会 302 到 raw.giteeusercontent.com**：curl 验证要加 `-L`；客户端 update.py 跟随重定向所以无感。
 - **云端版本记录已清场**（0.1.0 基线重开时）：Gitee 的 11 个旧 release（v0.1.41~49/55/56）、同名 tag 与 `update/latest.json` 全删——查更新 404 按「没有更新」处理，降级提示不再出现；发版时按上面三步重建。tag 删除没有 API（DELETE /tags 404），走浅克隆 `git push origin :refs/tags/…`。
@@ -38,9 +38,9 @@
 
 ## 三、测试
 
-- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8469~8495）。**测试 python 用项目自带的 `.build-venv`**（uv 管，requirements 全套；playwright 不在 requirements 里，缺就 `uv pip install --python .build-venv/Scripts/python.exe playwright`；浏览器二进制在 `D:\hermes\ms-playwright`，全局环境变量 PLAYWRIGHT_BROWSERS_PATH 指着，换 venv 不用重下。原先记的"hermes venv"已被清空，别再找）。
+- 回归在 `_qa/`（gitignored）：Playwright + `serve_temp.py`，`EGGPAPER_DATA`/`PORT` 环境变量起临时实例（8465~8498）。**测试 python 用项目自带的 `.build-venv`**（uv 管，requirements 全套；playwright 不在 requirements 里，缺就 `uv pip install --python .build-venv/Scripts/python.exe playwright`；浏览器二进制在 `D:\hermes\ms-playwright`，全局环境变量 PLAYWRIGHT_BROWSERS_PATH 指着，换 venv 不用重下。原先记的"hermes venv"已被清空，别再找）。
 - **全量回归前关掉所有常驻浏览器**：Computer Use 轮的 MCP 浏览器开着 8492 页面进回归，两个 UI 测试（new_paper_flow/multiselect）双双超时挂掉、单跑全绿——常驻实例与测试的 msedge 抢资源/抢 GPU 的量级足够把 4 秒的等待拖过 30 秒超时。MCP 会话结束必须 browser_close，回归跑之前也扫一眼 tasklist 里的 msedge 残留。
-- **测试实例的引擎与缓存一个共享一个不共享**：引擎装在 `dirname(data_dir)/engines`（`_qa/engines`，全实例共用，别删）；babeldoc 资产缓存在各数据目录的 `home/.cache`（每实例 ~337MB，只增不减）——`_tmp_*` 目录定期清，只留手工夹具。
+- **测试实例的引擎目录 = `dirname(数据目录)/engines`**：所有 `_qa/_tmp_*` 沙箱都指到 `_qa/engines`——那是 engine-install 测试自己下假引擎的沙箱（跑前跑后都会清，别当共享资产）；要真引擎的测试一律多候选探测（`D:\eggpaper\engines` 优先，随数据目录搬过家、别写死；见 shots_readme.ENGINE_CANDS / real_paths）。babeldoc 资产缓存在各数据目录的 `home/.cache`（每实例 ~337MB，只增不减）——`_tmp_*` 目录定期清，只留手工夹具。
 - 打包版黄金验证：`EGGPAPER_DATA` 指临时目录后直接跑 `D:\eggpaper\eggpaper.exe`。打包版不认 PORT 环境变量（起在 PORTS[0]=8430），但数据目录重定向生效——正好验"别人装完第一次打开"的完整链路。
 - 端口格局：8430=打包实例（用户真库）兼源码默认端口（别同时开）；8431/8432 是 desktop.py PORTS 的后备。
 - 断言经验：异步的轮询着等；别抓第一条 toast（可能是上一个动作发的）；文件选择框用 `expect_file_chooser`；用 python 直接 POST 造的数据 UI 不认（store 不知道），走 UI 动作或显式刷新；判据写"到达终态"，别写"必须看到进度条"（本地下载半秒完，进度条一闪而过）。
@@ -74,14 +74,13 @@
 - mac 仓不定期跟随（2026-09-22 定）：Windows 是唯一主仓，`D:\tools\eggpaper-macos` 不再逐版本同步——攒一批再跟，或用户点名时才跟；mac 自己的 VERSION 独立走，不追 Windows 版本号。
 - **版本号只听用户指令**（2026-09-29 定）：历史版本记录已清场，`VERSION`=0.1.0 重开；此后版本号变更必须用户明示，构建/安装一律沿用 `VERSION` 现值，不自动递增；Gitee feed 发布同样等指令。
 - 界面减法：不放解释性小字；一条信息只住一个房间，别处只给指针（细则见 [visual.md](visual.md)）。判据：删掉这行字，用户会损失什么？
-- 文档同口径：简洁、删陈旧、不留版本流水账；持久经验进本文件。
+- 文档同口径：简洁、删陈旧、不留版本流水账；持久经验进本文件。文档对账时每条承诺都当断言核——不一致既可能是文档陈旧，也可能是代码缺口（README 承诺导出七问，代码只导了五问，就是这轮对出来的）。
 - 提交信息：中文、`type(scope): 说人话`，把"为什么"写进去，结尾带版本号。
 - **新功能动手前先盘已有功能**：「综述矩阵」与既有「数据对比」重叠 1:1（同为多篇对照表；对比还更成熟——维度可选、逐篇抽取抗幻觉、格子带锚点），发版当天即撤，改成提问面板引用后一键唤起对比；同批的「组会月报」也撤了——原材料就是日历导出清单，LLM 那步只是强行解释一遍（数据薄时硬凑主线，数据厚时复述一眼卡），想让它解释什么，提问面板引用几篇随时能问，不需要常驻功能。AI 直接产出文章的三宗罪（幻觉/上下文/AI 味）靠"整理而非代笔"规避：结构化输出 + 材料进上下文 + ¶ 溯源；纯生成类交付物（related work 草稿）没被真实用户要过就不做。
-- **AI 眉批退场（2026-10-11，用户拍板）**：判决式行间批注与正文抢注意力，还压缩阅读宽度——owner 自己都不打开不看，质量再好（预埋靶 4/5）也救不了"没人看"。业界（Moonlight/Elicit/ReadPaper/SciSpace）清一色收敛在摘要+对话，没有一家做行间批判；批判性阅读的需求是真的，出口换成七问⑤「哪里可疑、还有什么没解决？」——模型现场生成冲突/可疑/含糊三类、带 ¶n 依据，原眉批验证过的刀法提示词搬进它的 prompt。删功能时的工程口径：AI 产出与用户资产同表同渲染时，只删生成链（起停/进度/取消/互锁/档位/i18n），用户的钉子（lookup/region/note）与 DB 字段一根不动；存量 AI 行不下发即视为消失。另有环境坑：本会话的 heredoc 会吃 `\\`（f-string 与行尾续路反斜杠都炸过），长补丁写脚本文件执行、含反斜杠的匹配串用 chr(92) 拼。
-- **删功能要删到"渲染口径"那一层，截图也是功能面**（2026-10-11 复扫 AI 眉批残留）：只删生成链不够——页边渲染还挂着整套档位解析口（bandOf/kindColor/KIND_COLOR/BAND_OF_KIND）、i18n 的九类标签、三档笔触与筛选 chip 的 CSS（.b-good/.b-warn/.b-noise/.band-chip）、README 的「批注三种笔触」条目，以及**首屏截图**（reader/chat 两张 9 月的旧图还在展示已删功能的右栏面板与三档筛选）。收口做法：用户资产只剩一种墨色笔触（样式收进 CSS，模板不再按 kind 取色）、i18n/文档/截图同批清，i18n 死键用 `_qa/i18n_prune.py` 复验。截图管线口径：`shots_readme.py` 的沙箱 config 要带 `pdf2zh.path`（引擎随数据目录 C→D 迁过，写死会过期——多候选探测）；提问截图种一条拟真问答直写沙箱 sqlite（README 图不值得烧用户余额），citations 写侧照旧给 `'[]'`；**读侧也必须容 NULL**——qa_history 曾直接 `json.loads(citations)`，老库里 NULL 行一读就 500（本轮实测复现并修，回归加了 NULL 用例）。
+- **AI 眉批退场（2026-10-11，用户拍板）**：判决式行间批注与正文抢注意力，还压缩阅读宽度——owner 自己都不打开不看，质量再好（预埋靶 4/5）也救不了"没人看"。业界（Moonlight/Elicit/ReadPaper/SciSpace）清一色收敛在摘要+对话，没有一家做行间批判；批判性阅读的需求是真的，出口换成七问⑤「哪里可疑、还有什么没解决？」——模型现场生成冲突/可疑/含糊三类、带 ¶n 依据，原眉批验证过的刀法提示词搬进它的 prompt。删功能时的工程口径：AI 产出与用户资产同表同渲染时，只删生成链（起停/进度/取消/互锁/档位/i18n），用户的钉子（lookup/region/note）与 DB 字段一根不动；存量 AI 行不下发即视为消失。
+- **删功能要删到"渲染口径"那一层，截图也是功能面**（2026-10-11 复扫 AI 眉批残留）：只删生成链不够——页边渲染还挂着整套档位解析口（bandOf/kindColor/KIND_COLOR/BAND_OF_KIND）、i18n 的九类标签、三档笔触与筛选 chip 的 CSS（.b-good/.b-warn/.b-noise/.band-chip）、README 的「批注三种笔触」条目，以及**首屏截图**（reader/chat 两张 9 月的旧图还在展示已删功能的右栏面板与三档筛选）。收口做法：用户资产只剩一种墨色笔触（样式收进 CSS，模板不再按 kind 取色）、i18n/文档/截图同批清，i18n 死键用 `_qa/i18n_prune.py` 复验。截图管线口径：`shots_readme.py` 的沙箱 config 要带 `pdf2zh.path`（引擎随数据目录 C→D 迁过，写死会过期——多候选探测）；提问截图种一条拟真问答直写沙箱 sqlite（README 图不值得烧用户余额），citations 写侧照旧给 `'[]'`；**读侧也必须容 NULL**——qa_history 曾直接 `json.loads(citations)`，老库里 NULL 行一读就 500（本轮实测复现并修，回归加了 NULL 用例）。通例：删功能连根删——测量代码、设置项、样式、导出小节、i18n 键、文档与截图一起删，再用审计脚本数引用，不靠印象。
 - **测试的"真库"路径要跟数据目录一起搬**（2026-10-11）：写死 `%LOCALAPPDATA%\eggpaper\data` + 找不到就 `return` 的组合，让 test_api_smoke 整场 0s「全绿」（一个断言没跑），数据搬家后同类脚本静默降级成空转。修法：`_qa/real_paths.py` 多候选探测（`D:\eggpaper\data` 优先、旧安装路径兜底），`run_regression` 把每个测试输出里的「跳过/SKIP」行打出来——全绿也要看得见跳了什么。
 - 先测量再动手："糊/慢/卡"先变成数字（对比度脚本、分阶段耗时、墨段数）再谈改。长任务分批提速是范本（当年在行间批注上实测）：墙钟时间 ≈ 波数 × 单块时间，单块是模型的地板（带思考时实测 ~36s/块，调用处现已关思考、地板大降），能压的只有波数——实测数字就写在 `CHUNK_WORKERS` 常量旁，别凭感觉调。
-- 删功能连根删：测量代码、设置项、样式、导出小节、i18n 键一起删，再用审计脚本数引用，不靠印象。
 - 闭环习惯：改码 → 回归 E2E → 构建 → 静默重装 → 8430 验证 → 提交，缺一步不算完。
 - **加新守卫前先查既有测试对同一行为断言了什么**：对抗轮给 para_idx 加"非负"钳位、给删除加 404，全量回归当场被 test_edges 打脸——`para_idx=-1` 是前端"划词在段外"的合法约定，删除不存在的 mid 断言的是幂等 200。正确修法是精化而不是一刀切：只拒 < -1；"mid 不存在"幂等放行、"mid 存在但不属于这篇"才 403。守卫的粒度要贴着调用方的真实语义走。
 - **"两处行为不一致"不一定是缺陷**：同屏后面板不收（多选是连续工作流，接着对比/归类要面板）与导入后收面板（第一篇已自动打开，面板挡视线）是两个工作流各自的合理语义——把它"统一"掉的改动被回归当场打回（multiselect 第二次点 .lib-multi 依赖面板还开着）。改行为前先找依赖它的测试/工作流，找不到才真是漏网。
@@ -180,7 +179,7 @@
 - **「查找范围」要按用户此刻看得见的那一层定义，不是按数据来源**（2026-10-12）：in-paper 查找里的 `if (it.origPage < 0) continue`（本意大概是「跳过非原文页」）把译文/双语里的译文页整类踢出查找——用户视角就是「译文里中英文都搜不到」，而双语里只有左半（原文）有命中。修法：逐项扫各自渲染出的文字层（版面是哪种就查哪种），命中框的归属从「页号」换成「条目下标 gi」——译文页的 origPage 恒为 -1，按页号归组会互相串、框会画到原文页上。
 - **写中文 PDF 夹具先确认 pdf.js 抽得出来**（同轮）：PyMuPDF 内置字体 `fontname="china-s"` 写出的文字 MuPDF 自己读得到，但 pdf.js 抽不出（没有可用的 ToUnicode），文字层全空——拿它测「译文查找」会得到假红。用系统字体嵌进去（msyh.ttc / simsun.ttc / simhei.ttf 实测 pdf.js 都能正常抽取），或者直接借一份真 pdf2zh 产物（实测真译文 4/4 页文字层可读、中文查找有命中）。
 - **给局部变量改名要按「函数」为单位扫，不是按「行」**（2026-10-12 重构轮）：把 `matchPaper` 里的局部 `t`（标题）改成 `q` 时只替换了定义处与第一个回调，第二个回调里还有一处 `t.includes(x)`——它不报「未定义」，而是安静地解析成 i18n 那个 `t()`（同名遮蔽），运行期变成 `t.includes is not a function`，提问面板的整条消息列表渲染当场炸掉（消息在、`.q-body` 一个都不出）。做法：改名前后都 grep 该函数体内这个名字的全部出现；`.vue` 里局部名与 import 撞名（t/ui/store…）的，改完必须在真页面里跑一遍相关面（本例 test_xref_jump 一跑就现形）。
-- **heredoc 会连反斜杠一起吃掉，长补丁一律写成脚本文件再跑**（同轮又踩；教训已有，仍需自律）：往 save.js 追加 CSV 转义时，`[",\r\n]` 里的转义序列经 heredoc 落地变成真换行（JS 正则字面量不允许行终结符，整份文件语法错）。凡补丁里带转义序列，先写 `D:\tmp\xxx.py` 再执行，改完立刻 `node --check`。
+- **heredoc 会连反斜杠一起吃掉，长补丁一律写成脚本文件再跑**（多轮反复踩）：`[",\r\n]` 这类转义序列经 heredoc 落地变成真换行（JS 正则不允许行终结符，整份文件语法错），f-string 与行尾续路反斜杠同样炸。凡补丁带转义序列或反斜杠，先写 `D:\tmp\xxx.py` 再执行，含反斜杠的匹配串用 chr(92) 拼，改完立刻 `node --check`。
 - **断言要能失败——「跑了但什么都没测」的三种形态**（2026-10-12 测试优化轮，全量盘点 67 个测试抓到的）：① 恒真断言（`ck('空白 term_en 拒绝', st in (200,400) and (st==400 or True))` 后半段永远是 True）；② 攻击点打在**已改名的旧路由**上（/translate-cancel、/glossary.csv、/para-translate、/page.png 全 404，「非 5xx 即通过」于是全空过）；③ 夹具太稀（单页一两行正文被 ingest 当扫描件走 OCR，断言却在等 `analysis_status==done`，永远等不到）。判据很简单：写每条断言前先问「它失败的话长什么样」，答不上来就是没测。
 - **测试一律自起沙箱，绝不打固定端口上的「别人」**（同轮，最高危的一条）：`test_golden_0151` 写着 `for x in GET 8430/api/papers: DELETE …`——写它时 8430 是个测试实例，后来那台成了**用户真库的端口**：再跑一次就是清库。凡默认 `BASE=http://127.0.0.1:8430` 又不自起服务的测试，先当数据风险处理（删或改成 `serve_temp` + `EGGPAPER_DATA` 沙箱）。
 - **删测试前必须先把独有断言搬走——`_qa` 不入库，删掉就找不回来了**（同轮踩到）：`test_edges4.py`、`test_edges5.py` 删掉后想回头核对「那几条断言到底写了什么」已无从查起（不在 git、也没有归档），只能凭盘点记录重建少数几条。口径：删除前逐条搬进事实标准；批量删测试的轮次先把断言原文抄进 lesson 或提交信息。
@@ -196,6 +195,7 @@
 - **在途提示用计数不用布尔**（同轮）：`capPending=true/false` 在快速翻图时被后来的请求互相抹掉——改计数（`++/--`），模板判 `> 0`。
 - **loading 的早退路径也要收口**（同轮）：`if (换了篇) return` 写在 `loading=false` 之前，spinner 永远转着/empty 恒 false（AskPanel 空白无空态、TOC 永久"读取中"）。一律 try/finally 或显式复位，且复位只在"还是当前篇"时做。
 - **单键快捷方式要看输入内容**（同轮）：提问框里裸 `/` 一律拦下开引用选择器——"and/or"、"A/B"、"10/20" 这些字符就永远打不出来。约定：只在**空输入框**里当命令键（slash-command 惯例）。
+- **惰性同步的状态端点会与取件端点错开一拍**（2026-10-12 文档轮）：翻译完成的库落盘写在 `translate-status` 里（"谁来问状态才写库"），但 `pdf?variant=mono` 只认库里的 mono_path——job 已 done、还没人问过状态的那一拍取件就是 404。端到端测试在负载下撞到过一次（单跑零复现，日志只剩尾部 800 字符只能靠推理），修法：取件端点在库没跟上时直接问 job，补同步段抽成 `_sync_translate_from_job` 与状态端点共用（顺带清过期 dual 与旧名 mono）。通例：**惰性同步的写口与读口之间要检查"另一头是否真的问过"**，读口自己也要能补一次同步。
 - **按下标删列表项的双击会删错行**（同轮）：第一次删除让后面的项顶上，第二下落在用户没点的那条上。改按对象身份/id 定位再删 + 在途守卫。
 - **上传临时文件的所有权跟着"是否被接收"走**（同轮）：安装器忙时 `start_from_zip` 直接返回，上传端点只在"装完"才删临时包——2GB 残骸永驻 `.upload/`。忙分支按 `cleanup` 自己收掉，清扫器再按年龄兜底一层。
 - **闸门要在"锁内、起线程之前"登记**（同轮）：OCR 的"占位"写在线程体内（被调度到才登记），双击的两下都看到"没人在跑"各起一个线程；两个 OCR 跑同一份 PDF，先完成的还清掉共享登记，让按钮复活再叠第三个。状态登记与状态检查必须在同一个临界区完成。

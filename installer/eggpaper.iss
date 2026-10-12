@@ -9,8 +9,9 @@
 ;   2. **PrivilegesRequired=lowest**：装到 {localappdata}\Programs\eggpaper，
 ;      全程不弹 UAC。用户想换盘（D:\eggpaper）在目录页改就是——那一页是开着的。
 ;   3. **用户数据不在 [Files] 里，也不在 [UninstallDelete] 里**：config.yaml、
-;      文库 PDF、SQLite 全在 %LOCALAPPDATA%\eggpaper\data。所以覆盖安装不会丢东西，
-;      卸载也不会——卸载只在用户手动勾选时才问数据的事。
+;      文库 PDF、SQLite 全在数据目录（新装默认安装目录旁 data\，不可写则回落
+;      %LOCALAPPDATA%\eggpaper\data，老安装原地继续；见 backend/appinfo.py）。
+;      所以覆盖安装不会丢东西，卸载也不会——卸载只在用户手动勾选时才问数据的事。
 ;   4. **升级前先关掉正在跑的旧版本**（CloseApplications + 兜底 taskkill）：
 ;      我们的 exe 占着自己的文件，不关掉就替换不了。
 

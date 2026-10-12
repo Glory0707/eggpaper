@@ -1804,6 +1804,27 @@ def _pdf_or_404(path: str, msg: str) -> _SafeFile:
         return _SafeFile(path, media_type="application/pdf")
     raise HTTPException(404, msg)
 
+def _sync_translate_from_job(pid: str, p: dict, j: dict) -> dict:
+    """job 说 done、库还没跟上的那一拍：把成品路径同步进库（状态端点与取件端点共用）。
+
+    状态端点本来就在做这件事，但那是**惰性同步**——没人来问状态就没人落库；直接在
+    done 后取件的客户端（端到端实测在负载下撞过：做完立刻取 mono 得到 404）要先问
+    一次 job。同步时顺带清掉上一轮的两个残件：dual 是按旧 mono 派生的缓存（已过期）、
+    旧名 mono 是没人指的孤儿。返回重读后的 paper（调用方后续判断用）。"""
+    if j.get("status") != "done":
+        return p
+    if (j.get("mono") or "") == (p.get("mono_path") or "") and p.get("translate_status") == "done":
+        return p
+    old_dual = p.get("dual_path") or ""
+    old_mono = p.get("mono_path") or ""
+    db.update_paper(pid, mono_path=j["mono"] or "", dual_path="",
+                    translate_status="done", translate_error="")
+    if old_dual:
+        fsutil.rm_quiet(old_dual)
+    if old_mono and old_mono != (j.get("mono") or ""):
+        fsutil.rm_quiet(old_mono)
+    return _paper_or_404(pid)
+
 @app.get("/api/papers/{pid}/pdf")
 def paper_pdf(pid: str, variant: str = "original"):
     p = _paper_or_404(pid)
@@ -1828,6 +1849,9 @@ def paper_pdf(pid: str, variant: str = "original"):
         raise HTTPException(404, "双语版尚未生成")
     if variant == "mono":
         mono = p.get("mono_path") or ""
+        if not (mono and os.path.exists(mono)):
+            p = _sync_translate_from_job(pid, p, translate_full.job(pid))
+            mono = p.get("mono_path") or ""
         if mono and os.path.exists(mono):
             return FileResponse(mono, media_type="application/pdf")
         dual = p.get("dual_path") or ""
@@ -2769,7 +2793,7 @@ def export_md(pid: str):
     en = (config.load().get("ui_lang") or "zh") == "en"
     T = {
         "skeleton": ("论证骨架", "Argument skeleton"),
-        "six": ("五个问题", "Five questions"),
+        "six": ("六个问题", "Six questions"),
         "mcard": ("方法卡", "Method card"),
         "scard": ("谱系卡", "Survey map"),
         "notes": ("页边批注与查译", "Margin notes & lookups"),
@@ -2802,14 +2826,14 @@ def export_md(pid: str):
                     lines.append(f"  - ¶{a}：{anno['purpose']}")
             lines.append("")
     # 七问里现场生成的那几问（answers 表，原先导出漏了——写综述/组会汇报时最值钱的恰是它们）。
-    # 目前标签表覆盖 ①/②/③（研究型 method、综述型 how）/⑥/⑦；⑤「哪里可疑」（doubt）还没进表，
-    # 补导出时把它一起加上
+    # ⑤「哪里可疑」此前漏在表外，补上；④「结论有哪些」就是上面的骨架主张-证据链，不重复一遍。
     answers = db.answers_all(pid)
     is_rev = (p.get("paper_type") == "review")
     SIX_LABELS = {"motive": ("① 要解决什么、为什么", "① What & why"),
                   "principle": ("② 原理是什么", "② Underlying principle"),
                   "method": ("③ 怎么解决的", "③ How it was done"),
                   "how": ("③ 它把文献怎么组织的", "③ How the literature is organized"),
+                  "doubt": ("⑤ 哪里可疑、还有什么没解决", "⑤ Doubts & open issues"),
                   "next": ("⑥ 还能做什么", "⑥ What next"),
                   "lens": ("⑦ 换个学科怎么看", "⑦ Other lenses")}
     six_lines = []
@@ -3956,17 +3980,8 @@ def translate_full_status(pid: str):
             p = _paper_or_404(pid)
     if j["status"] == "done":
         # mono 路径变了（重译改名/成品换名），或 db 还停在 running（重译同路径成品时
-        # 路径不变）都要写；顺带删掉旧 mono/dual——dual 是按上一轮 mono 派生的缓存，
-        # 内容已经过期，旧名 mono 留着就是一份没人指的孤儿文件
-        if (j["mono"] or "") != (p["mono_path"] or "") or p["translate_status"] != "done":
-            old_dual = p.get("dual_path") or ""
-            old_mono = p.get("mono_path") or ""
-            db.update_paper(pid, mono_path=j["mono"] or "", dual_path="",
-                            translate_status="done", translate_error="")
-            if old_dual:
-                fsutil.rm_quiet(old_dual)
-            if old_mono and old_mono != (j["mono"] or ""):
-                fsutil.rm_quiet(old_mono)
+        # 路径不变）都要写；残件清理与取件端点的补同步共用同一段（_sync_translate_from_job）
+        p = _sync_translate_from_job(pid, p, j)
     elif j["status"] == "error" and p["translate_status"] != "error":
         db.update_paper(pid, translate_status="error", translate_error=j["error"])
     return j
