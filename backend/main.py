@@ -87,7 +87,7 @@ async def _cap_upload_size(request: Request, call_next):
         except ValueError:
             clen = 0
         if clen > _MAX_UPLOAD + (1 << 20):     # 表单边界/字段名那点开销宽限 1MB
-            return JSONResponse({"detail": "PDF 太大（超过 500MB），先拆分或压缩再导入"},
+            return JSONResponse({"detail": "PDF 超过 500MB，请拆分或压缩"},
                                 status_code=413)
     return await call_next(request)
 
@@ -1046,7 +1046,7 @@ def update_download(body: dict):
     info = update.check(feed, force=False, cache_hours=float(cfg.get("cache_hours") or 6))
     url = (body or {}).get("url") or ""
     if not (info.get("ok") and info.get("url")) or url != info["url"]:
-        raise HTTPException(400, "下载地址与更新源不符，请先检查更新")
+        raise HTTPException(400, "下载地址与更新源不符，请重试")
     update.start_download(info["url"], (info.get("sha256") or "").lower(), int(info.get("size") or 0))
     return update.progress()
 
@@ -1059,7 +1059,7 @@ def update_install(body: dict):
     """把下好的安装包交给系统，然后本进程退出（安装器要替换的正是它占着的文件）。"""
     path = (body or {}).get("path") or update.progress().get("path") or ""
     if not update.install(path):
-        raise HTTPException(400, "安装包不在或无法启动，重新下载一次")
+        raise HTTPException(400, "安装包缺失或无法启动，请重新下载")
     return {"ok": True}
 
 @app.post("/api/update/reveal")
@@ -2392,7 +2392,7 @@ def _gen_six(p: dict, key: str):
                                     kind="review" if is_review else "research")
     if key == "method":
         if is_review:
-            raise HTTPException(400, "综述没有实验层，去看「它把文献怎么组织的？」那一问")
+            raise HTTPException(400, "综述没有实验层——看「它把文献怎么组织的？」")
         return llm.answer_method(p["title"], claims, paras)
     if key == "how":
         if is_review:
@@ -2640,7 +2640,7 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         raw = llm.extract_citation(p["title"], src)
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
         if not (meta.get("title") or meta.get("authors")):
-            raise HTTPException(503, "首页没认出文献信息，可能没印刊头")
+            raise HTTPException(503, "首页没认出文献信息")
         # 落库必须在锁内：放在锁外的话，第二个等待者拿锁时还读不到，会再花一次调用
         db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
     return {"meta": meta, "groups": citation.groups(meta)}
@@ -3444,7 +3444,7 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
         _autotitle(pid, conv_id, question, not any(h["role"] == "user" for h in hist))
         if not aid:
             # 会话被删、重建也没写成：答案真没落库，如实报错，别拿 assistant_id: null 冒充"存好了"
-            yield _sse({"type": "error", "message": "答案没能存进对话（会话可能刚被删了），换一摊对话重问一次",
+            yield _sse({"type": "error", "message": "答案没能存进对话，请在新会话里重问一次",
                         "user_id": uid or None, "assistant_id": None})
             return
         yield _sse({"type": "done", "user_id": uid or None, "assistant_id": aid,
@@ -3805,7 +3805,7 @@ def translate_full_start(pid: str, force: bool = False):
             raise HTTPException(400, f"{'旧版' if stale else '缺'}全文翻译引擎，"
                                      f"正在后台自动安装，装好会自动继续")
         if st["state"] in ("downloading", "unpacking", "warming"):
-            raise HTTPException(400, "全文翻译引擎正在后台安装。")
+            raise HTTPException(400, "翻译引擎正在后台安装…")
         if not exe_found or stale:
             raise HTTPException(400, f"全文翻译引擎{'升级' if stale else '下载'}没成功"
                                      f"（{st.get('error') or '原因未知'}）")

@@ -239,7 +239,7 @@ function wclip(s, n) {
 async function del(pid, name) {
   const yes = await confirmBox({
     title: t('删除文献'), ok: t('删除'), danger: true,
-    body: t('《{name}》及其批注、析读、问答将一并删除。', { name: wclip(name, 40) }),
+    body: t('《{name}》及其批注、析读、问答将删除。', { name: wclip(name, 40) }),
   })
   if (!yes) return
   await _removePids([pid])
@@ -324,7 +324,7 @@ async function doDelete() {
   if (!selN.value) return
   const yes = await confirmBox({
     title: t('删除文献'), ok: t('删除'), danger: true,
-    body: t('这 {n} 篇及其批注、析读、问答将一并删除。', { n: selN.value }),
+    body: t('这 {n} 篇及其批注、析读、问答将删除。', { n: selN.value }),
   })
   if (!yes) return
   const pids = [...selSet.value]
@@ -395,7 +395,7 @@ function onCmpGoto(c) {
     </div>
 
     <div class="lib-tools">
-      <input type="text" v-model="q" :placeholder="t('搜索标题或全文…')" class="lib-search" />
+      <input type="text" v-model="q" :placeholder="t('搜标题或全文…')" class="lib-search" />
       <select v-model="sort" class="lib-sort">
         <option value="added">{{ t('最近导入') }}</option>
         <option value="read">{{ t('最近阅读') }}</option>
@@ -478,7 +478,7 @@ function onCmpGoto(c) {
         <template v-if="!store.papers.length">{{ t('文库是空的') }}</template>
         <template v-else-if="q.trim()">{{ t('没有匹配「{q}」的文献', { q: q.trim() }) }}</template>
         <template v-else-if="typeof SEL === 'number'">{{ t('这个分类还没有文献') }}</template>
-        <template v-else-if="SEL === 'none'">{{ t('每一篇都归类了') }}</template>
+        <template v-else-if="SEL === 'none'">{{ t('没有未分类的文献') }}</template>
         <template v-else>{{ t('没有符合条件的结果') }}</template>
       </div>
     </div>

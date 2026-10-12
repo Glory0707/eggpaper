@@ -775,7 +775,7 @@ async function translateParaAndPin(idx) {
       if (ev.type === 'delta') zh += ev.text
       else if (ev.type === 'error') throw new Error(ev.message)
     }).done
-    if (!zh.trim()) { toast(t('模型没返回内容，再试一次')); return }
+    if (!zh.trim()) { toast(t('模型没返回内容')); return }
     const p = paras.value.find(x => x.idx === idx)   // 本窗格自持的段落表：全局 paraByIdx 可能已是别篇的
     await api.pin(pid, { quote: (p?.text || '').slice(0, 150), note: zh, para_idx: idx, page: p?.page ?? 0 })
     await refreshM()
@@ -1245,7 +1245,7 @@ async function finishShot(sel) {
       })
       name = (await api.screenshotSave(paperName(paperMeta.value), pageNum.value, b64)).name
     }
-    toast(name ? t('已复制 · 已保存 {n}', { n: name }) : t('已复制到剪贴板'))
+    toast(name ? t('已复制 · 已保存 {n}', { n: name }) : t('已复制'))
   } catch (e) {
     toast(t('截图失败：{m}', { m: e.message }))
   } finally { shotBusy.value = false }
@@ -1398,7 +1398,7 @@ watch([() => vis.visible, () => vis.answer, () => vis.busy, () => vis.err],
 
 function startFrameDrag(e, it) {
   if (!store.viewer.frame || e.button !== 0) return
-  if (it.origPage < 0) { toast(t('切回「原文」再框选')); return }
+  if (it.origPage < 0) { toast(t('切回原文再框选')); return }
   e.preventDefault()
   const el = pageEls.value[it.gi]
   const base = el.getBoundingClientRect()
@@ -1430,7 +1430,7 @@ function startFrameDrag(e, it) {
     visSeq++    // 新选区顶掉旧的：在途的上一单答案别再写回来
     Object.assign(vis, { visible: true, x: Math.min(window.innerWidth - 410, ev.clientX + 12),
                          y: Math.min(window.innerHeight - 340, Math.max(64, ev.clientY - 60)),
-                         img: img.url, imgW: img.cssW, question: t('解释选区里的内容。'), answer: '', busy: false, err: '',
+                         img: img.url, imgW: img.cssW, question: t('解释选区内容。'), answer: '', busy: false, err: '',
                          page: it.origPage, paraIdx,
                          rect: it.origPage >= 0 ? { x0: x0 / s, y0: y0 / s, x1: x1 / s, y1: y1 / s } : null })
   }
@@ -1483,7 +1483,7 @@ watch(() => store.visPrefill, pf => {
   if (!pf) return
   visSeq++    // 同上：新气泡顶掉旧的
   Object.assign(vis, { visible: true, x: Math.max(60, Math.floor(midX.value || window.innerWidth / 2) - 190), y: 90,
-                       img: pf.img, imgW: 0, question: pf.question || t('讲解这张图。'), answer: '', busy: false, err: '',
+                       img: pf.img, imgW: 0, question: pf.question || t('讲这张图。'), answer: '', busy: false, err: '',
                        page: pf.page ?? 0, paraIdx: pf.paraIdx ?? 0, rect: pf.rect ?? null })
   store.visPrefill = null
   askVisual()
@@ -1683,7 +1683,7 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
         <span class="chip" v-for="h in sel.hits" :key="h.en">📌 {{ h.en }} → {{ h.zh }}</span>
       </div>
             <div class="sp-mine" v-if="mine.open">
-        <textarea ref="mineEl" v-model="mine.text" rows="3" :placeholder="t('就这句写点什么…')"
+        <textarea ref="mineEl" v-model="mine.text" rows="3" :placeholder="t('写点什么…')"
                   @mouseup.stop @keydown.enter.ctrl="saveMine"></textarea>
       </div>
       <div class="sp-actions">
@@ -1719,9 +1719,9 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" @keydown.escape="closeVis" :placeholder="t('问这个选区…')" />
       <div class="sp-actions">
-                <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图：内容与结论'))">{{ t('分析此图') }}</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式：含义与推导'))">{{ t('分析公式') }}</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表：趋势、异常与疑点'))">{{ t('分析表格') }}</button>
+                <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图'))">{{ t('分析此图') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式'))">{{ t('分析公式') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表'))">{{ t('分析表格') }}</button>
       </div>
       <div v-if="vis.busy" class="vp-state">{{ t('正在看图') }}</div>
       <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>

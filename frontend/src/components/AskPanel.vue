@@ -219,7 +219,7 @@ async function delConv() {
   if (!c) return
   const yes = await confirmBox({
     title: t('删除会话'), danger: true, ok: t('删除'),
-    body: t('「{t}」的问答将删除，论文与批注不受影响。', { t: c.title }),
+    body: t('「{t}」的问答将删除。', { t: c.title }),
   })
   if (!yes) return
   try {
@@ -422,7 +422,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
     </div>
 
     <div class="qa-scroll" ref="scrollEl" @scroll.passive="onScroll">
-            <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">{{ t('更早的对话已存为摘要') }}</div>
+            <div v-if="curConv?.summary" class="qa-fold" :title="curConv.summary">{{ t('更早的对话已折叠') }}</div>
 
       <div v-if="empty" class="qa-empty">
         <div class="qa-quick">
@@ -496,7 +496,7 @@ onUnmounted(() => { stop(true); document.removeEventListener('keydown', onDocKey
         {{ t('数据对比') }}
       </button>
       <textarea ref="inputEl" v-model="text" rows="1" class="qa-ta"
-                :placeholder="t('基于这篇论文提问…')"
+                :placeholder="t('问点什么…')"
                 @keydown="onKey"></textarea>
       <button v-if="busy" class="qa-send stop" @click="stop()" :title="t('停止生成')">■</button>
       <button v-else class="primary qa-send" @click="send()" :disabled="!text.trim()" :title="t('发送')">↑</button>

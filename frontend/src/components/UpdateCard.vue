@@ -68,7 +68,7 @@ const mb = n => (n / 1048576).toFixed(1)
       </div>
 
       <div class="upd-notes" v-if="d.notes">{{ d.notes }}</div>
-      <div class="upd-notes muted" v-else>{{ t('本版无更新说明') }}</div>
+      <div class="upd-notes muted" v-else>{{ t('无更新说明') }}</div>
 
             <div class="upd-prog" v-if="state === 'downloading'">
         <div class="upd-bar"><i :style="{ width: pct + '%' }" /></div>

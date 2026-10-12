@@ -384,7 +384,7 @@ async function askFigure(f) {
     figIdx.value = -1
     const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
     store.visPrefill = {
-      img, question: t('讲这张图：内容、结论与疑点。'),
+      img, question: t('讲这张图。'),
       page: f.page, paraIdx: para?.idx ?? 0, rect: { x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y1 },
     }
   } catch (e) { toast(t('取图失败：{m}', { m: e.message })) }
@@ -514,12 +514,12 @@ async function saveToGlobal(term) {
         </div>
                 <div v-else-if="store.analysis.status !== 'done'" style="padding:8px 2px">
           <div style="font-size:var(--fs-md);line-height:1.75;color:var(--ink-2)">
-            {{ store.paras.length ? t('析读后出七问') : t('扫描件：能读能框选，七问答不了') }}
+            {{ store.paras.length ? t('析读后出七问') : t('扫描件：七问不可用') }}
           </div>
         </div>
 
         <template v-else-if="!store.paras.length">
-          <div class="r-note">{{ t('扫描件：能读能框选，七问答不了') }}<span v-if="figures.length">{{ t(' · 速览 {n} 张图', { n: figures.length }) }}</span></div>
+          <div class="r-note">{{ t('扫描件：七问不可用') }}<span v-if="figures.length">{{ t(' · 速览 {n} 张图', { n: figures.length }) }}</span></div>
         </template>
 
         <template v-else>
@@ -716,7 +716,7 @@ async function saveToGlobal(term) {
             <span class="t-acts">
               <button v-if="inPaper(term)" class="t-go" :title="t('在文中查找')"
                       @click="findTerm(term.term_en)">↗</button>
-              <span v-else class="t-no" :title="t('本文未出现这个词')">—</span>
+              <span v-else class="t-no" :title="t('本文未出现')">—</span>
               <button class="t-add" :title="t('收进学科库')" @click="saveToGlobal(term)">☆</button>
               <button class="t-del" @click="delTerm(term.id)" :title="t('删除')">×</button>
             </span>

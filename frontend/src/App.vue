@@ -587,7 +587,6 @@ let tranOptimistic = ref(false)
 let tranStopPending = false
 /* 与后端 translate_full.LLM_SERVICES 同名单：这些服务每页都要真过一遍模型，
  * 全文翻译是分钟级不是秒级——开跑时就说清，别让用户在 0/n 上猜它死没死 */
-const LLM_SVCS = ['openai', 'deepseek', 'zhipu', 'silicon', 'modelscope', 'gemini', 'grok', 'groq']
 async function doTranslateFull() {
   if (!store.currentId || tranSt.value === 'running' || tranStarting) return
   const again = tranSt.value === 'done'
@@ -606,11 +605,7 @@ async function doTranslateFull() {
       api.translateCancel(store.currentId).then(refreshPapers).catch(() => {})
       return
     }
-    if (LLM_SVCS.includes((r.service || '').toLowerCase())) {
-      toast(t('AI 通道较慢，进度按页推进'), 6000)
-    } else {
-      toast(r.note || t('全文翻译已开始'))
-    }
+    toast(r.note || t('全文翻译已开始'))
   } catch (e) {
     // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
@@ -699,7 +694,7 @@ let importing = false
 async function onImport(list) {
   const files = (Array.isArray(list) ? list : [list]).filter(f => f && f.name)
   if (!files.length) return
-  if (importing) { toast(t('正在导入上一批')) ; return }   // 批量导入是几十秒的串行循环，别让两批交错
+  if (importing) { toast(t('正在导入…')) ; return }   // 批量导入是几十秒的串行循环，别让两批交错
   importing = true
   const many = files.length > 1
   const ok = []
@@ -709,7 +704,7 @@ async function onImport(list) {
     try {
       const r = await api.upload(f)
       ok.push(r)
-      if (r.duplicate) toast(t('库里已有这篇，直接打开'))
+      if (r.duplicate) toast(t('库里已有这篇'))
       const c = store.lib.coll
       if (typeof c === 'number') {
         try { await api.paperColls(r.paper.id, [c]); await refreshCollections() } catch { /* 归类失败不影响导入 */ }
@@ -728,9 +723,9 @@ async function onImport(list) {
   importing = false
   if (!first) return
   if (many && ok.length > 1) {
-    toast(t('已导入 {n} 篇，其余排队通读中', { n: ok.length }))
+    toast(t('已导入 {n} 篇，其余排队通读', { n: ok.length }))
   } else if (first.no_text) {
-    toast(t('扫描件识别中，完成后自动析读'))
+    toast(t('扫描件识别中…'))
   } else if (first.n_paragraphs && first.n_paragraphs < 5) {
     toast(t('只认出 {n} 段，析读会较粗', { n: first.n_paragraphs }))
   }
@@ -741,7 +736,7 @@ async function onImport(list) {
 async function askSupersede(r) {
   const act = await choiceBox({
     title: t('疑似同一篇论文'),
-    body: t('《{a}》和库里的《{b}》像是同一篇的不同版本。', {
+    body: t('《{a}》与库里的《{b}》像是同一篇。', {
       a: (r.paper.title || '').slice(0, 40), b: (r.same_title.title || '').slice(0, 40),
     }),
     actions: [
@@ -758,7 +753,7 @@ async function askSupersede(r) {
     await refreshCollections()
     toast(st.pins_lost
       ? t('已替换；{n} 条页边卡没迁过去', { n: st.pins_lost })
-      : t('已替换，问答、术语与分类已迁到新版'))
+      : t('已替换，问答/术语/分类已迁移'))
   } catch (e) { toast(e.message) }
 }
 
@@ -947,13 +942,13 @@ function onKey(e) {
           {{ tranLabel }}
         </button>
         <button v-if="tranSt === 'running'" class="ghost" @click="stopTranslate"
-                :title="t('已译好的页会保留')">{{ t('停止') }}</button>
+                :title="t('已译的页会保留')">{{ t('停止') }}</button>
         <button class="primary" @click="doAnalyze" :disabled="anaBusy">
           {{ store.analysis.status === 'queued' ? t('排队中…') : (store.analysis.status === 'running' ? t('通读中…')
              : (store.analysis.status === 'done' ? t('重新析读') : t('析读'))) }}
         </button>
         <button v-if="anaBusy" class="ghost" @click="stopAnalyze"
-                :title="t('已生成的部分会保留')">{{ t('停止') }}</button>
+                :title="t('已生成的内容会保留')">{{ t('停止') }}</button>
       </div>
       <div class="actions">
         <button class="demo-badge" v-if="demoOn" @click="showSettings = true"
@@ -1016,11 +1011,11 @@ function onKey(e) {
           <div class="stamp" role="button" tabindex="0" @click="pickFiles"
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
           <div class="desk-hint" role="button" tabindex="0" @click="pickFiles"
-               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('拖入 PDF，或点击选择文件') }}</div>
+               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('拖入 PDF 或点击选择') }}</div>
           <div class="desk-hint demo-hint" v-if="demoOn" role="button" tabindex="0"
                @click="showSettings = true" @keydown.enter.prevent="showSettings = true"
                @keydown.space.prevent="showSettings = true">
-            {{ t('去设置配好模型') }}
+            {{ t('去设置模型') }}
           </div>
         </div>
         <PdfViewer v-else :pid="store.currentId" :key="store.currentId" />
@@ -1066,7 +1061,7 @@ function onKey(e) {
         <div class="eng-sub" v-if="engInst.state === 'downloading'">
           {{ t('已下载 {a} / {b} MB（{s}）', { a: fmtMB(engInst.got), b: fmtMB(engInst.total), s: engInst.src }) }}
         </div>
-        <div class="eng-sub" v-else-if="engInst.state === 'unpacking' || engInst.state === 'warming'">{{ t('装好后自动开始翻译') }}</div>
+        <div class="eng-sub" v-else-if="engInst.state === 'unpacking' || engInst.state === 'warming'">{{ t('装好后自动翻译') }}</div>
         <div class="eng-btns">
           <template v-if="engInst.state === 'error'">
             <button @click="startEngineInstall">{{ t('重试') }}</button>
@@ -1079,7 +1074,7 @@ function onKey(e) {
         </div>
       </div>
     </Transition>
-        <div class="quit-mask" v-if="quitMask">{{ t('eggpaper 已退出，可关闭此页') }}</div>
+        <div class="quit-mask" v-if="quitMask">{{ t('已退出，可关闭此页') }}</div>
         <input ref="appFile" type="file" accept="application/pdf" multiple hidden @change="onAppFile" />
 
         <Transition name="pop">
@@ -1088,9 +1083,9 @@ function onKey(e) {
       <div class="k-row"><span>{{ t('下一段 / 上一段') }}</span><kbd>j / k</kbd></div>
       <div class="k-row"><span>{{ t('翻页') }}</span><kbd>PageUp / PageDown</kbd></div>
       <div class="k-row"><span>{{ t('查找') }}</span><kbd>Ctrl + F</kbd></div>
-      <div class="k-row" v-if="!isEn()"><span>{{ t('译当前段并钉页边') }}</span><kbd>t</kbd></div>
+      <div class="k-row" v-if="!isEn()"><span>{{ t('译当前段') }}</span><kbd>t</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('翻译划选') }}</span><kbd>s</kbd></div>
-      <div class="k-row"><span>{{ t('框选问 AI（Esc 退出）') }}</span><kbd>r</kbd></div>
+      <div class="k-row"><span>{{ t('框选问 AI') }}</span><kbd>r</kbd></div>
       <div class="k-row"><span>{{ t('截图') }}</span><kbd>c</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('原文 / 译文 / 双语') }}</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>{{ t('聚焦提问') }}</span><kbd>/</kbd></div>
@@ -1099,7 +1094,7 @@ function onKey(e) {
       <div class="k-row"><span>{{ t('文库 / 日历 / 目录') }}</span><kbd>g l / g c / g o</kbd></div>
       <div class="k-row"><span>{{ t('回书桌') }}</span><kbd>g h</kbd></div>
       <div class="k-row"><span>{{ t('返回原位') }}</span><kbd>Alt + ←</kbd></div>
-      <div class="k-row"><span>{{ t('收起所有浮层 / 退出框选') }}</span><kbd>Esc</kbd></div>
+      <div class="k-row"><span>{{ t('收起浮层 / 退出框选') }}</span><kbd>Esc</kbd></div>
       <div class="k-row"><span>{{ t('这张卡') }}</span><kbd>?</kbd></div>
     </div>
     </Transition>
@@ -1127,7 +1122,7 @@ function onKey(e) {
     <Transition name="fade">
     <div class="modal-mask" v-if="dragOver && store.paper" style="pointer-events:none; background:rgba(var(--wash-rgb), .22)">
       <div class="modal" style="text-align:center">
-        <div style="font-size:var(--fs-xl);font-weight:650">{{ t('松手，放到书桌上') }}</div>
+        <div style="font-size:var(--fs-xl);font-weight:650">{{ t('松手导入') }}</div>
       </div>
     </div>
     </Transition>

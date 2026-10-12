@@ -40,7 +40,7 @@ watch(open, v => {
     </div>
 
     <div class="cal-empty" v-if="loading">{{ t('读取中…') }}</div>
-    <div class="cal-empty" v-else-if="!toc.length">{{ t('这份 PDF 没有书签目录') }}</div>
+    <div class="cal-empty" v-else-if="!toc.length">{{ t('没有书签目录') }}</div>
 
     <div class="toc-list" v-else>
       <button v-for="(item, i) in toc" :key="i" class="toc-row"
