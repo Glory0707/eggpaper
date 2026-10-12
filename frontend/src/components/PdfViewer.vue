@@ -1600,7 +1600,7 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
                  @mousedown="e => startFrameDrag(e, it)">
 
             <canvas :ref="el => (canvases[it.gi] = el)"></canvas>
-            <div class="care-wash" v-if="store.viewer.care !== 'off'"></div>
+            <div class="care-wash" v-if="store.viewer.care !== 'off' && !ui.dark"></div>
                         <div class="textLayer" v-if="it.text" :class="{ 'tl-off': store.viewer.frame }"
                  :ref="el => (textLayers[it.gi] = el)"></div>
             <a v-if="!store.viewer.frame" v-for="(lk, li) in docLinks[it.gi] || []" :key="'dl' + li"

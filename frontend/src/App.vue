@@ -1054,7 +1054,7 @@ function onKey(e) {
               <button class="rail-tab" v-if="store.paper && !store.railRight" :title="t('展开右栏')"
                 @click="store.viewer.railUser = true" :aria-label="t('展开右栏')"></button>
             </Transition>
-            <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight, overlay: store.railOverlay }">
+            <div class="rail-wrap" v-if="store.paper" :class="{ collapsed: !store.railRight }">
         <RightRail @analyze="doAnalyze" />
       </div>
     </div>

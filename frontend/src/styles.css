@@ -792,13 +792,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
   position: relative;
 }
 .rail-wrap.collapsed { width: 0; }
-/* 多窗格下的右栏：不占格子的宽度，以浮层盖上来（关掉就还整屏给文献） */
-.rail-wrap.overlay {
-  position: fixed; right: 0; top: 56px; bottom: 0; z-index: 210;
-  width: min(var(--rail-w, 336px), 92vw);
-  box-shadow: -10px 0 30px -14px rgba(var(--wash-rgb), 0.32);
-}
-
 body.rail-resizing .rail-wrap { transition: none; }
 body.rail-resizing { cursor: col-resize; user-select: none; }
 .rail-right {
@@ -813,8 +806,7 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
   --fs-sm: calc(12.8px * var(--fs-scale));
   --fs-xs: calc(11px * var(--fs-scale));
 }
-/* 浮层化的右栏（多窗格 / 窄窗）：栏宽就是内容宽，用 100% 跟着走 */
-.rail-wrap.overlay .rail-right { width: 100%; }
+/* 窄窗：栏宽就是内容宽，用 100% 跟着走 */
 @media (max-width: 1179px) { .rail-wrap .rail-right { width: 100%; } }
 
 .rail-grip {
@@ -1397,8 +1389,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 
 @media (max-width: 1179px) {
   .rail-wrap {
-    /* 与 .rail-wrap.overlay（多窗格浮层）同一套定位/阴影——窄屏也走浮层化；
-       阴影色改用主题变量，此前写死的暖灰在暗色主题下和另一处不一致 */
+    /* 窄屏把右栏做成浮层（不挤压正文；窗格头与关闭钮只在多窗格渲染，窄屏单篇没有，
+       所以浮层只压到纸面右缘与页边批注，收起右栏即恢复）；阴影色用主题变量，
+       此前写死的暖灰在暗色主题下和另一处不一致 */
     position: fixed; right: 0; top: 56px; bottom: 0; z-index: 210;
 
     width: min(var(--rail-w, 336px), 92vw);

@@ -70,13 +70,9 @@ export const store = reactive({
     if (this.dualSpread) return false
     return this.viewer.railUser
   },
-  /* 多窗格（对比读两篇）也要能提问/看七问/导出：右栏改浮层盖上来，不再硬收——
-     原来是 getter 硬 false，「展开右栏」成了死按钮。 */
-  get railOverlay() {
-    if (this.openIds.length <= 1) return false
-    if (this.dualSpread) return false
-    return this.viewer.railUser && !this.narrow
-  },
+  /* 多窗格（对比读两篇）也要能提问/看七问/导出：右栏与单篇同口径——占位挤压窗格。
+     2026-10-12 端到端走查改回挤压：浮层方案（盖在窗格上）会遮住最右窗格的
+     标题栏关闭钮与页边批注（实测点击落到右栏自己的收起钮上），藏内容比压窄更糟。 */
 })
 
 window.addEventListener('resize', () => { store.vw = window.innerWidth })

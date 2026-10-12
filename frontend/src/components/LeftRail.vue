@@ -248,13 +248,23 @@ async function del(pid, name) {
   if (!yes) return
   await _removePids([pid])
 }
-function touch(p) { if (p.id !== store.currentId) openPaper(p.id) }
+let touchT = null
+function touch(p) {
+  if (p.id === store.currentId) return
+  openPaper(p.id)
+  /* 单篇点开：抽屉连带遮罩让位（与导入路径同口径）——不让的话正文被遮罩挡着，
+     用户还得多点一下空白才能开始读。延一拍是给双击改名留路：真双击时
+     startEdit 会把这一拍取消掉，改名手势不受影响。 */
+  clearTimeout(touchT)
+  touchT = setTimeout(() => emit('close'), 260)
+}
 
 /* ---------- 改标题：首页识别不出像样标题时手动补一笔（后端会把文件夹名跟着对齐） ---------- */
 const pEditId = ref('')
 const pEditTitle = ref('')
 const pEditEl = ref(null)
 function startEdit(p) {
+  clearTimeout(touchT)      // 双击改名：取消上面的“抽屉让位”，别把编辑框连抽屉一起收掉
   pEditId.value = p.id
   pEditTitle.value = paperName(p)
   nextTick(() => { pEditEl.value?.focus(); pEditEl.value?.select() })
@@ -447,7 +457,7 @@ function onCmpGoto(c) {
                   @click.stop="startEdit(p)">✎</button>
           <button class="p-del" :title="t('删除')" @click.stop="del(p.id, paperName(p))">×</button>
         </div>
-        <input v-if="pEditId === p.id" ref="pEditEl" v-model="pEditTitle" class="p-edit"
+        <input v-if="pEditId === p.id" :ref="el => (pEditEl = el)" v-model="pEditTitle" class="p-edit"
                @click.stop @dblclick.stop @keydown.enter.prevent="commitEdit"
                @keydown.esc="pEditId = ''" @blur="commitEdit" />
         <button class="p-tag" v-if="!selMode" :title="t('归入分类')"
