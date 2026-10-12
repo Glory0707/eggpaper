@@ -1176,16 +1176,17 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 
 .back-chip {
-  bottom: 96px;
+  bottom: 100px;
   z-index: 210; display: flex; gap: 6px; align-items: center;
   background: var(--ink); color: var(--card);
   border: none; border-radius: 4px; font-size: var(--fs-sm); padding: 7px 14px;
 }
 
 .toast {
-  /* 底缘的浮层是一条栈：缩放条 18–52 / 提示气泡 58–88 / 查找条与返回钮 96 起。
-     以前气泡和缩放条同在 26px，报错长条会把缩放条从中截断，两边各剩半截 */
-  position: fixed; bottom: 58px; left: 50%; transform: translateX(-50%);
+  /* 底缘浮层一条栈，谁也不压谁：缩放条 18–52 / 查找条 58–93 / 返回钮 100 起 /
+     提示气泡 138 起（最瞬时的那个放最上）。以前气泡与缩放条同在 26px，报错长条会把
+     缩放条从中截断；查找条则挂在 96 给气泡让位，底缘空出一大截、看着像飘在正文中间 */
+  position: fixed; bottom: 138px; left: 50%; transform: translateX(-50%);
   z-index: 600; background: var(--ink); color: var(--card);
   font-size: var(--fs-sm); padding: 9px 16px; border-radius: 4px;
   box-shadow: var(--shadow-pop);
@@ -1331,7 +1332,9 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 .zoom-bar .zb-page em { font-family: var(--mono); font-size: var(--fs-xs); font-style: normal; color: var(--ink-3); }
 
 .find-bar {
-  bottom: 96px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  /* 贴着底部缩放条（58 起，控件条占 18–52）：查找时它是随手要用的工具，
+     不该飘在正文中间。拖拽仍可用，位置记忆见 PdfViewer 的 drag 键 */
+  bottom: 58px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   background: var(--card); border: 1px solid var(--hairline);
   border-radius: 4px; padding: 4px; box-shadow: var(--shadow-pop);
 }

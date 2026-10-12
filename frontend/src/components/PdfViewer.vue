@@ -1874,8 +1874,10 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
     </Transition>
 
         <Transition name="pop">
+    <!-- drag 键升一代（findbar → findbar2）：老记忆里存着"往上拖过"的纵向偏移，
+         会让查找条飘在正文中间（用户报过）；换键即把旧位置作废，回到贴着缩放条的默认位 -->
     <div v-if="ready && searchOpen" class="desk-float find-bar" :style="{ left: midX + 'px', maxWidth: floatMax }"
-         v-drag="{ key: 'findbar' }" data-drag>
+         v-drag="{ key: 'findbar2' }" data-drag>
       <input ref="searchInputEl" v-model="searchQ" class="fb-input" :placeholder="searchPlaceholder"
              @keydown.enter="searchStep(1)" @keydown.escape="closeSearch" />
       <span class="fb-count">
