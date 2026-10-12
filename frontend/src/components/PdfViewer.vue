@@ -231,6 +231,7 @@ async function load({ keepPlace = false } = {}) {
   sheets.value = []
   doneKeys.clear()
   doneTxt.clear()
+  paintGen++        // 旧布局的闲时补画链到此为止（它画的是已被换掉的页）
   try {
     await buildSheets()
   } catch (e) {
@@ -445,10 +446,13 @@ function reflow() {
   }, 200)
 }
 
-/* 一次渲染要碰的页数：**由视口往外，画到预算装满为止**，不是整本。
-   以前换模式/缩放都是整本重光栅化（200 页论文一次变出 1.5GB 位图、扫描件更慢）——
-   用户切原文/译文/双语卡几十秒、鼠标都动不了，量出来的就是这条。带外页面走两条老路
-   补画：滚动补（ensureNear）、文字层单独补（fillTextLayers，搜索/批注引文只认它）。 */
+/* 首轮出图＝**只画视口那一带**（band 页），其余交给两条闲时/按需的路补：
+     · 滚动到哪画到哪（ensureNear → near pass）；
+     · 闲着一页一页往外套（fillCanvasesIdle），套到预算装得下的页数为止。
+   以前换模式/缩放是整本重光栅化：本机实测 120 页扫描件一次 4.4~7.4s、峰值位图 452MB；
+   真库里 24 页的论文切一次也要 4s（24 页 ×~150ms）。弱机 dpr 1.5 时像素再 ×2.25，
+   就是用户报的"点一下卡几十秒、鼠标都动不了"。现在一次切换只画几页。
+   文字层另走一路（fillTextLayers/fillTextLayersIdle）——搜索、批注引文、DOI 链接只认它。 */
 async function renderAll({ early = null, near = false, focusGi = null } = {}) {
   const seq = ++passToken
   rendering.value = !near        // 近距补画是滚动跟手的一部分，别让顶部细线闪个不停
@@ -460,14 +464,9 @@ async function renderAll({ early = null, near = false, focusGi = null } = {}) {
   items.sort((a, b) => Math.abs(a.gi - centerGi) - Math.abs(b.gi - centerGi))
   const { band, keep } = canvasPlan()
   const inBand = it => Math.abs(it.gi - centerGi) <= band
-  // near=true：滚动停稳后的补画——只画带内缺着的页。
-  // 大部头（整本超预算）：就是从视口往外画到预算装满（keep 页）为止，不是整本——
-  // items 已按"离视口由近到远"排好，取前 keep 个正好是"眼前这一带 + 前后各几屏"。
-  // 小文档整本就在预算内，照旧全画。
   let todo
   if (near) todo = items.filter(it => inBand(it) && !doneKeys.has(doneKeyOf(it)))
-  else if (items.length > keep) todo = items.slice(0, keep)
-  else todo = items
+  else todo = items.slice(0, Math.min(band, items.length))
   const skipKeys = near ? null : new Set(todo.map(doneKeyOf))
   let kicked = false
   for (let i = 0; i < todo.length; i++) {
@@ -484,12 +483,56 @@ async function renderAll({ early = null, near = false, focusGi = null } = {}) {
     rendering.value = false
     if (!near) {
       evictFar(skipKeys)
+      fillCanvasesIdle()            // 带外闲时一页一页补（节流，不跟滚动/输入抢）
       fillTextLayersIdle()          // 带外只闲时补文字层：纸面的字可以慢慢画，搜索/引文不能缺
       if (seq !== passToken) return
       await measureNotes()
       if (searchOpen.value && searchQ.value.trim().length >= 2) runSearch()
     }
   }
+}
+
+/* ---------------- 闲时补画（带外页面） ----------------
+   一页一页来、两页之间还留间隔（180ms）：把"整轮光栅化"摊成背景里的小步，
+   机器不会有一段时间被顶住。有一轮 pass 在跑时让它先画（用户的滚动最优先）。 */
+let paintGen = 0, paintAt = 0
+const IDLE = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 8 }), 120))
+
+function _nextUnpainted() {
+  const items = flatItems.value
+  const { band, keep } = canvasPlan()
+  let painted = 0
+  for (const it of items) if (doneKeys.has(doneKeyOf(it))) painted++
+  if (painted >= keep) return null                 // 预算装满就停：更远的页交给滚动补画
+  const c = _centerGi()
+  const near3 = band * 3                           // 只补视口附近这几屏，跳转后的远页等滚过去再画
+  let best = null, bestD = 1e9
+  for (const it of items) {
+    if (doneKeys.has(doneKeyOf(it))) continue
+    const d = Math.abs(it.gi - c)
+    if (d <= near3 && d < bestD) { bestD = d; best = it }
+  }
+  return best
+}
+
+function fillCanvasesIdle() {
+  const my = ++paintGen
+  const step = () => {
+    if (my !== paintGen) return
+    if (rendering.value) { IDLE(step, { timeout: 600 }); return }   // 有 pass 在跑：让它先画
+    const it = _nextUnpainted()
+    if (!it) return
+    const go = () => {
+      if (my !== paintGen || rendering.value) { if (my === paintGen) IDLE(step, { timeout: 900 }); return }
+      paintAt = performance.now()
+      renderItem(it, passToken).catch(() => {})
+      IDLE(step, { timeout: 900 })
+    }
+    const wait = Math.max(0, 180 - (performance.now() - paintAt))
+    if (wait > 0) setTimeout(go, wait)
+    else go()
+  }
+  IDLE(step, { timeout: 600 })
 }
 
 function doRenderItem(it, seq) {
@@ -1691,7 +1734,7 @@ watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 32
    查询词不动，用户看到的是「结果跟着版面刷新」。 */
 watch([() => store.viewer.variant, () => store.viewer.spread],
       () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
-watch(scale, () => { doneKeys.clear(); doneTxt.clear(); dropFarCanvases(); scheduleRender(); saveLater() })
+watch(scale, () => { doneKeys.clear(); doneTxt.clear(); paintGen++; dropFarCanvases(); scheduleRender(); saveLater() })
 watch(paras, () => { spanCache.clear(); anchorCache.clear() })
 watch(() => store.jump, applyJump)
 watch(() => store.viewer.layers, () => measureNotes(), { deep: true })    // 图层开关只动页边卡，画布不用重画
