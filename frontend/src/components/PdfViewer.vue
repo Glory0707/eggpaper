@@ -230,6 +230,7 @@ async function load({ keepPlace = false } = {}) {
   const anchor = keepPlace || !veryFirst ? currentAnchor() : null
   sheets.value = []
   doneKeys.clear()
+  doneTxt.clear()
   try {
     await buildSheets()
   } catch (e) {
@@ -264,7 +265,14 @@ async function load({ keepPlace = false } = {}) {
   }
   try {
     await measure()
-    await renderAll({ early: settle })
+    /* 画哪一带：换模式按锚点（落位要跳回的那一页），首开按记下来的滚动位置。
+       不带这个的话，画的是"旧滚动位置"那一带，落位一跳又得重画一遍。 */
+    let focusIt = anchor ? pageItem(anchor.page) : null
+    if (!focusIt && savedScroll != null && scroller()) {
+      const a = anchorAt(savedScroll + 8)
+      if (a) focusIt = pageItem(a.page)
+    }
+    await renderAll({ early: settle, focusGi: focusIt ? focusIt.gi : null })
   } catch (e) {
     if (seq !== loadSeq) return
     console.error('[eggpaper] 渲染失败：', e)
@@ -277,6 +285,10 @@ async function load({ keepPlace = false } = {}) {
   }
   if (seq !== loadSeq) { loading = false; return }
   settle()                 // 只有一两页的薄文档，early 的打点可能赶不上，这里兜住
+  /* 兜底：这一轮的带是按预判挑的，落位后再验一次眼前这几页真在不在——
+     不在就让滚动补画那条路补上。少了它，预判偏了（记忆位置与当前排版对不上）
+     就是一屏空白纸，用户不滚动还触发不了补画。 */
+  ensureNear()
   await nextTick()
   await measureNotes()
   if (veryFirst) setTimeout(onScroll, 800)
@@ -433,20 +445,29 @@ function reflow() {
   }, 200)
 }
 
-async function renderAll({ early = null, near = false } = {}) {
+/* 一次渲染要碰的页数：**由视口往外，画到预算装满为止**，不是整本。
+   以前换模式/缩放都是整本重光栅化（200 页论文一次变出 1.5GB 位图、扫描件更慢）——
+   用户切原文/译文/双语卡几十秒、鼠标都动不了，量出来的就是这条。带外页面走两条老路
+   补画：滚动补（ensureNear）、文字层单独补（fillTextLayers，搜索/批注引文只认它）。 */
+async function renderAll({ early = null, near = false, focusGi = null } = {}) {
   const seq = ++passToken
   rendering.value = !near        // 近距补画是滚动跟手的一部分，别让顶部细线闪个不停
   await nextTick()
-  // 渲染顺序 = 离视口中心由近到远：缩放/换排版时眼前几页先回来，首开时锚点页先回来，
-  // 远页后台补（顶上那条细进度条跑到头为止）。整本从第 1 页串行画起的话，
-  // 翻到 200 页的人要干等 199 页画完才见着字。
+  // 渲染顺序 = 离视口中心由近到远：眼前几页先回来（顶上那条细进度条跑到头为止）。
+  // 换模式时中心认锚点（要跳回的那一页），不然会画在旧滚动位置那一带、落位后还得重画。
   const items = flatItems.value.slice()
-  const centerGi = _centerGi()
+  const centerGi = focusGi == null ? _centerGi() : focusGi
   items.sort((a, b) => Math.abs(a.gi - centerGi) - Math.abs(b.gi - centerGi))
-  // near=true：滚动停稳后的补画——只画视口附近缺着的页，不重排整本
-  const todo = near
-    ? items.filter(it => Math.abs(it.gi - centerGi) <= KEEP_NEAR + 2 && !doneKeys.has(doneKeyOf(it)))
-    : items
+  const { band, keep } = canvasPlan()
+  const inBand = it => Math.abs(it.gi - centerGi) <= band
+  // near=true：滚动停稳后的补画——只画带内缺着的页。
+  // 大部头（整本超预算）：就是从视口往外画到预算装满（keep 页）为止，不是整本——
+  // items 已按"离视口由近到远"排好，取前 keep 个正好是"眼前这一带 + 前后各几屏"。
+  // 小文档整本就在预算内，照旧全画。
+  let todo
+  if (near) todo = items.filter(it => inBand(it) && !doneKeys.has(doneKeyOf(it)))
+  else if (items.length > keep) todo = items.slice(0, keep)
+  else todo = items
   const skipKeys = near ? null : new Set(todo.map(doneKeyOf))
   let kicked = false
   for (let i = 0; i < todo.length; i++) {
@@ -463,6 +484,8 @@ async function renderAll({ early = null, near = false } = {}) {
     rendering.value = false
     if (!near) {
       evictFar(skipKeys)
+      fillTextLayersIdle()          // 带外只闲时补文字层：纸面的字可以慢慢画，搜索/引文不能缺
+      if (seq !== passToken) return
       await measureNotes()
       if (searchOpen.value && searchQ.value.trim().length >= 2) runSearch()
     }
@@ -484,7 +507,7 @@ function doRenderItem(it, seq) {
       if (seq !== passToken) return        // pass 已过期：这一页的缩放/布局已经换了，别再画
       const page = await d.getPage(it.page + 1)
       const viewport = page.getViewport({ scale: scale.value })
-      const dpr = Math.min(2.5, window.devicePixelRatio || 1)
+      const dpr = dprFor(viewport.width, viewport.height)
       canvas.width = Math.floor(viewport.width * dpr)
       canvas.height = Math.floor(viewport.height * dpr)
       canvas.style.width = viewport.width + 'px'
@@ -501,14 +524,8 @@ function doRenderItem(it, seq) {
       }
       try {
         await task.promise
-        if (tlEl && it.text) {
-          tlEl.innerHTML = ''
-          clearTextIndex(tlEl)          // 节点全换了，旧的引文索引作废
-          const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
-          await tl.render()
-          clearTextIndex(tlEl)
-          docLinks.value[it.gi] = findDocLinks(el)     // 链接层跟着文本层走，一次微秒级的正则扫描
-        } else if (docLinks.value[it.gi]?.length) {
+        if (tlEl && it.text) await buildText(it, tlEl, el, page, viewport)
+        else if (docLinks.value[it.gi]?.length) {
           docLinks.value[it.gi] = []                   // 无文本层的变体（扫描件态）：别留上一版的链接
         }
         doneKeys.add(key)
@@ -521,6 +538,73 @@ function doRenderItem(it, seq) {
     work,
     new Promise(resolve => { wd = setTimeout(resolve, 45000) }),
   ]).finally(() => clearTimeout(wd))
+}
+
+/* 文字层：搜索、划词、批注引文的地基。跟着位图一起建（都画），或者单独建（带外页面）。 */
+async function buildText(it, tlEl, el, page, viewport) {
+  tlEl.innerHTML = ''
+  clearTextIndex(tlEl)                 // 节点全换了，旧的引文索引作废
+  el.style.setProperty('--scale-factor', scale.value)
+  const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: tlEl, viewport })
+  await tl.render()
+  clearTextIndex(tlEl)
+  docLinks.value[it.gi] = findDocLinks(el)     // 链接层跟着文本层走，一次微秒级的正则扫描
+  doneTxt.add(doneKeyOf(it))
+}
+
+/* 带外页面的文字层补建：只建文字层，不碰画布（大部头里画布才是贵的那部分）。
+   两条路，同一个代次号（新的打断旧的）：
+     · 查找前全量补——缺层会让 Ctrl+F **静默漏页**，这一路必须跑完；
+     · 平时闲时一片一页地补——不跟滚动/输入抢主线程，几秒后整本也就齐了。 */
+let fillGen = 0
+
+function _nextMissingText() {
+  for (const it of flatItems.value) {
+    if (it.text && !doneTxt.has(doneKeyOf(it)) && textLayers.value[it.gi] && pageEls.value[it.gi]) return it
+  }
+  return null
+}
+
+async function _buildTextOf(it, gen) {
+  const tlEl = textLayers.value[it.gi], el = pageEls.value[it.gi]
+  if (!tlEl || !el) return
+  const d = await getDoc(it.doc)
+  const page = await d.getPage(it.page + 1)
+  if (gen !== fillGen) return
+  await buildText(it, tlEl, el, page, page.getViewport({ scale: scale.value }))
+}
+
+async function fillTextLayers() {
+  const my = ++fillGen
+  const items = flatItems.value
+  for (let i = 0; i < items.length; i++) {
+    if (my !== fillGen) return
+    const it = items[i]
+    if (!it.text || doneTxt.has(doneKeyOf(it))) continue
+    try {
+      await _buildTextOf(it, my)
+    } catch (e) {
+      console.error('[eggpaper] text layer fail', it.key, e)
+    }
+    if ((i & 7) === 7) await new Promise(r => setTimeout(r, 0))   // 分部头：每 8 页让出主线程
+  }
+}
+
+function fillTextLayersIdle() {
+  const my = ++fillGen
+  const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 8 }), 120))
+  const step = async () => {
+    if (my !== fillGen) return
+    const it = _nextMissingText()
+    if (!it) return
+    try {
+      await _buildTextOf(it, my)
+    } catch (e) {
+      console.error('[eggpaper] text layer fail', it.key, e)
+    }
+    if (my === fillGen) idle(step, { timeout: 600 })
+  }
+  idle(step, { timeout: 600 })
 }
 
 function renderItem(it, seq) {
@@ -538,10 +622,34 @@ function scheduleRender(near = false) {
 /* ---------------- 位图记账：常驻上限 + 视口补画 ----------------
    600 页的大部头全画完时，每页一张满分辨率位图常驻，内存以 GB 计（缩放 300% 时
    单页就能上百 MB）。文字层是搜索/划词的地基，永远保留；只收位图——被收掉的页
-   滚回来时 ensureNear 补画。小文档（≤36 页）完全不进这条路，行为与从前一致。 */
+   滚回来时 ensureNear 补画。小文档（整本在预算内）完全不进这条路，行为与从前一致。 */
 const KEEP_NEAR = 6
-const KEEP_CANVASES = 36
+const KEEP_CANVASES = 36        // 常驻页数上限（预算算出来比它多时也照它砍）
+const PIX_BUDGET = 192 * 1024 * 1024     // 位图常驻预算：一屏页数 × 单页字节，超了少留几页
+const MAX_CANVAS_PX = 8e6                // 单张画布像素上限：4K + 200% 缩放 + 放大到 300% 时
+                                         // 一张就是上亿像素（几百 MB），比整个预算还大
 const doneKeyOf = it => it.key + ':' + scale.value.toFixed(3)
+const doneTxt = new Set()                // 文字层单独记账：位图可以收，文字层不收
+
+function dprFor(w, h) {
+  let d = Math.min(2.5, window.devicePixelRatio || 1)
+  if (w * h * d * d > MAX_CANVAS_PX) d = Math.max(1, Math.sqrt(MAX_CANVAS_PX / (w * h)))
+  return d
+}
+
+/* 一屏要花多少位图：{band 附近保几页（滚动跟手）, keep 全局留几页}。
+   按"预算 ÷ 单页字节"算，不是拍脑袋的页数——同一份预算，小屏多留几页、
+   4K 高 DPI 少留几页，内存曲线才是平的（弱机 + 高 DPI 曾经是 36 页 × 30MB）。 */
+function canvasPlan() {
+  const it = flatItems.value[0]
+  const w = (it?.w || 800) * scale.value, h = (it?.h || 1100) * scale.value
+  const dpr = dprFor(w, h)
+  const per = Math.max(1, Math.floor(w * dpr) * Math.floor(h * dpr) * 4)
+  const pages = Math.max(1, Math.floor(PIX_BUDGET / per))
+  return { dpr,
+           band: Math.max(3, Math.min(KEEP_NEAR + 2, Math.floor(pages / 2))),
+           keep: Math.max(5, Math.min(KEEP_CANVASES, pages)) }
+}
 
 function _centerGi() {
   const sc = scroller()
@@ -559,28 +667,52 @@ function _centerGi() {
 
 function evictFar(skipKeys = null) {
   const items = flatItems.value
-  if (items.length <= KEEP_CANVASES) return
+  const { band, keep } = canvasPlan()
+  if (items.length <= keep) return
   const c = _centerGi()
   const done = items.filter(it => doneKeys.has(doneKeyOf(it)))
-  if (done.length <= KEEP_CANVASES) return
+  if (done.length <= keep) return
   done.sort((a, b) => Math.abs(b.gi - c) - Math.abs(a.gi - c))     // 离视口最远的先收
-  for (let i = 0; i < done.length - KEEP_CANVASES; i++) {
+  for (let i = 0; i < done.length - keep; i++) {
     const it = done[i]
     const k = doneKeyOf(it)
     if (skipKeys && skipKeys.has(k)) continue     // 这一轮还没画到它：收了它马上又会重画
-    if (Math.abs(it.gi - c) <= KEEP_NEAR) continue
+    if (Math.abs(it.gi - c) <= band) continue     // 带内是滚动跟手要用的：不动它
     const canvas = canvases.value[it.gi]
-    if (canvas && canvas.width > 1) { canvas.width = 1; canvas.height = 1 }
+    if (canvas && canvas.width > 1) {
+      canvas.width = 1; canvas.height = 1
+      // 内联尺寸也要撤：只缩 backing store 的话，1×1 位图会被 CSS 尺寸拉满整页——
+      // alpha:false 的画布缩完是**不透明黑**，远页看着就是一整页黑纸（用户快速滚动时才现形）
+      canvas.style.width = ''; canvas.style.height = ''
+    }
     doneKeys.delete(k)
   }
 }
 
+/* 缩放/换排版后，带外的位图还停在旧比例上：尺寸换来换去反正都要重画，
+   先撤掉——留着的是错位的图（放大后只占左上角、缩小后溢出纸面）。 */
+function dropFarCanvases() {
+  const items = flatItems.value
+  const { band } = canvasPlan()
+  if (items.length <= band) return
+  const c = _centerGi()
+  for (const it of items) {
+    if (Math.abs(it.gi - c) <= band) continue
+    const canvas = canvases.value[it.gi]
+    if (canvas && canvas.width > 1) {
+      canvas.width = 1; canvas.height = 1
+      canvas.style.width = ''; canvas.style.height = ''
+    }
+  }
+}
+
 function ensureNear() {
-  if (rendering.value) return    // 整本 pass 在跑：它由近到远自己会画到这一页，别打断它
+  if (rendering.value) return    // 渲染 pass 在跑：它由近到远自己会画到这一页，别打断它
   if (!sheets.value.length || !scroller()) return
+  const { band } = canvasPlan()
   const c = _centerGi()
   for (const it of flatItems.value) {
-    if (Math.abs(it.gi - c) > KEEP_NEAR + 2) continue
+    if (Math.abs(it.gi - c) > band) continue
     if (!doneKeys.has(doneKeyOf(it))) { scheduleRender(true); return }
   }
 }
@@ -1035,7 +1167,10 @@ async function runSearch() {
   const items = flatItems.value
   /* 查找范围＝**当前版面**看得见的文字：原文版面查原文的文字层、译文版面查译文、
      双语版面两边都查。以前这里跳过了 origPage < 0 的项（译文页整类），于是译文里
-     中英文都查不到；现在逐项扫各自渲染出的文字层，版面是哪种就查哪种。 */
+     中英文都查不到；现在逐项扫各自渲染出的文字层，版面是哪种就查哪种。
+     大部头里带外页面只建了文字层、没画位图（见 renderAll），这里的扫描照样整本覆盖。 */
+  await fillTextLayers()                 // 万一带外文字层被新一轮渲染中途打断：补上再扫
+  if (seq !== searchSeq) return
   for (let idx = 0; idx < items.length; idx++) {
     const it = items[idx]
     const el = pageEls.value[it.gi]
@@ -1556,7 +1691,7 @@ watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 32
    查询词不动，用户看到的是「结果跟着版面刷新」。 */
 watch([() => store.viewer.variant, () => store.viewer.spread],
       () => { searchHits.value = []; searchAt.value = -1; lastSearchQ = ''; doneKeys.clear(); load({ keepPlace: true }); saveLater() })
-watch(scale, () => { doneKeys.clear(); scheduleRender(); saveLater() })
+watch(scale, () => { doneKeys.clear(); doneTxt.clear(); dropFarCanvases(); scheduleRender(); saveLater() })
 watch(paras, () => { spanCache.clear(); anchorCache.clear() })
 watch(() => store.jump, applyJump)
 watch(() => store.viewer.layers, () => measureNotes(), { deep: true })    // 图层开关只动页边卡，画布不用重画

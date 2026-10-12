@@ -290,6 +290,8 @@ Alt+←    返回上一个位置                      Esc         收浮层 / �
 
 只动 `opacity`/`transform`；滚动跟随用去抖的 scroll 监听（scroll-spy，见 PdfViewer `onScroll` 的 `spyT` 去抖）而不是逐帧读布局；canvas 重渲染去抖 160ms；`will-change` 只加在已知将动的浮层上。
 
+**出图只画"预算内的最近若干页"，不是整本**：位图常驻按字节预算算（192MB ÷ 单页字节，钳 5~36 页），换版面/缩放从视口往外画到预算装满为止，带外页面滚动时补画（`ensureNear`）。文字层另记账、永不留缺（搜索与批注引文只认它），闲时 `requestIdleCallback` 一页一页补、查找前强制补全。理由见 [lesson](lesson.md) §八：整本重光栅化在弱机/高 DPI 上是 GB 级位图吞吐，会把整机拖卡。
+
 ## 13. 文案：标签，不是说明
 
 界面上不写解释设计的话。规则：
