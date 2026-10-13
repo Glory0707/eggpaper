@@ -228,6 +228,7 @@ const EN = {
   '更早的对话已折叠': 'Earlier messages folded into a summary',
   '回到底部 ↓': 'Back to bottom ↓',
   '停止生成': 'Stop',
+  '段落已重排，重新析读一次': 'Paragraphs were re-segmented — analyze again',
   '回答被上限截断': 'Answer cut off by the output limit',
   '继续生成': 'Continue',
   '接着写…': 'Continuing…',

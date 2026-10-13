@@ -536,8 +536,9 @@ onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); docu
         </template>
         <div class="q-body" v-else>{{ m.content }}</div>
         <span v-if="m.streaming" class="qa-caret"></span>
-        <!-- 被输出上限截断：回答只写到一半。给一条明路，别让用户以为模型"就答这么多" -->
-        <div v-if="m.truncated && !m.streaming" class="qa-cut">
+        <!-- 被输出上限截断：回答只写到一半。给一条明路，别让用户以为模型"就答这么多"。
+             只在**最后一条**上给（服务端只允许续写最后一条回答，老消息上的按钮点了必 400） -->
+        <div v-if="m.truncated && !m.streaming && i === msgs.length - 1" class="qa-cut">
           <span>{{ t('回答被上限截断') }}</span>
           <button @click="cont(m)" :disabled="busy">{{ t('继续生成') }}</button>
         </div>

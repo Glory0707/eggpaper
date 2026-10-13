@@ -1972,18 +1972,24 @@ def _reparse_paper(pid: str) -> str:
     if old and db.paragraphs_match(pid, fresh):
         db.replace_paragraphs(pid, fresh)      # 只是补行级坐标/页高，编号一个没动
         return "same"
-    stats = db.migrate_anchors(pid, [(r["idx"], r["text"]) for r in old], fresh) if old else None
+    if old:
+        # 迁移锚点 + 换段落表 + （必要时）作废骨架，全在同一事务里：
+        # 分两笔写，中间崩就是"锚点已迁、旧骨架还挂着 done"或"老表 + 新编号"的静默错位
+        stats = db.migrate_anchors(pid, [(r["idx"], r["text"]) for r in old], fresh,
+                                   stale_note=STALE_NOTE)
+    else:
+        if _pid_gone(pid):
+            return "skip"
+        db.replace_paragraphs(pid, fresh)
+        return "fresh"
     if _pid_gone(pid):
         return "skip"
-    db.replace_paragraphs(pid, fresh)
-    if stats is None:
-        return "fresh"
     _applog(f"段落重解析 {pid}: {len(old)}→{len(fresh)} 段，锚点迁移 {stats['mapped']}"
             f"（丢 {stats['orphan']}），新救回 {stats['uncovered']}"
             + (f"，页边卡跟迁 {stats['pins']}（丢 {stats['pins_lost']}）"
                if stats["pins"] or stats["pins_lost"] else ""))
     if stats["material"]:
-        db.ai_invalidate(pid, STALE_NOTE)
+        _cancel_request("analysis", pid)      # 还在跑的那轮析读：收手，别再往下烧钱
         _applog(f"段落重排后骨架作废 {pid}：新解析救回 {stats['uncovered']} 段、丢 {stats['orphan']} 段")
         return "stale"
     return "migrated"
@@ -2002,16 +2008,53 @@ def _maybe_requeue_stale(pid: str):
     if _analysis_inflight(pid):
         return
     _applog(f"段落重排后重析读 {pid}")
-    _enqueue_analysis(pid, db.get_paragraphs(pid))
+    _enqueue_analysis(pid, db.get_paragraphs(pid, with_lines=False))
+
+_reparse_ev_lock = threading.Lock()
+_reparse_events: dict = {}       # pid -> Event：正在解析的那一篇
+
+def _reparse_paper_sync(pid: str):
+    """重解析一篇：**同一篇只跑一次**，其他调用者等它跑完再回。
+
+    为什么要等：两个窗口同时打开同一篇老格式论文时，后到的那个会读到**上一代**段落表
+    （一个窗口一套 ¶ 编号，页边卡/引用跳转全对不上）。等的是"这一次解析落地"，
+    不是永远——等超时（大部头也就几十秒）就按现状读库，不把请求挂死。
+    """
+    with _reparse_ev_lock:
+        ev = _reparse_events.get(pid)
+        if ev is None:
+            ev = threading.Event()
+            _reparse_events[pid] = ev
+            first = True
+        else:
+            first = False
+    if not first:
+        ev.wait(timeout=180)
+        return
+    try:
+        _reparse_paper(pid)
+    except Exception as e:
+        _applog(f"[eggpaper] 段落重解析失败 {pid}: {e}")
+    finally:
+        with _reparse_ev_lock:
+            _reparse_events.pop(pid, None)
+        ev.set()
+
+def _wait_reparse(pid: str, timeout: float = 180):
+    """别人正在解析这一篇就等它落地（没有在解析的就不等）。"""
+    with _reparse_ev_lock:
+        ev = _reparse_events.get(pid)
+    if ev is not None:
+        ev.wait(timeout=timeout)
 
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
-    if db.paragraphs_stale(pid) and _probe_lines_once(pid):
-        try:
-            _reparse_paper(pid)
-        except Exception as e:
-            _applog(f"[eggpaper] 段落重解析失败 {pid}: {e}")
+    if db.paragraphs_stale(pid):
+        if _probe_lines_once(pid):
+            _reparse_paper_sync(pid)
+        else:
+            _wait_reparse(pid)        # 别的窗口/开机扫库正在解析：等它落地，别给上一代
     _maybe_requeue_stale(pid)
     return db.get_paragraphs(pid)
 
@@ -2032,7 +2075,7 @@ def _reparse_sweep():
         if not _probe_lines_once(pid):
             continue
         try:
-            what = _reparse_paper(pid)
+            what = _reparse_paper_sync(pid)
         except Exception as e:
             _applog(f"[eggpaper] 段落重解析失败 {pid}: {e}")
             continue
@@ -2162,8 +2205,17 @@ def _run_analysis(pid: str, paras: list):
             if p["in_refs"]:
                 data["roles"][str(p["idx"])] = "boilerplate"
                 data["purposes"][str(p["idx"])] = "参考文献"
-        db.set_analysis(pid, data["claims"], {k: {"role": v, "purpose": data["purposes"].get(k, "")}
-                                              for k, v in data["roles"].items()})
+        # 指纹闸：骨架是按**这一版**段落算的，跑完时段落若已换代（另一窗口重解析过），
+        # 写进去就是静默错位——整批不写，这篇回到"未析读"
+        if not db.set_analysis(pid, data["claims"],
+                               {k: {"role": v, "purpose": data["purposes"].get(k, "")}
+                                for k, v in data["roles"].items()},
+                               expect=db.para_sig(paras)):
+            # 作废也要落到**终态**：只 return 的话状态停在 running，界面永远"正在通读…"
+            # （只能等重启时的僵尸清扫）。落成"未析读 + 原因"，再打开时会自动重析读一次
+            _applog(f"析读 {pid}: 段落已换代，这次结果作废（不写骨架，也不写七问/摘要）")
+            db.update_paper(pid, analysis_status="none", analysis_error=STALE_NOTE)
+            return
         db.answers_clear(pid)
         upd = dict(summary=None, suggest=None, advisor=None, method_card=None,
                    abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
@@ -2182,7 +2234,16 @@ def _run_analysis(pid: str, paras: list):
     except Exception as e:
         hint = _human_msg(e)
         _applog(f"析读失败 {pid}: {type(e).__name__}: {str(e)[:300]}")
-        db.fail_analysis(pid, hint)
+        # 状态已经是 none 的（被段落换代作废 / 用户取消后清场）别再标 error：
+        # STALE_NOTE 是"再打开这篇时自动重析读"的触发条件，踩掉它就永远不重跑了
+        try:
+            cur = (db.get_paper(pid) or {}).get("analysis_status") or "none"
+            if cur == "none":
+                _applog(f"析读 {pid}: 状态已是未析读（作废/取消），这次失败不标错")
+            else:
+                db.fail_analysis(pid, hint)
+        except Exception:
+            pass
     finally:
         _cancel_clear("analysis", pid)
         _analysis_progress.pop(pid, None)
@@ -2215,7 +2276,7 @@ def analyze(pid: str):
             return {"status": p["analysis_status"]}
         if p["analysis_status"] in ("running", "queued"):
             _applog(f"析读 {pid}: 数据库里是 {p['analysis_status']} 但本进程没有这个任务（上次被中断），重来")
-        _enqueue_analysis(pid, db.get_paragraphs(pid))
+        _enqueue_analysis(pid, db.get_paragraphs(pid, with_lines=False))
     return {"status": "queued"}
 
 @app.get("/api/papers/{pid}/analysis")
@@ -3806,9 +3867,11 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None, cont: di
         if not ans.strip():
             raise RuntimeError("模型这次没返回内容")
         if cont is not None:
-            # 续写：接在原来那条后面。消息被删了（用户在续写途中删掉）就不写，如实说一声
-            if not db.qa_append_assistant(cont["mid"], ans):
-                yield _sse({"type": "error", "message": "这条回答已经不在了，重新生成一次",
+            # 续写：接在原来那条后面。消息被删了（用户在续写途中删掉）或已被别处
+            # 续写过（乐观锁对不上）就不写，如实说一声
+            if not db.qa_append_assistant(cont["mid"], ans, expect=len(cont["partial"])):
+                yield _sse({"type": "error",
+                            "message": "这条回答已经变过了（别处删了或续写过），刷新看看",
                             "assistant_id": None})
                 return
             yield _sse({"type": "done", "user_id": None, "assistant_id": cont["mid"],
@@ -3831,7 +3894,7 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None, cont: di
         if cont is not None:
             got = "".join(buf)
             if got.strip():
-                db.qa_append_assistant(cont["mid"], got)
+                db.qa_append_assistant(cont["mid"], got, expect=len(cont["partial"]))
         raise
     except Exception as e:
         hint = _human_msg(e)
@@ -3839,7 +3902,7 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None, cont: di
         if cont is not None:
             # 续写失败：已经吐出来的那半截接回原消息（能存多少是多少），别整段丢掉
             if ans.strip():
-                db.qa_append_assistant(cont["mid"], ans)
+                db.qa_append_assistant(cont["mid"], ans, expect=len(cont["partial"]))
             yield _sse({"type": "error", "message": hint, "assistant_id": cont["mid"],
                         "appended": bool(ans.strip())})
             return
@@ -3873,12 +3936,28 @@ def ask(pid: str, body: dict):
             ref_pids.append(pid2)
     return _sse_response(_stream_answer(p, conv_id, question, ref_pids), keep_alive=True)
 
+_cont_lock = threading.Lock()
+_cont_inflight: set = set()      # 正在续写的消息号：同一段同时只许一发（见 ask_continue）
+
+def _cont_release_wrap(gen, mid: int):
+    """包一层：流怎么结束（正常/出错/客户端断开）都要把"续写中"的登记摘掉。"""
+    try:
+        for x in gen:
+            yield x
+    finally:
+        with _cont_lock:
+            _cont_inflight.discard(mid)
+
 @app.post("/api/papers/{pid}/ask-continue")
 def ask_continue(pid: str, body: dict):
     """接着写：上一条回答被输出上限截断了，从断点续写（写回同一条消息，不新增问答对）。
 
     前缀与上一次调用逐字节相同（历史取到那条问题之前、问题原样再传），续写这拍
-    只有尾部那点新内容按全价算，其余全走服务端缓存。"""
+    只有尾部那点新内容按全价算，其余全走服务端缓存。
+
+    同一段**同时只许一发**：两个窗口/双击连发时，第二发若也跑完流程就会把同一段
+    续写接两遍（正文里出现两份）。这里用一本"续写中"的簿子当场挡住（409），
+    写库那一步另有一道乐观锁兜底（`qa_append_assistant(expect=…)`）。"""
     p = _paper_or_404(pid)
     _require_paras(pid)
     try:
@@ -3896,9 +3975,18 @@ def ask_continue(pid: str, body: dict):
         raise HTTPException(400, "找不到这条回答对应的问题")
     if not (m.get("content") or "").strip():
         raise HTTPException(400, "这条回答是空的，重新生成一次")
-    return _sse_response(_stream_answer(p, m["conv_id"], question, None,
-                                       cont={"mid": mid, "partial": m["content"]}),
-                         keep_alive=True)
+    with _cont_lock:
+        if mid in _cont_inflight:
+            raise HTTPException(409, "这条回答正在续写中，等它写完再点")
+        _cont_inflight.add(mid)
+    try:
+        gen = _stream_answer(p, m["conv_id"], question, None,
+                             cont={"mid": mid, "partial": m["content"]})
+        return _sse_response(_cont_release_wrap(gen, mid), keep_alive=True)
+    except Exception:
+        with _cont_lock:
+            _cont_inflight.discard(mid)
+        raise
 
 @app.get("/api/papers/{pid}/conversations")
 def conversations(pid: str):

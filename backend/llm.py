@@ -381,11 +381,14 @@ def paper_doc(title: str, paras: list) -> str:
     实在装不下才明示节选——只保头会让 30 页+ 的论文对这些问题集体失明。"""
     use = [p for p in paras if not p.get("in_refs")]
     n = max(1, len(use))
-    if sum(len(p["text"]) + 8 for p in use) + len(title or "") + 8 <= DOC_CAP:
+    # text 一律走 (p.get("text") or "")：老库/手改库里可能留 NULL，读侧不许把整条
+    # 问答链打成 500（与 db._safe_json 同一条口径）
+    if sum(len(p.get("text") or "") + 8 for p in use) + len(title or "") + 8 <= DOC_CAP:
         per = None                       # 装得下：一段不截
     else:
         per = int(min(PARA_MAX, max(PARA_MIN, (DOC_CAP * 0.94 - len(title or "")) / n)))
-    lines = [f"¶{p['idx']} {p['text'] if per is None else _clip_para(p['text'], per)}" for p in use]
+    lines = [f"¶{p['idx']} {(p.get('text') or '') if per is None else _clip_para(p.get('text') or '', per)}"
+             for p in use]
     body = "\n\n".join(lines)
     if len(body) <= DOC_CAP:
         return f"论文标题：{title or ''}\n\n{body}"

@@ -624,12 +624,17 @@ def paragraphs_match(pid: str, paras: list) -> bool:
 # （骨架的角色、主张的依据段、七问回答里的 ¶n）全是按编号指的——不迁移就是静默错位：
 # 点「¶12」跳到别的段上，比"少一个功能"更糟。这里按**文字**把它们搬到新编号上。
 
-def _probe(part: str, new_sq: list):
-    """一小截老段文字落在哪条新段里（逐条包含比对，找不到回 None）。"""
+def _probe(part: str, new_sq: list, start: int = 0):
+    """一小截老段文字落在哪条新段里（逐条包含比对，找不到回 None）。
+
+    start：从第几条开始找。映射是**单调**的（重解析不改阅读顺序），调用方传上一段的
+    落点就能把整趟比对从 O(段数²) 压成 O(段数)——5000 段的书原来要 2500 万次子串比对，
+    那是分钟级的卡顿，而它就挂在打开论文这条路上。找不到时调用方回退到全文再找一遍。
+    """
     if not part:
         return None
-    for i, (_, nsq) in enumerate(new_sq):
-        if nsq and part in nsq:
+    for i in range(max(0, start), len(new_sq)):
+        if new_sq[i][1] and part in new_sq[i][1]:
             return i
     return None
 
@@ -649,14 +654,20 @@ def _para_map(old_rows: list, new_paras: list) -> tuple:
     # 两种入参形状都收：[{idx,text}]（库里那批）与 [(idx,text)]（调用方顺手拼的）
     rows = [(int(r["idx"]), r["text"]) if isinstance(r, dict) else (int(r[0]), r[1])
             for r in old_rows]
+    start = 0                                # 上一段落点之后：单调推进（见 _probe）
     for idx, text in rows:
         sq = _squash(text)
         if not sq:
             continue
-        head = _probe(sq[:80], new_sq)
+        head = _probe(sq[:80], new_sq, start)
         if head is None:                     # 老段开头被改了（页眉滤除规则变了）：逐级缩短再探
             for L in (40, 20, 12):
-                head = _probe(sq[:L], new_sq)
+                head = _probe(sq[:L], new_sq, start)
+                if head is not None:
+                    break
+        if head is None:                     # 单调推进没命中：回退全文再找一遍（解析乱序/合并）
+            for L in (80, 40, 20, 12):
+                head = _probe(sq[:L], new_sq, 0)
                 if head is not None:
                     break
         if head is None:                     # 反向：新段整体落在老段里（老段更长）
@@ -664,7 +675,7 @@ def _para_map(old_rows: list, new_paras: list) -> tuple:
         if head is None:
             orphan += 1
             continue
-        tail = _probe(sq[-80:], new_sq) if len(sq) > 160 else None
+        tail = _probe(sq[-80:], new_sq, head) if len(sq) > 160 else None
         end = tail if (tail is not None and tail > head) else head
         run = list(range(head, end + 1))
         k = end + 1
@@ -673,6 +684,7 @@ def _para_map(old_rows: list, new_paras: list) -> tuple:
             k += 1
         mapping[idx] = [new_sq[j][0] for j in run]
         covered.update(run)
+        start = max(start, run[-1] + 1)
     return mapping, orphan, max(0, len(new_sq) - len(covered))
 
 def _remap_refs(text: str, mapping: dict) -> str:
@@ -705,12 +717,23 @@ def _remap_json_refs(raw, mapping: dict, keys: bool = False):
         return out
     return raw
 
-def migrate_anchors(pid: str, old_rows: list, new_paras: list) -> dict:
-    """重解析之前：把这篇的所有锚点按文字搬到新编号上，返回迁移统计。
+def migrate_anchors(pid: str, old_rows: list, new_paras: list, replace: bool = True,
+                    stale_note: str = None) -> dict:
+    """重解析：把这篇的所有锚点按文字搬到新编号上 + 换掉段落表，**同一个事务**。
 
     old_rows: [{idx, text}]（库里那批）；new_paras: pdfparse 的新输出。
+    replace=False 只迁移不换表（测试/特殊情况用）。
     统计里 material=True 表示"这次重排把段落结构改到骨架不可信了"（新解析救回来的
     正文超过一成，或者有一成老段找不到落点）——由调用方决定要不要重析读。
+
+    锚点迁移与段落替换必须同一事务：分两次写的话，中间崩/断电会留下
+    "老段落表 + 新编号锚点"的静默错位（点 ¶12 跳到别的段上，比报错难查得多）。
+
+    stale_note=原因（通常是 STALE_NOTE）：结构改到骨架不可信（material，判据见下）时，
+    **同一事务里**把按段号锚定的 AI 产物整批作废（角色/主张/七问回答/一眼卡/方法卡/
+    推荐问题，全部由重析读重建）。
+    分两笔写会留下"锚点已迁移 + 旧骨架还挂着 done"的半截态；用户资产（页边卡、批注、
+    术语表）一个不动——页边卡刚按引句迁过，术语表锚的是词不是段。
     """
     mapping, orphan, uncovered = _para_map(old_rows, new_paras)
     n_old, n_new = max(1, len(old_rows)), max(1, len(new_paras))
@@ -793,34 +816,56 @@ def migrate_anchors(pid: str, old_rows: list, new_paras: list) -> dict:
             if upd:
                 c.execute("UPDATE papers SET " + ", ".join(f"{k}=?" for k in upd) +
                           " WHERE id=?", (*upd.values(), pid))
+        # ⑤ 骨架不可信时整批作废（同一事务，别留半截态）
+        if stale_note and stats["material"]:
+            c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
+            c.execute("DELETE FROM claims WHERE paper_id=?", (pid,))
+            c.execute("DELETE FROM answers WHERE paper_id=?", (pid,))
+            c.execute("UPDATE papers SET analysis_status='none', analysis_error=?, summary=NULL, "
+                      "suggest=NULL, advisor=NULL, method_card=NULL, evidence_qs=NULL WHERE id=?",
+                      (stale_note, pid))
+        # ⑥ 换段落表（与上面的锚点迁移同一事务，见函数文档）
+        if replace:
+            c.execute("DELETE FROM paragraphs WHERE paper_id=?", (pid,))
+            c.executemany(
+                "INSERT INTO paragraphs(paper_id, idx, page, bbox, text, in_refs, lines) "
+                "VALUES(?,?,?,?,?,?,?)",
+                [(pid, p["idx"], p["page"], json.dumps(p["bbox"]), p["text"],
+                  1 if p.get("in_refs") else 0, json.dumps(p.get("lines") or []))
+                 for p in new_paras])
     return stats
-
-def ai_invalidate(pid: str, why: str):
-    """段落重排后骨架不再可信：把按段落编号生成的 AI 产物整批作废。
-
-    清的是"锚在段号上的"（角色/主张/七问回答/一眼卡/方法卡/推荐问题）——
-    它们全部由重析读重建。用户资产（页边卡、批注、术语表）一个不动：
-    页边卡刚按引句迁过，术语表锚的是词不是段。
-    """
-    with _txn() as c:
-        if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
-            c.rollback()
-            return
-        c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
-        c.execute("DELETE FROM claims WHERE paper_id=?", (pid,))
-        c.execute("DELETE FROM answers WHERE paper_id=?", (pid,))
-        c.execute("UPDATE papers SET analysis_status='none', analysis_error=?, summary=NULL, "
-                  "suggest=NULL, advisor=NULL, method_card=NULL, evidence_qs=NULL WHERE id=?",
-                  (why, pid))
 
 # ---------- skeleton ----------
 
-def set_analysis(pid: str, claims: list, annos: list, status: str = "done", error: str = None):
+def para_sig(paras: list) -> str:
+    """段落集的廉价指纹（段数 + 首尾各三段的开头）：**析读写库前的闸**。
+
+    析读是分钟级的活，跑完时段落可能已经换代（另一窗口打开了这篇 → 重解析；
+    或者开机扫库刚跑过）。角色/主张/回答全按段号锚定，拿旧编号的结果写进新段落表
+    就是静默错位——对不上就整批不写，让这篇回到"未析读"。
+    """
+    import hashlib
+    h = hashlib.sha1()
+    h.update(str(len(paras)).encode())
+    for p in (list(paras[:3]) + list(paras[-3:]) if paras else []):
+        h.update(((p.get("text") or "")[:60]).encode("utf-8", "replace"))
+    return h.hexdigest()[:12]
+
+def set_analysis(pid: str, claims: list, annos: list, status: str = "done", error: str = None,
+                 expect: str = None) -> bool:
+    """写骨架。expect 给了就先比段落指纹：对不上（段落已换代）整批不写并返回 False。
+
+    返回 True=写了 / False=被闸挡下（调用方据此收手，别接着写按段号锚定的七问/摘要）。"""
     with _lock:
         c = _get()
         # 存在性检查必须在锁内：purge 的事务可能插在 get 与写之间，把孤儿行插回死篇
         if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
-            return
+            return False
+        if expect is not None:
+            rows = [dict(r) for r in c.execute(
+                "SELECT idx, text FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,)).fetchall()]
+            if para_sig(rows) != expect:
+                return False
         c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
         c.execute("DELETE FROM claims WHERE paper_id=?", (pid,))
         c.executemany("INSERT INTO claims(paper_id, cid, text, anchors) VALUES(?,?,?,?)",
@@ -829,6 +874,7 @@ def set_analysis(pid: str, claims: list, annos: list, status: str = "done", erro
                       [(pid, int(k), v["role"], v.get("purpose", "")) for k, v in annos.items()])
         c.execute("UPDATE papers SET analysis_status=?, analysis_error=? WHERE id=?", (status, error, pid))
         c.commit()
+        return True
 
 def clear_ai_results() -> int:
     """清掉"一眼就能重算出来的卡片"（换演示/真实模式时用）。
@@ -1133,14 +1179,22 @@ def qa_msg_get(mid: int):
     rows = q("SELECT id, paper_id, role, content, conv_id FROM qa_messages WHERE id=?", (mid,))
     return dict(rows[0]) if rows else None
 
-def qa_append_assistant(mid: int, add: str) -> bool:
-    """把续写的一段接到那条回答末尾。行还在才写（用户在续写途中删了消息就算了）。"""
+def qa_append_assistant(mid: int, add: str, expect: int = None) -> bool:
+    """把续写的一段接到那条回答末尾。行还在才写（用户在续写途中删了消息就算了）。
+
+    expect 给了就是乐观锁：要求当前正文长度等于它（调用方读到的那一版）。两个窗口
+    同时点「继续生成」时，第二发读到的长度已经变了——不接，返回 False，免得同一段
+    续写接两遍（正文里出现两份）。
+    """
     with _txn() as c:
         row = c.execute("SELECT content FROM qa_messages WHERE id=?", (mid,)).fetchone()
         if not row:
             return False
+        cur = row["content"] or ""
+        if expect is not None and len(cur) != expect:
+            return False
         c.execute("UPDATE qa_messages SET content=? WHERE id=?",
-                  (((row["content"] or "").rstrip() + "\n\n" + add.strip()) if row["content"] else add.strip(), mid))
+                  ((cur.rstrip() + "\n\n" + add.strip()) if cur else add.strip(), mid))
         return True
 
 def qa_history(pid: str, conv_id: int = None, limit: int = 200):
