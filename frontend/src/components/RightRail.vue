@@ -224,7 +224,6 @@ watch(() => store.analysis.status, s => {
    （body.rail-resizing），松手再交还给 CSS，否则边缘会黏在手后面。
    键盘也能改（←/→），拖不动鼠标的人不该被挡在外面。 */
 const RAIL_MIN = 268, RAIL_MAX = 760, RAIL_DEF = 336
-/* 经典分栏拖动：位移直接写进 railW，宽度过渡由 CSS 负责；拖完才 reflow（不然每帧重画论文）。 */
 const rail = useEdgeResize({
   get: () => store.viewer.railW, set: w => { store.viewer.railW = w },
   min: RAIL_MIN, max: RAIL_MAX, def: RAIL_DEF, dir: -1,      // 抓手在左缘：往左拖 = 变宽

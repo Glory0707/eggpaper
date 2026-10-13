@@ -36,9 +36,9 @@ INK, INK2, INK3 = '#1d1b17', '#55524a', '#6b675e'
 
 THEMES = {
     'off 纯白': ('#ffffff', '#f6f6f5', '#ffffff', '#ffffff', None),
-    'mung 豆沙绿': ('#e4f2e6', '#daedde', '#eaf6ec', '#f5fbf6', ('#c7edcc', 0.9)),
-    'cyan 浅青绿': ('#e2f2f2', '#d8ebeb', '#e9f6f6', '#f5fbfb', ('#cce8e8', 0.9)),
-    'sand 米黄': ('#f6f6ea', '#efefe0', '#fafaf2', '#fdfef9', ('#f5f5dc', 0.9)),
+    'mung 豆沙绿': ('#e4f2e6', '#daedde', '#ddf0e1', '#ecf7ee', ('#c7edcc', 0.9)),
+    'cyan 浅青绿': ('#e2f2f2', '#d8ebeb', '#dceeee', '#e9f4f4', ('#cce8e8', 0.9)),
+    'sand 米黄': ('#f6f6ea', '#efefe0', '#f1f1dd', '#f8f8ea', ('#f5f5dc', 0.9)),
 }
 
 print(f'{"底纹":<12}{"桌面":>7}{"沟槽":>7}{"面板":>7}{"浮层":>7}   {"纸面":>8}{"黑字/纸面":>10}')

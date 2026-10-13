@@ -2967,7 +2967,9 @@ def export_md(pid: str):
     except Exception:
         cb = []
     if cb:
-        ST = {"support": ("支持", "supports"), "contest": ("质疑", "questions"),
+        # 立场键必须是 contrast（LLM 输出与 _CITE_STANCE_ZH 的取值）：写成 contest 时
+        # ST.get("contrast") 落空、取默认的"提及"，导出的 .md 里"质疑"一直显示成"提及"
+        ST = {"support": ("支持", "supports"), "contrast": ("质疑", "questions"),
               "mention": ("提及", "mentions")}
         lines += [f"## {L('cited')}", ""]
         for citing, h in cb:
@@ -4106,10 +4108,7 @@ def translate_full_start(pid: str, force: bool = False):
         glossary_rows = []
 
         def add_terms(rows, cap=None):
-            """把一份词表并进来：按 term_en 去重、空项跳过、cap 只对后面的学科库生效。
-
-            本篇词表与学科库是同一段逻辑的两遍（本篇优先、学科库补缺），封顶 200
-            是护栏；各写一遍的话，封顶数或字段名改一处就会让学科库在最贵的那条链上失效。"""
+            """把一份词表并进来：按 term_en 去重、空项跳过；cap 只对后面的学科库生效。"""
             for r in rows:
                 en = (r.get("term_en") or "").strip()
                 if not en or en.lower() in gseen:

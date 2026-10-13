@@ -544,7 +544,7 @@ SKELETON_SYSTEM = """你是论文论证结构分析专家。研究者会把一�
 PURPOSE_FALLBACK = {
     "background": "领域铺垫，可跳过", "gap": "作者真正的出发点", "claim": "论文要证明的核心",
     "evidence": "支撑主张的核心数据", "control": "仅为严谨的对照", "boilerplate": "样板描述，可跳过",
-    "extension": "锦上添花的拓展", "limitation": "作者主动承认的弱点", "boilerplate_refs": "参考文献",
+    "extension": "锦上添花的拓展", "limitation": "作者主动承认的弱点",
 }
 
 ROLE_ALIAS = {

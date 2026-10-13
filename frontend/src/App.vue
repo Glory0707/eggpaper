@@ -601,8 +601,9 @@ let tranStarting = false
    这期间切了篇的话，新篇会被一个全局 true 照出一条假的"翻译中 + 停止" */
 let tranOptimistic = ref('')
 let tranStopPending = false
-/* 与后端 translate_full.LLM_SERVICES 同名单：这些服务每页都要真过一遍模型，
- * 全文翻译是分钟级不是秒级——开跑时就说清，别让用户在 0/n 上猜它死没死 */
+/* 全文翻译是分钟级不是秒级：开跑时就把服务与"在跑"说清，别让用户在 0/n 上猜它死没死。
+ * 服务名单与耗时口径在后端（translate_full.LLM_SERVICES 决定分批大小），
+ * 这里只负责把后端返回的 note 原样弹出来 */
 async function doTranslateFull() {
   if (!store.currentId || tranSt.value === 'running' || tranStarting) return
   const pid = store.currentId              // 全程认这一篇：中途切篇不许把停止/续翻打到别篇

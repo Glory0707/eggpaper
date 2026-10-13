@@ -144,8 +144,9 @@ def engine_path(explicit: str = "") -> str:
     `%LOCALAPPDATA%\\Programs\\Python\\Python312\\Scripts\\pdf2zh.exe` 就躺在那儿，
     而 `shutil.which` 一个都看不见——"明明装了却说没装"就是这么来的。
 
-    顺序：设置里指定的 → PATH → exe 同目录 → 数据目录 engines/ → 常见 Python Scripts。
-    最后一处（数据目录 engines/）是给"手动放一个进来"留的稳位：那目录升级、卸载都不动。
+    顺序：设置里指定的 → 数据目录 engines/（自动装的最新版插在最前）→ PATH → exe 同目录
+    → 常见 Python Scripts。engines/ 靠前是因为它给"手动放一个进来"留了稳位：那目录
+    升级、卸载都不动。
     """
     import glob
     if os.environ.get("EGGPAPER_ENGINE_OFF"):

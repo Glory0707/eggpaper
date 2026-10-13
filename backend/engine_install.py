@@ -10,8 +10,8 @@
 1. 更新源同源（{feed}/pdf2zh-*.zip——作者把引擎包和安装包放同一目录时最快，404 就过）；
 2. gh-proxy 系镜像（前缀拼接官方 URL，国内通常几 MB/s；这类域名时不时换，死源几秒就跳过）；
 3. 官方 GitHub 直连（挂了代理的用户它反而最稳）。
-每个源都有**停滞判据**：开下 12 秒平均速度不足 64KB/s、或 25 秒没有任何新字节，
-就断开换下一个源——不等它慢慢磨 8 个小时。
+每个源都有**停滞判据**：开下 12 秒平均速度不足 64KB/s 就断开换下一个源——不等它慢慢磨
+8 个小时（"连数据都不来"那种卡死由 httpx 的 30s 读超时兜底）。
 
 **完整性**：官方 zip 的 sha256 钉死在 ENGINE_SHA256（与 GitHub API 的 assets digest
 逐字核对过），不管从哪个源下来（镜像再不可信也一样），解压前先校验，不对就删掉报错。
@@ -41,8 +41,8 @@ import fsutil    # 静默删文件/流式 sha256：与 main/translate_full/updat
 
 
 def applog(msg: str):
-    """本模块的日志出口：默认 stdout；main 启动时替换成 _applog——打包版 console=False
-    没有 stdout，不接上的话"引擎安装到底卡在哪"一个字都留不下（与 llm.applog 同款接法）。"""
+    """本模块的日志出口（接法与原因同 llm.applog：打包版 console=False 没有 stdout，
+    不接上"引擎安装到底卡在哪"就一个字都留不下）。"""
     print(msg)
 
 

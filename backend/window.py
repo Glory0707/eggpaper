@@ -12,11 +12,10 @@ Edge——同一个引擎，不用往安装包里塞几十兆，也没有额外�
 连"10 秒没出来就退回应用模式"这种兜底计时都跑不到（主线程要 GIL 才能跑 Python 回调）。
 一个会僵住的窗口不值得为了一个任务栏图标去换，所以这条路撤掉了，留这段话防止再试一遍。
 
-**关于任务栏/标题栏图标**：favicon 那条路走不通——Chromium 按物理像素挑档位再放大，
-`--app-icon` 实测无效（红方块 A/B：任务栏零变化），内联 SVG favicon 更糟。favicon 一侧仍按
-每档 DPI 给足原图（`tools/make_icon.py` 的 ICO_SIZES 与 `frontend/index.html` 的 `?v=`），
-真正让任务栏达到桌面快捷方式级清晰度的是 `_give_window_icon()`（窗口拉起后从进程外注入按
-窗口 DPI 现画的精确位图；原因、手法与"压 20 秒"的由来见该函数的文档）。
+**关于任务栏/标题栏图标**：favicon 那条路走不通（Chromium 按物理像素挑档位再放大），
+favicon 一侧仍按每档 DPI 给足原图（`tools/make_icon.py` 的 ICO_SIZES 与
+`frontend/index.html` 的 `?v=`），真正让任务栏达到桌面快捷方式级清晰度的是
+`_give_window_icon()`——原因、手法与"压 20 秒"的由来见该函数的文档。
 """
 import os
 import subprocess
@@ -198,7 +197,7 @@ def _give_window_icon(pid: int):
                     if hsmall:
                         u.SendMessageW(h, WM_SETICON, ICON_SMALL, hsmall)
                     if hbig:
-                        u.SendMessageW(h, WM_SETICON, ICON_BIG2, hbig)
+                        u.SendMessageW(h, WM_SETICON, ICON_SMALL2, hbig)
 
             for _ in range(27):
                 apply()
@@ -225,7 +224,7 @@ _guard_started = False
 
 # ---- Windows 消息/度量常量：_pin_all 与 _make_icon_pair 共用同一份 ----
 WM_SETICON = 0x0080          # 设置窗口图标
-ICON_BIG, ICON_SMALL, ICON_BIG2 = 1, 0, 2
+ICON_BIG, ICON_SMALL, ICON_SMALL2 = 1, 0, 2      # 2 号档名是 SMALL2，Win11 任务栏读的是它
 SM_CXICON, SM_CXSMICON = 11, 49
 
 def _pin_all():
@@ -269,7 +268,7 @@ def _pin_all():
         if hsmall:
             u.SendMessageW(h, WM_SETICON, ICON_SMALL, hsmall)
         if hbig:
-            u.SendMessageW(h, WM_SETICON, ICON_BIG2, hbig)   # 任务栏读的是这一档
+            u.SendMessageW(h, WM_SETICON, ICON_SMALL2, hbig)   # 任务栏读的是这一档
 
 def _make_icon_pair(dpi: int, hwnd: int):
     """按窗口 DPI 现画大小两枚 HICON（白底圆角卡片 + 三杠蛋，mark.draw 同一份几何）。"""

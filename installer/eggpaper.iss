@@ -121,12 +121,6 @@ Source: "..\build\pyi\eggpaper\*"; DestDir: "{app}"; Flags: ignoreversion recurs
 ; pywebview 实验时代被撤掉的 pythonnet/webview……），没有任何机制会再去删它们。
 ; 先删后装，安装目录永远等于这次构建的准确内容。
 Type: filesandordirs; Name: "{app}\_internal"
-; 网页图标搬进 dist\icons\ 之后，这几张旧位置的还在——留着就会"明明换了图标，
-; 服务端还能吐出旧的那张"，排查时能白耗半天。整目录清后这条本可去掉，留着防的是
-; 更古老的版本（还没有 _internal 结构时）留下的散落文件。
-Type: files; Name: "{app}\_internal\frontend\dist\icon-192.png"
-Type: files; Name: "{app}\_internal\frontend\dist\icon-512.png"
-Type: files; Name: "{app}\_internal\frontend\dist\favicon-256.png"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyExe}"

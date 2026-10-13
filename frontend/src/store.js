@@ -63,8 +63,8 @@ export const store = reactive({
   visPrefill: null,   // {img, question} 图表灯箱带过来的视觉问答
 
   get narrow() { return this.vw < 1180 },
-  /* 双语·对开：屏宽全给左右两页，右栏让位。railRight 与 railOverlay 都要判这一条，
-     以前同一条式子抄两遍（改一处漏一处就会「有种姿势收不干净」）。 */
+  /* 双语·对开：屏宽全给左右两页，右栏让位。这条判据只此一处——以前同一条式子
+     抄两遍，改一处漏一处就会「有种姿势收不干净」。 */
   get dualSpread() { return this.viewer.variant === 'dual' && this.viewer.spread === 'spread' },
   get railRight() {
     if (this.dualSpread) return false

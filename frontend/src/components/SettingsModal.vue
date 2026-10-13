@@ -168,7 +168,7 @@ async function openShots() {
 function openGuide() { window.open('/guide', '_blank') }
 function openModel() { window.open('/model', '_blank') }
 
-/* 全文翻译引擎（pdf2zh_next）：不在安装包里（渠道上限 100MB，380MB 的引擎另装）。
+/* 全文翻译引擎（pdf2zh_next）：不在安装包里（渠道上限 100MB，~600MB 的引擎另装）。
    状态先显示上次的结果（localStorage），后台再刷新——打开设置不再闪"未安装"。
    安装进度看全局的 engInst（engine.js）：不管安装从哪里发起（这里手动、
    点「全文翻译」时自动），这一行和右下角等待卡看到的是同一份状态。 */

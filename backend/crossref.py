@@ -25,8 +25,8 @@ _API = os.environ.get("EGGPAPER_CROSSREF_API", "https://api.crossref.org")
 
 
 def applog(msg: str):
-    """本模块的日志出口：默认 stdout；main 启动时替换成 _applog——打包版 console=False
-    没有 stdout，不接上的话"回填为什么没补上"一个字都留不下（与 llm.applog 同款接法）。"""
+    """本模块的日志出口（接法与原因同 llm.applog：打包版 console=False 没有 stdout，
+    不接上"回填为什么没补上"就一个字都留不下）。"""
     print(msg)
 
 
