@@ -44,15 +44,15 @@ def _blobish(text: str) -> bool:
 # 进了 ¶——实测一张 3177 字的文献表变成一个 ¶，问答拿它当依据。
 REF_NUM = re.compile(r"^[\[［【(（]?\s*\d{1,3}\s*[\]］】)）.、]")
 REF_YEAR = re.compile(r"(?:19|20)\d{2}")
-REF_AY = re.compile(r"^[A-Z][A-Za-z'’\-]{1,20}(?:\s*(?:,|&|and|et\s+al\.?)\s*[A-Za-z'’\-]{0,20}){0,4}"
-                    r"\s*[,(（]?\s*(?:19|20)\d{2}")
+REF_AY = re.compile(r"^[A-Z][A-Za-z'’\-]{1,20}(?:\s*(?:,|,?\s*&|and|et\s+al\.?)\s*[A-Za-z'’\-]{0,20}\.?){0,6}"
+                    r"\s*[.,]?\s*[,(（]?\s*(?:19|20)\d{2}")
 
 def _ref_like(text: str) -> bool:
     """"行首编号 + 年份"或"作者 + 年"开头 = 像一条参考文献。
 
-    只用来数**连续**三条：单条像文献的行（正文里 "Smith et al. (2019) reported…"）
-    不算数，连三条才是文献表。编号本身不算数（"1. Introduction" 也是编号开头），
-    年份是必须的第二个信号。"""
+    单条像文献的行**不算数**（正文里 "Smith et al. (2019) reported…" 也长这样）——
+    安全阀在调用处：连着三条才算文献区。编号本身也不算数（"1. Introduction" 也是
+    编号开头），年份是必须的第二个信号。"""
     t = text.strip()
     if REF_YEAR.search(t) and REF_NUM.match(t):
         return True
@@ -324,6 +324,7 @@ def extract_paragraphs(path: str) -> list:
     doc = pymupdf.open(path)
     paras = []
     in_refs = False
+    refs_fallback = False        # 兜底触发的文献区（与标题触发的 in_refs 分开：见下）
     reached_supplement = False
     refs_run = []                    # 连续"像参考文献"的段落下标（见 _ref_like 的三连判据）
     try:
@@ -430,7 +431,12 @@ def extract_paragraphs(path: str) -> list:
                         paras.append({"page": pno, "bbox": bbox, "text": _clean(text), "lines": lines,
                                       "in_refs": False, "caption": True})
                         continue
-                    if g["refs"] or in_refs or not _enough(text) or size > body_size + 2.2:
+                    # 只认 g["refs"]（建组时记下的区域状态），**不看外层 in_refs**：
+                    # 标题行是在"分组那一趟"就把 in_refs 置位的，处理这一趟再看它，
+                    # 同列 refs 标题**之前**的正文组会被整体误杀（中文单页夹具实测：
+                    # 正文 6 段 + 参考文献同列 → 只剩 1 张图注）。兜底触发用独立的
+                    # refs_fallback——它只作用于触发之后
+                    if g["refs"] or refs_fallback or not _enough(text) or size > body_size + 2.2:
                         continue
                     if _blobish(text):
                         continue
@@ -438,7 +444,17 @@ def extract_paragraphs(path: str) -> list:
                     affilish = len(text.split()) < 60 if not HAS_CJK.search(text) else len(text) < 120
                     if affilish and len(AFFIL.findall(text)) >= 2:
                         continue
-                    # 文献表兜底：连着三条"编号+年份"或"作者+年"，从这里起就是文献区
+                    # 文献表兜底：连着三条"编号+年份"或"作者+年"，从这里起就是文献区。
+                    # 两种形态都收：三条独立的组（有条目间距的文献表），或**一个组里连着
+                    # 三行**文献条目（紧凑排版整表粘成一个组，实测那种表 3177 字当一个 ¶）
+                    # 数整个组里像文献的行（不是只数开头那几行）：文献条目跨行折行时
+                    # （"3. Yoshida, M. … in Photoreception and Vision in" + "743±771 (…1984)."）
+                    # 折行本身不像文献，只数开头连着的会漏；而条目行都以编号/作者年开头，
+                    # 一页正文里凑不出三条，误判风险极低
+                    refs_lines = sum(1 for _l in ls if _ref_like(_l["text"]))
+                    if refs_lines >= 3:
+                        refs_fallback = True
+                        continue
                     if _ref_like(first):
                         refs_run.append(len(paras))
                         if len(refs_run) >= 3:
@@ -446,7 +462,7 @@ def extract_paragraphs(path: str) -> list:
                                 if j < len(paras):
                                     del paras[j]
                             refs_run = []
-                            in_refs = True
+                            refs_fallback = True
                             continue
                     else:
                         refs_run = []
