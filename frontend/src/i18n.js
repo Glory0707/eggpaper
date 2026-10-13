@@ -33,13 +33,13 @@ const EN = {
 
   '已译的页会保留': 'Translated pages are kept',
   '已生成的内容会保留': 'Generated parts are kept',
-  '拖入 PDF 或点击选择': 'Drop a PDF or click to choose',
+  '拖入 PDF': 'Drop a PDF',
   '还没有分类': 'No collections yet',
   '这个分类还没有文献': 'Nothing in this collection yet',
   '没有符合条件的结果': 'No matches',
   '切回原文再框选': 'Switch to the original to frame',
   '析读后出七问': 'Seven answers appear after a deep read',
-  '扫描件：七问不可用': 'Scan: Q&A unavailable',
+  '扫描件：七问不可用': 'Scan: seven questions unavailable',
   '原理是什么？': 'What is the underlying principle?',
   '结论有哪些？': 'What are the conclusions?',
   '这个领域的共识是什么？': 'What is the consensus in this field?',
@@ -82,7 +82,7 @@ const EN = {
   '翻译划选': 'Translate selection',
   '原文 / 译文 / 双语': 'Original / Translated / Dual',
   '聚焦提问': 'Focus ask box',
-  '折叠右栏': 'Collapse sidebar',
+
   '返回原位': 'Jump back',
   '收起浮层 / 退出框选': 'Dismiss pop-ups / exit framing',
   '出错了：{m}': 'Something went wrong: {m}',
@@ -133,13 +133,10 @@ const EN = {
   '复制译文': 'Copy translation',
   '钉在页边': 'Pin to margin',
   '写批注': 'Add note',
-  '收进术语': 'Save to glossary',
+
   '提问': 'Ask',
-  '选区问 AI': 'Ask AI about this selection',
   '问这个选区…': 'Ask about this selection…',
-  '分析此图': 'Analyze figure',
-  '分析公式': 'Analyze equation',
-  '分析表格': 'Analyze table',
+
   '分析这张图': 'Analyze this figure',
 
   '分析这个公式': 'Analyze this formula',
@@ -159,7 +156,7 @@ const EN = {
 
   '没写上：{m}': 'Not saved: {m}',
   '没删成：{m}': 'Could not delete: {m}',
-  '页边卡没刷新，重开这篇看看': 'Margin notes did not refresh — reopen this paper',
+  '页边卡没刷新，重开这篇': 'Margin notes did not refresh — reopen this paper',
   '删这条批注？': 'Delete this note?',
   '译文版打不开，已切回原文': 'The translation could not be opened — back to the original',
   '双语版打不开，已切回原文': 'The dual version could not be opened — back to the original',
@@ -336,7 +333,7 @@ const EN = {
   '数据': 'Data',
   '关键结果': 'Key results',
   '局限': 'Limitations',
-  '拖入 PDF 或点击导入': 'Drop a PDF or click to import',
+
   '收起右栏': 'Collapse sidebar',
   '重命名': 'Rename',
   '作者': 'Authors',
@@ -413,13 +410,13 @@ const EN = {
 
   '引擎预热中…': 'Warming up engine…',
   '已下载 {a} / {b} MB（{s}）': 'Downloaded {a} / {b} MB ({s})',
-  '装好后自动翻译': 'Translation starts automatically',
+  '装好后接着翻译': 'Translation resumes when ready',
 
   '停止下载': 'Stop download',
   '待读': 'To read',
   '待读 {n} 篇': '{n} to read',
   '找一篇…': 'Find a paper…',
-  '教程': 'Guide',
+  '模型教程': 'Model guide',
   '论文不存在': 'Paper not found',
   '下载安装包': 'Download installer',
   '下载并安装': 'Download & install',
@@ -433,7 +430,7 @@ const EN = {
   '未析读': 'Not analyzed',
   '引用这篇': 'Cite this paper',
   '批注': 'Note',
-  '新建会话': 'New chat',
+
   '新建分类': 'New collection',
   '有新版本 {v}': 'New version {v}',
   '未找到直接证据段': 'No directly supporting paragraphs found',
@@ -480,7 +477,7 @@ const EN = {
   '停止': 'Stop',
   '搜标题或全文…': 'Search titles or full text…',
   '疑似同一篇论文': 'Probably the same paper',
-  '《{a}》与库里的《{b}》像是同一篇。': 'These two look like the same paper.',
+  '《{a}》与库里的《{b}》': '“{a}” and “{b}” in your library',
   '两篇都保留': 'Keep both',
   '替换旧篇': 'Replace the old one',
   '已替换，问答/术语/分类已迁移': 'Replaced — Q&A, glossary and collections moved',
@@ -540,10 +537,10 @@ const EN = {
   '导出本月 .md': 'Export month .md',
 
   // ---- 后端消息（静态原文，原样冒到界面上）与零散词条 ----
-  '这份 PDF 没有文字层（多半是扫描件），析读和提问用不了':
-    'No text layer in this PDF (likely a scan) — deep read and ask cannot work',
-  'PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。':
-    'The PDF is gone from its original location. Drop it back in to re-import — your notes are safe.',
+  '这份 PDF 没有文字层，析读和提问用不了':
+    'This PDF has no text layer — deep read and ask cannot work',
+  'PDF 不在原来的位置了。把它拖回窗口重新导入，批注不会丢。':
+    'The PDF is gone from its original location. Drop it back in — your notes are safe.',
   '读取中…': 'Loading…',
 
   // ---- 数据对比（标准维度 / 自定义列，同一入口） ----

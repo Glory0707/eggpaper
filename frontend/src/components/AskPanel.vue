@@ -258,7 +258,7 @@ async function newConv() {
 async function renameConv() {
   const c = curConv.value
   if (!c) return
-  const name = await inputBox({ title: t('重命名会话'), value: c.title, placeholder: t('会话名称'), ok: t('改名') })
+  const name = await inputBox({ title: t('重命名会话'), value: c.title, placeholder: t('会话名称'), ok: t('重命名') })
   if (name == null) return
   try { await api.convRename(c.id, name.trim() || t('新对话')); await loadConvs(true) } catch (e) { toast(e.message) }
 }
@@ -456,7 +456,7 @@ onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); docu
         <option v-for="c in shownConvs" :key="c.id" :value="c.id">{{ c.title }}</option>
         <option v-if="!shownConvs.length" :value="''">{{ t('新对话') }}</option>
       </select>
-      <button class="cv-btn" :title="t('新建会话')" @click="newConv">
+      <button class="cv-btn" :title="t('新对话')" @click="newConv">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13" /></svg>
       </button>

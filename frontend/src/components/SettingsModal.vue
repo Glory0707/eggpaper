@@ -237,7 +237,7 @@ function save() {
       </div>
       <div class="f-row">
         <label class="mono-label">BASE URL
-          <button class="lnk" style="margin-left:6px" @click="openModel">{{ t('教程') }}</button>
+          <button class="lnk" style="margin-left:6px" @click="openModel">{{ t('模型教程') }}</button>
         </label>
         <input type="text" v-model="f.base_url" placeholder="https://api.deepseek.com" />
       </div>

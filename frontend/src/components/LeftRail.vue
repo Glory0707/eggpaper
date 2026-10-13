@@ -528,7 +528,7 @@ function onCmpGoto(c) {
     <div class="drop-hint" :class="{ over, hot: zotArmed }" v-show="!selMode"
          @mousedown="hintDown" @mouseup="hintUp" @mouseleave="hintUp" @click="hintClick"
          @dragover.prevent="over = true" @dragleave="over = false" @drop.prevent="onDrop">
-      {{ t('拖入 PDF 或点击导入') }}
+      {{ t('拖入 PDF') }}
     </div>
     </Transition>
     <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFile" />

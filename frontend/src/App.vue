@@ -629,7 +629,7 @@ async function doTranslateFull() {
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
     const st = await api.pdf2zhInstallStatus().catch(() => null)
     if (st && engBusy(st.state)) {
-      engResumeId = pid
+      engResumeId.value = pid
       watchEngine()
     } else {
       toast(t('启动失败：{m}', { m: e.message }))
@@ -638,16 +638,16 @@ async function doTranslateFull() {
 }
 /* 引擎装好后的自动续翻：只续"因为等引擎而停下"的那一篇——设置页手动装的
  * （没记 engResumeId）只收 toast，不冷不丁替用户开翻译反而吓人。 */
-let engResumeId = ''
+const engResumeId = ref('')     // ref 而不是普通变量：等待卡的副行要按它做响应式判断
 onEngineReady(() => {
   toast(t('引擎装好了，继续翻译'))
-  if (engResumeId && store.currentId === engResumeId) doTranslateFull()
-  engResumeId = ''
+  if (engResumeId.value && store.currentId === engResumeId.value) doTranslateFull()
+  engResumeId.value = ''
 })
 /* 用户主动喊停下载：自动续翻的意图跟着撤销，否则很久之后手动装个引擎，
    装完还会"冷不丁"替用户把翻译续上。 */
 async function stopEngineInstall() {
-  engResumeId = ''
+  engResumeId.value = ''
   await cancelEngineInstall()
 }
 
@@ -757,7 +757,7 @@ async function onImport(list) {
 async function askSupersede(r) {
   const act = await choiceBox({
     title: t('疑似同一篇论文'),
-    body: t('《{a}》与库里的《{b}》像是同一篇。', {
+    body: t('《{a}》与库里的《{b}》', {
       a: (r.paper.title || '').slice(0, 40), b: (r.same_title.title || '').slice(0, 40),
     }),
     actions: [
@@ -1067,7 +1067,7 @@ function onKey(e) {
           <div class="stamp" role="button" tabindex="0" @click="pickFiles"
                @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">EGGPAPER · LOCAL-FIRST</div>
           <div class="desk-hint" role="button" tabindex="0" @click="pickFiles"
-               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('拖入 PDF 或点击选择') }}</div>
+               @keydown.enter.prevent="pickFiles" @keydown.space.prevent="pickFiles">{{ t('拖入 PDF') }}</div>
           <div class="desk-hint demo-hint" v-if="demoOn" role="button" tabindex="0"
                @click="showSettings = true" @keydown.enter.prevent="showSettings = true"
                @keydown.space.prevent="showSettings = true">
@@ -1117,7 +1117,11 @@ function onKey(e) {
         <div class="eng-sub" v-if="engInst.state === 'downloading'">
           {{ t('已下载 {a} / {b} MB（{s}）', { a: fmtMB(engInst.got), b: fmtMB(engInst.total), s: engInst.src }) }}
         </div>
-        <div class="eng-sub" v-else-if="engInst.state === 'unpacking' || engInst.state === 'warming'">{{ t('装好后自动翻译') }}</div>
+        <!-- 续翻承诺只在真有在案任务时给（点全文翻译被缺引擎挡下才会记 engResumeId）：
+             从设置页手动装的卡给这句承诺是假的 -->
+        <div class="eng-sub" v-else-if="(engInst.state === 'unpacking' || engInst.state === 'warming') && engResumeId">
+          {{ t('装好后接着翻译') }}
+        </div>
         <div class="eng-btns">
           <template v-if="engInst.state === 'error'">
             <button @click="startEngineInstall">{{ t('重试') }}</button>
@@ -1145,7 +1149,7 @@ function onKey(e) {
       <div class="k-row"><span>{{ t('截图') }}</span><kbd>c</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('原文 / 译文 / 双语') }}</span><kbd>1 / 2 / 3</kbd></div>
       <div class="k-row"><span>{{ t('聚焦提问') }}</span><kbd>/</kbd></div>
-      <div class="k-row"><span>{{ t('折叠右栏') }}</span><kbd>x</kbd></div>
+      <div class="k-row"><span>{{ t('收起右栏') }}</span><kbd>x</kbd></div>
       <div class="k-row" v-if="!isEn()"><span>{{ t('析读') }}</span><kbd>a</kbd></div>
       <div class="k-row"><span>{{ t('文库 / 日历 / 目录') }}</span><kbd>g l / g c / g o</kbd></div>
       <div class="k-row"><span>{{ t('回书桌') }}</span><kbd>g h</kbd></div>

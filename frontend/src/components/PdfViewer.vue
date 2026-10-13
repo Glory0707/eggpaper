@@ -1112,7 +1112,7 @@ async function pinSel() {
     try {
       await api.pin(props.pid, { quote: sel.text.slice(0, 150), note: sel.zh, para_idx: sel.paraIdx, page: sel.page })
     } catch (e) { toast(t('钉页边失败：{m}', { m: e.message })); return }
-    try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇看看')) }
+    try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇')) }
     closeSel()
   } finally { pinning = false }
 }
@@ -1154,7 +1154,7 @@ async function saveMine() {
   } catch (e) { toast(t('没写上：{m}', { m: e.message })); return }
   finally { savingMine = false }
   mine.open = false; mine.text = ''
-  try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇看看')) }
+  try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇')) }
   closeSel()
 }
 
@@ -1174,7 +1174,7 @@ async function unpin(n) {
   try {
     await api.unpin(props.pid, n.id)
   } catch (e) { toast(t('没删成：{m}', { m: e.message })); return }
-  try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇看看')) }
+  try { await refreshM() } catch { toast(t('页边卡没刷新，重开这篇')) }
 }
 
 /* ---------------- 阅读器基本功能：缩放 / 页码 / 搜索 ---------------- */
@@ -1740,7 +1740,7 @@ async function askVisual() {
   if (my === visSeq) vis.busy = false
 }
 
-/* 「分析此图/公式/表格」三个按钮只预填不发：用户多半要改两句再问（Enter 发送）。
+/* 「分析这张图/这个公式/这张表」三个按钮只预填不发：用户多半要改两句再问（Enter 发送）。
    填完把光标挪到输入框末尾——改提示词从那里开始。 */
 function visFill(q) {
   vis.question = q
@@ -1997,7 +1997,7 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
             <button v-if="sel.zh" style="padding:4px 10px"
                     @click="copySel">{{ t('复制译文') }}</button>
             <button style="padding:4px 10px" @click="pinSel">{{ t('钉在页边') }}</button>
-            <button style="padding:4px 10px" @click="sendToGlossary">{{ t('收进术语') }}</button>
+            <button style="padding:4px 10px" @click="sendToGlossary">{{ t('收进术语表') }}</button>
           </template>
           <button style="padding:4px 10px" @click="openMine">{{ t('写批注') }}</button>
           <button style="padding:4px 10px" @click="askAboutSel">{{ t('提问') }}</button>
@@ -2010,16 +2010,16 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
     <div class="sel-pop vis-pop" ref="visEl" v-if="vis.visible" :style="{ left: vis.x + 'px', top: vis.y + 'px' }"
          v-drag="{ key: 'vispop' }" data-drag @mouseup.stop>
       <div class="vp-head">
-        <span class="mono-label">{{ t('选区问 AI') }}</span>
+        <span class="mono-label">{{ t('框选问 AI') }}</span>
         <button class="vp-x" :title="t('关闭')" @click="closeVis">×</button>
       </div>
       <img class="vis-img" :src="vis.img" :style="vis.imgW ? { width: vis.imgW + 'px' } : null" />
       <input ref="visInputEl" type="text" v-model="vis.question" style="width:100%; margin-top:8px"
              @keydown.enter="askVisual" @keydown.escape="closeVis" :placeholder="t('问这个选区…')" />
       <div class="sp-actions">
-                <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图'))">{{ t('分析此图') }}</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式'))">{{ t('分析公式') }}</button>
-        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表'))">{{ t('分析表格') }}</button>
+                <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张图'))">{{ t('分析这张图') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这个公式'))">{{ t('分析这个公式') }}</button>
+        <button style="padding:3px 8px; font-size:var(--fs-sm)" @click="visFill(t('分析这张表'))">{{ t('分析这张表') }}</button>
       </div>
       <div v-if="vis.busy" class="vp-state">{{ t('正在看图') }}</div>
       <div v-if="vis.err" class="vp-state err">{{ vis.err }}</div>
