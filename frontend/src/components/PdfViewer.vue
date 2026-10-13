@@ -785,10 +785,37 @@ function ensureNear() {
 
 /* ---------------- 标注几何 ---------------- */
 
-function rectStyle(p) {
-  const b = p.bbox
-  return { left: b.x0 * scale.value + 'px', top: b.y0 * scale.value + 'px',
-           width: (b.x1 - b.x0) * scale.value + 'px', height: (b.y1 - b.y0) * scale.value + 'px' }
+/* ---------------- 段落矩形落位：原文页直取，译文页按页内比例 ---------------- */
+
+/* 这一项（窗格里的一张页）画的是原文第几页的段区：原文页与译文版（mono）都是页号
+   本身（babeldoc 的 mono 输出页序与原文一一对应），双语版的奇数页是译文半、
+   对应它前一张的原文页。译文页也要画段区——不然译文版面里点 ¶n 跳过来什么也看不见。 */
+function paraPageOf(it) {
+  if (it.origPage >= 0) return it.origPage
+  if (it.doc === 'mono') return it.page
+  if (it.doc === 'dual' && it.page % 2 === 1) return (it.page - 1) / 2
+  return -1
+}
+
+/* 段落矩形落在这一项上的坐标。译文页按**页内比例**换算（原文 y/页高 → 译文页
+   同比例，x 同理）：译文版重排过版面，页高与原文不一定相等，直接搬 y 会整体漂；
+   原文页上 bbox 自带的 pw/ph 与页元素同尺寸，比例天然是 1。 */
+function paraBoxOn(p, it) {
+  const b = p.bbox || {}
+  const s = scale.value
+  const kx = b.pw ? it.w / b.pw : 1
+  const ky = b.ph ? it.h / b.ph : 1
+  return { x: (b.x0 || 0) * kx * s, y: (b.y0 || 0) * ky * s,
+           w: ((b.x1 || 0) - (b.x0 || 0)) * kx * s, h: ((b.y1 || 0) - (b.y0 || 0)) * ky * s }
+}
+function paraStyleOn(p, it) {
+  const r = paraBoxOn(p, it)
+  return { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' }
+}
+/* 同一页可能同时挂在两项上（双语的原文半 + 译文半）：高亮两半一起亮，
+   用户一眼看到"这段在译文里的哪儿"。 */
+function itemsOfPage(pno) {
+  return flatItems.value.filter(it => paraPageOf(it) === pno)
 }
 
 function noteHeight(n) {
@@ -882,7 +909,8 @@ function computeQuoteMarks() {
     const el = it && pageEls.value[it.gi]
     if (!el) continue
     const p = byIdx.value[n.para_idx]
-    const box = p ? { y0: p.bbox.y0 * scale.value, y1: p.bbox.y1 * scale.value } : null
+    const pb = p ? paraBoxOn(p, it) : null
+    const box = pb ? { y0: pb.y, y1: pb.y + pb.h } : null
     const r = findQuoteRects(el, anchorText(n), box)
     if (r) { out[n.id] = r.rects; cov[n.id] = r.coverage }
   }
@@ -1330,7 +1358,11 @@ async function applyJump() {
     for (const p of parasByPage.value[j.page] || []) {
       const y0 = (p.lines?.[0]?.bbox.y0 ?? p.bbox.y0) * scale.value
       const y1 = (p.lines?.[p.lines.length - 1]?.bbox.y1 ?? p.bbox.y1) * scale.value
-      if (y0 <= j.y0 * scale.value + 6 && y1 >= j.y0 * scale.value - 6) { flash.value = { idx: p.idx, gi: it.gi }; break }
+      if (y0 <= j.y0 * scale.value + 6 && y1 >= j.y0 * scale.value - 6) {
+        // 双语版面里同一页挂着两项（原文半 + 译文半）：两半一起亮
+        flash.value = { idx: p.idx, gi: it.gi, gis: itemsOfPage(j.page).map(x => x.gi) }
+        break
+      }
     }
   }
   setTimeout(() => (flash.value = null), 2400)     // 2400 > 入场 180 + 停留 1600 + 淡出 520
@@ -1345,7 +1377,11 @@ function jumpQuote(n) {
   const it = pageItem(n.page)
   if (!it) return
   const y = boxes.length ? boxes[0].y / scale.value : (n.rect?.y0 ?? byIdx.value[n.para_idx]?.bbox.y0 ?? 0)
-  store.jump = { pid: props.pid, page: n.page, y0: y, y1: y + 1, rects: boxes, at: Date.now() }
+  // 译文版面：划线是按**原文文字层**算出来的，搬到译文页上只会画在错处——
+  // 退回按段区高亮（paraBoxOn 会按页内比例换算）
+  const onOrig = it.origPage >= 0
+  store.jump = { pid: props.pid, page: n.page, y0: y, y1: y + 1,
+                 rects: onOrig ? boxes : [], at: Date.now() }
 }
 
 function jumpBack() {
@@ -1370,7 +1406,7 @@ function paraAbsY(idx) {
   const it = pageItem(p.page)
   const el = it && pageEls.value[it.gi]
   if (!el) return null
-  return el.offsetTop + p.bbox.y0 * scale.value
+  return el.offsetTop + paraBoxOn(p, it).y      // 译文版面按页内比例换算（paraBoxOn 的口径）
 }
 
 function step(dir) {
@@ -1545,19 +1581,18 @@ function pageIdxLinear(top) {
   return cur
 }
 /* "原文页码 → 页元素"索引：与 pageItem 同一套优先级（先认 origPage，再退到
-   mono / 对开的奇数页），一次建表、整趟段落 spy 复用 */
-function pageElIndex() {
+   mono / 对开的奇数页），一次建表、整趟段落 spy 复用。存的是**项**而不是元素：
+   段落 y 要按这一项的页高做页内比例换算（paraBoxOn） */
+function pageItemIndexOf() {
   const m = new Map()
   for (const it of flatItems.value) {
-    const el = pageEls.value[it.gi]
-    if (el && it.origPage >= 0 && !m.has(it.origPage)) m.set(it.origPage, el)
+    if (pageEls.value[it.gi] && it.origPage >= 0 && !m.has(it.origPage)) m.set(it.origPage, it)
   }
-  const fallback = (key, el) => { if (!m.has(key)) m.set(key, el) }
+  const fallback = (key, it) => { if (!m.has(key)) m.set(key, it) }
   for (const it of flatItems.value) {
-    const el = pageEls.value[it.gi]
-    if (!el || it.origPage >= 0) continue
-    if (it.doc === 'mono') fallback(it.page, el)
-    else if (it.doc === 'dual' && it.page % 2 === 1) fallback((it.page - 1) / 2, el)
+    if (!pageEls.value[it.gi] || it.origPage >= 0) continue
+    if (it.doc === 'mono') fallback(it.page, it)
+    else if (it.doc === 'dual' && it.page % 2 === 1) fallback((it.page - 1) / 2, it)
   }
   return m
 }
@@ -1579,16 +1614,17 @@ function onScroll() {
     const focusY = sc.scrollTop + sc.clientHeight * 0.4
     /* 段落 spy：原实现每段都调 paraAbsY，而 paraAbsY 每次都在 flatItems 上线性找三遍页
        ——600 页 / 600 段一次滚动停顿就是几十万次迭代。这里建表 + 每张页只读一次
-       offsetTop，再按"段落本就按文档顺序排（idx = 页序）"提前收尾：越过焦点后只会更远 */
-    const elOf = pageElIndex()
+       offsetTop，再按"段落本就按文档顺序排（idx = 页序）"提前收尾：越过焦点后只会更远。
+       段落 y 一律走 paraBoxOn：译文/双语版面里页元素是译文页，按页内比例换算才对得上 */
+    const itOf = pageItemIndexOf()
     const topOf = new Map()
     let best = null, bestD = Infinity
     for (const p of paras.value) {
-      const el = elOf.get(p.page)
-      if (!el) continue
-      let base = topOf.get(el)
-      if (base === undefined) { base = el.offsetTop; topOf.set(el, base) }
-      const d = Math.abs(base + p.bbox.y0 * scale.value - focusY)
+      const it = itOf.get(p.page)
+      if (!it) continue
+      let base = topOf.get(it)
+      if (base === undefined) { base = pageEls.value[it.gi].offsetTop; topOf.set(it, base) }
+      const d = Math.abs(base + paraBoxOn(p, it).y - focusY)
       if (d < bestD) { bestD = d; best = p.idx }
       else break
     }
@@ -1862,8 +1898,11 @@ watch([gutterW, gutterPad], () => { if (fit.value !== 'none' && !loading) reflow
                            width: Math.abs(frameRect.x1 - frameRect.x0) + 'px', height: Math.abs(frameRect.y1 - frameRect.y0) + 'px' }"></div>
 
             <div class="para-zone">
-              <template v-for="(p, pi) in parasByPage[it.origPage] || []" :key="'f' + p.idx">
-                <div v-if="flash?.idx === p.idx && flash?.gi === it.gi" class="para-fade hot" :style="rectStyle(p)"></div>
+              <!-- 段区按 paraPageOf(it) 取：原文页与译文页都画（译文页按页内比例落位），
+                   双语版面两半各画一次；flash 的 gis 让同页的两半一起亮 -->
+              <template v-for="p in parasByPage[paraPageOf(it)] || []" :key="'f' + p.idx">
+                <div v-if="flash?.idx === p.idx && (flash.gis || [flash.gi]).includes(it.gi)"
+                     class="para-fade hot" :style="paraStyleOn(p, it)"></div>
               </template>
 
                             <div v-for="(b, bi) in flash?.gi === it.gi ? flash.boxes || [] : []" :key="'fb' + bi"

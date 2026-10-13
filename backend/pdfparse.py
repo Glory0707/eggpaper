@@ -18,6 +18,46 @@ AFFIL = re.compile(r"(University|Laboratory|Institute|Department|College|Academy
 
 HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
 
+# 公式/数据块里的符号。判"这一段不是正文"用它，不用它做任何排版判断
+MATH_SYM = re.compile(r"[=+\-−×÷∫∑∏√±≈≠≤≥→←↔∂∞∆∇^_{}|\\~·⋅∝∈∀∃⟨⟩⌈⌉⌊⌋]")
+_ASCII_A = re.compile(r"[A-Za-z]")
+_DIGIT = re.compile(r"\d")
+
+def _blobish(text: str) -> bool:
+    """公式块 / 压平的数据行：**不成段**，不进 ¶ 编号。
+
+    判据刻意保守（符号 ≥4 或数字占比 >0.35 才可能命中，且只对 ≤300 字的短块）——
+    宁可把一个公式留在 ¶ 里，也不能把一段真正文当公式丢掉：¶ 是问答唯一的语料。
+    中文正文里夹一行 "其中 k = 1.38×10⁻²³ J/K" 是正文，符号数不够，不会命中。"""
+    ns = re.sub(r"\s+", "", text)
+    if not 8 <= len(ns) <= 300:
+        return False
+    sym = len(MATH_SYM.findall(ns))
+    a = _alpha_ratio(ns)
+    digits = len(_DIGIT.findall(ns))
+    d = digits / len(ns)
+    if sym >= 4 and (a < 0.6 or sym / len(ns) > 0.15):
+        return True
+    return d > 0.35 and a < 0.5
+
+# 参考文献条目兜底：有的论文文献表**没有标题行**（或标题是图片），条目就整表当正文
+# 进了 ¶——实测一张 3177 字的文献表变成一个 ¶，问答拿它当依据。
+REF_NUM = re.compile(r"^[\[［【(（]?\s*\d{1,3}\s*[\]］】)）.、]")
+REF_YEAR = re.compile(r"(?:19|20)\d{2}")
+REF_AY = re.compile(r"^[A-Z][A-Za-z'’\-]{1,20}(?:\s*(?:,|&|and|et\s+al\.?)\s*[A-Za-z'’\-]{0,20}){0,4}"
+                    r"\s*[,(（]?\s*(?:19|20)\d{2}")
+
+def _ref_like(text: str) -> bool:
+    """"行首编号 + 年份"或"作者 + 年"开头 = 像一条参考文献。
+
+    只用来数**连续**三条：单条像文献的行（正文里 "Smith et al. (2019) reported…"）
+    不算数，连三条才是文献表。编号本身不算数（"1. Introduction" 也是编号开头），
+    年份是必须的第二个信号。"""
+    t = text.strip()
+    if REF_YEAR.search(t) and REF_NUM.match(t):
+        return True
+    return bool(REF_AY.match(t))
+
 def _enough(text: str, words: int = 14) -> bool:
     """"这段够长，是正文"的门槛。中文没有空格，split() 永远数不出词——按字符数。"""
     if HAS_CJK.search(text):
@@ -242,12 +282,50 @@ def _split_columns(raw: list, pw: float) -> list:
         columns = ([wide] + columns) if wide_max_y < col_median_y else (columns + [wide])
     return columns
 
+# 句末标点（含引号/括号收尾）：段首的"上一行必须是个句子结尾"用它
+SENT_END = re.compile(r"[.!?。！？：；:;…][\"'”’\)）】》\]]?$")
+
+def _sentence_start(t: str) -> bool:
+    """行首像句子开头：大写字母、汉字或开引号。中文没有大小写，这一半恒真，
+    靠"上一行是句子结尾"那一半把关。"""
+    s = t.lstrip()
+    if not s:
+        return False
+    c = s[0]
+    return c.isupper() or "\u4e00" <= c <= "\u9fff" or c in "“「《【"
+
+def _alpha_ratio(text: str) -> float:
+    ns = re.sub(r"\s+", "", text)
+    if not ns:
+        return 1.0
+    return (len(_ASCII_A.findall(ns)) + len(HAS_CJK.findall(ns))) / len(ns)
+
+def _indent_starts(col: list, i: int, left: float, eps: float) -> bool:
+    """第 i 行是不是"缩进起行"的段首：比栏左缘缩进、下一行回到左缘、**上一行是句子结尾、
+    本行像句子开头**，四条全中才算。
+
+    这救的是"段间没有空行、只靠首行缩进分段"的论文——原判据（行距/字号变化）对它们完全
+    失效，整节正文会粘成一个大 ¶（实测 91 个块里 38 个块内部藏着真段首）。
+    另外两条是防误切的：悬挂缩进（图表注/文献表，后续行都缩进）靠"下一行回不回左缘"
+    挡掉；而"缩进行 + 下一行齐左"也可能是居中公式后面那半句正文（实测丢过
+    "lens to the ®rst imaging plane:"），靠句末/句首两个信号挡掉——真段首前面必然是
+    句子结尾，而半句开头是小写。"""
+    if i >= len(col) or col[i]["bbox"][0] - left <= eps:
+        return False
+    if not (i + 1 >= len(col) or col[i + 1]["bbox"][0] - left <= eps):
+        return False
+    return bool(SENT_END.search(col[i - 1]["text"])) and _sentence_start(col[i]["text"])
+
 def extract_paragraphs(path: str) -> list:
-    """返回 [{idx, page, bbox, text, in_refs, caption}]，idx 从 1 开始。"""
+    """返回 [{idx, page, bbox, text, in_refs, caption}]，idx 从 1 开始。
+
+    bbox 里带 pw/ph（本页宽高）：译文页按"页内比例"落段区要靠它换算，
+    没有它前端就得为译文版面再开一次原文 PDF。"""
     doc = pymupdf.open(path)
     paras = []
     in_refs = False
     reached_supplement = False
+    refs_run = []                    # 连续"像参考文献"的段落下标（见 _ref_like 的三连判据）
     try:
         for pno in range(len(doc)):
             if reached_supplement:
@@ -274,13 +352,19 @@ def extract_paragraphs(path: str) -> list:
                 ys = sorted(l["bbox"][1] for l in col)
                 gaps = [b - a for a, b in zip(ys, ys[1:]) if 3 < b - a < 30]
                 pitch = statistics.median(gaps) if gaps else 12
+                # 栏左缘：正文行贴着它。取中位数而不是最小值——个别伸出栏外一截的行
+                # （负缩进的编号、超宽的公式）不该把整栏的基准线拉歪；而缩进的行只占少数
+                # （一段才一行），中位数照样落在左缘上
+                col_left = statistics.median(l["bbox"][0] for l in col)
+                indent_eps = max(3.5, 0.55 * statistics.median(l["size"] for l in col))
 
                 # 每组记下生成时的区域状态：refs 标题行触发 break 时 in_refs 才置位，
                 # 它只该作用于它**之后**的组——处理循环若看外层变量，同列 refs 之前的
                 # 正文组会被整体误杀（英文论文最后一页 References 前的段落一直在丢）
                 cur = {"lines": [col[0]], "refs": in_refs}
                 groups = []
-                for prev, ln in zip(col, col[1:]):
+                for i in range(1, len(col)):
+                    ln = col[i]
                     hk = _heading_kind(ln["text"])
                     if hk:
                         groups.append(cur)
@@ -290,17 +374,34 @@ def extract_paragraphs(path: str) -> list:
                         else:
                             in_refs = True
                         break
-                    gap = ln["bbox"][1] - prev["bbox"][3]
+                    gap = ln["bbox"][1] - col[i - 1]["bbox"][3]
                     same_style = abs(ln["size"] - cur["lines"][0]["size"]) < 1.2
                     if gap > pitch * 0.55 or not same_style:
                         groups.append(cur)
                         cur = {"lines": [ln], "refs": in_refs}
+                    elif _indent_starts(col, i, col_left, indent_eps):
+                        groups.append(cur)
+                        cur = {"lines": [ln], "refs": in_refs, "soft": True}
                     else:
                         cur["lines"].append(ln)
                 if cur is not None:
                     groups.append(cur)
                 if reached_supplement:
                     break
+
+                # 缩进断出来的碎片自己不够成段、又确实是文字（不是公式），并回下一组：
+                # 一刀切在句子中间时宁可让两半同住一个 ¶，也不能让半句被 _enough 丢掉
+                merged = []
+                for g in groups:
+                    prev = merged[-1] if merged else None
+                    if (prev is not None and prev.get("soft") and g is not None
+                            and not CAPTION.match(g["lines"][0]["text"])):
+                        ft = " ".join(l["text"] for l in prev["lines"])
+                        if not _enough(ft) and not _blobish(ft) and _alpha_ratio(ft) >= 0.6:
+                            merged.pop()
+                            g = {"lines": prev["lines"] + g["lines"], "refs": g["refs"]}
+                    merged.append(g)
+                groups = merged
 
                 for g in groups:
                     if g is None:
@@ -317,7 +418,8 @@ def extract_paragraphs(path: str) -> list:
                     text = " ".join(l["text"] for l in ls)
                     size = statistics.median(l["size"] for l in ls)
                     bbox = {"x0": min(l["bbox"][0] for l in ls), "y0": min(l["bbox"][1] for l in ls),
-                            "x1": max(l["bbox"][2] for l in ls), "y1": max(l["bbox"][3] for l in ls)}
+                            "x1": max(l["bbox"][2] for l in ls), "y1": max(l["bbox"][3] for l in ls),
+                            "pw": round(pw, 1), "ph": round(ph, 1)}
                     lines = [{"text": l["text"], "bbox": {"x0": l["bbox"][0], "y0": l["bbox"][1],
                                                           "x1": l["bbox"][2], "y1": l["bbox"][3]}}
                              for l in ls]
@@ -328,12 +430,26 @@ def extract_paragraphs(path: str) -> list:
                         paras.append({"page": pno, "bbox": bbox, "text": _clean(text), "lines": lines,
                                       "in_refs": False, "caption": True})
                         continue
-                    if g["refs"] or not _enough(text) or size > body_size + 2.2:
+                    if g["refs"] or in_refs or not _enough(text) or size > body_size + 2.2:
+                        continue
+                    if _blobish(text):
                         continue
                     # 机构行滤除只对"短行"下手：中文按字符算，否则带两处"大学"的正文段会被误杀
                     affilish = len(text.split()) < 60 if not HAS_CJK.search(text) else len(text) < 120
                     if affilish and len(AFFIL.findall(text)) >= 2:
                         continue
+                    # 文献表兜底：连着三条"编号+年份"或"作者+年"，从这里起就是文献区
+                    if _ref_like(first):
+                        refs_run.append(len(paras))
+                        if len(refs_run) >= 3:
+                            for j in reversed(refs_run):        # 已经收下的那几条一并撤掉
+                                if j < len(paras):
+                                    del paras[j]
+                            refs_run = []
+                            in_refs = True
+                            continue
+                    else:
+                        refs_run = []
                     paras.append({"page": pno, "bbox": bbox, "text": _clean(text), "lines": lines,
                                   "in_refs": False, "caption": False})
     finally:

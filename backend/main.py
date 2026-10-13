@@ -535,6 +535,7 @@ def _startup():
                 _applog(f"引擎残骸清扫失败（不影响启动）：{_human_msg(e)}")
             _clear_zombie_jobs()
             _backfill_pdf_hashes()
+            _reparse_sweep()
         except Exception:
             _applog("启动收尾失败：" + traceback.format_exc(limit=3))
     threading.Thread(target=_late_boot, daemon=True).start()
@@ -1942,29 +1943,106 @@ def _claim_once(book: set, lock, key) -> bool:
         return True
 
 def _probe_lines_once(pid: str) -> bool:
-    """这篇要不要做行级补解析：两个窗口同时首拉时，本意是每篇只跑一次整本重解析。"""
+    """这篇要不要做段落重解析：两个窗口同时首拉时，本意是每篇只跑一次整本重解析。"""
     return _claim_once(_lines_probe_done, _lines_probe_lock, pid)
+
+STALE_NOTE = "段落已重排，重新析读一次"
+
+def _reparse_paper(pid: str) -> str:
+    """重解析一篇的段落（免费、本地 CPU）。返回 'same'|'migrated'|'stale'|'fresh'|'skip'。
+
+    解析规则演进过（缩进断段、公式块不进 ¶、文献表兜底三处收紧），库里老规则切出来的
+    大 ¶ 要整批换代。换代就会重排编号，而页边卡、骨架角色、主张依据、回答里的 ¶n
+    全是按编号指的——先按**文字**把锚点搬过去，再判骨架还能不能信：
+    新解析救回来的正文超过一成、或一成老段找不到落点，骨架就作废（标 stale，
+    由"再打开这篇"这个动作触发重析读，不在开机时替用户花钱）。
+    """
+    p = db.get_paper(pid)
+    if not p:
+        return "skip"
+    src = _paper_src(pid, p)
+    if not os.path.exists(src):
+        return "skip"
+    old = db.get_paragraphs(pid, with_lines=False)
+    fresh = pdfparse.extract_paragraphs(src)
+    if not fresh:
+        return "skip"          # 扫描件/纯图 PDF 解析不出东西：别把 OCR 出来的段落抹了
+    if _pid_gone(pid):
+        return "skip"
+    if old and db.paragraphs_match(pid, fresh):
+        db.replace_paragraphs(pid, fresh)      # 只是补行级坐标/页高，编号一个没动
+        return "same"
+    stats = db.migrate_anchors(pid, [(r["idx"], r["text"]) for r in old], fresh) if old else None
+    if _pid_gone(pid):
+        return "skip"
+    db.replace_paragraphs(pid, fresh)
+    if stats is None:
+        return "fresh"
+    _applog(f"段落重解析 {pid}: {len(old)}→{len(fresh)} 段，锚点迁移 {stats['mapped']}"
+            f"（丢 {stats['orphan']}），新救回 {stats['uncovered']}"
+            + (f"，页边卡跟迁 {stats['pins']}（丢 {stats['pins_lost']}）"
+               if stats["pins"] or stats["pins_lost"] else ""))
+    if stats["material"]:
+        db.ai_invalidate(pid, STALE_NOTE)
+        _applog(f"段落重排后骨架作废 {pid}：新解析救回 {stats['uncovered']} 段、丢 {stats['orphan']} 段")
+        return "stale"
+    return "migrated"
+
+def _maybe_requeue_stale(pid: str):
+    """骨架被段落重排作废过的论文：用户再打开它时自动重析读一次。
+
+    钱花在"用户真的打开了这篇"这个动作上，开机扫全库时不替任何人花。
+    设置里关掉了「导入即析读」就不自动——只把作废原因留在析读按钮旁边。
+    """
+    p = db.get_paper(pid) or {}
+    if p.get("analysis_status") != "none" or (p.get("analysis_error") or "") != STALE_NOTE:
+        return
+    if _demo_mode() or not (config.load().get("analysis") or {}).get("auto", True):
+        return
+    if _analysis_inflight(pid):
+        return
+    _applog(f"段落重排后重析读 {pid}")
+    _enqueue_analysis(pid, db.get_paragraphs(pid))
 
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
-    if db.paragraphs_need_lines(pid) and _probe_lines_once(pid):
-        p = db.get_paper(pid)
-        if not p:                     # 这两拍之间被别的窗口删了：与"解析中被删"同口径收手
-            return db.get_paragraphs(pid)
-        path = _paper_src(pid, p)
+    if db.paragraphs_stale(pid) and _probe_lines_once(pid):
         try:
-            if os.path.exists(path):
-                fresh = pdfparse.extract_paragraphs(path)
-                if _pid_gone(pid):        # 解析的几秒里论文被删：别把段落插回已清空的库
-                    return db.get_paragraphs(pid)
-                if db.paragraphs_match(pid, fresh):
-                    db.replace_paragraphs(pid, fresh)
-                else:
-                    _applog(f"行级坐标补解析 {pid}: 新解析的段落与库里那批对不上，这次不补（避免批注错位）")
+            _reparse_paper(pid)
         except Exception as e:
-            _applog(f"[eggpaper] 行级坐标补解析失败 {pid}: {e}")
+            _applog(f"[eggpaper] 段落重解析失败 {pid}: {e}")
+    _maybe_requeue_stale(pid)
     return db.get_paragraphs(pid)
+
+def _reparse_sweep():
+    """开机把全库老解析器的段落整批换代（免费、本地 CPU）。
+
+    一篇一篇来、每篇之间歇一拍：解析是纯 Python 循环，连着跑会把 GIL 占满——
+    用户这时正在开第一篇文章。已解析过的（本进程的簿子）跳过。
+    """
+    try:
+        rows = db.q("SELECT DISTINCT paper_id FROM paragraphs "
+                    "WHERE bbox LIKE '{%' AND bbox NOT LIKE '%\"ph\"%'")
+    except Exception:
+        return
+    n, lost = 0, 0
+    for r in rows:
+        pid = r["paper_id"]
+        if not _probe_lines_once(pid):
+            continue
+        try:
+            what = _reparse_paper(pid)
+        except Exception as e:
+            _applog(f"[eggpaper] 段落重解析失败 {pid}: {e}")
+            continue
+        if what != "skip":
+            n += 1
+        if what == "stale":
+            lost += 1
+        time.sleep(1.0)
+    if n:
+        _applog(f"段落整批换代：{n} 篇完成" + (f"，其中 {lost} 篇骨架作废待重析读" if lost else ""))
 
 # ---------------- 骨架分析 ----------------
 
@@ -3655,17 +3733,33 @@ def _ref_pools(p: dict, valid: set, others: list) -> dict:
             pools[ot] = {x.get("idx") for x in (o.get("paras") or []) if isinstance(x, dict)}
     return pools
 
-def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
-    """流式回答。事件三种：delta（增量文字）/ done（依据段号 + 落库 id）/ error。
+def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None, cont: dict = None):
+    """流式回答。事件四种：delta（增量文字）/ done（依据段号 + 落库 id + 有没有被截断）
+    / status（跨篇取材在等）/ error。
 
     落库的时机有两处：正常结束在这里写；用户中途点"停止生成"由前端调 qa-save 写，
     因为客户端断开时服务端不保证还能把生成器走完——让能拿到半截答案的那一端负责存。
+
+    cont = {"mid": 那条被截断的回答, "partial": 它已经写出的内容}：续写模式。
+    历史取到那条问题之前、问题原样再传一遍，消息列表与上一次调用逐字节同构——
+    服务端缓存照旧命中；写回的是同一条消息（不新增问答对）。
     """
     pid = p["id"]
-    uid = db.qa_add(pid, "user", question, conv_id=conv_id)
-    hist = db.qa_history(pid, conv_id)[:-1]
+    uid = None
+    if cont is None:
+        uid = db.qa_add(pid, "user", question, conv_id=conv_id)
+        hist = db.qa_history(pid, conv_id)[:-1]        # 去掉刚落的那条用户消息
+    else:
+        hist = db.qa_history(pid, conv_id)
+        keep = []
+        for m in hist:
+            if m["id"] == cont["mid"]:
+                break
+            keep.append(m)
+        hist = keep[:-1] if keep and keep[-1]["role"] == "user" else keep
     buf = []
     valid, pools = set(), {}
+    cut = [False]                                      # 被输出上限截断（finish_reason=length）
     try:
         if _demo_mode():
             gen = _mock_stream(question)
@@ -3695,8 +3789,12 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
                     if o:
                         others.append({"title": o.get("title") or o.get("filename") or "未命名",
                                        "paras": db.get_paragraphs(x, with_lines=False)})
-            gen = llm.chat_stream(llm.ask_messages(p["title"], paras, ctx, question,
-                                                   hits, summary, others), scene="问答")
+            msgs = (llm.continue_messages(p["title"], paras, ctx, question, cont["partial"],
+                                          hits, summary, others)
+                    if cont is not None else
+                    llm.ask_messages(p["title"], paras, ctx, question, hits, summary, others))
+            gen = llm.chat_stream(msgs, scene="问答",
+                                  on_finish=lambda f: cut.__setitem__(0, f == "length"))
             valid = {pp["idx"] for pp in paras}
             pools = _ref_pools(p, valid, others)
         # 每片都过引用校验（带标题的按那篇、裸号按本篇）：越界的 ¶n 不入手，用户就不会
@@ -3707,6 +3805,15 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
         ans = llm.filter_answer_refs("".join(buf), valid, pools)
         if not ans.strip():
             raise RuntimeError("模型这次没返回内容")
+        if cont is not None:
+            # 续写：接在原来那条后面。消息被删了（用户在续写途中删掉）就不写，如实说一声
+            if not db.qa_append_assistant(cont["mid"], ans):
+                yield _sse({"type": "error", "message": "这条回答已经不在了，重新生成一次",
+                            "assistant_id": None})
+                return
+            yield _sse({"type": "done", "user_id": None, "assistant_id": cont["mid"],
+                        "appended": True, "truncated": cut[0]})
+            return
         aid, conv_used = _qa_add_revive(pid, "assistant", ans, conv_id, question)
         _autotitle(pid, conv_id, question, not any(h["role"] == "user" for h in hist))
         if not aid:
@@ -3715,10 +3822,27 @@ def _stream_answer(p: dict, conv_id: int, question: str, ref_pids=None):
                         "user_id": uid or None, "assistant_id": None})
             return
         yield _sse({"type": "done", "user_id": uid or None, "assistant_id": aid,
+                    "truncated": cut[0],
                     "conv_id": conv_used if conv_used != conv_id else None})
+    except GeneratorExit:
+        # 客户端断开（点了「停止生成」/关了窗口）：把已经吐出去的那半截接回原消息。
+        # 续写没有 qa-save 这条退路（那会新增一条消息），不接就是"屏幕上有、库里没有"，
+        # 重载即消失。GeneratorExit 是 BaseException，接住后**不许再 yield**，写完就抛。
+        if cont is not None:
+            got = "".join(buf)
+            if got.strip():
+                db.qa_append_assistant(cont["mid"], got)
+        raise
     except Exception as e:
         hint = _human_msg(e)
         ans = "".join(buf)
+        if cont is not None:
+            # 续写失败：已经吐出来的那半截接回原消息（能存多少是多少），别整段丢掉
+            if ans.strip():
+                db.qa_append_assistant(cont["mid"], ans)
+            yield _sse({"type": "error", "message": hint, "assistant_id": cont["mid"],
+                        "appended": bool(ans.strip())})
+            return
         aid, conv_used = _qa_add_revive(pid, "assistant",
                                         (ans + "\n\n⚠ " + hint) if ans.strip() else "⚠ " + hint,
                                         conv_id, question)
@@ -3748,6 +3872,33 @@ def ask(pid: str, body: dict):
         if pid2 and pid2 != pid and pid2 not in ref_pids:
             ref_pids.append(pid2)
     return _sse_response(_stream_answer(p, conv_id, question, ref_pids), keep_alive=True)
+
+@app.post("/api/papers/{pid}/ask-continue")
+def ask_continue(pid: str, body: dict):
+    """接着写：上一条回答被输出上限截断了，从断点续写（写回同一条消息，不新增问答对）。
+
+    前缀与上一次调用逐字节相同（历史取到那条问题之前、问题原样再传），续写这拍
+    只有尾部那点新内容按全价算，其余全走服务端缓存。"""
+    p = _paper_or_404(pid)
+    _require_paras(pid)
+    try:
+        mid = int(body.get("mid") or 0)
+    except (TypeError, ValueError):
+        mid = 0
+    m = db.qa_msg_get(mid)
+    if not m or m["paper_id"] != pid or m["role"] != "assistant" or not m.get("conv_id"):
+        raise HTTPException(404, "这条回答不在了")
+    hist = db.qa_history(pid, m["conv_id"])
+    if not hist or hist[-1]["id"] != mid:
+        raise HTTPException(400, "只能续写最后一条回答")
+    question = next((x["content"] for x in reversed(hist[:-1]) if x["role"] == "user"), "")
+    if not question:
+        raise HTTPException(400, "找不到这条回答对应的问题")
+    if not (m.get("content") or "").strip():
+        raise HTTPException(400, "这条回答是空的，重新生成一次")
+    return _sse_response(_stream_answer(p, m["conv_id"], question, None,
+                                       cont={"mid": mid, "partial": m["content"]}),
+                         keep_alive=True)
 
 @app.get("/api/papers/{pid}/conversations")
 def conversations(pid: str):

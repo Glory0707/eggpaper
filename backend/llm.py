@@ -59,17 +59,43 @@ def _require_live() -> dict:
         raise RuntimeError("MOCK")
     return cfg
 
+# 思考额度：推理模型（GLM/DeepSeek 系）的思考 token 与正文**共用** max_tokens——
+# 实测一次问答 "输出 4000（思考 4000）"：额度全被思考吃掉，正文一个字没写，
+# 界面上一句"模型这次没返回内容"。开着思考的调用一律在正文额度之上再加这一份。
+THINK_EXTRA = 4096
+
+def _finish_of(data: dict) -> str:
+    """choices[0].finish_reason（逐层过类型闸，取不到就是空串）。"""
+    choices = data.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    fr = first.get("finish_reason") if isinstance(first, dict) else None
+    return fr if isinstance(fr, str) else ""
+
+def _think_of(usage: dict):
+    det = usage.get("completion_tokens_details")
+    return det.get("reasoning_tokens") if isinstance(det, dict) else None
+
+def _log_cut(scene: str, cap: int, usage: dict):
+    """被输出上限截断：日志里必须留一行。截断的回答和正常结束长得一模一样，
+    不记下来，用户问"为什么只答了半句"时一个字都查不到。"""
+    think = _think_of(usage or {})
+    applog(f"[eggpaper] 输出被上限截断 [{scene or '-'}] 额度 {cap}" + (f"（思考 {think}）" if think else ""))
+
 def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
-         no_think: bool = False, timeout: int = 600, scene: str = "") -> str:
+         no_think: bool = False, timeout: int = 600, scene: str = "",
+         on_finish=None) -> str:
     """非流式调用。no_think 的用途见 chat_stream：短任务别让推理模型先空想 8 秒。
-    scene：这笔调用是干什么的（术语/骨架/问答…），只进 token 账，模型看不见。"""
+    scene：这笔调用是干什么的（术语/骨架/问答…），只进 token 账，模型看不见。
+    on_finish(finish_reason)：这次调用的收尾状态——"length" 就是被上限截断了，
+    调用方要据此加大额度重发或给界面一个提示。"""
     cfg = _require_live()
     budget = max_tokens
+    extra = 0 if no_think else THINK_EXTRA
     out = ""
     last_err = None
     for _ in range(3):
         body = {"model": cfg["provider"]["model"], "messages": messages,
-                "max_tokens": budget, "temperature": temperature}
+                "max_tokens": budget + extra, "temperature": temperature}
         if no_think:
             body["thinking"] = {"type": "disabled"}
         try:
@@ -90,8 +116,9 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             if r.status_code == 400 and budget > 2048 and \
                     "max_tokens" in (r.text or ""):
                 # 有的供应商输出上限低于我们给的 16k，400 里点名 max_tokens——
-                # 折半重试，别让整篇析读一击即灭
+                # 折半重试，别让整篇析读一击即灭（思考额度也跟着收，否则还是超上限）
                 budget = max(2048, budget // 2)
+                extra = min(extra, 2048)
                 last_err = RuntimeError("这个模型的输出上限不够，换个模型或稍后再试")
                 continue
             r.raise_for_status()
@@ -103,7 +130,13 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
         # 任意一处不是预期类型就 AttributeError/KeyError 冒出去，整条链 500
         data = _json_or_empty(r)
         out = _first_content(data)
-        _log_cache(data.get("usage") or {}, scene)
+        usage = data.get("usage") or {}
+        _log_cache(usage, scene)
+        fin = _finish_of(data)
+        if fin == "length":
+            _log_cut(scene, budget + extra, usage)
+        if on_finish:
+            on_finish(fin)
         if out.strip():
             return out
         budget = int(budget * 1.6)
@@ -112,7 +145,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
     return out
 
 def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3,
-                no_think: bool = False, scene: str = ""):
+                no_think: bool = False, scene: str = "", on_finish=None):
     """逐字吐内容。前端要的是"字一个个出来"的手感，而不是转圈 20 秒再砸一大段。
 
     no_think：推理模型（GLM 系）输出正文前会先"思考"5–10 秒，期间一个字都不吐。
@@ -122,10 +155,13 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
     token 账（钱花了不知道花在哪）；个别端点不认这个参数时降级重开一次。
     5xx/429：服务端打嗝/限流是瞬时的，短退避后**重开一次**；但已经吐过字的流不能再
     重开——前端会收到半截+重来两段。连接级错误（TransportError）同理。
+    on_finish(finish_reason)：流收尾时的状态，"length" = 回答被上限截断（前端据此
+    给「继续生成」；思考额度与正文额度分开，见 THINK_EXTRA）。
     """
     cfg = _require_live()
     payload = {"model": cfg["provider"]["model"], "messages": messages,
-               "max_tokens": max_tokens, "temperature": temperature, "stream": True,
+               "max_tokens": max_tokens + (0 if no_think else THINK_EXTRA),
+               "temperature": temperature, "stream": True,
                "stream_options": {"include_usage": True}}
     if no_think:
         payload["thinking"] = {"type": "disabled"}
@@ -154,6 +190,7 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
                             continue
                         raise last_err
                     r.raise_for_status()
+                    fin, usage = "", {}
                     for raw in r.iter_lines():
                         if not raw:
                             continue
@@ -167,13 +204,21 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
                         except ValueError:
                             continue
                         choices = j.get("choices") or [{}]
-                        delta = choices[0].get("delta") or {}
+                        first = choices[0] if isinstance(choices[0], dict) else {}
+                        delta = first.get("delta") or {}
+                        if isinstance(first.get("finish_reason"), str) and first["finish_reason"]:
+                            fin = first["finish_reason"]
                         piece = delta.get("content") or ""
                         if piece:
                             emitted = True
                             yield piece
                         # include_usage 时末块带 usage：流式调用也有 token 账（没带的端点就没了）
+                        usage = j.get("usage") or usage
                         _log_cache(j.get("usage") or {}, scene)
+                    if fin == "length":
+                        _log_cut(scene, payload["max_tokens"], usage)
+                    if on_finish:
+                        on_finish(fin)
                     return
             except (httpx.TransportError, httpx.TimeoutException) as e:
                 last_err = e
@@ -272,9 +317,19 @@ _JSON_RETRY_NOTE = ("你上一条输出不是合法 JSON。重新输出，只给
 def chat_json(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
               no_think: bool = False, timeout: int = 600, tail: int = 2000, scene: str = "") -> dict:
     """要 JSON 的调用统一走这里：坏 JSON 就地带错误说明重发一次，别让整条管线一击即溃。
-    重试锚取上次输出尾部 tail 字（截断点在那头，比开头更能帮模型对上位置）。"""
+    重试锚取上次输出尾部 tail 字（截断点在那头，比开头更能帮模型对上位置）。
+
+    被输出上限截断（finish_reason=length）时先**加大额度**重发一次：截断的 JSON 经
+    _json_patch 补括号能解出半截对象，坏得最隐蔽——骨架少几条主张、术语表少一半，
+    界面照常显示、用户看不出来。加大后仍截断才走下面的坏 JSON 纠错重发。"""
+    fin = []
     raw = chat(messages, max_tokens=max_tokens, temperature=temperature,
-               no_think=no_think, timeout=timeout, scene=scene)
+               no_think=no_think, timeout=timeout, scene=scene, on_finish=fin.append)
+    if fin and fin[-1] == "length" and max_tokens < 32000:
+        big = min(32000, max_tokens * 2)
+        applog(f"[eggpaper] 输出被上限截断，额度 {max_tokens}→{big} 重发 [{scene or '-'}]")
+        raw = chat(messages, max_tokens=big, temperature=temperature,
+                   no_think=no_think, timeout=timeout, scene=scene)
     try:
         return parse_json(raw)
     except Exception:
@@ -311,31 +366,52 @@ SHARED_SYSTEM = ("你是学术深度阅读工具 eggpaper 的分析引擎，读�
                  "下面的论文全文以 ¶编号 标出每一段，回答时引用依据就写对应的 ¶n。")
 
 DOC_CAP = 90000          # 全文块的字数上限（约 20-25 页双栏正文）
+PARA_MIN = 1200          # 单段保底额度（老口径：一整段全进上下文）
+PARA_MAX = 6000          # 单段上限：再长的段也不许一段吃掉整份预算
 
 def paper_doc(title: str, paras: list) -> str:
     """整文任务的共享全文块，同一篇论文在所有任务里逐字节相同——这是跨任务
-    缓存命中的前提。每段截到句界、全文封顶 DOC_CAP，滤参考文献段。
+    缓存命中的前提。
 
-    超限**保头也保尾**（约 6:4）：Discussion/Conclusion 住在尾部，"局限/下一步"
-    两问全指着它；只保头会让 30 页+的论文对这些任务集体失明。中间明示是节选。"""
-    lines = [f"¶{p['idx']} {_clip_para(p['text'])}" for p in paras if not p.get("in_refs")]
+    单段额度**按篇动态给**：整篇装得下就一个字不截——"AI 看到的 = 纸面上的"
+    是问答质量的底线（老口径一刀 1200 字，实测 24 页论文切掉三成正文，方法段
+    后半截的参数、样本数全在刀口外）。装不下才均分到段。
+    全文封顶 DOC_CAP，超限**保头也保尾**（约 5:3.5）：Discussion/Conclusion 住在
+    尾部，"局限/下一步"两问全指着它；中间段退成"首句提要"（给每段开头一小截），
+    实在装不下才明示节选——只保头会让 30 页+ 的论文对这些问题集体失明。"""
+    use = [p for p in paras if not p.get("in_refs")]
+    n = max(1, len(use))
+    if sum(len(p["text"]) + 8 for p in use) + len(title or "") + 8 <= DOC_CAP:
+        per = None                       # 装得下：一段不截
+    else:
+        per = int(min(PARA_MAX, max(PARA_MIN, (DOC_CAP * 0.94 - len(title or "")) / n)))
+    lines = [f"¶{p['idx']} {p['text'] if per is None else _clip_para(p['text'], per)}" for p in use]
     body = "\n\n".join(lines)
     if len(body) <= DOC_CAP:
         return f"论文标题：{title or ''}\n\n{body}"
     used, i = 0, 0
     head = []
-    while i < len(lines) and used + len(lines[i]) + 2 <= int(DOC_CAP * 0.56):
+    while i < len(lines) and used + len(lines[i]) + 2 <= int(DOC_CAP * 0.52):
         head.append(lines[i])
         used += len(lines[i]) + 2
         i += 1
     tail, used2, k = [], 0, len(lines) - 1
-    while k >= i and used2 + len(lines[k]) + 2 <= int(DOC_CAP * 0.38):
+    while k >= i and used2 + len(lines[k]) + 2 <= int(DOC_CAP * 0.36):
         tail.append(lines[k])
         used2 += len(lines[k]) + 2
         k -= 1
     tail.reverse()
-    skipped = k - i + 1
-    middle = f"\n\n〔……中间略去 {skipped} 段，未收入本文材料……〕\n\n" if skipped > 0 else "\n\n"
+    mid = lines[i:k + 1]
+    if mid:
+        mb = max(120, int(DOC_CAP * 0.08) // len(mid))
+        mid_txt = "\n\n".join(_clip_para(m, mb) for m in mid)
+        if len(mid_txt) <= int(DOC_CAP * 0.11):
+            middle = (f"\n\n〔以下 {len(mid)} 段是全文中间的节选，每段只给了开头——"
+                      f"提到它们时先说明是节选〕\n\n" + mid_txt + "\n\n")
+        else:
+            middle = f"\n\n〔……中间略去 {len(mid)} 段，未收入本文材料……〕\n\n"
+    else:
+        middle = "\n\n"
     return f"论文标题：{title or ''}\n\n" + "\n\n".join(head) + middle + "\n\n".join(tail)
 
 def _kick(what: str) -> str:
@@ -781,10 +857,13 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
             # 按段落装到预算为止：字符刀会把最后一段拦腰截断（"《某论文》¶12 之后全是半句"），
             # 模型引半截段比少引一段更糟
             out_lines, used = [], 0
+            # 单段额度跟着这一篇分到的预算走：per 有 60000 字时别只给 1000
+            # （正文被切得太狠），但也不许一段吃掉整份预算
+            per_para = max(1000, min(6000, per // 6))
             for p in o.get("paras") or []:
                 if p.get("in_refs"):
                     continue
-                line = f"¶{p['idx']} {_clip_para(p['text'] or '', 1000)}"
+                line = f"¶{p['idx']} {_clip_para(p['text'] or '', per_para)}"
                 if used + len(line) > per - len(t) - 8:
                     break
                 out_lines.append(line)
@@ -807,6 +886,20 @@ def ask_messages(title: str, paras: list, history: list, question: str, hits=Non
         if h.get("role") in ("user", "assistant") and h.get("content"):
             msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": question})
+    return msgs
+
+CONTINUE_NOTE = ("上一条回答被输出上限截断了。从断点处**接着写**：不要重复已经写过的内容，"
+                 "不要重新开头，不要写“接上文”这类说明，直接续下去（依据段号 [¶n] 的格式照旧）。")
+
+def continue_messages(title: str, paras: list, history: list, question: str, partial: str,
+                      hits=None, summary: str = "", others: list = None) -> list:
+    """「继续生成」：把被截断的那条回答当 assistant 前缀接回去，再补一句"接着写"。
+
+    前缀（system + 历史 + 那条问题）与上一次调用逐字节相同——服务端缓存照旧命中，
+    续写这拍只有尾部那点新内容按全价算。partial 只带尾部（续写的接点在那头）。"""
+    msgs = ask_messages(title, paras, history, question, hits, summary, others)
+    msgs.append({"role": "assistant", "content": partial[-4000:]})
+    msgs.append({"role": "user", "content": CONTINUE_NOTE})
     return msgs
 
 # ---------------- 全库分层问答：侦察之后、作答之前的「取材」拍 ----------------

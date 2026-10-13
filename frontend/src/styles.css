@@ -1532,6 +1532,19 @@ body.rail-resizing { cursor: col-resize; user-select: none; }
 }
 .qa-acts button:hover { background: var(--accent-soft); color: var(--accent-deep); transform: none; box-shadow: none; }
 
+/* 被输出上限截断的一条提示：常显（不像 .qa-acts 那样悬停才出）——
+   用户得知道"只答了一半"，并且一眼看到接着写的出口 */
+.qa-cut {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  font-size: var(--fs-xs); color: var(--ink-3);
+}
+.qa-cut button {
+  border: 1px solid var(--hairline); background: var(--card-2); color: var(--ink-2);
+  font-size: var(--fs-xs); padding: 2px 9px; border-radius: 4px;
+}
+.qa-cut button:hover { background: var(--accent-soft); color: var(--accent-deep); border-color: var(--accent-soft); transform: none; box-shadow: none; }
+.qa-cut button:disabled { opacity: 0.5; }
+
 .qa-tobottom {
   position: sticky; bottom: 6px; left: 50%; translate: -50% 0; z-index: 6;
   font-size: var(--fs-sm); padding: 4px 12px; border-radius: 14px;

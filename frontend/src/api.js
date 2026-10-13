@@ -167,6 +167,12 @@ export function askStream(pid, body, onEvent) {
   return sseStream(api.askUrl(pid), body, onEvent)
 }
 
+/* 接着写：上一条回答被输出上限截断了，从断点续写（服务端写回同一条消息）。
+   与 askStream 同一套 SSE 事件，done 里带 appended: true。 */
+export function askContinueStream(pid, mid, onEvent) {
+  return sseStream(`/api/papers/${pid}/ask-continue`, { mid }, onEvent)
+}
+
 export function translateStream(pid, kind, body, onEvent) {
   return sseStream(`/api/papers/${pid}/translate-${kind}`, body, onEvent)
 }

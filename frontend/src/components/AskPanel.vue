@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, store, toast, jumpPara, openPaper, gotoPaperPara, paperName } from '../store'
+import { api, askStream, askContinueStream, store, toast, jumpPara, openPaper, gotoPaperPara, paperName } from '../store'
 import { confirmBox, inputBox } from '../dialog'
 import { copyWithToast, frameBuffer } from '../clip'
 import { scrollBehavior } from '../motion'
@@ -141,7 +141,7 @@ async function send(q, pidArg) {
   await nextTick(); autoGrow(); inputEl.value?.focus()
   const um = reactive({ uid: ++msgSeq, role: 'user', content: q })
   msgs.value.push(um)
-  const m = reactive({ uid: ++msgSeq, role: 'assistant', content: '', streaming: true, error: '' })
+  const m = reactive({ uid: ++msgSeq, role: 'assistant', content: '', streaming: true, error: '', truncated: false })
   msgs.value.push(m)
   gotDone = false
   await nextTick(); scrollBottom(false)
@@ -168,7 +168,11 @@ async function send(q, pidArg) {
   const h = askStream(reqPid, body, ev => {
     if (ev.type === 'delta') fb.push(ev.text)
     else if (ev.type === 'status') m.hint = t('正在翻 {n} 篇…', { n: ev.n || '' })
-    else if (ev.type === 'done') { fb.flush(); gotDone = true; applyIds(ev) }
+    else if (ev.type === 'done') {
+      fb.flush(); gotDone = true; applyIds(ev)
+      // 被输出上限截断：回答只写了一半，给一条明路（「继续生成」接着写）
+      m.truncated = !!ev.truncated
+    }
     else if (ev.type === 'error') {
       fb.flush()
       applyIds(ev)
@@ -222,6 +226,46 @@ async function regen() {
     regenBusy = false
     await send(r.question, reqPid)
   } catch (e) { toast(e.message) } finally { regenBusy = false }
+}
+
+/* 「继续生成」：回答被输出上限截断了，从断点接着写。
+   续写直接接在**同一条消息**上（服务端写回同一行），不新增问答对；消息列表前缀
+   与上一次调用逐字节相同，服务端缓存照旧命中。 */
+let contBusy = false
+async function cont(m) {
+  if (busy.value || contBusy || !m.id || !pid.value) return
+  contBusy = true
+  busy.value = true
+  const reqPid = pid.value
+  m.truncated = false
+  m.streaming = true
+  m.hint = t('接着写…')
+  const fb = frameBuffer(piece => { m.content += piece; follow() })
+  const h = askContinueStream(reqPid, m.id, ev => {
+    if (ev.type === 'delta') { m.hint = ''; fb.push(ev.text) }
+    else if (ev.type === 'status') m.hint = t('正在翻 {n} 篇…', { n: ev.n || '' })
+    else if (ev.type === 'done') { fb.flush(); m.truncated = !!ev.truncated }
+    else if (ev.type === 'error') {
+      fb.flush()
+      m.content = (m.content.trim() ? m.content + '\n\n' : '') + '⚠ ' + ev.message
+      m.error = ev.message
+    }
+  })
+  ctl = h
+  try {
+    await h.done
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      m.content = (m.content.trim() ? m.content + '\n\n' : '') + '⚠ ' + e.message
+      m.error = e.message
+    }
+  }
+  fb.flush()
+  ctl = null
+  m.streaming = false
+  m.hint = ''
+  busy.value = false
+  contBusy = false
 }
 let delBusy = false
 async function delMsg(i) {
@@ -492,6 +536,11 @@ onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); docu
         </template>
         <div class="q-body" v-else>{{ m.content }}</div>
         <span v-if="m.streaming" class="qa-caret"></span>
+        <!-- 被输出上限截断：回答只写到一半。给一条明路，别让用户以为模型"就答这么多" -->
+        <div v-if="m.truncated && !m.streaming" class="qa-cut">
+          <span>{{ t('回答被上限截断') }}</span>
+          <button @click="cont(m)" :disabled="busy">{{ t('继续生成') }}</button>
+        </div>
                 <div class="qa-acts" v-if="!m.streaming">
           <button @click="copy(m)">{{ t('复制') }}</button>
           <button v-if="m.role === 'assistant' && i === msgs.length - 1" @click="regen()"

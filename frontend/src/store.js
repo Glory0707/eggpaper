@@ -4,7 +4,7 @@ import { t, ui } from './i18n'
 import { lsGet, lsSet } from './ls'
 
 /* 只转出组件真的会 import 的那些；页边卡的颜色/笔触统一在 styles.css，不经这里。 */
-export { api, askStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindZH } from './api'
+export { api, askStream, askContinueStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindZH } from './api'
 export { lsGet, lsSet, lsRemove } from './ls'
 
 

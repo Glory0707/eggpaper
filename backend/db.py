@@ -587,24 +587,28 @@ def get_paragraph(pid: str, idx: int):
     return dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
                 lines=_safe_json(r["lines"], []))
 
-def paragraphs_need_lines(pid: str) -> bool:
-    """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。
+def paragraphs_stale(pid: str) -> bool:
+    """库里的段落是不是**旧解析器**的产物（该整篇重解析一次）。
 
-    只判空却在读侧把整列 lines 反序列化出来（行级坐标是段落里最重的一块），
-    而这个函数每次打开论文都会走一遍——交给 SQL 数。写侧空列表恒为 "[]"
-    （真值），所以"有没有行坐标"的判定与原来逐行 `not r["lines"]` 完全一致。"""
-    r = q("SELECT COUNT(*) AS n, SUM(CASE WHEN lines IS NULL OR lines='' THEN 1 ELSE 0 END) AS e "
+    判据是 bbox 里有没有 ph（本页页高）：新解析器把页宽页高写进 bbox（译文页按
+    "页内比例"落段区要用），老行没有这个键——它同时替代了原来的"没有行级坐标"
+    判据（重解析本来就会补 lines）。SQL 上只看 dict 形状的 bbox：OCR 写的 bbox 是
+    数组（扫描件没有文字层，重解析也解析不出东西），不能算"旧"，否则每次开篇都要
+    白开一遍 PDF。
+
+    每篇一次整本重解析：解析规则演进过（缩进断段/公式块/文献兜底三处收紧），
+    库里的段落是老规则的产物——不重解析就永远停在"整节正文粘成一个大 ¶"的状态。
+    """
+    r = q("SELECT COUNT(*) AS n, SUM(CASE WHEN lines IS NULL OR lines='' THEN 1 ELSE 0 END) AS e, "
+          "SUM(CASE WHEN bbox LIKE '{%' AND bbox NOT LIKE '%\"ph\"%' THEN 1 ELSE 0 END) AS old "
           "FROM paragraphs WHERE paper_id=?", (pid,))[0]
-    return (r["n"] or 0) > 0 and (r["e"] or 0) == r["n"]
+    n = r["n"] or 0
+    return n > 0 and ((r["e"] or 0) == n or (r["old"] or 0) > 0)
 
 def paragraphs_match(pid: str, paras: list) -> bool:
     """新解析出来的段落和库里存的**是不是同一批**（段数一样、每段的正文也一样）。
 
-    为什么要问这个：行级坐标是靠"重解析一次"补的，而补的动作是整表替换。批注、主张锚点、
-    页边笔迹全是按 para_idx 指位置的——只要新解析把段落分组改了一点点（解析规则演进过、
-    或者这份 PDF 抽出来的结果本来就不稳定），替换就会把这些锚点整体挪位，而且是**静默**的。
-    对不上时宁可这次不补（页边退回按段落框画），也别把用户已有的批注挪到别的段上。
-    """
+    对上了就整表替换（只是把行级坐标/页高补上，编号一个没动，锚点不需要迁移）。"""
     rows = q("SELECT idx, text FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,))
     if len(rows) != len(paras):
         return False
@@ -614,6 +618,200 @@ def paragraphs_match(pid: str, paras: list) -> bool:
         if (r["text"] or "").strip() != (p["text"] or "").strip():
             return False
     return True
+
+# ---------- 段落重解析：锚点迁移 ----------
+# 解析规则一改，段落编号就整体重排。用户的锚点（页边卡/批注）与 AI 的锚点
+# （骨架的角色、主张的依据段、七问回答里的 ¶n）全是按编号指的——不迁移就是静默错位：
+# 点「¶12」跳到别的段上，比"少一个功能"更糟。这里按**文字**把它们搬到新编号上。
+
+def _probe(part: str, new_sq: list):
+    """一小截老段文字落在哪条新段里（逐条包含比对，找不到回 None）。"""
+    if not part:
+        return None
+    for i, (_, nsq) in enumerate(new_sq):
+        if nsq and part in nsq:
+            return i
+    return None
+
+def _para_map(old_rows: list, new_paras: list) -> tuple:
+    """老段号 → 新段号们（`{old_idx: [new_idx, ...]}`）＋覆盖统计。
+
+    切分方向是双向的：新解析器**细分**了老的大 ¶（一条老段映射到连续几条新段），
+    也可能把老的两小段并回一条（多条老段映射到同一条新段）。用文字包含关系定，
+    不靠编号差：编号差在"页眉页脚滤除规则也变了"的时候会整体漂。
+
+    返回 (mapping, orphan_old, uncovered_new)：
+    orphan_old = 文字在新解析里找不到的老段（真丢了内容）；
+    uncovered_new = 文字在老解析里找不到的新段（新规则救回来的正文）。
+    """
+    new_sq = [(p["idx"], _squash(p["text"])) for p in new_paras]
+    mapping, orphan, covered = {}, 0, set()
+    # 两种入参形状都收：[{idx,text}]（库里那批）与 [(idx,text)]（调用方顺手拼的）
+    rows = [(int(r["idx"]), r["text"]) if isinstance(r, dict) else (int(r[0]), r[1])
+            for r in old_rows]
+    for idx, text in rows:
+        sq = _squash(text)
+        if not sq:
+            continue
+        head = _probe(sq[:80], new_sq)
+        if head is None:                     # 老段开头被改了（页眉滤除规则变了）：逐级缩短再探
+            for L in (40, 20, 12):
+                head = _probe(sq[:L], new_sq)
+                if head is not None:
+                    break
+        if head is None:                     # 反向：新段整体落在老段里（老段更长）
+            head = next((i for i, (_, nsq) in enumerate(new_sq) if nsq and nsq in sq), None)
+        if head is None:
+            orphan += 1
+            continue
+        tail = _probe(sq[-80:], new_sq) if len(sq) > 160 else None
+        end = tail if (tail is not None and tail > head) else head
+        run = list(range(head, end + 1))
+        k = end + 1
+        while k < len(new_sq) and new_sq[k][1] and new_sq[k][1] in sq:
+            run.append(k)                    # 尾巴上"整段都在老段里"的继续吃进来
+            k += 1
+        mapping[idx] = [new_sq[j][0] for j in run]
+        covered.update(run)
+    return mapping, orphan, max(0, len(new_sq) - len(covered))
+
+def _remap_refs(text: str, mapping: dict) -> str:
+    """把文字里的 ¶n 改写成新编号（映射到一段就用那一段，映射到多段就用第一段）。
+
+    回答/摘要里的 ¶n 是指针不是内容：切分后老 ¶12 变成新 ¶12–14，指针指到 12
+    至少还落在原地；不搬就整体错位到别的段上。找不到落点的编号原样留着——
+    前端对越界引用本来就降级成纯文本，不会变成死按钮。
+    """
+    def one(m):
+        n = int(m.group(1))
+        tgt = mapping.get(n)
+        return f"¶{tgt[0]}" if tgt else m.group(0)
+    return re.sub(r"¶\s*(\d{1,4})", one, text or "")
+
+def _remap_json_refs(raw, mapping: dict, keys: bool = False):
+    """JSON 缓存里的文字统一过一遍 ¶n 改写（结构不动，只改字符串）。
+
+    keys=True 用于"键就是段号"的缓存（evidence_qs）：键跟着映射走。其余缓存的键
+    都是语义键（缩写、术语），不碰。"""
+    if isinstance(raw, str):
+        return _remap_refs(raw, mapping)
+    if isinstance(raw, list):
+        return [_remap_json_refs(x, mapping, keys) for x in raw]
+    if isinstance(raw, dict):
+        out = {}
+        for k, v in raw.items():
+            nk = str(mapping.get(int(k), [k])[0]) if keys and isinstance(k, str) and k.isdigit() else k
+            out[nk] = _remap_json_refs(v, mapping, keys)
+        return out
+    return raw
+
+def migrate_anchors(pid: str, old_rows: list, new_paras: list) -> dict:
+    """重解析之前：把这篇的所有锚点按文字搬到新编号上，返回迁移统计。
+
+    old_rows: [{idx, text}]（库里那批）；new_paras: pdfparse 的新输出。
+    统计里 material=True 表示"这次重排把段落结构改到骨架不可信了"（新解析救回来的
+    正文超过一成，或者有一成老段找不到落点）——由调用方决定要不要重析读。
+    """
+    mapping, orphan, uncovered = _para_map(old_rows, new_paras)
+    n_old, n_new = max(1, len(old_rows)), max(1, len(new_paras))
+    stats = {"mapped": len(mapping), "orphan": orphan, "uncovered": uncovered,
+             "pins": 0, "pins_lost": 0, "refs": 0,
+             "material": (uncovered > max(2, 0.12 * n_new)) or (orphan > max(2, 0.12 * n_old))}
+    new_sq = [(p["idx"], _squash(p["text"])) for p in new_paras]
+    with _txn() as c:
+        if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
+            c.rollback()
+            return stats
+        # ① 骨架的角色/用途：老段映射到几条新段，几条都继承（老块的角色覆盖它的碎片）
+        annos = c.execute("SELECT para_idx, role, purpose FROM annotations WHERE paper_id=?",
+                          (pid,)).fetchall()
+        c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
+        rows = []
+        for a in annos:
+            for n in mapping.get(int(a["para_idx"]), []):
+                rows.append((pid, int(n), a["role"], a["purpose"]))
+        if rows:
+            c.executemany("INSERT OR IGNORE INTO annotations(paper_id, para_idx, role, purpose) "
+                          "VALUES(?,?,?,?)", rows)
+        # ② 主张的依据段：老锚点 → 新范围（整段搬，编号连续不丢）
+        for cl in c.execute("SELECT cid, anchors FROM claims WHERE paper_id=?", (pid,)).fetchall():
+            try:
+                old = json.loads(cl["anchors"] or "[]")
+            except ValueError:
+                continue
+            got = []
+            for a in (old if isinstance(old, list) else []):
+                for n in mapping.get(int(a), []):
+                    if n not in got:
+                        got.append(n)
+            c.execute("UPDATE claims SET anchors=? WHERE paper_id=? AND cid=?",
+                      (json.dumps(sorted(got)), pid, cl["cid"]))
+        # ③ 页边卡：引句在新段落里逐字找回（去空白比对），找不回就退到映射的第一段
+        for m in c.execute("SELECT id, para_idx, quote, rect FROM marginalia WHERE paper_id=? "
+                           "AND kind IN ('lookup','region','note')", (pid,)).fetchall():
+            q_ = _squash(m["quote"])[:60]
+            hit = next((nidx for nidx, nsq in new_sq if q_ and q_ in nsq), None)
+            if hit is None:
+                rng = mapping.get(int(m["para_idx"] or 0))
+                hit = rng[0] if rng else None
+            if hit is None:
+                stats["pins_lost"] += 1
+                continue
+            if hit != int(m["para_idx"] or 0):
+                c.execute("UPDATE marginalia SET para_idx=?, rect=NULL WHERE id=?", (hit, m["id"]))
+            stats["pins"] += 1
+        # ④ 文字里的 ¶n：回答、对话、摘要、卡片（JSON 里的字符串逐个改写）
+        for key, raw in c.execute("SELECT key, json FROM answers WHERE paper_id=?", (pid,)).fetchall():
+            new = json.dumps(_remap_json_refs(_safe_json(raw, None), mapping), ensure_ascii=False)
+            if new != raw:
+                stats["refs"] += 1
+                c.execute("UPDATE answers SET json=? WHERE paper_id=? AND key=?", (new, pid, key))
+        for r in c.execute("SELECT id, content FROM qa_messages WHERE paper_id=?", (pid,)).fetchall():
+            new = _remap_refs(r["content"], mapping)
+            if new != r["content"]:
+                c.execute("UPDATE qa_messages SET content=? WHERE id=?", (new, r["id"]))
+        for r in c.execute("SELECT id, summary FROM conversations WHERE paper_id=?", (pid,)).fetchall():
+            new = _remap_refs(r["summary"], mapping)
+            if new != (r["summary"] or ""):
+                c.execute("UPDATE conversations SET summary=? WHERE id=?", (new, r["id"]))
+        cols = (("summary", False), ("suggest", False), ("advisor", False),
+                ("method_card", False), ("citation", False), ("evidence_qs", True))
+        cur = c.execute("SELECT " + ", ".join(k for k, _ in cols) + " FROM papers WHERE id=?",
+                        (pid,)).fetchone()
+        if cur:
+            upd = {}
+            for k, keys in cols:
+                if cur[k]:
+                    new = _remap_json_refs(_safe_json(cur[k], cur[k]), mapping, keys)
+                    if isinstance(new, str):
+                        if new != cur[k]:
+                            upd[k] = new
+                    else:
+                        s = json.dumps(new, ensure_ascii=False)
+                        if s != cur[k]:
+                            upd[k] = s
+            if upd:
+                c.execute("UPDATE papers SET " + ", ".join(f"{k}=?" for k in upd) +
+                          " WHERE id=?", (*upd.values(), pid))
+    return stats
+
+def ai_invalidate(pid: str, why: str):
+    """段落重排后骨架不再可信：把按段落编号生成的 AI 产物整批作废。
+
+    清的是"锚在段号上的"（角色/主张/七问回答/一眼卡/方法卡/推荐问题）——
+    它们全部由重析读重建。用户资产（页边卡、批注、术语表）一个不动：
+    页边卡刚按引句迁过，术语表锚的是词不是段。
+    """
+    with _txn() as c:
+        if not c.execute("SELECT 1 FROM papers WHERE id=?", (pid,)).fetchone():
+            c.rollback()
+            return
+        c.execute("DELETE FROM annotations WHERE paper_id=?", (pid,))
+        c.execute("DELETE FROM claims WHERE paper_id=?", (pid,))
+        c.execute("DELETE FROM answers WHERE paper_id=?", (pid,))
+        c.execute("UPDATE papers SET analysis_status='none', analysis_error=?, summary=NULL, "
+                  "suggest=NULL, advisor=NULL, method_card=NULL, evidence_qs=NULL WHERE id=?",
+                  (why, pid))
 
 # ---------- skeleton ----------
 
@@ -929,6 +1127,21 @@ def qa_last_user_id(pid: str, conv_id: int):
     rows = q("SELECT id FROM qa_messages WHERE paper_id=? AND conv_id=? AND role='user' ORDER BY id DESC LIMIT 1",
              (pid, conv_id))
     return rows[0]["id"] if rows else None
+
+def qa_msg_get(mid: int):
+    """单条消息（继续生成要读那条被截断的回答）。"""
+    rows = q("SELECT id, paper_id, role, content, conv_id FROM qa_messages WHERE id=?", (mid,))
+    return dict(rows[0]) if rows else None
+
+def qa_append_assistant(mid: int, add: str) -> bool:
+    """把续写的一段接到那条回答末尾。行还在才写（用户在续写途中删了消息就算了）。"""
+    with _txn() as c:
+        row = c.execute("SELECT content FROM qa_messages WHERE id=?", (mid,)).fetchone()
+        if not row:
+            return False
+        c.execute("UPDATE qa_messages SET content=? WHERE id=?",
+                  (((row["content"] or "").rstrip() + "\n\n" + add.strip()) if row["content"] else add.strip(), mid))
+        return True
 
 def qa_history(pid: str, conv_id: int = None, limit: int = 200):
     if conv_id:
