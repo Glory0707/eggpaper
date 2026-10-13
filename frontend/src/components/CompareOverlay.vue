@@ -14,6 +14,10 @@ const props = defineProps({ open: Boolean, ids: { type: Array, default: () => []
 const emit = defineEmits(['close', 'goto'])
 const maskEl = ref(null)
 modalFocus(maskEl, () => props.open, () => null)
+/* 步骤一切换，刚才按的那个按钮就从 DOM 里消失（pick 的「开始对比」→ run 的等待态），
+   焦点随即掉回 body——Esc 的 @keydown 挂在遮罩上，从此收不到键盘（实测：抽取出表后
+   按 Esc 关不掉浮层，还会挡住右栏点击）。每步把焦点收回遮罩。 */
+
 const DIMS_ALL = [
   { k: 'problem', label: '研究问题' },
   { k: 'method', label: '方法' },
@@ -24,6 +28,7 @@ const DIMS_ALL = [
 ]
 const MAX_COLS = 6
 const step = ref('pick')            // pick 选维度 | run 抽取中 | done 表格 | fail
+watch(step, () => requestAnimationFrame(() => maskEl.value?.focus({ preventScroll: true })))
 const picked = ref(new Set(DIMS_ALL.map(d => d.k)))
 const cols = ref([])                // [{label, hint}] 自定义列口径的列
 const papers = ref([])

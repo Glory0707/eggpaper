@@ -225,6 +225,18 @@ let loadSeq = 0    // 装载代次：变体/排布连切时，先发的 load 慢
 
 async function load({ keepPlace = false } = {}) {
   const seq = ++loadSeq
+  /* 这篇没有成品（translate_status 不是 done）时，别带着"上一本留下的"译文/双语变体
+     去取 PDF：那会白打一发 /pdf?variant=mono|dual 的 404，然后弹一句"译文版打不开"
+     ——用户看到的是一场并不存在的故障（实测：双语态下打开没翻译的中文论文）。
+     变体是跨论文记的全局偏好；多窗格/同屏切换是刻意**不**动它的（别扰邻格），
+     所以这道闸要留在拿到 PDF 之前。查这一篇自己的行，不查"当前篇"。
+     查不到行就不拦（列表还没到）：那种情况有既有的 catch 兜底。 */
+  const row = (store.papers || []).find(p => p.id === props.pid)
+  if (store.viewer.variant !== 'original' && row && row.translate_status !== 'done') {
+    store.viewer.variant = 'original'      // watch 会重新 load；本次就地收手
+    loading = false
+    return
+  }
   loading = true
   const veryFirst = !sheets.value.length
   if (veryFirst) { ready.value = false; loadPct.value = 0.08; startCreep() }

@@ -527,7 +527,11 @@ async function saveToGlobal(term) {
       <button class="rt-collapse" :title="t('收起右栏')" @click="store.viewer.railUser = false">»</button>
     </div>
     <div class="rbody" ref="rbodyEl" :class="{ flush: tab === 'ask' }">
-            <Transition name="rt" mode="out-in">
+            <!-- :duration 是给"合成帧停摆"买的保险：mode="out-in" 下新面板要等旧面板的
+                 leave 动画 transitionend 才挂载，而窗口被遮挡/后台时 Chromium 不给合成帧、
+                 transitionend 永不触发——面板就卡在 rt-leave-active 上（实测：切页签后
+                 内容整块不换）。显式时长到了 Vue 自己收尾，不赌动画事件。 -->
+            <Transition name="rt" mode="out-in" :duration="{ enter: 170, leave: 90 }">
       <div class="rt-pane" v-if="tab !== 'ask'" :key="tab">
             <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
