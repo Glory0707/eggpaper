@@ -15,13 +15,25 @@ const pid = computed(() => store.currentId)
 /* 回答里的 ¶n 是本篇的直接跳；《别篇》¶n（模型按《标题》¶n 的口径写跨篇引用）
    先按标题在库里认出那篇——模型可能截断长标题，用双向包含兜住——
    认得出就打开它再跳段（位置记忆管回来），认不出就诚实降级成纯文本，不给一个点了没反应的按钮。 */
+/* 篇名匹配：citeOk 会在**每次 Markdown 渲染的每个引用 run** 上问一遍（一屏几十次），
+   每次都两趟全量 find + 逐篇 toLowerCase。小写化结果按 papers 数组的引用建缓存——
+   列表换了引用（刷新/换库）就整表重建，纯函数不改返回值。 */
+let titleIdxSrc = null
+let titleIdx = new Map()
+function titleIndexOf() {
+  const ps = store.papers || []
+  if (titleIdxSrc === ps) return titleIdx
+  titleIdxSrc = ps
+  titleIdx = new Map(ps.map(p => [p, (p.title || '').trim().toLowerCase()]))
+  return titleIdx
+}
 function matchPaper(title) {
   const q = String(title || '').trim().toLowerCase()
   if (!q) return null
   const ps = store.papers || []
-  const ti = p => (p.title || '').trim().toLowerCase()
-  return ps.find(p => ti(p) === q)
-      || ps.find(p => { const x = ti(p); return x && (x.includes(q) || q.includes(x)) })
+  const ti = titleIndexOf()
+  return ps.find(p => ti.get(p) === q)
+      || ps.find(p => { const x = ti.get(p); return x && (x.includes(q) || q.includes(x)) })
 }
 const paraIdxSet = computed(() => new Set((store.paras || []).map(p => p.idx)))
 /* 引用要真落在存在的段上才给按钮：服务端（llm.filter_answer_refs）已把越界的 ¶ 从回答里

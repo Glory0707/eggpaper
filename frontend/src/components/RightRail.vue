@@ -320,14 +320,17 @@ async function classifyCited() {
 function gotoCiting(pid2, para) {
   gotoPaperPara(pid2, para)
 }
+let mcCachedBusy = false
 async function loadCachedBlocks() {
-  if (!store.currentId) return
+  if (!store.currentId || mcCachedBusy) return      // 在途守卫：同一篇别叠第二次缓存查询
   const mine = paperEpoch()
   if (!methodCard.value) {
+    mcCachedBusy = true
     try {
       const r = await api.methodCard(store.currentId, true)
       if (samePaper(mine) && r?.goal) methodCard.value = r
     } catch { /* 没缓存很正常 */ }
+    finally { mcCachedBusy = false }
   }
 }
 
@@ -382,7 +385,9 @@ function onFigKey(e) {
   }
 }
 async function loadFigures() {
-  if (!store.currentId || figures.value.length) return
+  // figuresLoading 也要当守卫用：只判 figures.length 的话，请求在途（还是 0）时
+  // 来回切页签会重复 GET 一遍；失败时 finally 已复位，下一次触发照旧可重试
+  if (!store.currentId || figures.value.length || figuresLoading.value) return
   const mine = paperEpoch()
   figuresLoading.value = true
   try {
@@ -397,9 +402,12 @@ async function loadFigures() {
   }
 }
 async function askFigure(f) {
+  const pid = store.currentId              // 钉住发起时的篇：取图要两次 await
   try {
-    const url = api.figureUrl(store.currentId, f, 150)
+    const url = api.figureUrl(pid, f, 150)
     const img = await blobToDataURL(await (await fetch(url)).blob())
+    // 取图期间换了篇就作罢：否则拿新篇的段落表配旧篇的 rect，气泡会钉在错的位置
+    if (store.currentId !== pid) return
     figIdx.value = -1
     const para = store.paras.find(p => p.page === f.page && p.bbox.y0 <= f.y1 && p.bbox.y1 >= f.y0)
     store.visPrefill = {
@@ -597,23 +605,14 @@ async function saveToGlobal(term) {
                 </div>
               </template>
 
-              <!-- ⑤⑥ 两块渲染同一个形态（条目列表，数据各自在 six[s.gen]）：合成一块 -->
-              <template v-else-if="s.k === 'q5' || s.k === 'q6'">
+              <!-- ⑤⑥⑦ 三块渲染同一个形态（条目列表，数据各自在 six[s.gen]）：合成一块 -->
+              <template v-else-if="s.k === 'q5' || s.k === 'q6' || s.k === 'q7'">
                 <div class="six-item" v-for="(it, i) in (six[s.gen]?.items || [])" :key="i">
                   <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
                   <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
                   <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
                 </div>
                 <div v-if="!six[s.gen]?.items?.length" class="six-note">{{ sixBusy[s.gen] ? '…' : t('未生成') }}</div>
-              </template>
-
-                            <template v-else-if="s.k === 'q7'">
-                <div class="six-item" v-for="(it, i) in (six.lens?.items || [])" :key="i">
-                  <div class="si-lead" v-if="it.lead">{{ it.lead }}</div>
-                  <MdLite class="six-txt" :text="it.text" @cite="c => jumpPara(c.n)" />
-                  <button class="si-ask" v-if="it.ask" @click="askIt(it.ask)">{{ it.ask }} ↗</button>
-                </div>
-                <div v-if="!six.lens?.items?.length" class="six-note">{{ sixBusy.lens ? '…' : t('未生成') }}</div>
               </template>
             </div>
              </div>

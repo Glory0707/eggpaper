@@ -76,7 +76,10 @@ def load() -> dict:
             except OSError:
                 pass
             cfg = {}
-    merged = DEFAULTS.copy()
+    # 子字典要复制一层：DEFAULTS.copy() 是浅拷贝，用户没写的键会与模块级常量**共用同一个
+    # 字典对象**——今天唯一的写路径先 deepcopy 了所以不炸，但"在 load() 结果上改一个字段
+    # 再 save"的写法一旦出现，就会把一个会话里串味（值与键序不变，只是不再别名）
+    merged = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
     for k, v in cfg.items():
         if isinstance(v, dict) and isinstance(merged.get(k), dict):
             merged[k] = {**merged[k], **v}

@@ -160,6 +160,20 @@ def migrate_if_needed():
         dst_eng = os.path.join(os.path.dirname(ptr), "engines")
         _merge_move(src_eng, dst_eng)
 
+def log_path(create: bool = False) -> str:
+    """app.log 的路径（数据目录旁的 logs/）。三处写入方共用这一个算式：
+    各抄一份的话，将来谁把目录改成 logs2/，就会出现"崩溃日志写进了没人看的文件"。
+
+    create=True 时顺手建目录（写入方需要）；只取路径的调用方传 False，别在
+    启动路径上做无谓的 mkdir。"""
+    d = os.path.join(os.path.dirname(data_dir()), "logs")
+    if create:
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
+    return os.path.join(d, "app.log")
+
 def version() -> str:
     """版本号只有一个来源：仓库根的 VERSION 文件（打包时一并带上）。"""
     for p in (os.path.join(res_dir(), "VERSION"), os.path.join(exe_dir(), "VERSION")):

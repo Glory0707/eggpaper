@@ -1,9 +1,5 @@
 import { prettyChem } from './chem'
 
-const CITE = /¶\s*\d+/
-const CODE = /`[^`]+`/
-const BOLD = /\*\*[^*]+\*\*/
-
 export function mdSegs(text) {
   const out = []
   const lines = String(text || '').split('\n')

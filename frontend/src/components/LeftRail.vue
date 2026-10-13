@@ -42,13 +42,13 @@ const shown = computed(() => {
   })
   let extra = []
   if (kw) {
-    list = list.filter(p => (p.title || p.filename || '').toLowerCase().includes(kw))
+    list = list.filter(p => paperName(p).toLowerCase().includes(kw))
     const inCat = id => SEL.value === 'all' || (SEL.value === 'none' ? !collOf(id).length : collOf(id).includes(SEL.value))
     const titleIds = new Set(list.map(p => p.id))
     extra = contentHits.value.filter(h => !titleIds.has(h.id) && inCat(h.id))
   }
   const s = store.lib.sort
-  const title = p => (p.title || p.filename || '').toLowerCase()
+  const title = p => paperName(p).toLowerCase()
   /* 四档排序各一条比较器：查表比嵌套三元好读，也不会在加档时漏掉一支 */
   const SORTERS = {
     title: (a, b) => title(a).localeCompare(title(b)),
@@ -59,7 +59,10 @@ const shown = computed(() => {
   const sorted = [...list].sort(SORTERS[s] || SORTERS.added)
   return [...sorted, ...extra]
 })
-const hitOf = pid => contentHits.value.find(h => h.id === pid)
+/* 命中表：一行模板里 hitOf(p.id) 要问 6 次（标题串 3 次 + 正文 3 次），
+   每次一遍线性 find；几百篇的库上翻一次列表就是几百×6 次比较。建表查一次。 */
+const hitById = computed(() => new Map(contentHits.value.map(h => [h.id, h])))
+const hitOf = pid => hitById.value.get(pid)
 const WHERE_KEYS = { glance: '一眼卡', seven: '七问', claims: '核心主张', qa: '问答', body: '正文' }
 
 /* 全库内容检索：标题过滤是即时的（打一个字列表就收），内容命中防抖问后端——
@@ -114,10 +117,7 @@ async function menuDone() {
   const want = [...menuPicked.value]
   const cur = collOf(pid)
   if (want.length === cur.length && want.every(c => cur.includes(c))) return   // 没改就不发请求
-  try {
-    await api.paperColls(pid, want)
-    await refreshCollections()
-  } catch (e) { await collFail(e) }
+  await saveColls(pid, want)
 }
 /* 菜单挂在 body 上（防列表裁剪），点外面/按 Esc 收起 */
 let menuArmT = null
@@ -141,6 +141,8 @@ function closeMenu(e) {
 function escMenu(e) { if (e.key === 'Escape') closeMenu() }
 onBeforeUnmount(() => {
   clearTimeout(menuArmT)   // 组件先卸、定时器后补挂监听 = 永久泄漏，一并掐掉
+  clearTimeout(touchT)     // 抽屉让位延时：卸载后回调还会 emit('close')
+  clearTimeout(pressTimer) // Zotero 长按：卸载后回调会去开弹层
   document.removeEventListener('click', closeMenu, { capture: true })
   document.removeEventListener('keydown', escMenu, { capture: true })
 })
@@ -179,6 +181,14 @@ async function delColl(c) {
 
 /* ---------- 归入分类：勾选 + 拖拽两条路 ---------- */
 /* 归类失败若是"论文不存在"：列表八成是陈旧的（别的窗口删过）——刷新掉，别让用户对着死行反复撞墙 */
+/* 存一篇的分类：写库 → 刷新分类计数 → 失败走同一套人话收场（两处调用点共用） */
+async function saveColls(pid, want) {
+  try {
+    await api.paperColls(pid, want)
+    await refreshCollections()
+  } catch (e) { await collFail(e) }
+}
+
 async function collFail(e) {
   if (String(e.message || '').includes('不存在')) {
     await refreshPapers()
@@ -192,10 +202,7 @@ async function dropOn(cid) {
   if (pid == null) return
   const cur = collOf(pid)
   if (cur.includes(cid)) return
-  try {
-    await api.paperColls(pid, [...cur, cid])
-    await refreshCollections()
-  } catch (e) { await collFail(e) }
+  await saveColls(pid, [...cur, cid])
   menuFor.value = null
 }
 
@@ -351,24 +358,20 @@ function selCollAll(cid) {
   const hits = [...selSet.value].filter(pid => collOf(pid).includes(cid)).length
   return hits > 0 && hits === selN.value
 }
-async function selAddColl(cid) {
+/* 批量归类：nextOf(当前分类集) 回 null = 这一篇不用动（已在该分类里 / 本来就未分类） */
+async function applySelColl(nextOf) {
   for (const pid of selSet.value) {
-    const cur = collOf(pid)
-    if (cur.includes(cid)) continue
-    try { await api.paperColls(pid, [...cur, cid]) } catch { selSet.value.delete(pid) }   // 一篇失败不拖垮整批；失败的多半已被删，勾选里摘掉
+    const want = nextOf(collOf(pid))
+    if (want === null) continue
+    // 一篇失败不拖垮整批；失败的多半已被删，勾选里摘掉
+    try { await api.paperColls(pid, want) } catch { selSet.value.delete(pid) }
   }
   await refreshCollections()
   selMenu.value = false
 }
+const selAddColl = cid => applySelColl(cur => (cur.includes(cid) ? null : [...cur, cid]))
 /* 「未分类」= 从所有分类里移出（它本来就是"不属于任何分类"的别名） */
-async function selToUncategorized() {
-  for (const pid of selSet.value) {
-    if (!collOf(pid).length) continue
-    try { await api.paperColls(pid, []) } catch { selSet.value.delete(pid) }
-  }
-  await refreshCollections()
-  selMenu.value = false
-}
+const selToUncategorized = () => applySelColl(cur => (cur.length ? [] : null))
 
 /* ---------- 长按拖放区 = 从 Zotero 导入（点击仍是选文件） ---------- */
 const zotArmed = ref(false)

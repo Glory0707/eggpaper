@@ -66,7 +66,8 @@ def data_dir() -> str:
             prefs.sort(key=os.path.getmtime, reverse=True)
             for f in prefs[:2]:
                 try:
-                    txt = open(f, encoding="utf-8", errors="ignore").read()
+                    with open(f, encoding="utf-8", errors="ignore") as fh:
+                        txt = fh.read()
                 except OSError:
                     continue
                 m = re.search(r'user_pref\("extensions\.zotero\.dataDir",\s*"((?:[^"\\]|\\.)*)"\)', txt)

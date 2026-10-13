@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { downloadUrl } from '../save'
 import { api, store, FS_SCALE, toast, checkUpdate, lsGet, lsSet } from '../store'
-import { engInst, startEngineInstall, onEngineReady } from '../engine'
+import { engInst, engBusy, engSnapshot, startEngineInstall, onEngineReady } from '../engine'
 import { t, ui, setLang, setDark, isEn } from '../i18n'
 import { confirmBox } from '../dialog'
 import { vDrag } from '../drag'
@@ -181,8 +181,7 @@ async function checkEngine() {
     const r = await api.pdf2zhEngine(f.engine_path.trim())
     Object.assign(eng, { ok: r.ok, path: r.path, why: r.why, version: r.version || '',
                          upgrade: !!r.upgrade, pinned: r.pinned || '', checked: true })
-    lsSet('engState', { ok: r.ok, path: r.path, why: r.why, version: r.version || '',
-                        upgrade: !!r.upgrade, pinned: r.pinned || '' })
+    lsSet('engState', engSnapshot(r))
   } catch (e) {
     Object.assign(eng, { ok: false, path: '', why: e.message, version: '', upgrade: false, checked: true })
   }
@@ -198,8 +197,7 @@ async function installEngine() {
 onEngineReady(() => {
   const st = lsGet('engState', null)
   if (st) {
-    Object.assign(eng, { ok: st.ok, path: st.path, why: st.why, version: st.version || '',
-                         upgrade: !!st.upgrade, pinned: st.pinned || '', checked: true })
+    Object.assign(eng, engSnapshot(st), { checked: true })
   }
 })
 
@@ -322,9 +320,9 @@ function save() {
         <button class="eng-check" style="margin-left:auto" @click="checkEngine" :disabled="eng.busy">
           {{ eng.busy ? '…' : t('检测') }}</button>
         <button class="eng-check" style="margin-left:4px"
-                v-if="eng.checked && !eng.ok && engInst.state !== 'error' && !['downloading', 'unpacking', 'warming'].includes(engInst.state)"
+                v-if="eng.checked && !eng.ok && engInst.state !== 'error' && !engBusy(engInst.state)"
                 @click="installEngine">{{ t('安装') }}</button>
-        <button class="eng-check" style="margin-left:4px" v-if="eng.upgrade && !['downloading', 'unpacking', 'warming'].includes(engInst.state)"
+        <button class="eng-check" style="margin-left:4px" v-if="eng.upgrade && !engBusy(engInst.state)"
                 @click="installEngine">{{ t('升级') }}</button>
       </div>
       <div class="f-line">

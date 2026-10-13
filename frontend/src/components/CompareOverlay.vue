@@ -28,6 +28,9 @@ const picked = ref(new Set(DIMS_ALL.map(d => d.k)))
 const cols = ref([])                // [{label, hint}] 自定义列口径的列
 const papers = ref([])
 const cells = ref({})
+/* 一个格子的取值：一行模板里要问 3 次（文本 / 有没有 ref / ref 号），
+   每次写一遍可选链下标既啰嗦又容易漏一个 ?. */
+const cellOf = (p, d) => cells.value[p.id]?.[d.k] || null
 const dims = ref(DIMS_ALL)
 const demo = ref(false)
 const failed = ref('')
@@ -190,9 +193,9 @@ function downloadCsv() {
               <tr v-for="d in dims" :key="d.k">
                 <td class="dim">{{ t(d.label) }}</td>
                 <td v-for="p in papers" :key="p.id">
-                  <span class="cmp-text">{{ cells[p.id]?.[d.k]?.text }}</span>
-                  <button class="cmp-ref" v-if="cells[p.id]?.[d.k]?.ref"
-                          :title="t('跳到原文这段')" @click="goto(p, cells[p.id][d.k].ref)">¶{{ cells[p.id][d.k].ref }}</button>
+                  <span class="cmp-text">{{ cellOf(p, d)?.text }}</span>
+                  <button class="cmp-ref" v-if="cellOf(p, d)?.ref"
+                          :title="t('跳到原文这段')" @click="goto(p, cellOf(p, d).ref)">¶{{ cellOf(p, d).ref }}</button>
                 </td>
               </tr>
             </tbody>

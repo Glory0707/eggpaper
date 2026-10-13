@@ -7,15 +7,23 @@ const KEEP = /[0-9a-z\u4e00-\u9fff]/
 const LIG = { '\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl',
               '\ufb03': 'ffi', '\ufb04': 'ffl', '\ufb05': 'ft', '\ufb06': 'st' }
 
+/* 归一化的字母表只此一份：连字展开 + 只留 KEEP 里的字符。
+   入参必须是**已小写**的单个字符（调用方各自先小写——整串小写与逐字小写
+   在 İ 这类字符上结果不同，不能换）。
+   三处（normText / lineSpanOf / indexOf）以前各写一遍，代价是实打实的：
+   漏掉连字展开会让引文高亮整条路落空（下面两处注释里各记过一次）。 */
+function foldChar(c) {
+  if (c.length !== 1) return ''      // 小写化后变长的（İ → i̇）与代理对半截：整字丢掉
+  const lig = LIG[c]
+  if (lig) return lig
+  return KEEP.test(c) ? c : ''
+}
+
 /* 导出给术语表的"本文出现过"判定（RightRail）用：引文对齐和术语归一化
    必须是同一套折叠规则，各写一份迟早改出"术语查不到" */
 export function normText(s) {
   let out = ''
-  for (const ch of (s || '').toLowerCase()) {
-    const lig = LIG[ch]
-    if (lig) out += lig
-    else if (KEEP.test(ch)) out += ch
-  }
+  for (const ch of (s || '').toLowerCase()) out += foldChar(ch)
   return out
 }
 
@@ -27,16 +35,12 @@ export function lineSpanOf(para, quote) {
   if (!q || q.length < 4 || !lines?.length) return null
   let acc = ''
   const owner = []
+  /* 折叠规则走共用的 foldChar（连字展开在里头）——这里漏连字的话，ﬁ 在 acc 里被整字
+     丢掉、而 q 里已展开成 "fi"：两边不是一个字母表，indexOf 永远 -1，
+     引文高亮在这条路上整个落空（DOM 那条路有同款折叠） */
   for (let li = 0; li < lines.length; li++) {
     for (const ch of lines[li].text || '') {
-      const c = ch.toLowerCase()
-      /* 折叠规则必须与 normText 逐字一致（含连字展开）——这里漏连字的话，
-         ﬁ 在 acc 里被整字丢掉、而 q 里已展开成 "fi"：两边不是一个字母表，
-         indexOf 永远 -1，引文高亮在这条路上整个落空（DOM 那条路有同款折叠） */
-      const lig = LIG[c]
-      if (lig) {
-        for (const lc of lig) { acc += lc; owner.push(li) }
-      } else if (c.length === 1 && KEEP.test(c)) { acc += c; owner.push(li) }
+      for (const lc of foldChar(ch.toLowerCase())) { acc += lc; owner.push(li) }
     }
   }
   const at = acc.indexOf(q)
@@ -68,13 +72,7 @@ function indexOf(root) {
   while ((node = walker.nextNode())) {
     const t = node.nodeValue || ''
     for (let i = 0; i < t.length; i++) {
-      const lig = LIG[t[i].toLowerCase()]
-      if (lig) {
-        for (const ch of lig) { idx.norm += ch; idx.map.push(node, i) }
-        continue
-      }
-      const c = t[i].toLowerCase()
-      if (c.length === 1 && KEEP.test(c)) { idx.norm += c; idx.map.push(node, i) }
+      for (const ch of foldChar(t[i].toLowerCase())) { idx.norm += ch; idx.map.push(node, i) }
     }
   }
   cache.set(root, idx)

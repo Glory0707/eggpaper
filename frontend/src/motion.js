@@ -5,7 +5,7 @@
 let mq = null
 try { mq = window.matchMedia('(prefers-reduced-motion: reduce)') } catch { mq = null }
 
-export const reduceMotion = () => !!(mq && mq.matches)
+const reduceMotion = () => !!(mq && mq.matches)
 
 /* 给 scrollTo / scrollIntoView 的 behavior：平时 'smooth'，减弱动态时 'auto' */
 export const scrollBehavior = (smooth = true) => (smooth && !reduceMotion() ? 'smooth' : 'auto')

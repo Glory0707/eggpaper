@@ -590,6 +590,23 @@ def _skeleton_system(kind: str) -> str:
               .replace("该实验/数据直接回答的问题，≤22字", "the question this experiment/data directly answers, ≤22 words"))
     return s + _lang_tail()
 
+def _num_keyed(raw, valid: set, cap: int) -> dict:
+    """模型给的"段落编号 → 一段文字"映射（purposes / evidence_qs 同款）。
+
+    键过 _key_num、编号必须落在本文段号集合里、值必须是非空字符串，超 cap 截断。
+    入口先过 isinstance：模型偶尔把该给对象的地方给成数组/字符串，直接 .items()
+    会 AttributeError——整篇析读被判失败，错误文案还是 "'list' object has no attribute
+    'items'" 这种天书。这两项本来就是"最好有"的（缺了有 PURPOSE_FALLBACK 兜），
+    当"没给"比整篇失败合理。"""
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k, v in raw.items():
+        num = _key_num(k)
+        if num in valid and isinstance(v, str) and v.strip():
+            out[str(num)] = v.strip()[:cap]
+    return out
+
 def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     """paras: [{idx, text}]；返回 {"claims": [...], "roles": {...}, "purposes": {...}}
     kind：research / review（综述走附录提示词，别把它的主体判成背景）。
@@ -629,6 +646,8 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
     roles_raw = data.get("roles") or {}
     if isinstance(roles_raw, list):
         roles_raw = {it.get("para") or it.get("idx"): it.get("role") for it in roles_raw if isinstance(it, dict)}
+    if not isinstance(roles_raw, dict):
+        roles_raw = {}          # 该给对象却给成字符串之类：当"没给"，由下面的 ValueError 说人话
     roles = {}
     for k, v in roles_raw.items():
         num = _key_num(k)
@@ -636,23 +655,14 @@ def analyze_skeleton(title: str, paras: list, kind: str = "research") -> dict:
         if num in valid and role:
             roles[str(num)] = role
 
-    purposes = {}
-    for k, v in (data.get("purposes") or {}).items():
-        num = _key_num(k)
-        if num in valid and isinstance(v, str) and v.strip():
-            purposes[str(num)] = v.strip()[:40]
+    purposes = _num_keyed(data.get("purposes"), valid, 40)
     for num, role in roles.items():
         purposes.setdefault(num, PURPOSE_FALLBACK.get(role, ""))
 
     abbrs_raw = data.get("abbrs") or {}
-    abbrs = {str(k)[:24]: str(v)[:80] for k, v in abbrs_raw.items() if isinstance(v, str) and v.strip()}         if isinstance(abbrs_raw, dict) else {}
-    eqs_raw = data.get("evidence_qs") or {}
-    eqs = {}
-    if isinstance(eqs_raw, dict):
-        for k, v in eqs_raw.items():
-            num = _key_num(k)
-            if num in valid and isinstance(v, str) and v.strip():
-                eqs[str(num)] = v.strip()[:36]
+    abbrs = ({str(k)[:24]: str(v)[:80] for k, v in abbrs_raw.items()
+              if isinstance(v, str) and v.strip()} if isinstance(abbrs_raw, dict) else {})
+    eqs = _num_keyed(data.get("evidence_qs"), valid, 36)
     caps_raw = data.get("fig_caps") or {}   # 兼容：旧缓存/旧模型顺手带出来的仍收下
     fig_caps_zh = {}
     if isinstance(caps_raw, dict):
@@ -1120,11 +1130,7 @@ def _filter_para_refs(text: str, valid: set) -> str:
 
     out = _BRACKET_REFS.sub(fix_bracket, text)
     out = _BARE_REFS.sub(lambda m: m.group(0) if int(m.group(1)) in valid else "", out)
-    if out != text:     # 真剔过引用才收拾残迹：双空格、以及标点前多出来的空格（"依据 。"）
-        out = re.sub(r"[ \t]{2,}", " ", out)
-        out = re.sub(r"[ \t]+(?=[，,。；;：:！!？?、）)】」』])", "", out)
-        out = out.rstrip("，,、;；:： \t")
-    return out
+    return _tidy_ref_spacing(out, text)
 
 # 问答回答的引用校验：同一份实现跑两遍——流式边到边滤（不等收完，用户盯着看呢）+ 落库前。
 # 带《标题》的引用按"那篇"的段落集判；裸 ¶n/[¶n, ¶m] 按当前篇判（复用七问那套清洗）。
@@ -1134,6 +1140,18 @@ _TITLED_REF = re.compile(r"《([^》]{1,80})》([ \t]*)((?:[\[［]\s*)?¶\s*\d+(
 def title_key(t: str) -> str:
     """认篇用的标题归一：空白全去掉、大小写不敏感（模型抄标题常丢空格/换大小写）。"""
     return re.sub(r"\s+", "", str(t or "")).lower()
+
+def _tidy_ref_spacing(out: str, text: str) -> str:
+    """剔掉引用后收拾残迹：双空格、以及标点前多出来的空格（"依据 。"）。
+
+    只在真剔过东西时动手（`out != text`）——没动就原样放回，不改格式。
+    七问（_filter_para_refs）与问答（filter_answer_refs）两条路共用这一份：
+    以前各写一遍，改一处就会让"流式里看到的"和"落库的"两份文本分叉。"""
+    if out == text:
+        return out
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"[ \t]+(?=[，,。；;：:！!？?、）)】」』])", "", out)
+    return out.rstrip("，,、;；:： \t")
 
 def filter_answer_refs(text: str, valid: set, others: dict = None) -> str:
     """问答回答的 ¶n 范围校验：只丢越界的引用本身，不丢整句（口径同七问）。
@@ -1160,11 +1178,7 @@ def filter_answer_refs(text: str, valid: set, others: dict = None) -> str:
                 if fixed != tok:                     # 真剔了才重排；没动就原样放回（别改格式）
                     raw = ("《%s》" % title) + (sep + fixed if fixed else "")
             out = out.replace("\x00%d\x00" % i, raw)
-    if out != text:
-        out = re.sub(r"[ \t]{2,}", " ", out)
-        out = re.sub(r"[ \t]+(?=[，,。；;：:！!？?、）)】」』])", "", out)
-        out = out.rstrip("，,、;；:： \t")
-    return out
+    return _tidy_ref_spacing(out, text)
 
 # 流式上"还可能是半个引用"的尾巴（引用被按 token 切开是常态："¶1"+"99"、"[¶3,"+"¶999]"、
 # "《某篇"+"》¶3"、"["+"¶3]"）：这些先压着不发，凑齐了再判。标题要跟它后面那截一起压着

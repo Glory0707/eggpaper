@@ -563,8 +563,11 @@ def get_paragraphs(pid: str, with_lines: bool = True):
     """with_lines=False 给纯文本消费方（问答/析读语料）：行级坐标是段落里最重的一块，
     不画线就不必反序列化它。"""
     rows = q("SELECT idx, page, bbox, text, in_refs, lines FROM paragraphs WHERE paper_id=? ORDER BY idx", (pid,))
+    # 缓存列一律过 _safe_json：老库/半截写盘会留下坏 JSON 或 NULL，直连 json.loads 会让
+    # /paragraphs 整个 500（同文件 208 行就是为这件事定的口径）。bbox 另说：pdfparse 写
+    # dict、ocr 写 list，兜底形状没法一刀切，这里不动它
     return [dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
-                 lines=(json.loads(r["lines"]) if (with_lines and r["lines"]) else [])) for r in rows]
+                 lines=(_safe_json(r["lines"], []) if with_lines else [])) for r in rows]
 
 def has_paragraphs(pid: str) -> bool:
     """只判"有没有文字层"时用这个：整载全部段落（含 bbox/lines 两坨 JSON）只为一判空，太重。"""
@@ -582,12 +585,17 @@ def get_paragraph(pid: str, idx: int):
         return None
     r = rows[0]
     return dict(r, bbox=json.loads(r["bbox"]), in_refs=bool(r["in_refs"]),
-                lines=(json.loads(r["lines"]) if r["lines"] else []))
+                lines=_safe_json(r["lines"], []))
 
 def paragraphs_need_lines(pid: str) -> bool:
-    """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。"""
-    rows = q("SELECT lines FROM paragraphs WHERE paper_id=?", (pid,))
-    return bool(rows) and all(not r["lines"] for r in rows)
+    """旧库里的段落没有行级坐标：拿这个判断要不要重解析一次。
+
+    只判空却在读侧把整列 lines 反序列化出来（行级坐标是段落里最重的一块），
+    而这个函数每次打开论文都会走一遍——交给 SQL 数。写侧空列表恒为 "[]"
+    （真值），所以"有没有行坐标"的判定与原来逐行 `not r["lines"]` 完全一致。"""
+    r = q("SELECT COUNT(*) AS n, SUM(CASE WHEN lines IS NULL OR lines='' THEN 1 ELSE 0 END) AS e "
+          "FROM paragraphs WHERE paper_id=?", (pid,))[0]
+    return (r["n"] or 0) > 0 and (r["e"] or 0) == r["n"]
 
 def paragraphs_match(pid: str, paras: list) -> bool:
     """新解析出来的段落和库里存的**是不是同一批**（段数一样、每段的正文也一样）。
@@ -679,7 +687,7 @@ def get_analysis(pid: str):
         # 取行与取析读之间被删（删篇竞态）：回 None 状态让端点自己判 404，
         # 别让 paper["analysis_status"] 的 None 下标把端点炸成 500
         return None, [], {}
-    rows = [{"id": r["cid"], "text": r["text"], "anchors": json.loads(r["anchors"])}
+    rows = [{"id": r["cid"], "text": r["text"], "anchors": _safe_json(r["anchors"], [])}
             for r in q("SELECT cid, text, anchors FROM claims WHERE paper_id=?", (pid,))]
     # 按编号的数字部分排（C2 在 C10 前面）：字典序会把 10+ 条主张排成 C1,C10,C11,…,C2
     def _num(r):

@@ -445,7 +445,7 @@ def _repair_paper_paths():
         # 库内副本：先认 path 字段（在本夹里），断了退夹里的新旧两种命名
         lib = src if inside and os.path.isfile(src) else ""
         if not lib:
-            for cand in ((f"{base}.pdf" if base else ""), "paper.pdf"):
+            for cand in _lib_candidates(base):
                 c = os.path.join(d, cand) if cand else ""
                 if c and os.path.isfile(c):
                     lib = c
@@ -458,12 +458,23 @@ def _repair_paper_paths():
         if src and os.path.isfile(src) and not inside:
             try:
                 os.makedirs(d, exist_ok=True)
-                shutil.copy2(src, os.path.join(d, f"{base}.pdf" if base else "paper.pdf"))
+                shutil.copy2(src, os.path.join(d, _lib_name(base)))
                 copied += 1
             except OSError:
                 pass
     if fixed or copied:
         _applog(f"自愈：{fixed} 篇的来源路径改回库内副本，{copied} 篇补了库内副本")
+
+def _lib_candidates(base: str) -> tuple:
+    """库内副本的候选名（按优先级）：可读名在前、老命名 paper.pdf 兜底。
+
+    base 为空（还没对齐出显示名）时首位是空串——调用方按"有没有"跳过它，
+    保持与历史写法一致的顺序与空位语义。"""
+    return ((f"{base}.pdf" if base else ""), "paper.pdf")
+
+def _lib_name(base: str) -> str:
+    """库内副本最终落的名字：有可读名就用它，否则退回老命名。"""
+    return f"{base}.pdf" if base else "paper.pdf"
 
 def _paper_src(pid: str, p: dict) -> str:
     """这篇论文的原 PDF 在哪：先认 path 字段，断了退库内副本（顺手把字段修回来）。
@@ -475,7 +486,7 @@ def _paper_src(pid: str, p: dict) -> str:
         return src
     d = paper_dir(pid)
     base = _display_name(p)
-    for cand in ((f"{base}.pdf" if base else ""), "paper.pdf"):
+    for cand in _lib_candidates(base):
         alt = os.path.join(d, cand) if cand else ""
         if alt and os.path.exists(alt):
             try:
@@ -1384,8 +1395,7 @@ async def upload(request: Request, file: UploadFile = File(...)):
     # 分块落盘：以前 chunks 攒满再 b"".join，峰值两份 500MB 驻留在**事件循环线程**上，
     # 攒的那一拍整个服务（含正在流的问答）一起停摆。现在 4MB 一块边收边写临时文件。
     # content-length 的预检在 _cap_upload_size 中间件里（要赶在 multipart 解析之前）。
-    import uuid as _uuid
-    tmp = os.path.join(config.DATA_DIR, f".upload-{_uuid.uuid4().hex}.tmp")
+    tmp = os.path.join(config.DATA_DIR, f".upload-{uuid.uuid4().hex}.tmp")
     size, head = 0, b""
     try:
         with open(tmp, "wb") as f:
@@ -1921,20 +1931,27 @@ def paper_pdf(pid: str, variant: str = "original"):
 _lines_probe_done: set = set()   # 行级补解析每篇每进程只试一次：对不上的篇反复整本重解析纯属浪费
 _lines_probe_lock = threading.Lock()   # 上面这本簿子的锁：端点线程与删篇线程并发翻它
 
-def _probe_lines_once(pid: str) -> bool:
-    """这篇要不要做行级补解析：查与登记同一把锁——两个窗口同时首拉时，两边都"没试过"
-    就会各跑一遍整本 PDF 重解析（重），而簿子的本意是每篇只试一次。"""
-    with _lines_probe_lock:
-        if pid in _lines_probe_done:
+def _claim_once(book: set, lock, key) -> bool:
+    """“只试一次”的簿子：查与登记必须在同一把锁里（两边都读到“没试过”就会各跑一遍）。
+
+    行级补解析与页边补定位两处共用：将来要给簿子加 TTL 或上限，只改这一处。"""
+    with lock:
+        if key in book:
             return False
-        _lines_probe_done.add(pid)
+        book.add(key)
         return True
+
+def _probe_lines_once(pid: str) -> bool:
+    """这篇要不要做行级补解析：两个窗口同时首拉时，本意是每篇只跑一次整本重解析。"""
+    return _claim_once(_lines_probe_done, _lines_probe_lock, pid)
 
 @app.get("/api/papers/{pid}/paragraphs")
 def paragraphs(pid: str):
     _paper_or_404(pid)
     if db.paragraphs_need_lines(pid) and _probe_lines_once(pid):
         p = db.get_paper(pid)
+        if not p:                     # 这两拍之间被别的窗口删了：与"解析中被删"同口径收手
+            return db.get_paragraphs(pid)
         path = _paper_src(pid, p)
         try:
             if os.path.exists(path):
@@ -2185,13 +2202,8 @@ _rect_tried = set()
 _rect_lock = threading.Lock()   # _rect_tried 的锁：GET /marginalia（端点线程）与删篇线程并发翻它
 
 def _rect_mark_tried(nid) -> bool:
-    """这条钉子值不值得试一次补定位：判重与登记同一把锁——并发开两次页边时，
-    两边都读到"没试过"就会各开一遍 PDF 搜同一条（每条只试一次是这里的设计口径）。"""
-    with _rect_lock:
-        if nid in _rect_tried:
-            return False
-        _rect_tried.add(nid)
-        return True
+    """这条钉子值不值得试一次补定位（并发开两次页边时，每条只试一次是这里的设计口径）。"""
+    return _claim_once(_rect_tried, _rect_lock, nid)
 
 _live_jobs = set()
 _live_lock = threading.Lock()   # _live_jobs 的读写锁：析读 worker、OCR 线程与各端点都会翻这本簿子
@@ -2297,9 +2309,7 @@ def _applog(msg: str):
     轮转是"读旧-截短-改写"三步，多线程同时跨过 1MB 线时互相截断会把刚写的一行整段吃掉
     （丢的还常是 token 账）——整段读改写+追加都进同一把锁。"""
     try:
-        d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
-        os.makedirs(d, exist_ok=True)
-        path = os.path.join(d, "app.log")
+        path = appinfo.log_path(create=True)
         with _applog_lock:
             try:
                 if os.path.getsize(path) > 1_000_000:
@@ -2411,15 +2421,12 @@ def _json_of(raw, fallback=_JSON_DEFAULT):
 
     fallback 不传 = 坏值/空值回 {}（"当没缓存"，走重生成）；显式传 None = 回 None
     （页边说"没有 rect 就是 null"这类两态字段）。
+    实现只有一份（db._safe_json）：这里以前各写一遍，坏值兜底的口径一旦分叉，
+    就会出现"某个端点 500、另一个端点安静"的经典不一致。
     """
     if fallback is _JSON_DEFAULT:
         fallback = {}
-    if not raw:
-        return fallback
-    try:
-        return json.loads(raw)
-    except (ValueError, TypeError):
-        return fallback
+    return db._safe_json(raw, fallback)
 
 
 def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
@@ -2431,13 +2438,23 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
     precond(p) 返回非 None 即"前置条件不满足"的空响应（如还没析读的提问建议）。
     """
     p = _paper_needing_paras(pid)
-    if p[field]:
-        cached_json = _json_of(p[field], None)
-        if cached_json is not None:
-            return JSONResponse(cached_json)
-        # 坏缓存当没有，走重生成
-    if cached and cached_value is not None:
-        return cached_value
+
+    def _hit(pp):
+        """缓存命中就回响应、没有回 None：坏缓存一律当没有（走重生成）。
+
+        锁外快返与锁内复查是同一件事，以前各写一份——加一种"坏缓存"口径时
+        只会加到其中一处，于是"等锁的人"和"没等锁的人"拿到两种结果。"""
+        if pp[field]:
+            cached_json = _json_of(pp[field], None)
+            if cached_json is not None:
+                return JSONResponse(cached_json)
+        if cached and cached_value is not None:
+            return cached_value
+        return None
+
+    r = _hit(p)
+    if r is not None:
+        return r
     if precond:                              # 锁外快返：前置不满足就别排在一次真生成后面
         empty = precond(p)
         if empty is not None:
@@ -2446,12 +2463,9 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
         p = db.get_paper(pid)
         if not p:
             _paper_or_404(pid)          # 排队等生成时论文被删：404，别 None 下标炸 500
-        if p[field]:
-            cached_json = _json_of(p[field], None)
-            if cached_json is not None:
-                return JSONResponse(cached_json)
-        if cached and cached_value is not None:
-            return cached_value
+        r = _hit(p)
+        if r is not None:
+            return r
         empty = precond(p) if precond else None
         if empty is not None:
             return empty
@@ -2806,10 +2820,18 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
     排版在 citation.py 里做（模型只负责抄字段）。
     """
     p = _paper_or_404(pid)
-    if p["citation"] and not refresh:
-        meta = _json_of(p["citation"])
-        if meta:
-            return {"meta": meta, "groups": citation.groups(meta)}
+
+    def _cached_hit(pp):
+        """有缓存就排版返回、没有回 None（锁外快返与锁内复查共用一份）。"""
+        if pp["citation"] and not refresh:
+            meta = _json_of(pp["citation"])
+            if meta:              # 坏缓存当没有，走重生成
+                return {"meta": meta, "groups": citation.groups(meta)}
+        return None
+
+    r = _cached_hit(p)
+    if r is not None:
+        return r
     if cached:
         return {"meta": None, "groups": []}
     if _demo_mode():
@@ -2823,10 +2845,9 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         p = db.get_paper(pid)
         if not p:
             _paper_or_404(pid)      # 排队等生成时论文被删：404，别 None 下标炸 500
-        if p["citation"] and not refresh:
-            meta = _json_of(p["citation"])
-            if meta:              # 坏缓存当没有，走重生成（与外层缓存分支同一口径）
-                return {"meta": meta, "groups": citation.groups(meta)}
+        r = _cached_hit(p)
+        if r is not None:
+            return r
         src = pdfparse.citation_source(_paper_src_or_404(pid, p))
         raw = llm.extract_citation(p["title"], src)
         meta = citation.sanity(raw, src, fallback_title=p["title"], fallback_author=p["authors"] or "")
@@ -3060,6 +3081,34 @@ def _wide_flags(rects, colw_of, lm, rm):
         flags.append(f)
     return flags
 
+def _x_overlap_ok(rect, R, gfx: bool, gap: float) -> bool:
+    """候选是否与当前并集在横向上"算同一列"（纯读，不改任何状态）。
+
+    完全落在并集里当然算；否则要求横向重叠达到阈值（图元 15%、文字 25%），
+    或者"图元 + 贴得极近 + 横向盖住并集"（通栏图）。
+    """
+    if rect.x0 >= R.x0 - 2 and rect.x1 <= R.x1 + 2:
+        return True
+    xov = min(R.x1, rect.x1) - max(R.x0, rect.x0)
+    if xov >= (0.15 if gfx else 0.25) * rect.width:
+        return True
+    return bool(gfx and gap <= 8 and rect.x0 <= R.x0 + 4 and rect.x1 >= R.x1 - 4)
+
+def _blocked_by(rect, R, blockers, up: bool) -> bool:
+    """候选与并集之间是否隔着正文块/别的题注（隔着就到此为止，别越过去吸）。
+
+    只认"横向有实质重叠（>30% 宽）且正好落在这一侧"的遮挡物；纯读，不改状态。
+    """
+    for b in blockers:
+        if min(R.x1, b.x1) - max(R.x0, b.x0) <= 0.3 * b.width:
+            continue
+        if up:
+            if b.y1 <= R.y0 + 1 and b.y0 >= rect.y1 - 1:
+                return True
+        elif b.y0 >= R.y1 - 1 and b.y1 <= rect.y0 + 1:
+            return True
+    return False
+
 def _band_fill(up, cap_rect, cands, blockers, y_clip):
     """从题注往一个方向吸收紧邻的图元。cands: [(rect, 是图元, 是宽文字行)]；
     blockers: 正文块/别的题注（撞上就当没看见，整个填充到此为止）。
@@ -3089,25 +3138,9 @@ def _band_fill(up, cap_rect, cands, blockers, y_clip):
                 lim = min(lim, FIG_RULE_TXT_GAP)
             if gap > lim:
                 continue
-            inside = rect.x0 >= R.x0 - 2 and rect.x1 <= R.x1 + 2
-            if not inside:
-                xov = min(R.x1, rect.x1) - max(R.x0, rect.x0)
-                if xov < (0.15 if gfx else 0.25) * rect.width:
-                    spans = (gfx and gap <= 8 and rect.x0 <= R.x0 + 4
-                             and rect.x1 >= R.x1 - 4)
-                    if not spans:
-                        continue
-            blocked = False
-            for b in blockers:
-                if min(R.x1, b.x1) - max(R.x0, b.x0) <= 0.3 * b.width:
-                    continue
-                if up:
-                    blocked = b.y1 <= R.y0 + 1 and b.y0 >= rect.y1 - 1
-                else:
-                    blocked = b.y0 >= R.y1 - 1 and b.y1 <= rect.y0 + 1
-                if blocked:
-                    break
-            if blocked:
+            if not _x_overlap_ok(rect, R, gfx, gap):
+                continue
+            if _blocked_by(rect, R, blockers, up):
                 continue
             best, best_gap = ci, gap
         if best is None:
@@ -4002,10 +4035,11 @@ def _claim_existing_translation(pid: str) -> dict:
     状态打成 done，返回成品 dict；没有返回空。两次 stat + 尾部读，够便宜。
     成品名两代并存：可读名 `<显示名>（译文|双语）.pdf` 与老名 mono/dual.pdf 都认。"""
     base = _display_name(db.get_paper(pid) or {})
+    mono_n, dual_n = _variant_names(base)
     got = translate_full.adopt_existing(
         paper_dir(pid),
-        mono=[f"{base}（译文）.pdf"] if base else [],
-        dual=[f"{base}（双语）.pdf"] if base else [])
+        mono=[mono_n] if mono_n else [],
+        dual=[dual_n] if dual_n else [])
     if got:
         db.update_paper(pid, dual_path=got.get("dual") or "", mono_path=got.get("mono") or "",
                         translate_status="done", translate_error="")
@@ -4070,23 +4104,31 @@ def translate_full_start(pid: str, force: bool = False):
         # 学科库在最该生效的地方失效。词表是手工策展的，并集不会爆炸，封顶只是护栏
         gseen = set()
         glossary_rows = []
-        for r in db.glossary_list(pid):
-            en = (r.get("term_en") or "").strip()
-            if en and en.lower() not in gseen:
+
+        def add_terms(rows, cap=None):
+            """把一份词表并进来：按 term_en 去重、空项跳过、cap 只对后面的学科库生效。
+
+            本篇词表与学科库是同一段逻辑的两遍（本篇优先、学科库补缺），封顶 200
+            是护栏；各写一遍的话，封顶数或字段名改一处就会让学科库在最贵的那条链上失效。"""
+            for r in rows:
+                en = (r.get("term_en") or "").strip()
+                if not en or en.lower() in gseen:
+                    continue
+                if cap is not None and len(glossary_rows) >= cap:
+                    return
                 gseen.add(en.lower())
                 glossary_rows.append({"term_en": en, "term_zh": (r.get("term_zh") or "").strip()})
-        for g in db.glossary_global_list():
-            en = (g.get("term_en") or "").strip()
-            if en and en.lower() not in gseen and len(glossary_rows) < 200:
-                gseen.add(en.lower())
-                glossary_rows.append({"term_en": en, "term_zh": (g.get("term_zh") or "").strip()})
+
+        add_terms(db.glossary_list(pid))
+        add_terms(db.glossary_global_list(), 200)
         nb = _display_name(db.get_paper(pid) or {}) or "paper"
+        mono_n, dual_n = _variant_names(nb)
         translate_full.start(pid, src, paper_dir(pid), used,
                              cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                              note=note, engine=engine,
                              flavor=_translate_flavor(used, cfg),
                              glossary_rows=glossary_rows, fresh=force,
-                             mono_name=f"{nb}（译文）.pdf", dual_name=f"{nb}（双语）.pdf")
+                             mono_name=mono_n, dual_name=dual_n)
         db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 
@@ -4237,6 +4279,7 @@ def _citedby_scan(p: dict) -> list:
         return []                      # 标题太短匹配必炸误报；什么钥匙都没有就别扫
     tlow = title.lower()
     tnorm = llm.norm_text(title)
+    tnorm_cmp = tnorm if len(tnorm) >= 8 else ""      # 判据里反复用，别在循环里重算
     # SQL LIKE 先把候选缩到命中标题片段/DOI 的那几篇（几百篇的库不再全表拉进 Python）；
     # 精筛（大小写、归一化折叠）仍在 Python 侧做。片段取标题前 24 字——跨行连字符
     # 断在这段里的极少数会漏，属于已知召回边界（见 docstring）。
@@ -4260,7 +4303,7 @@ def _citedby_scan(p: dict) -> list:
         at = -1
         if tlow and tlow in text.lower():
             at = text.lower().find(tlow)
-        elif tnorm and len(tnorm) >= 8 and tnorm in llm.norm_text(text):
+        elif tnorm_cmp and tnorm_cmp in llm.norm_text(text):
             at = -2                    # 归一化才对得上（跨行连字符/连字）：句子提不出来，用段落摘录
         elif doi and doi.lower() in text.lower():
             at = text.lower().find(doi.lower())
@@ -4269,16 +4312,24 @@ def _citedby_scan(p: dict) -> list:
         quote = _sentence_around(text, at) if at >= 0 else " ".join(text.split())[:200]
         by_paper.setdefault(r["paper_id"], []).append(
             {"para": r["idx"], "page": r["page"], "quote": quote})
+    # 引用者的元信息一次 IN 查（原来是逐篇 get_paper：引用者一多就是 N+1）。
+    # 查不到的（两拍之间被删）跳过——与原 get_paper 回 None 时的行为一致
+    wanted = [cid for cid in by_paper if cid not in twins]
+    meta = {}
+    if wanted:
+        marks = ",".join("?" * len(wanted))
+        meta = {r["id"]: r for r in db.q(
+            f"SELECT id, title, filename, authors, year FROM papers WHERE id IN ({marks})", tuple(wanted))}
     out = []
     for citing_id, hits in by_paper.items():
         if citing_id in twins:
             continue
-        o = db.get_paper(citing_id)
+        o = meta.get(citing_id)
         if not o:
             continue
         out.append({"citing": {"id": citing_id,
-                               "title": o.get("title") or o.get("filename") or "",
-                               "authors": o.get("authors") or "", "year": o.get("year") or ""},
+                               "title": o["title"] or o["filename"] or "",
+                               "authors": o["authors"] or "", "year": o["year"] or ""},
                     "hits": hits[:3]})
     out.sort(key=lambda x: (x["citing"]["title"] or "").lower())
     return out

@@ -41,9 +41,7 @@ def _setup_paths():
 
 def _log_path() -> str:
     import appinfo
-    d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, "app.log")
+    return appinfo.log_path(create=True)
 
 def _log(msg: str):
     line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
@@ -233,14 +231,19 @@ def _running_instance():
     try:
         with open(_instance_file(), encoding="utf-8") as f:
             info = json.load(f)
-    except (OSError, ValueError):
+        # 坏形态一律当"没有实例"：非 dict（[]/"x"/null）、pid/port 不是数字——
+        # 它们在 json.load 之外，原来会抛 AttributeError/ValueError 直接崩在启动路径上
+        # （--window-only 那条连崩溃钩子都没装，表现就是"双击没反应"）
+        if not isinstance(info, dict):
+            return None
+        pid = int(info.get("pid") or 0)
+        port = int(info.get("port") or 0)
+    except (OSError, ValueError, TypeError):
         return None
-    pid = int(info.get("pid") or 0)
     if pid <= 0 or pid == os.getpid():
         return None
     if not _alive(pid):
         return None
-    port = int(info.get("port") or 0) or None
     if not port:
         return None
     return port, str(info.get("version") or "")

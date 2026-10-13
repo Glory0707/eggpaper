@@ -179,10 +179,10 @@ export async function refreshCollections() {
    而 store.openPaper 是手写清场的——漏一个字段就漏一个洞。 */
 /* 按篇状态的两个空壳：初始值、换篇、出错三条路都要摆出同形的骨架。手写字面量
    迟早漏字段（漏了 evidence_qs 就是模板里一个 undefined 的小坑）。 */
-export function emptyAnalysis(extra = {}) {
+function emptyAnalysis(extra = {}) {
   return { status: 'none', claims: [], annotations: {}, evidence_qs: {}, error: '', ...extra }
 }
-export function emptyMarginalia() { return { notes: [] } }
+function emptyMarginalia() { return { notes: [] } }
 
 /* 当前活动篇在 papers 里的那条记录（顶栏标题、译文/双语按钮的可用性都看它）。 */
 export const currentPaper = computed(() => store.papers.find(p => p.id === store.currentId) || null)
@@ -340,7 +340,7 @@ export async function refreshAnalysis() {
   })
 }
 
-export async function refreshMarginalia() {
+async function refreshMarginalia() {
   await fetchPaperData(api.marginalia, m => {
     Object.assign(store.marginalia, { notes: m.notes || [], pid: store.currentId })
   })

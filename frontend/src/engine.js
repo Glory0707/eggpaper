@@ -8,8 +8,19 @@
  * （App 的等待卡用它自动续发全文翻译，设置页用它把状态行刷成「可用」）。
  */
 import { reactive } from 'vue'
+
 import { api } from './api'
 import { lsSet } from './ls'
+
+/* 引擎"正在装"的三个中间态：装的过程中别让用户重复点安装/升级。
+   写在一处的理由与下面的 engSnapshot 相同——三处各写一遍，加一个状态就会漏。 */
+export const ENG_BUSY_STATES = ['downloading', 'unpacking', 'warming']
+export const engBusy = state => ENG_BUSY_STATES.includes(state)
+
+/* 引擎探测结果的规范化快照：这份形状必须"处处一致"（设置页的引擎行、等待卡、
+   engState 缓存都读它），而它被写了三遍——加一个字段就会漏掉其中一处 */
+export const engSnapshot = r => ({ ok: r.ok, path: r.path, why: r.why, version: r.version || '',
+                                   upgrade: !!r.upgrade, pinned: r.pinned || '' })
 
 export const engInst = reactive({
   on: false,          // 等待卡要不要显示（error 时也显示，给重试/关闭）
@@ -44,8 +55,7 @@ async function poll() {
     engInst.hidden = false
     try {   // 刷一遍引擎缓存（lsGet/lsSet 的 engState，带 eggpaper: 前缀——裸 localStorage 写的键读取方永远看不见）
       const e = await api.pdf2zhEngine(s.path || '')
-      lsSet('engState', { ok: e.ok, path: e.path, why: e.why, version: e.version || '',
-                          upgrade: !!e.upgrade, pinned: e.pinned || '' })
+      lsSet('engState', engSnapshot(e))
     } catch { /* 探测失败不打扰安装成功的消息 */ }
     doneHooks.forEach(fn => { try { fn() } catch { /* 钩子自己的事 */ } })
   } else if (s.state === 'error') {

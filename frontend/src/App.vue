@@ -13,7 +13,7 @@ import CiteCard from './components/CiteCard.vue'
 import UpdateCard from './components/UpdateCard.vue'
 import { dlg, dlgCancel, choiceBox } from './dialog'
 import { engInst, watchEngine, hideEngineCard, closeEngineCard, cancelEngineInstall,
-         startEngineInstall, onEngineReady, fmtMB } from './engine'
+         startEngineInstall, onEngineReady, fmtMB, engBusy } from './engine'
 import EggMark from './components/EggMark.vue'
 import { festivalSkin } from './festival'
 import { t, isEn, setLang } from './i18n'
@@ -258,8 +258,7 @@ function spinStyle(p) {
 /* 干活与庆祝：全文翻译跑着、或析读在通读时，蛋轻轻晃着埋头干（eggBusy；深夜它睡了，睡觉优先）——
    你在等析读，它也在一起读。这一篇译完跳两下（cheerEgg，pollTranslate 的完成拍调用）——
    全文翻完比析读完更有分量，跳两下；析读完成仍是滚一圈。轮询只看当前论文，人不在场就不庆祝。 */
-const eggBusy = computed(() =>
-  (tranSt.value === 'running' || ['running', 'queued'].includes(store.analysis.status)) && !sleepEgg.value)
+const eggBusy = computed(() => (tranSt.value === 'running' || anaBusy.value) && !sleepEgg.value)
 const eggCheer = ref(false)
 function cheerEgg() {
   if (sleepEgg.value) return          // 深夜它睡着干的活，不吵醒它庆祝
@@ -613,10 +612,10 @@ async function doTranslateFull() {
   /* 乐观态先亮：POST 里可能有一次最坏 2.5 秒的服务预检，按钮要在这之前就
    * 翻成「翻译中」——用户以为没点上再点第二下的双发，比预检本身更贵 */
   tranOptimistic.value = pid
-  tranProg.value = { done: 0, total: 0, svc: '', started: Date.now() / 1000 | 0, cur: [] }
+  tranProg.value = { ...emptyTranProg(), started: Date.now() / 1000 | 0 }
   try {
     const r = await api.translateFull(pid, again)
-    tranProg.value = { done: 0, total: 0, svc: r.service || '', started: Date.now() / 1000 | 0, cur: [] }
+    tranProg.value = { ...emptyTranProg(), svc: r.service || '', started: Date.now() / 1000 | 0 }
     await refreshPapers()
     if (tranStopPending) {       // 开跑前用户就按了停止：现在任务登记上了，把停停实
       tranStopPending = false    // （不能再走 stopTranslate——tranStarting 还没清，会无限记账）
@@ -628,7 +627,7 @@ async function doTranslateFull() {
     // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
     const st = await api.pdf2zhInstallStatus().catch(() => null)
-    if (st && ['downloading', 'unpacking', 'warming'].includes(st.state)) {
+    if (st && engBusy(st.state)) {
       engResumeId = pid
       watchEngine()
     } else {
@@ -658,14 +657,17 @@ async function pollTranslate() {
   const pid = store.currentId
   const j = await api.translateStatus(pid)
   if (store.currentId !== pid) return      // 等待期间换了篇：旧篇的进度别写进新篇
-  if (j.pages && j.pages[1]) tranProg.value = { done: j.pages[0], total: j.pages[1], svc: j.service || '', cur: j.current || [], started: j.started || 0 }
+  if (j.pages && j.pages[1]) {
+    tranProg.value = { ...emptyTranProg(), done: j.pages[0], total: j.pages[1],
+                       svc: j.service || '', cur: j.current || [], started: j.started || 0 }
+  }
   if (j.status === 'done') {
-    tranProg.value = { done: 0, total: 0, svc: '' }
+    tranProg.value = emptyTranProg()
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
     cheerEgg()                            // 全文翻完了：跳两下（析读完成才是滚一圈）
     toast(t('全文翻译完成'))   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
   } else if (j.status === 'error') {
-    tranProg.value = { done: 0, total: 0, svc: '' }
+    tranProg.value = emptyTranProg()
     await refreshPapers()
     toast(t('全文翻译失败：{m}', { m: (j.error || '').slice(0, 100) }), 6000)
   }
@@ -827,12 +829,15 @@ async function onSplitMany(ids) {
 const tranSt = computed(() => (tranOptimistic.value === store.currentId
     || currentPaper.value?.translate_status === 'running')
   ? 'running' : (currentPaper.value?.translate_status || 'none'))
-const tranProg = ref({ done: 0, total: 0, svc: '', started: 0, cur: [] })
+/* 翻译进度的形状只此一份：以前 6 处各写一遍字面量（有两处还漏了 started/cur，
+   读侧全靠 falsy 兜住）——加一个字段就会漏掉其中几处 */
+const emptyTranProg = () => ({ done: 0, total: 0, svc: '', started: 0, cur: [] })
+const tranProg = ref(emptyTranProg())
 /* 换篇把进度整组清掉：started 是"这一篇的任务什么时候开的"，跨篇复用会拿
    上一轮的锚给新篇当秒表（刚开跑就显示"已用 40 分"）；新篇的值下一次轮询
    就由服务端的 j.started 填回来 */
 watch(() => store.currentId, () => {
-  tranProg.value = { done: 0, total: 0, svc: '', started: 0, cur: [] }
+  tranProg.value = emptyTranProg()
 })
 const tranTick = ref(0)
 let tranTimer = null
@@ -841,18 +846,22 @@ watch(tranSt, s => {
   if (s === 'running') tranTimer = setInterval(() => { tranTick.value++ }, 1000)
 }, { immediate: true })
 onUnmounted(() => clearInterval(tranTimer))
-const tranElapsed = computed(() => {
+/* 已用秒数：两个时钟（悬浮提示的人话、按钮上的 m:ss）共用一份算式 */
+const tranSec = computed(() => {
   tranTick.value
+  const started = tranProg.value.started
+  return started ? Math.max(0, Math.round(Date.now() / 1000 - started)) : 0
+})
+const tranElapsed = computed(() => {
   if (!tranProg.value.started) return ''
-  const sec = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
+  const sec = tranSec.value
   return sec >= 90 ? t('{m} 分 {s} 秒', { m: Math.floor(sec / 60), s: sec % 60 }) : t('{s} 秒', { s: sec })
 })
 /* 按钮上的紧凑时钟（m:ss）：整个批次期间页数一动不动（pdf2zh 到批结束才落产物），
  * 秒针就是唯一的"活着"信号——只放悬浮提示里用户根本不看（实测盯着 0/4 三分半就按了停止） */
 const tranClock = computed(() => {
-  tranTick.value
   if (!tranProg.value.started || tranSt.value !== 'running') return ''
-  const sec = Math.max(0, Math.round(Date.now() / 1000 - tranProg.value.started))
+  const sec = tranSec.value
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
 })
 const tranLabel = computed(() => {

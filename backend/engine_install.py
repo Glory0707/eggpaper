@@ -149,10 +149,7 @@ def settle_assets() -> int:
                          recursive=True)
         if not zips:
             return 0
-        cache = os.path.join(appinfo.data_dir(), "home", ".cache", "babeldoc")
-        if not os.path.isfile(os.path.join(cache, "cache.v1.db")):
-            return 0
-        if not all(os.path.isdir(os.path.join(cache, d)) for d in ("models", "fonts", "cmap")):
+        if not _assets_cached():
             return 0
         n = 0
         for zp in zips:
@@ -165,6 +162,15 @@ def settle_assets() -> int:
     except Exception as e:
         applog(f"[eggpaper] 资产包归档（settle_assets）没做成，跳过：{type(e).__name__}: {str(e)[:160]}")
         return 0
+
+def _assets_cached() -> bool:
+    """引擎的资产缓存齐不齐：home/.cache/babeldoc 下的 cache.v1.db + 三件套目录。
+
+    这一个判据被两处**互为取反**地用着（settle_assets 齐了就收起 zip；restore_assets_zip
+    不齐就放回 zip）——各写一份的话，将来加一个资产目录只改一处，收起/放回就会来回打摆。"""
+    cache = os.path.join(appinfo.data_dir(), "home", ".cache", "babeldoc")
+    return (os.path.isfile(os.path.join(cache, "cache.v1.db"))
+            and all(os.path.isdir(os.path.join(cache, d)) for d in ("models", "fonts", "cmap")))
 
 def restore_assets_zip() -> int:
     """缓存不全时把收起的资产包放回 zip 名，让引擎自己离线恢复（返回放回个数）。
@@ -179,9 +185,7 @@ def restore_assets_zip() -> int:
     缓存齐全时不动（放回反而让每批多付重哈希的税）；恢复跑过一轮后，下一次翻译开头的
     settle_assets 见缓存齐全会再把它收起，自愈闭环。"""
     try:
-        cache = os.path.join(appinfo.data_dir(), "home", ".cache", "babeldoc")
-        if os.path.isfile(os.path.join(cache, "cache.v1.db")) and \
-                all(os.path.isdir(os.path.join(cache, d)) for d in ("models", "fonts", "cmap")):
+        if _assets_cached():
             return 0
         n = 0
         for zp in glob.glob(os.path.join(install_dir(), "**", "offline_assets_*.zip.installed"),
@@ -534,9 +538,9 @@ def _download_single(url: str, part: str, done: str) -> str:
                     _set(got=got, total=total, pct=round(got * 100 / total) if total else 0)
                     now = time.time()
                     if now - t0 >= _SPEED_WINDOW:
-                        speed = (got - base) / (now - t0)
-                        if speed < _MIN_SPEED:
-                            return f"太慢（{int(speed / 1024)}KB/s），换源"
+                        why = _stall_reason(got, base, t0, now)
+                        if why:
+                            return why
                         t0, base = now, got
         if got < total:
             return f"连接中断（{got * 100 // total if total else 0}%）"
@@ -544,6 +548,17 @@ def _download_single(url: str, part: str, done: str) -> str:
         return ""
     except Exception as e:
         return f"{type(e).__name__}: {str(e)[:120]}"
+
+def _stall_reason(got: int, base: int, t0: float, now: float) -> str:
+    """停滞判据：窗口内平均速度低于 _MIN_SPEED 就给一句人话（否则回 ""）。
+
+    单流下载与并行分段两条路共用这一份——各写一遍的话，改阈值/文案只改一处，
+    另一条路的表现是"某个源卡死却不换源"。调用方各自维护 t0/base 的重置时机：
+    两边都是"不慢才重置窗口"（慢的那次立刻返回，不再等下一窗口）。"""
+    speed = (got - base) / (now - t0)
+    if speed < _MIN_SPEED:
+        return f"太慢（{int(speed / 1024)}KB/s），换源"
+    return ""
 
 class _Pace:
     """并行分段的聚合进度与停滞判据：所有线程共写，进度取总和，速度看全窗口。"""
@@ -564,10 +579,10 @@ class _Pace:
             now = time.time()
             span = now - self.t0
             if span >= _SPEED_WINDOW:
-                speed = (self.got - self.base) / span
+                why = _stall_reason(self.got, self.base, self.t0, now)
                 self.t0, self.base = now, self.got
-                if speed < _MIN_SPEED:
-                    return f"太慢（{int(speed / 1024)}KB/s），换源"
+                if why:
+                    return why
         return ""
 
 def _download_parallel(url: str, zpath: str, total: int) -> str:

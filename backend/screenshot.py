@@ -53,7 +53,7 @@ def capture_window() -> bytes:
         b = ctypes.create_unicode_buffer(n + 1)
         u.GetWindowTextW(hwnd, b, n + 1)
         t = b.value.strip()
-        if t and len(visible) < 14:
+        if t:
             visible.append(t)
         if "eggpaper" in t.lower() and len(hits) < 3:
             hits.append((hwnd, bool(u.IsIconic(hwnd))))

@@ -18,7 +18,13 @@ function stopPoll() {
 }
 onUnmounted(stopPoll)
 
+/* 入口守卫：按钮可用性看的是 state，而那要等一次往返才翻——双击会发两条下载/安装。
+   用非响应式布尔占位（与 App 的 importing、右栏的 mcBusy 同款），不加 :disabled
+   ——那会改按钮样式。 */
+let starting = false
 async function startDownload() {
+  if (starting) return
+  starting = true
   try {
     await api.updateDownload({ url: d.value.url, sha256: d.value.sha256, size: d.value.size })
     stopPoll()
@@ -33,13 +39,17 @@ async function startDownload() {
       }
     }, 500)
   } catch (e) { toast(e.message) }
+  finally { starting = false }
 }
 
 async function install() {
+  if (starting) return
+  starting = true
   try {
     await api.updateInstall(d.value.prog.path)
     store.update = { ...store.update, installing: true }
   } catch (e) { toast(e.message) }
+  finally { starting = false }
 }
 async function openFolder() {
   try { await api.revealUpdate(d.value.prog.path) } catch { toast(d.value.prog.path || '') }

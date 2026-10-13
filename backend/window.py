@@ -130,8 +130,7 @@ def _give_window_icon(pid: int):
                            ctypes.c_int, ctypes.c_int, wintypes.UINT]
 
             ico = icon_path()
-            WM_SETICON, IMAGE_ICON, LR_LOADFROMFILE = 0x0080, 1, 0x10
-            SM_CXICON, SM_CXSMICON = 11, 49
+            IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
             CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
             def find_hwnds(timeout=20):
@@ -195,11 +194,11 @@ def _give_window_icon(pid: int):
             def apply():
                 for h in hwnds:
                     if hbig:
-                        u.SendMessageW(h, WM_SETICON, 1, hbig)
+                        u.SendMessageW(h, WM_SETICON, ICON_BIG, hbig)
                     if hsmall:
-                        u.SendMessageW(h, WM_SETICON, 0, hsmall)
+                        u.SendMessageW(h, WM_SETICON, ICON_SMALL, hsmall)
                     if hbig:
-                        u.SendMessageW(h, WM_SETICON, 2, hbig)
+                        u.SendMessageW(h, WM_SETICON, ICON_BIG2, hbig)
 
             for _ in range(27):
                 apply()
@@ -223,6 +222,11 @@ _last_proc = None
 
 _icon_cache = {}          # dpi -> (hbig, hsmall)
 _guard_started = False
+
+# ---- Windows 消息/度量常量：_pin_all 与 _make_icon_pair 共用同一份 ----
+WM_SETICON = 0x0080          # 设置窗口图标
+ICON_BIG, ICON_SMALL, ICON_BIG2 = 1, 0, 2
+SM_CXICON, SM_CXSMICON = 11, 49
 
 def _pin_all():
     """枚举标题恰好是 "eggpaper" 的可见顶层窗口，逐一重钉图标。"""
@@ -261,11 +265,11 @@ def _pin_all():
             _icon_cache[dpi] = _make_icon_pair(dpi, h)
         hbig, hsmall = _icon_cache[dpi]
         if hbig:
-            u.SendMessageW(h, 0x0080, 1, hbig)     # WM_SETICON ICON_BIG
+            u.SendMessageW(h, WM_SETICON, ICON_BIG, hbig)
         if hsmall:
-            u.SendMessageW(h, 0x0080, 0, hsmall)   # WM_SETICON ICON_SMALL
+            u.SendMessageW(h, WM_SETICON, ICON_SMALL, hsmall)
         if hbig:
-            u.SendMessageW(h, 0x0080, 2, hbig)     # ICON_BIG2：任务栏读的是这一档
+            u.SendMessageW(h, WM_SETICON, ICON_BIG2, hbig)   # 任务栏读的是这一档
 
 def _make_icon_pair(dpi: int, hwnd: int):
     """按窗口 DPI 现画大小两枚 HICON（白底圆角卡片 + 三杠蛋，mark.draw 同一份几何）。"""
@@ -273,10 +277,10 @@ def _make_icon_pair(dpi: int, hwnd: int):
         import ctypes
         u = ctypes.windll.user32
         try:
-            bx = u.GetSystemMetricsForDpi(11, dpi, hwnd)    # SM_CXICON
-            sx = u.GetSystemMetricsForDpi(49, dpi, hwnd)    # SM_CXSMICON
+            bx = u.GetSystemMetricsForDpi(SM_CXICON, dpi, hwnd)
+            sx = u.GetSystemMetricsForDpi(SM_CXSMICON, dpi, hwnd)
         except Exception:
-            bx, sx = u.GetSystemMetrics(11), u.GetSystemMetrics(49)
+            bx, sx = u.GetSystemMetrics(SM_CXICON), u.GetSystemMetrics(SM_CXSMICON)
         bx, sx = max(16, bx or 32), max(16, sx or 16)
         import mark
         hbig = _hicon_from_pil(mark.draw(bx, tile=True))
@@ -325,9 +329,7 @@ def _window_log(msg: str):
     try:
         import time
         import appinfo
-        d = os.path.join(os.path.dirname(appinfo.data_dir()), "logs")
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "app.log"), "a", encoding="utf-8") as f:
+        with open(appinfo.log_path(create=True), "a", encoding="utf-8") as f:
             f.write("[%s] [window] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
     except OSError:
         pass

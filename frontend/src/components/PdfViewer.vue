@@ -315,12 +315,21 @@ function origPageOf(it) {
   if (it.doc === 'dual') return Math.floor(it.page / 2)
   return it.page
 }
-function pageItem(pno) {
+/* "原文页码 → 项"的索引：三趟优先级与原来的三连 find 逐字同构（第一趟认 origPage、
+   第二趟退到 mono、第三趟对开奇数页；每趟 first-wins，先命中的不被后面覆盖）。
+   pageItem 会被引文落位、批注锚点、段落跳转按条调用，每条最多三趟全量 find。 */
+const pageItemIndex = computed(() => {
+  const m = new Map()
   const items = flatItems.value
-  return items.find(x => x.origPage === pno)
-      || items.find(x => x.doc === 'mono' && x.page === pno)
-      || items.find(x => x.doc === 'dual' && x.page === 2 * pno + 1)
-      || null
+  for (const it of items) if (it.origPage >= 0 && !m.has(it.origPage)) m.set(it.origPage, it)
+  for (const it of items) if (it.doc === 'mono' && !m.has(it.page)) m.set(it.page, it)
+  for (const it of items) {
+    if (it.doc === 'dual' && it.page % 2 === 1 && !m.has((it.page - 1) / 2)) m.set((it.page - 1) / 2, it)
+  }
+  return m
+})
+function pageItem(pno) {
+  return pageItemIndex.value.get(pno) || null
 }
 
 /* 当前读到哪：原文页码 + 页内高度比例（比例让不同缩放/排布之间也能对上） */
@@ -636,7 +645,7 @@ async function fillTextLayers() {
 
 function fillTextLayersIdle() {
   const my = ++fillGen
-  const idle = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 8 }), 120))
+  const idle = IDLE
   const step = async () => {
     if (my !== fillGen) return
     const it = _nextMissingText()
@@ -690,8 +699,8 @@ function canvasPlan() {
   const dpr = dprFor(w, h)
   const per = Math.max(1, Math.floor(w * dpr) * Math.floor(h * dpr) * 4)
   const pages = Math.max(1, Math.floor(PIX_BUDGET / per))
-  return { dpr,
-           band: Math.max(3, Math.min(KEEP_NEAR + 2, Math.floor(pages / 2))),
+  // dpr 只在这里参与算字节预算：外面要的是 band/keep（画布自己按 dprFor 再算一遍）
+  return { band: Math.max(3, Math.min(KEEP_NEAR + 2, Math.floor(pages / 2))),
            keep: Math.max(5, Math.min(KEEP_CANVASES, pages)) }
 }
 
@@ -722,13 +731,7 @@ function evictFar(skipKeys = null) {
     const k = doneKeyOf(it)
     if (skipKeys && skipKeys.has(k)) continue     // 这一轮还没画到它：收了它马上又会重画
     if (Math.abs(it.gi - c) <= band) continue     // 带内是滚动跟手要用的：不动它
-    const canvas = canvases.value[it.gi]
-    if (canvas && canvas.width > 1) {
-      canvas.width = 1; canvas.height = 1
-      // 内联尺寸也要撤：只缩 backing store 的话，1×1 位图会被 CSS 尺寸拉满整页——
-      // alpha:false 的画布缩完是**不透明黑**，远页看着就是一整页黑纸（用户快速滚动时才现形）
-      canvas.style.width = ''; canvas.style.height = ''
-    }
+    releaseCanvas(canvases.value[it.gi])   // 见 releaseCanvas 的注释：内联尺寸必须一起撤
     doneKeys.delete(k)
   }
 }
@@ -748,6 +751,16 @@ function stretchCanvases() {
 
 /* 缩放/换排版后，带外的位图还停在旧比例上：尺寸换来换去反正都要重画，
    先撤掉——留着的是错位的图（放大后只占左上角、缩小后溢出纸面）。 */
+/* 撤掉一张画布的位图：位图尺寸置 1 是"释放这几 MB"，内联尺寸必须同时清掉——
+   留着 1×1 的内联尺寸会被 CSS 拉满整页，就是一张不透明的黑纸（实测踩过）。 */
+function releaseCanvas(canvas) {
+  if (!canvas || canvas.width <= 1) return
+  canvas.width = 1
+  canvas.height = 1
+  canvas.style.width = ''
+  canvas.style.height = ''
+}
+
 function dropFarCanvases() {
   const items = flatItems.value
   const { band } = canvasPlan()
@@ -755,11 +768,7 @@ function dropFarCanvases() {
   const c = _centerGi()
   for (const it of items) {
     if (Math.abs(it.gi - c) <= band) continue
-    const canvas = canvases.value[it.gi]
-    if (canvas && canvas.width > 1) {
-      canvas.width = 1; canvas.height = 1
-      canvas.style.width = ''; canvas.style.height = ''
-    }
+    releaseCanvas(canvases.value[it.gi])
   }
 }
 
@@ -1634,7 +1643,7 @@ onBeforeUnmount(() => {
   selStream?.abort()
   clearTimeout(spyT); clearTimeout(saveT); clearTimeout(scheduleRender._t)
   clearTimeout(focusNote._t); clearTimeout(applyJump._t); clearTimeout(retryJump._t)
-  clearTimeout(reflowT)
+  clearTimeout(reflowT); clearTimeout(searchT)
   ro?.disconnect()
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('mousedown', onDocDown)

@@ -222,6 +222,26 @@ def text_lines(page: pymupdf.Page, clean: bool = True, blocks: list = None):
             lines.append({"text": text, "bbox": line["bbox"], "size": main_size})
     return lines
 
+def _split_columns(raw: list, pw: float) -> list:
+    """一页的干净行 → 阅读顺序的"列"数组（双栏期刊是左栏在前、右栏在后）。
+
+    判定：横跨两栏的行算"通栏块"（wide），其余按中线分左右；右侧不足 4 行就当单栏
+    （单栏论文里偶尔的居中公式不该把正文劈成两半）。通栏块按它与正文的中位高度比较，
+    决定它排在最前还是最后——这决定的是**阅读顺序**，写错会让 j/k 步进忽上忽下。
+    """
+    wide = [l for l in raw if l["bbox"][0] < pw * 0.42 and l["bbox"][2] > pw * 0.58]
+    rest = [l for l in raw if l not in wide]
+    left = [l for l in rest if l["bbox"][0] < pw * 0.5 - 20]
+    right = [l for l in rest if l["bbox"][0] >= pw * 0.5 - 20]
+    if not (left and right and len(right) >= 4):
+        return [raw]
+    columns = [left, right]
+    if wide:
+        col_median_y = statistics.median(l["bbox"][1] for l in left + right)
+        wide_max_y = max(l["bbox"][3] for l in wide)
+        columns = ([wide] + columns) if wide_max_y < col_median_y else (columns + [wide])
+    return columns
+
 def extract_paragraphs(path: str) -> list:
     """返回 [{idx, page, bbox, text, in_refs, caption}]，idx 从 1 开始。"""
     doc = pymupdf.open(path)
@@ -245,18 +265,7 @@ def extract_paragraphs(path: str) -> list:
                 continue
 
             body_size = statistics.median(l["size"] for l in raw)
-            wide = [l for l in raw if l["bbox"][0] < pw * 0.42 and l["bbox"][2] > pw * 0.58]
-            rest = [l for l in raw if l not in wide]
-            left = [l for l in rest if l["bbox"][0] < pw * 0.5 - 20]
-            right = [l for l in rest if l["bbox"][0] >= pw * 0.5 - 20]
-            if left and right and len(right) >= 4:
-                columns = [left, right]
-                if wide:
-                    col_median_y = statistics.median(l["bbox"][1] for l in left + right)
-                    wide_max_y = max(l["bbox"][3] for l in wide)
-                    columns = ([wide] + columns) if wide_max_y < col_median_y else (columns + [wide])
-            else:
-                columns = [raw]
+            columns = _split_columns(raw, pw)
 
             for col in columns:
                 col.sort(key=lambda l: (l["bbox"][1], l["bbox"][0]))
