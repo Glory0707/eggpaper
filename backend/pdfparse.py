@@ -215,6 +215,74 @@ def citation_source(path: str) -> str:
     finally:
         doc.close()
 
+# ---------------- 扫描件判定 ----------------
+# "这一页可见的字，是文字对象画的吗"：把文字摘掉再渲染一遍，只看**文字框内**的像素。
+# 数字版：摘掉文字 = 字从画面上消失（框内像素大变）；扫描件：可见的字在位图里，
+# 被摘掉的是一层看不见的 OCR 文字，画面纹丝不动。
+# 为什么要自己判：引擎也有同款检测（DetectScannedFile），但它只在**多页批次**里真跑——
+# 页级流水线的单页批次（2 页批失败后的拆单页）会让它的阈值判据恒假，检测整个空转，
+# 于是译文直接叠在扫描件原文的像素上（2026-10-14 用户实测：整页重影）。
+_SCAN_MAD = 12          # 单像素灰度差超过它才算"这个像素变了"
+_SCAN_CHANGED = 0.02    # 文字框内"变了"的像素占比低于它 → 可见的字不在文字对象里
+_SCAN_MASK_MIN = 0.001  # 文字框占到页面积这个比例以下就不判了（信号太小，宁可不加白底）
+
+def _scan_page(doc: pymupdf.Document, i: int, dpi: int = 72) -> bool:
+    """单页判定，口径见上。判不了（渲染/去字失败）按"不是扫描件"——与旧行为一致。"""
+    import numpy as np
+    page = doc[i]
+    blocks = [b for b in page.get_text("blocks") if (b[4] or "").strip()]
+    if not blocks:
+        return False                    # 没文字可译，盖不盖无所谓
+    pm = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
+    a = np.frombuffer(pm.samples, dtype=np.uint8).reshape(pm.height, pm.width)
+    tmp = pymupdf.open()
+    try:
+        tmp.insert_pdf(doc, from_page=i, to_page=i)
+        tp = tmp[0]
+        tp.add_redact_annot(tp.rect, fill=False, cross_out=False)
+        # 只摘文字：位图和矢量图元都留着，否则"是扫描件还是数字版"就无从比起了
+        tp.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                            graphics=pymupdf.PDF_REDACT_LINE_ART_NONE)
+        pm2 = tp.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
+    finally:
+        tmp.close()
+    if (pm2.width, pm2.height) != (pm.width, pm.height):
+        return False
+    b = np.frombuffer(pm2.samples, dtype=np.uint8).reshape(pm2.height, pm2.width)
+    sc = dpi / 72.0
+    mask = np.zeros_like(a, dtype=bool)
+    for blk in blocks:
+        r = pymupdf.Rect(blk[0], blk[1], blk[2], blk[3]) & page.rect
+        if r.is_empty:
+            continue
+        mask[max(int(r.y0 * sc), 0):int(r.y1 * sc), max(int(r.x0 * sc), 0):int(r.x1 * sc)] = True
+    total = int(mask.sum())
+    if total < _SCAN_MASK_MIN * pm.width * pm.height:
+        return False
+    changed = (np.abs(a.astype(np.int16) - b.astype(np.int16)) > _SCAN_MAD) & mask
+    return float(changed.sum()) / total < _SCAN_CHANGED
+
+def scan_pages(path: str, pages=None, dpi: int = 72) -> dict:
+    """逐页判"扫描件页"，返回 {0 基页号: True/False}。pages=None 判全本，给了页号就只判
+    那几页（全文翻译按批来问，别为整本买单）。打不开返回空字典。"""
+    out = {}
+    try:
+        doc = pymupdf.open(path)
+    except Exception:
+        return out
+    try:
+        n = len(doc)
+        for i in (range(n) if pages is None else pages):
+            if not (0 <= i < n):
+                continue
+            try:
+                out[i] = _scan_page(doc, i, dpi)
+            except Exception:
+                out[i] = False          # 单页判不了不影响别的页
+    finally:
+        doc.close()
+    return out
+
 def page_count(path: str) -> int:
     """PDF 页数。只为 len(doc) 开一遍文档的调用点收口到这里（用完就关）。"""
     doc = pymupdf.open(path)

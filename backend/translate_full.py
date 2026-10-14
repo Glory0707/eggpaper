@@ -317,7 +317,8 @@ def probe_cached(path: str) -> tuple | None:
 
 # ---------------- 起进程 ----------------
 
-def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", pages: str = ""):
+def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", pages: str = "",
+         scan: bool = False):
     """pdf2zh_next 的命令行协议与 1.9 完全不同：每家翻译服务一个独立旗标
     （`--bing`/`--openai`/…，不传会落到它默认的 SiliconFlowFree），key 一类敏感值
     一律走 PDF2ZH_* 环境变量（见 _pdf2zh_env），不进命令行、不进配置文件。
@@ -328,6 +329,12 @@ def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", p
                                两种形态组装逻辑都认，带上省得猜）；
     --no-dual                  盘上只落译文版，双语版要的时候由 原文+译文 派生（省一半盘）；
     --watermark-output-mode no_watermark  显式关水印，别吃默认值。
+
+    scan=True（这一批里有扫描件页，见 _batch_scan）再加：
+    --ocr-workaround           译文强制黑字 + 段底铺白底。扫描件的字在位图里，引擎
+                               "删原文"这步对像素无效，不加白底 = 译文叠在原件字影上；
+                               它同时会关掉引擎自己的扫描件检测（否则多页批直接报
+                               Scanned PDF detected 整批失败）。
     """
     exe = engine_path(engine)
     if exe:
@@ -342,6 +349,8 @@ def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", p
         cmd += ["--glossaries", glossary_csv]
     cmd += ["--only-include-translated-page", "--no-dual",
             "--watermark-output-mode", "no_watermark"]
+    if scan:
+        cmd += ["--ocr-workaround"]
     if service in LLM_SERVICES:
         # LLM 通道提速（2026-10-09 真端点对照实测）：BabelDOC 默认 qps=4、段落翻译
         # 线程池=并发池=qps——每页几十段请求排成 4 路纵队。抬到 12 实测墙钟 ~1.35x
@@ -773,9 +782,21 @@ def _pages_count(pages: str) -> int:
     a, b = int(m.group(1)), int(m.group(2) or m.group(1))
     return max(1, b - a + 1)
 
+def _batch_scan(pdf_path: str, batch: list) -> bool:
+    """这一批里有没有"底子是位图"的页（扫描件）：有就整批按 OCR 排版跑。
+
+    为什么必须自己判：引擎的扫描件检测只在多页批次里真跑，而页级流水线最后总会退到
+    "单页一批"（整批失败就拆单页），那时它判据恒假、检测空转，产物就是"译文叠在
+    扫描件原文上"的一页重影（2026-10-14 用户反馈的正是这个）。
+    """
+    try:
+        return any(pdfparse.scan_pages(pdf_path, batch).values())
+    except Exception:
+        return False
+
 def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
               envs: dict, proc_reg: list, auth_out: list, engine: str = "",
-              glossary_csv: str = "", asset_out: list = None) -> tuple:
+              glossary_csv: str = "", asset_out: list = None, scan: bool = False) -> tuple:
     """翻译一页（或一个页区间）。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
     proc_reg：正在跑的进程都登记进来，删论文时 cancel() 能把它们掐掉。
     auth_out：一旦在输出里看到鉴权失败就**立刻**杀进程并记到这里——
@@ -788,7 +809,7 @@ def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
     摊薄；批里单页坏了拆成单页再各试一遍，复用粒度从"页"退到"批"，
     断点续译（_page_done 逐页认）不变。
     """
-    cmd = _cmd(pdf_path, out_dir, service, extra, glossary_csv, engine, pages)
+    cmd = _cmd(pdf_path, out_dir, service, extra, glossary_csv, engine, pages, scan=scan)
     tail = collections.deque(maxlen=5)
     flags, si = _no_window()
     proc = None
@@ -1054,6 +1075,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             lock = threading.Lock()
             auth_error = []
             asset_error = []
+            scan_said = []              # "这篇是扫描件"只播报一次，别每批一条
 
             def worker(batch: list):
                 try:
@@ -1067,6 +1089,10 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 a, b = batch[0] + 1, batch[-1] + 1
                 label = str(a) if a == b else f"{a}-{b}"
                 got, tail, auth_out, asset_out = None, [], [], []
+                scan = _batch_scan(pdf_path, batch)
+                if scan and not scan_said:
+                    scan_said.append(True)
+                    say(f"全文翻译 {pid}: 第 {label} 页是扫描件，按 OCR 排版译（译文黑字白底，盖住原件字影）")
                 for t in range(PAGE_TRIES):
                     if auth_error or asset_error or j.get("_abort"):
                         return
@@ -1088,7 +1114,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                         try:
                             got, tail = _run_page(pdf_path, label, pdir_t, service, extra,
                                                   envs, procs, auth_out, engine, glossary_csv,
-                                                  asset_out)
+                                                  asset_out, scan=scan)
                         finally:
                             with lock:
                                 j["current"] = [x for x in (j.get("current") or []) if x != label]
