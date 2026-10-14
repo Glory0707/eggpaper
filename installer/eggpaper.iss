@@ -1,7 +1,7 @@
 ; eggpaper 安装包（Inno Setup 6）
 ;
 ; 由 tools/build_installer.py 调用，版本号通过 /DMyVersion=<VERSION> 传进来。
-; 手动编译：ISCC.exe /DMyVersion=0.1.1 installer\eggpaper.iss
+; 手动编译：ISCC.exe /DMyVersion=0.1.2 installer\eggpaper.iss
 ;
 ; 四个关键决定：
 ;   1. **AppId 固定**：升级靠它认出"这是同一个软件"。改了就变成两份并存，
@@ -17,7 +17,7 @@
 
 #define MyAppName "eggpaper"
 #ifndef MyVersion
-  #define MyVersion "0.1.1"
+  #define MyVersion "0.1.2"
 #endif
 #define MyPublisher "eggpaper"
 #define MyExe "eggpaper.exe"

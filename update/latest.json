@@ -1,0 +1,8 @@
+{
+  "version": "0.1.2",
+  "url": "https://gitee.com/zhouao1207/eggpaper/releases/download/v0.1.2/eggpaper-0.1.2-setup.exe",
+  "size": 96568528,
+  "sha256": "e8c1fb2078772378c8dffb45f4aa2e131de7aa249943503b096cf801dbfc60a4",
+  "pub_date": "2026-10-14",
+  "notes": "修复段落定位、提问上下文信息全面性、扫描件重影、PDF加载速度卡顿等问题"
+}
