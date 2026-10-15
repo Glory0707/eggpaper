@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { api, store, toast } from '../store'
-import { copyText } from '../clip'
+import { api, store } from '../store'
+import { copyWithToast } from '../clip'
 import { t } from '../i18n'
 import { modalFocus } from '../modalFocus'
 
@@ -61,8 +61,7 @@ async function recognize() {
 }
 
 async function copy(row) {
-  const ok = await copyText(row.text)
-  toast(ok ? t('已复制 · {label}', { label: row.label }) : t('复制失败'))
+  await copyWithToast(row.text, t('已复制 · {label}', { label: row.label }))
 }
 </script>
 

@@ -2067,7 +2067,8 @@ def _reparse_sweep():
     try:
         rows = db.q("SELECT DISTINCT paper_id FROM paragraphs "
                     "WHERE bbox LIKE '{%' AND bbox NOT LIKE '%\"ph\"%'")
-    except Exception:
+    except Exception as e:
+        _applog(f"[eggpaper] 段落换代开机扫描失败，本次跳过：{e}")
         return
     n, lost = 0, 0
     for r in rows:
@@ -2218,11 +2219,11 @@ def _run_analysis(pid: str, paras: list):
             return
         db.answers_clear(pid)
         upd = dict(summary=None, suggest=None, advisor=None, method_card=None,
-                   abbrs=json.dumps(data.get("abbrs", {}), ensure_ascii=False),
-                   evidence_qs=json.dumps(data.get("evidence_qs", {}), ensure_ascii=False))
+                   abbrs=db.dumps_cjk(data.get("abbrs", {})),
+                   evidence_qs=db.dumps_cjk(data.get("evidence_qs", {})))
         if data.get("fig_caps"):
             # 只在真的拿到了译文时才覆盖：懒翻译存下的旧值不被一次没带图注的析读清掉
-            upd["fig_caps"] = json.dumps(data["fig_caps"], ensure_ascii=False)
+            upd["fig_caps"] = db.dumps_cjk(data["fig_caps"])
         db.update_paper(pid, **upd)
         if _analysis_cancelled(pid, "已取消（骨架完成后，骨架保留）"):
             return
@@ -2613,7 +2614,7 @@ def _gen_card(pid: str, field: str, lock: str, *, what: str, shape: tuple,
         else:
             data = real_fn(p)
             _require_shape(data, shape, what)
-        db.update_paper(pid, **{field: json.dumps(data, ensure_ascii=False)})
+        db.update_paper(pid, **{field: db.dumps_cjk(data)})
     return data
 
 
@@ -2649,7 +2650,7 @@ def _summary_compute(pid: str) -> dict:
         data = llm.summarize(p["title"], paras, hits)
         _require_shape(data, ("one_line", "novelty", "findings", "keywords"), "一眼卡")
         if not _pid_gone(pid):          # 生成隔着一次模型调用，论文可能已被删
-            db.update_paper(pid, summary=json.dumps(data, ensure_ascii=False))
+            db.update_paper(pid, summary=db.dumps_cjk(data))
         return data
 
 def _suggest_compute(pid: str) -> dict:
@@ -2666,7 +2667,7 @@ def _suggest_compute(pid: str) -> dict:
         data = llm.suggest_questions(p["title"], claims, annos)
         _require_shape(data, ("questions",), "提问建议")
         if not _pid_gone(pid):
-            db.update_paper(pid, suggest=json.dumps(data, ensure_ascii=False))
+            db.update_paper(pid, suggest=db.dumps_cjk(data))
         return data
 
 @app.get("/api/papers/{pid}/summary")
@@ -2993,7 +2994,7 @@ def paper_citation(pid: str, cached: bool = False, refresh: bool = False):
         if not (meta.get("title") or meta.get("authors")):
             raise HTTPException(503, "首页没认出文献信息")
         # 落库必须在锁内：放在锁外的话，第二个等待者拿锁时还读不到，会再花一次调用
-        db.update_paper(pid, citation=json.dumps(meta, ensure_ascii=False))
+        db.update_paper(pid, citation=db.dumps_cjk(meta))
     return {"meta": meta, "groups": citation.groups(meta)}
 
 @app.post("/api/cite-table")
@@ -3607,7 +3608,7 @@ def _valid_conv(pid: str, raw):
     return cid
 
 def _sse(obj: dict) -> str:
-    return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
+    return "data: " + db.dumps_cjk(obj) + "\n\n"
 
 def _sse_response(gen, keep_alive: bool = False):
     """三条 SSE 端点共用的响应壳。"""
@@ -4171,7 +4172,7 @@ def translate_para(pid: str, body: dict):
 
 _RELAY_TOKEN = secrets.token_urlsafe(16)   # 引擎拿来叩中转的临时令牌，每次启动换
 RELAY_PORT = 0        # serve() 落定；不开端口直调 app 的场合（TestClient）保持 0 → 翻译走直连老路
-_relay_http = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=20))
+_relay_http = httpx.AsyncClient(timeout=llm.LLM_TIMEOUT)
 
 @app.post("/llm-relay/chat/completions")
 async def _llm_relay(req: Request):
@@ -4286,6 +4287,18 @@ def _claim_existing_translation(pid: str) -> dict:
                         translate_status="done", translate_error="")
     return got or {}
 
+def _pipe_stale_reason(pid: str, p: dict) -> str:
+    """盘上那份成品还算不算"当前口径"的译文：'' = 算（或压根没成品），非空 = 该重译的原因。
+
+    判据在 translate_full.product_pipe_reason（口径版本 + 这篇有没有扫描件页）。这里是
+    "把成品名与原件路径凑齐"的那一层——成品名随显示名走，别在别处再拼一遍。
+    """
+    nb = _display_name(p) or "paper"
+    mono_n, dual_n = _variant_names(nb)
+    return translate_full.product_pipe_reason(
+        paper_dir(pid), _paper_src(pid, p),
+        mono=[mono_n] if mono_n else [], dual=[dual_n] if dual_n else [])
+
 @app.post("/api/papers/{pid}/translate-full")
 def translate_full_start(pid: str, force: bool = False):
     p = _paper_or_404(pid)
@@ -4296,13 +4309,24 @@ def translate_full_start(pid: str, force: bool = False):
         raise HTTPException(400, "正在翻译中，稍后再试")
     svc = (cfg["pdf2zh"].get("service") or "bing").strip()
     envs, host = _pdf2zh_env(svc, cfg)
+    stale_why = ""
     if not force:
-        if _claim_existing_translation(pid):
+        # 认领成品之前先问一句"这份还算不算当前口径的译文"：升级后旧口径的成品不能继续
+        # 冒充"上次已经译好了"——不然扫描件那篇一直是重影，用户点几次都不动
+        # （2026-10-14 用户反馈：0.1.2 修了重影，他升级后再译还是重影）
+        stale_why = _pipe_stale_reason(pid, p)
+        if not stale_why and _claim_existing_translation(pid):
             _applog(f"全文翻译 {pid}: 发现上次已经译好的成品，直接认领")
             return {"status": "done", "service": "", "note": "上次已经译好了"}
     used, note = translate_full.choose_service(svc, host)
     if used is None:
         raise HTTPException(400, note)
+    if stale_why:
+        # 旧口径的成品：不认领，按重译走（force 的效果），把原因说给用户听。点一次翻译就
+        # 真译一遍——这是点这颗按钮的本意（而不是"什么都不做"）
+        _applog(f"全文翻译 {pid}: 成品是旧口径的，不认领——{stale_why}")
+        force = True
+        note = f"{stale_why}；{note}" if note else stale_why
     engine = (cfg["pdf2zh"].get("path") or "").strip()
     exe = translate_full.engine_path(engine)
     hot = translate_full.probe_cached(exe)

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { todayKey } from './day'
-import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, reloadSummary, checkUpdate, loadVersion, startLibraryWatch, paperName, currentPaper } from './store'
+import { goHome, lsGet, lsSet, api, store, toast, refreshPapers, refreshCollections, openPaper, refreshAnalysis, reloadSummary, checkUpdate, loadVersion, startLibraryWatch, paperName, currentPaper, dropPaperDocs } from './store'
 import PdfViewer from './components/PdfViewer.vue'
 import LibPanel from './components/LeftRail.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
@@ -623,7 +623,7 @@ async function doTranslateFull() {
       api.translateCancel(pid).then(refreshPapers).catch(() => {})   // 停的是刚发起的那篇，不是现在看的
       return
     }
-    toast(r.note || t('全文翻译已开始'))
+    toast(r.note ? t(r.note) : t('全文翻译已开始'))
   } catch (e) {
     // 缺引擎时后端已经自己在后台装了（多源自动换源+续传+校验）。见到"下载中"就弹等待卡，
     // 装完 onEngineReady 会把这篇的全文翻译自动续上——用户不需要进设置。
@@ -665,6 +665,10 @@ async function pollTranslate() {
   if (j.status === 'done') {
     tranProg.value = emptyTranProg()
     await refreshPapers()                 // 译文/双语两个按钮看的是 papers 里的 translate_status
+    // 译文在盘上被重写了：屏幕上那份 pdf.js 文档作废、按新成品重取。URL 固定
+    // （/pdf?variant=mono），pdf.js 拿到解析结果就不再回盘——不这一下，纸面会一直停在
+    // 上一次的译文（2026-10-14 用户反馈"点重新翻译、完成后还是有重影"）
+    if (pid === store.currentId) store.viewerApi?.refreshTranslation?.()
     cheerEgg()                            // 全文翻完了：跳两下（析读完成才是滚一圈）
     toast(t('全文翻译完成'))   // 盘上只落译文版，双语首次点开才派生——"双语已生成"是假话
   } else if (j.status === 'error') {
@@ -689,6 +693,10 @@ async function bgTranslateTick() {
       _bgTran.delete(pid)
       if (j.status === 'done') {
         await refreshPapers()
+        // 译文被重写：在场的这篇就地重取纸面，别处的篇也作废内存里那份旧文档
+        // （不然切回去还是上一次的译文）——同一件事的两个面，见 store.dropPaperDocs
+        if (pid === store.currentId) store.viewerApi?.refreshTranslation?.()
+        else dropPaperDocs(pid)
         if (pid !== store.currentId) {
           const pp = store.papers.find(x => x.id === pid)
           toast(t('《{t}》翻译完成', { t: paperName(pp).slice(0, 24) }))
@@ -875,7 +883,7 @@ const tranLabel = computed(() => {
 const tranTip = computed(() => {
   if (tranSt.value === 'running') {
     const cur = tranProg.value.cur?.length
-      ? ` ${t('第{p}页', { p: tranProg.value.cur.join('、') })}` : ''
+      ? ` ${t('第 {p} 页', { p: tranProg.value.cur.join('、') })}` : ''
     return t('正在译{svc}{cur} · 已用 {t}', { svc: tranProg.value.svc ? `（${tranProg.value.svc}）` : '',
                                               cur, t: tranElapsed.value || t('刚刚') })
   }
@@ -972,7 +980,7 @@ function onKey(e) {
       </div>
       <div class="doc-head" v-if="store.paper">
         <div class="t-row">
-          <div class="t">{{ paperName(store.paper) }}</div>
+          <div class="t" :title="paperName(store.paper)">{{ paperName(store.paper) }}</div>
                     <button class="cite-btn" @click="store.cite.open = true">{{ t('引用') }}</button>
         </div>
       </div>
@@ -1165,7 +1173,7 @@ function onKey(e) {
         <Transition name="greet">
           <div class="greet-box" v-if="greetShow">
             <i class="gtl"></i><i class="gtr"></i><i class="gbl"></i><i class="gbr"></i>
-            <span class="gt">{{ greetText }}</span>
+            <span class="gt" :title="greetText">{{ greetText }}</span>
           </div>
         </Transition>
         <i class="feed-ghost" v-for="g in ghosts" :key="g.id" aria-hidden="true"

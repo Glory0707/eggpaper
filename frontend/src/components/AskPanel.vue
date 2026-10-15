@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, askStream, askContinueStream, store, toast, jumpPara, openPaper, gotoPaperPara, paperName } from '../store'
+import { api, askStream, askContinueStream, store, toast, jumpPara, openPaper, gotoPaperPara, paperName, focusSoon } from '../store'
 import { confirmBox, inputBox } from '../dialog'
 import { copyWithToast, frameBuffer } from '../clip'
 import { scrollBehavior } from '../motion'
@@ -466,7 +466,7 @@ function takePrefill(pf) {
   applyPrefill(pf)
 }
 watch(() => store.askPrefill, pf => { if (pf) { takePrefill(pf); store.askPrefill = null } })
-watch(() => store.askFocusTick, () => nextTick(() => inputEl.value?.focus({ preventScroll: true })))
+watch(() => store.askFocusTick, () => focusSoon(() => inputEl.value))
 
 function onDocKey(e) {
   // 只想关引用弹层：stopPropagation 拦住冒泡，别让全局 Esc 把抽屉、查找框一起收了
@@ -485,7 +485,7 @@ onMounted(async () => {
   await loadMsgs()
   ready = true
   if (pending) { const pf = pending; pending = null; await nextTick(); applyPrefill(pf) }
-  else nextTick(() => inputEl.value?.focus({ preventScroll: true }))
+  else focusSoon(() => inputEl.value)
 })
 onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); document.removeEventListener('keydown', onDocKey); document.removeEventListener('pointerdown', onDocPointer) })
 </script>
@@ -574,7 +574,7 @@ onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); docu
                   <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
                        stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
                 </span>
-                <span class="t">{{ g.name }}</span>
+                <span class="t" :title="g.name">{{ g.name }}</span>
               </button>
               <button v-for="p in g.items" :key="p.id" class="cite-item" :class="{ on: isOn(titleKey(p)) }"
                       @click="pickFromPop(p)">
@@ -582,7 +582,7 @@ onUnmounted(() => { if (growRaf) cancelAnimationFrame(growRaf); stop(true); docu
                   <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.4"
                        stroke-linecap="round"><path d="M4.5 12.5l5 5.5 10-12" /></svg>
                 </span>
-                <span class="t">{{ paperName(p) }}</span>
+                <span class="t" :title="paperName(p)">{{ paperName(p) }}</span>
                 <span class="tag" v-if="p.analysis_status === 'done'">{{ t('已析读') }}</span>
                 <span class="tag" v-else>{{ t('未析读') }}</span>
               </button>

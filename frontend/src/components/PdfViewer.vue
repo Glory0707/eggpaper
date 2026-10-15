@@ -1,8 +1,7 @@
 <script>
-/* 解析好的 PDF 文档缓存是**文件级**的：多窗格/重挂载共享同一份解析结果（key = pid:variant），
-   第二次打开秒出。LRU 上限 10 份，超出淘汰最久未用的一份（多窗格 × dual 变体轻松要 8 份）；
-   还被活窗格引用的 key 不淘汰——宁超限也不把打开着的文档销掉。 */
-const docCache = new Map()
+/* 解析好的 PDF 文档缓存（docCache）与"译文被重写后作废它"的 dropPaperDocs 都在 store 里：
+   重译完成那一刻要在**任何**位置作废它（含"人在别的篇、后台译完"的那种），不只是本组件。
+   这里只留实例自己的登记表。 */
 const docClaims = new Map()   // 实例令牌 → 它正用着的 key 集（见 getDoc 的逐出循环）
 </script>
 
@@ -11,7 +10,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { api, store, toast, askNotePrefill, kindZH, paperName } from '../store'
+import { api, store, toast, askNotePrefill, kindZH, paperName, docCache, dropPaperDocs, focusSoon } from '../store'
 import { confirmBox } from '../dialog'
 import { lsGet, lsSet } from '../ls'
 import { copyWithToast, frameBuffer } from '../clip'
@@ -88,6 +87,11 @@ let passToken = 0
 const scroller = () => deskEl.value?.closest('.desk') || deskEl.value
 let ro = null
 
+/* 装载/补画的超时与间隔：值即契约，改之前先看 visual §12 与各引用处注释 */
+const PDF_WORKER_TIMEOUT_MS = 20000  // pdf.js worker 无响应判死
+const JUMP_STALE_MS = 8000           // 渲染没赶上的跳转最多等 8 秒
+const FILL_GAP_MS = 180              // 闲时补画两页之间的间隔（visual §12 定死）
+
 const scale = computed(() => {
   const base = fit.value === 'page' ? Math.min(fitScale.value, pageFitScale.value)
              : fit.value === 'none' ? 1
@@ -132,14 +136,22 @@ async function getDoc(kind) {
   // worker 会假死（休眠恢复/标签页冻结/内嵌环境节流）：promise 永不落定，纸面永久白屏。
   // 看门狗 20s：超时就销毁这个 task 换新 worker 重来一次；再挂才向上抛（load 的 catch 接住）。
   for (let attempt = 0; attempt < 2; attempt++) {
-    const task = pdfjsLib.getDocument(`/api/papers/${props.pid}/pdf?variant=${kind}`)
+    // CJK 非嵌入字体（UniGB-UTF16-H 这类中文 PDF 常见）要靠外部 CMap 解码，
+    // 标准 14 字体要靠 .pfb 度量——两样都在 public/ 里随包发布（见下方注），
+    // 不配的话中文件整本白纸 + 文字层全空，还静默无报错（2026-10-16 走查抓到）。
+    const task = pdfjsLib.getDocument({
+      url: `/api/papers/${props.pid}/pdf?variant=${kind}`,
+      cMapUrl: "/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "/standard_fonts/",
+    })
     if (!sheets.value.length) {
       task.onProgress = ({ loaded, total }) => {
         if (total) loadPct.value = Math.max(loadPct.value, Math.min(0.94, loaded / total))
       }
     }
     const doc = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('pdf worker timeout')), 20000)
+      const timer = setTimeout(() => reject(new Error('pdf worker timeout')), PDF_WORKER_TIMEOUT_MS)
       task.promise.then(
         d => { clearTimeout(timer); resolve(d) },
         e => { clearTimeout(timer); reject(e) })
@@ -312,7 +324,7 @@ async function load({ keepPlace = false } = {}) {
     nextTick(() => { searchQ.value = q; searchOpen.value = true })
   }
   if (pendingJump) {                      // 渲染没赶上的那次跳转（跨篇《标题》¶n 常见）
-    if (store.jump === pendingJump && Date.now() - pendingJump.at < 8000) applyJump()
+    if (store.jump === pendingJump && Date.now() - pendingJump.at < JUMP_STALE_MS) applyJump()
     pendingJump = null
   }
   loading = false
@@ -550,7 +562,7 @@ function fillCanvasesIdle() {
       renderItem(it, passToken).catch(() => {})
       IDLE(step, { timeout: 900 })
     }
-    const wait = Math.max(0, 180 - (performance.now() - paintAt))
+    const wait = Math.max(0, FILL_GAP_MS - (performance.now() - paintAt))
     if (wait > 0) setTimeout(go, wait)
     else go()
   }
@@ -1158,7 +1170,7 @@ async function pinSel() {
 }
 
 async function copySel() {
-  await copyWithToast(sel.zh || '', t('译文已复制'))
+  await copyWithToast(sel.zh || '', t('已复制'))
 }
 function sendToGlossary() {
   store.glossaryPrefill = { term_en: sel.text.slice(0, 80), term_zh: (sel.zh || '').replace('〔演示译文〕', '').slice(0, 24) }
@@ -1179,7 +1191,7 @@ const mineEl = ref(null)
 function openMine() {
   mine.open = true
   mine.text = ''
-  nextTick(() => mineEl.value?.focus({ preventScroll: true }))
+  focusSoon(() => mineEl.value)
 }
 let savingMine = false
 async function saveMine() {
@@ -1536,7 +1548,16 @@ async function finishShot(sel) {
   } finally { shotBusy.value = false }
 }
 
-const viewerApiObj = { step, translateCurrent, startShot, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper }
+/* 译文在盘上被重写了（重新全文翻译完成）：作废内存里那份 pdf.js 文档，正在看译文/双语
+   就地按新成品重取。url 是固定的 `/pdf?variant=mono`，不一并作废的话 pdf.js 永远不会
+   再回盘取——纸面会一直停在上一次的译文（2026-10-14 用户反馈的"重译完还是重影"）。
+   不动原文（源文件没变），也不强切变体（用户在看什么就还是什么）。 */
+function refreshTranslation() {
+  dropPaperDocs(props.pid)
+  if (store.viewer.variant === 'mono' || store.viewer.variant === 'dual') load()
+}
+
+const viewerApiObj = { step, translateCurrent, startShot, jumpBack, translateSelectionKey, stepPage, gotoPage, openSearch, findInPaper, refreshTranslation }
 watch(() => props.pid === store.currentId, act => { if (act) store.viewerApi = viewerApiObj }, { immediate: true })
 
 function openSearch() { searchOpen.value = true }
@@ -1845,7 +1866,7 @@ watch(() => store.escTick, () => {
   if (vis.visible) closeVis()
   if (searchOpen.value) closeSearch()
 })
-watch(searchOpen, v => { if (v) nextTick(() => searchInputEl.value?.focus({ preventScroll: true })) })
+watch(searchOpen, v => { if (v) focusSoon(() => searchInputEl.value) })
 let searchT = null
 watch(searchQ, () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 320) })
 

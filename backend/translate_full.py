@@ -318,7 +318,7 @@ def probe_cached(path: str) -> tuple | None:
 # ---------------- 起进程 ----------------
 
 def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", pages: str = "",
-         scan: bool = False):
+         scan=None):
     """pdf2zh_next 的命令行协议与 1.9 完全不同：每家翻译服务一个独立旗标
     （`--bing`/`--openai`/…，不传会落到它默认的 SiliconFlowFree），key 一类敏感值
     一律走 PDF2ZH_* 环境变量（见 _pdf2zh_env），不进命令行、不进配置文件。
@@ -330,7 +330,7 @@ def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", p
     --no-dual                  盘上只落译文版，双语版要的时候由 原文+译文 派生（省一半盘）；
     --watermark-output-mode no_watermark  显式关水印，别吃默认值。
 
-    scan=True（这一批里有扫描件页，见 _batch_scan）再加：
+    scan=扫描件页号列表（非空即这一批里有扫描件页，见 _batch_scan）再加：
     --ocr-workaround           译文强制黑字 + 段底铺白底。扫描件的字在位图里，引擎
                                "删原文"这步对像素无效，不加白底 = 译文叠在原件字影上；
                                它同时会关掉引擎自己的扫描件检测（否则多页批直接报
@@ -596,6 +596,79 @@ def job(pid: str) -> dict:
                                  "service": "", "note": "", "pages": [0, 0],
                                  "current": [], "started": 0.0})
 
+# ---------------- 成品的"口径盖章" ----------------
+
+_PIPE_FILE = ".translate-pipe.json"
+
+def pipe_stamp_path(out_dir: str) -> str:
+    """成品译文的"口径盖章"存在哪：一篇一个文件，与 .pages/ 平级。
+
+    为什么不进 DB：加列要迁移，而这份信息丢了最坏也只是"下次多点一次探测"，
+    不值得动库（兼容底线：数据库字段不动）。也不写进 PDF 成品里：成品名随标题改、
+    还会被 derive_mono/dual 派生来派生去，挂在论文目录上最稳。
+    """
+    return os.path.join(out_dir, _PIPE_FILE)
+
+def read_pipe_stamp(out_dir: str) -> dict:
+    """读盖章。读不到/坏了/不是对象一律当"没盖章"（空 dict）——这只会让调用方多探测一次。"""
+    try:
+        with open(pipe_stamp_path(out_dir), encoding="utf-8") as f:
+            got = json.load(f)
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+def stamp_pipe(out_dir: str, scanned=None, keep_prev: bool = False) -> None:
+    """给这次译出来的成品盖章：口径版本 + 这次按扫描件姿势译的页号。
+    写不进去只影响"下次省一次探测"，不影响翻译本身——静默失败是刻意的。
+
+    keep_prev=True 用于"页缓存在复用"那种跑动：这次没碰那些页，它们上一次是按什么姿势
+    译的记录在上一次的章里，丢了这份记档就不完整。口径都变了（缓存被作废）时不并——
+    那时候全本重译，这一次的页号就是全量。"""
+    try:
+        prev = (read_pipe_stamp(out_dir).get("scan") or []) if keep_prev else []
+        keep = {int(p) for p in list(prev) + list(scanned or [])}
+        os.makedirs(out_dir, exist_ok=True)
+        with open(pipe_stamp_path(out_dir), "w", encoding="utf-8") as f:
+            json.dump({"v": PIPE_VERSION, "scan": sorted(keep)}, f)
+    except (OSError, ValueError, TypeError):
+        pass
+
+def product_pipe_reason(out_dir: str, src_path: str, mono=(), dual=()) -> str:
+    """盘上这份成品还算不算"当前口径"的译文：'' = 算（顺手盖章），非空 = 该重译的原因。
+
+    为什么需要（2026-10-14 用户反馈"更新后翻译完还是有重影"）：成品在就直接被认领
+    （见 main._claim_existing_translation），认领从来不看它是哪代口径生成的——0.1.1 译的
+    "扫描件重影"成品在升级后照样算"上次已经译好了"，用户点什么都不会动。
+
+    判据：
+      · 没有成品 → ''（没什么可认领的，让调用方走正常翻译）；
+      · 有成品且盖章就是当前口径 → ''；
+      · 没盖章/旧盖章（升级前的产物）→ 看这篇有没有扫描件页：
+          - 没有（数字版）→ 新口径跑出来与旧产物等价，就地盖章、不花一次重译。
+            探测只在这次点击上付（实测 40~50ms/页），盖过章之后再点就是瞬间的事；
+          - 有 → 旧产物必然缺白底覆盖（译文叠在原件字影上），返回原因让调用方重译。
+    探测本身出异常（PDF 读不动等）→ 当"算数"放行：不拿一个探测器故障去换用户一次真花钱的重译。
+    """
+    if not adopt_existing(out_dir, mono, dual):
+        return ""
+    if read_pipe_stamp(out_dir).get("v") == PIPE_VERSION:
+        return ""
+    try:
+        verdicts = pdfparse.scan_pages(src_path) or {}
+    except Exception:
+        return ""
+    scanned = sorted(p for p, v in verdicts.items() if v)
+    if not scanned:
+        stamp_pipe(out_dir, [])
+        return ""
+    pages = ", ".join(str(p + 1) for p in scanned[:6])
+    if len(scanned) > 6:
+        return _PIPE_STALE_NOTE_MANY.format(first=pages)
+    # 发给用户的那句原因：模板留 {first} 槽位给前端 en 词典做模式匹配（见 i18n 的同键），
+    # 中文输出与原来逐字相同。
+    return _PIPE_STALE_NOTE.format(first=pages)
+
 # ---------------- 全文翻译：按页流水线 ----------------
 
 PAGE_WORKERS_FREE = 3
@@ -605,6 +678,24 @@ PAGE_WORKERS_LLM = 2
 ENGINE_PROCS_CAP = 4
 _SLOTS = threading.BoundedSemaphore(ENGINE_PROCS_CAP)
 PAGE_TIMEOUT = 150
+
+# 版式口径版本：**引擎调用语义一变就 +1**。两处都用它，是同一件事的两面——
+#   ① 进页级缓存指纹（page_sig 的 "pipe"）：口径变了，旧页不许再当合法缓存复用；
+#   ② 给成品盖章（.translate-pipe.json / product_pipe_reason）：口径变了，盘上那份
+#      "上次已经译好了"的成品不许再冒充当前口径的译文。
+# 为什么必须有它（2026-10-14 用户反馈"更新后翻译完还是有重影"）：0.1.2 给扫描件加了
+# --ocr-workaround，但指纹里没有任何字段跟着变——升级后重译会把 0.1.1 那批"译文叠在
+# 原件字影上"的旧页原样复用，装好的成品也被直接认领，用户看到的还是旧毛病。
+# 1 = 0.1.2 之前；2 = 扫描件走 OCR 排版（--ocr-workaround）之后。
+PIPE_VERSION = 2
+# 旧口径成品不认领时发给用户的那句原因：{first} 是扫描件页号（"3, 5"）。
+# 中文输出与旧 f-string 逐字相同；{first} 槽位供前端 en 词典做模板匹配。
+# 超过 6 页时页号后跟"等"（"第 3, 5 等 页"），与"第 3, 5 页"形状不同——各用一个模板，
+# 前端才能用两个单键分别匹配（一个模板的 ' 页' 字面量对不上 ' 等 页'）。
+_PIPE_STALE_NOTE = ("这篇原文含扫描件页（第 {first} 页），上一版译文是按普通排版译的"
+                    "（原件字影会透出来），这就重新翻译一遍")
+_PIPE_STALE_NOTE_MANY = ("这篇原文含扫描件页（第 {first} 等 页），上一版译文是按普通排版译的"
+                         "（原件字影会透出来），这就重新翻译一遍")
 PAGE_TRIES = 2
 BATCH_PAGES = 8          # 免费服务一次 pdf2zh 进程译几页。2.x 单进程冷启动 ~15-35s（1.9 约 3s），
                          # 批太小全是纯开销；批内坏页仍拆单页兜底，复用粒度退到"批"但产物按页认
@@ -637,12 +728,16 @@ def _page_timeout(service: str) -> float:
 def page_sig(pdf_path: str, service: str, extra: str, engine: str,
              glossary_rows: list, flavor: str = "") -> str:
     """页级缓存的指纹：要覆盖一切"会改变产物"的输入——源文件（mtime+大小）、
-    翻译服务、附加参数、引擎名、术语气息。
+    翻译服务、附加参数、引擎名、术语气息，以及**版式口径**（PIPE_VERSION）。
 
     只认源文件的话，换服务（bing→LLM）、改术语表或 options 后再点翻译，旧页会被
     静默复用：一篇译文里两种姿势混着，术语锁定只在新译的页上生效，用户拿着
     "术语已锁定"的期待看一份半锁定的文档（2026-10-11 审计实锤）。指纹一变，
     .pages 整目录作废重译，正是"改了输入就该重来"。
+
+    "pipe" 这一项是 2026-10-14 补的：口径变化（比如给扫描件加 --ocr-workaround）
+    不改上面的任何一项，旧页却已经不能看了——当期用户反馈"更新后重译还是有重影"
+    就是它：旧页被复用，成品由旧页组装出来。
     """
     try:
         gsig = ""
@@ -654,7 +749,7 @@ def page_sig(pdf_path: str, service: str, extra: str, engine: str,
         return json.dumps({"m": int(os.path.getmtime(pdf_path)),
                            "s": os.path.getsize(pdf_path),
                            "svc": service, "extra": extra or "",
-                           "eng": engine or "", "g": gsig,
+                           "eng": engine or "", "g": gsig, "pipe": PIPE_VERSION,
                            # f = 哪个模型 + 哪个上游端点。同一个服务名下换模型/换端点，
                            # 旧页会被整页复用 → 一份成品里两种模型风格、两套术语口径混排，
                            # 界面还照报"术语已锁定"（2026-10-13 审计）
@@ -782,21 +877,25 @@ def _pages_count(pages: str) -> int:
     a, b = int(m.group(1)), int(m.group(2) or m.group(1))
     return max(1, b - a + 1)
 
-def _batch_scan(pdf_path: str, batch: list) -> bool:
-    """这一批里有没有"底子是位图"的页（扫描件）：有就整批按 OCR 排版跑。
+def _batch_scan(pdf_path: str, batch: list) -> list:
+    """这一批里"底子是位图"的页（扫描件）：返回页号列表（空 = 批里一页扫描件都没有）。
+    有扫描件就整批按 OCR 排版跑（见 _cmd 的 scan 参数）。
 
     为什么必须自己判：引擎的扫描件检测只在多页批次里真跑，而页级流水线最后总会退到
     "单页一批"（整批失败就拆单页），那时它判据恒假、检测空转，产物就是"译文叠在
     扫描件原文上"的一页重影（2026-10-14 用户反馈的正是这个）。
+    返回页号（而不是 True/False）是给 stamp_pipe 记档用的：成品是哪几页按扫描件姿势译的，
+    写进 .translate-pipe.json，下次判"这份成品还算不算数"时不用重新探测。
     """
     try:
-        return any(pdfparse.scan_pages(pdf_path, batch).values())
+        got = pdfparse.scan_pages(pdf_path, batch)
     except Exception:
-        return False
+        return []
+    return sorted(p for p, v in got.items() if v)
 
 def _run_page(pdf_path: str, pages: str, out_dir: str, service: str, extra: str,
               envs: dict, proc_reg: list, auth_out: list, engine: str = "",
-              glossary_csv: str = "", asset_out: list = None, scan: bool = False) -> tuple:
+              glossary_csv: str = "", asset_out: list = None, scan=None) -> tuple:
     """翻译一页（或一个页区间）。返回 (产物 dict 或 None, 日志尾行 list)。超时/报错返回 (None, tail)。
     proc_reg：正在跑的进程都登记进来，删论文时 cancel() 能把它们掐掉。
     auth_out：一旦在输出里看到鉴权失败就**立刻**杀进程并记到这里——
@@ -1076,6 +1175,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             auth_error = []
             asset_error = []
             scan_said = []              # "这篇是扫描件"只播报一次，别每批一条
+            scanned_pages = set()       # 这次按扫描件姿势（--ocr-workaround）译的页，落进成品盖章
 
             def worker(batch: list):
                 try:
@@ -1090,9 +1190,12 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 label = str(a) if a == b else f"{a}-{b}"
                 got, tail, auth_out, asset_out = None, [], [], []
                 scan = _batch_scan(pdf_path, batch)
-                if scan and not scan_said:
-                    scan_said.append(True)
-                    say(f"全文翻译 {pid}: 第 {label} 页是扫描件，按 OCR 排版译（译文黑字白底，盖住原件字影）")
+                if scan:
+                    with lock:
+                        scanned_pages.update(scan)
+                    if not scan_said:
+                        scan_said.append(True)
+                        say(f"全文翻译 {pid}: 第 {label} 页是扫描件，按 OCR 排版译（译文黑字白底，盖住原件字影）")
                 for t in range(PAGE_TRIES):
                     if auth_error or asset_error or j.get("_abort"):
                         return
@@ -1195,6 +1298,11 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                                           dual_name, j, say, pid, service)
             if not mono_path:
                 return
+            # 成品出来了：盖"口径"章（这一版口径 + 哪些页按扫描件姿势译的）。下次点翻译时
+            # product_pipe_reason 靠它判"这份成品还算不算数"，不用重新探测，也不会把
+            # 旧口径的成品当"上次已经译好了"认领。页缓存在复用（old == sig）时把上一次的
+            # 页号并进来：这次没碰那些页，它们的记档在上一次的章里。
+            stamp_pipe(out_dir, sorted(scanned_pages), keep_prev=(old == sig))
 
             done_note = (note or "") + (f"（第 {', '.join(map(str, failed))} 页没译成，保留原文）"
                                         if failed else "")

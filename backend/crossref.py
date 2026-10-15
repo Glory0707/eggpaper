@@ -9,7 +9,6 @@
 - 数据只进 papers 表的 title/authors/year 与 citation JSON，格式与 citation.py 的
   meta 完全同构——引用浮层、九种排版、CSV 导出原样可用，省一次"抄首页"的模型调用。
 """
-import json
 import os
 import re
 import threading
@@ -69,18 +68,34 @@ def _meta_of(rec: dict) -> dict:
 
 
 def lookup(doi: str) -> dict:
-    """查一条 DOI，返回 citation.meta 同构 dict；任何失败返回 {}。"""
+    """查一条 DOI，返回 citation.meta 同构 dict；任何失败返回 {}。
+
+    超时/5xx 这类抖动重试一次（死端口、4xx 这类确定性失败立刻返回，不拖慢导入）。"""
     if not doi:
         return {}
-    try:
-        r = httpx.get(f"{_API}/works/{doi}", timeout=httpx.Timeout(10, connect=6),
-                      follow_redirects=True,
-                      headers={"User-Agent": "eggpaper/0.1 (local paper reader)"})
-        r.raise_for_status()
-        return _meta_of(r.json())
-    except Exception as e:
-        applog(f"[eggpaper] Crossref 查询 {doi} 没成：{type(e).__name__}")
-        return {}
+    for attempt in (1, 2):
+        try:
+            r = httpx.get(f"{_API}/works/{doi}", timeout=httpx.Timeout(10, connect=6),
+                          follow_redirects=True,
+                          headers={"User-Agent": "eggpaper/0.1 (local paper reader)"})
+            r.raise_for_status()
+            return _meta_of(r.json())
+        except httpx.HTTPStatusError as e:
+            st = e.response.status_code if e.response is not None else 0
+            if 500 <= st < 600 and attempt == 1:
+                continue
+            applog(f"[eggpaper] Crossref 查询 {doi} 没成：HTTP {st}")
+            return {}
+        except httpx.TimeoutException as e:
+            if attempt == 1:
+                continue
+            applog(f"[eggpaper] Crossref 查询 {doi} 没成：{type(e).__name__}")
+            return {}
+        except Exception as e:
+            applog(f"[eggpaper] Crossref 查询 {doi} 没成：{type(e).__name__}")
+            return {}
+    applog(f"[eggpaper] Crossref 查询 {doi} 没成：重试后仍失败")
+    return {}
 
 
 def backfill(pid: str, on_update=None):
@@ -96,7 +111,8 @@ def backfill(pid: str, on_update=None):
             import pymupdf
             with pymupdf.open(src) as d:
                 text = "\n".join(d[i].get_text() for i in range(min(2, len(d))))
-        except Exception:
+        except Exception as e:
+            applog(f"[eggpaper] Crossref 回填 {pid} 打不开原文，本次跳过：{type(e).__name__}")
             return
         doi = first_doi(text)
         if not doi:
@@ -112,7 +128,7 @@ def backfill(pid: str, on_update=None):
         if not p.get("citation"):
             have = {k: v for k, v in meta.items() if v}
             if have.get("title") or have.get("authors"):
-                ups["citation"] = json.dumps(meta, ensure_ascii=False)
+                ups["citation"] = db.dumps_cjk(meta)
         if ups:
             db.update_paper(pid, **ups)
             if on_update:

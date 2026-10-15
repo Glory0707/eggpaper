@@ -535,7 +535,7 @@ async function saveToGlobal(term) {
       <div class="rt-pane" v-if="tab !== 'ask'" :key="tab">
             <template v-if="tab === 'skeleton'">
         <div class="reading" v-if="store.analysis.status === 'running'">
-          <div class="r-line">{{ t('正在通读…') }}</div>
+          <div class="r-line">{{ t('通读中…') }}</div>
           <div class="r-bar"><i /></div>
           <div class="blk-prog-line" v-if="store.analysis.progress?.total">
             <span>{{ t('已完成 {n}/{m} 项', { n: store.analysis.progress.done, m: store.analysis.progress.total }) }}</span>

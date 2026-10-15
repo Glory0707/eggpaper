@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref } from 'vue'
 import { api, store, toast } from '../store'
+import { fmtMB } from '../engine'
 import { t } from '../i18n'
 import { modalFocus } from '../modalFocus'
 
@@ -57,7 +58,7 @@ async function openFolder() {
 
 const pct = computed(() => d.value.prog?.pct || 0)
 const state = computed(() => d.value.prog?.state || 'idle')
-const mb = n => (n / 1048576).toFixed(1)
+const mb = n => fmtMB(n, 1)
 </script>
 
 <template>
@@ -65,7 +66,7 @@ const mb = n => (n / 1048576).toFixed(1)
   <div class="modal-mask" v-if="d.show" @click.self="close" ref="maskEl">
     <div class="modal upd">
       <div class="modal-head">
-        <h3>{{ t('有新版本 {v}', { v: d.latest }) }}</h3>
+        <h3>{{ t('有新版（{v}）', { v: d.latest }) }}</h3>
         <button class="modal-x" :title="t('关闭')" @click="close">×</button>
       </div>
 

@@ -79,6 +79,17 @@ function indexOf(root) {
   return idx
 }
 
+/** Range 碎片里取最宽的一条（过滤 <1px 的 Chromium 碎片）。rectsOf 与 DOI/arXiv
+ * 链接层共用：两处原来是逐字相同的循环。 */
+function pickWidest(range) {
+  let best = null
+  for (const box of range.getClientRects()) {
+    if (box.width < 1 || box.height < 1) continue
+    if (!best || box.width > best.width) best = box
+  }
+  return best
+}
+
 /** 命中区间 → 逐行矩形。
  *
  * 不用 range.getClientRects() 一把梭：跨文本节点时 Chromium 会顺带吐几个几像素宽的
@@ -96,11 +107,7 @@ function rectsOf(idx, from, to, base) {
     try {
       r.setStart(node, idx.map[i * 2 + 1])
       r.setEnd(node, idx.map[(j - 1) * 2 + 1] + 1)
-      let best = null
-      for (const box of r.getClientRects()) {
-        if (box.width < 1 || box.height < 1) continue
-        if (!best || box.width > best.width) best = box
-      }
+      const best = pickWidest(r)
       if (best) out.push({ x: best.left - base.left, y: best.top - base.top, w: best.width, h: best.height })
     } catch { /* 边界异常就跳过这一段 */ }
     i = j
@@ -264,11 +271,7 @@ export function findDocLinks(pageEl) {
       try {
         r.setStart(node, h.at)
         r.setEnd(node, h.at + h.len)
-        let best = null
-        for (const box of r.getClientRects()) {
-          if (box.width < 1 || box.height < 1) continue
-          if (!best || box.width > best.width) best = box
-        }
+        const best = pickWidest(r)
         if (best) out.push({ x: best.left - base.left, y: best.top - base.top,
                              w: best.width, h: best.height, url: h.url })
       } catch { /* 边界异常跳过这一处 */ }

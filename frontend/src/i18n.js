@@ -75,7 +75,6 @@ const EN = {
   '松手导入': 'Drop to import',
   '翻译中': 'Translating',
   '正在译{svc}{cur} · 已用 {t}': 'Translating{svc}{cur} · {t} elapsed',
-  '第{p}页': 'pages {p}',
   '刚刚': 'just now',
   '键盘': 'Keyboard',
   '译当前段': 'Translate current paragraph',
@@ -151,7 +150,6 @@ const EN = {
   '解释选区内容。': 'Explain the selected region.',
   '先滚到要译的段落': 'Scroll to a paragraph first',
 
-  '译文已复制': 'Translation copied',
   '钉页边失败：{m}': 'Failed to pin to the margin: {m}',
 
   '没写上：{m}': 'Not saved: {m}',
@@ -168,7 +166,6 @@ const EN = {
   '问题': 'Questions',
   '速览': 'Overview',
   '术语': 'Glossary',
-  '正在通读…': 'Reading…',
   '重试': 'Retry',
   ' · 速览 {n} 张图': ' · {n} figures',
   '读至 ¶{n} / {m}': 'At ¶{n} / {m}',
@@ -321,7 +318,7 @@ const EN = {
   '导入 {n} 篇': 'Import {n}',
   '已导入 {n} 篇，通读中': 'Imported {n} from Zotero — analyzing',
 
-  '连不上 Zotero——先把它打开，再回来点导入': "Can't reach Zotero — open it first, then try again",
+  '连不上 Zotero，先打开它再试': "Can't reach Zotero — open it first, then try again",
   /* 数据对比表 */
   '数据对比 · {n} 篇': 'Comparison · {n} papers',
   '演示': 'Demo',
@@ -436,7 +433,6 @@ const EN = {
   '批注': 'Note',
 
   '新建分类': 'New collection',
-  '有新版本 {v}': 'New version {v}',
   '未找到直接证据段': 'No directly supporting paragraphs found',
   '术语没生成：{m}': 'Glossary generation failed: {m}',
   '检查更新失败：{m}': 'Update check failed: {m}',
@@ -541,10 +537,20 @@ const EN = {
   '导出本月 .md': 'Export month .md',
 
   // ---- 后端消息（静态原文，原样冒到界面上）与零散词条 ----
-  '这份 PDF 没有文字层，析读和提问用不了':
-    'This PDF has no text layer — deep read and ask cannot work',
-  'PDF 不在原来的位置了。把它拖回窗口重新导入，批注不会丢。':
+  '这份 PDF 没有文字层（多半是扫描件），析读和提问用不了':
+    'This PDF has no text layer (likely a scan) — deep read and ask cannot work',
+  '这份 PDF 没有文字层（多半是扫描件），装上 OCR 引擎后重新析读即可':
+    'This PDF has no text layer (likely a scan). Install the OCR engine, then analyze again.',
+  '扫描件文字识别没成功，可能太糊':
+    'Scan recognition failed — the pages may be too blurry',
+  'PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。':
     'The PDF is gone from its original location. Drop it back in — your notes are safe.',
+  // 下两条顺序不能换："等页"那条必须在前——t() 模板按顺序取首个命中的，
+  // 普通形状也会被 '第 {first} 页' 误收（first="3, 5 等"），"等"就漏进英文里了。
+  '这篇原文含扫描件页（第 {first} 等 页），上一版译文是按普通排版译的（原件字影会透出来），这就重新翻译一遍':
+    'Scanned pages ({first} and more) — the old translation used plain layout (text may show through). Retranslating now.',
+  '这篇原文含扫描件页（第 {first} 页），上一版译文是按普通排版译的（原件字影会透出来），这就重新翻译一遍':
+    'Scanned pages ({first}) — the old translation used plain layout (text may show through). Retranslating now.',
   '读取中…': 'Loading…',
 
   // ---- 数据对比（标准维度 / 自定义列，同一入口） ----

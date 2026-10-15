@@ -12,7 +12,9 @@ import config
 # 连接复用：每次 httpx.post 都要重新 TCP+TLS 握手（走代理时上百毫秒），
 # 析读一条管线 8+ 次调用全在白付这笔钱。模块级 Client 只管连接池，鉴权在每次请求头里，
 # 换 key/base_url 不用重建。线程安全是 httpx.Client 的合同内行为。
-_http = httpx.Client(timeout=httpx.Timeout(600, connect=20),
+LLM_TIMEOUT = httpx.Timeout(600, connect=20)
+RETRY_DELAY_S = 1.5  # 429/5xx/传输抖动的短退避：三处重试共用，改时一起改
+_http = httpx.Client(timeout=LLM_TIMEOUT,
                      limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
 
 _SENT_ENDS = (". ", "。", ".\n", "! ", "? ", "！","？")
@@ -111,7 +113,7 @@ def chat(messages: list, max_tokens: int = 4000, temperature: float = 0.2,
             if r.status_code == 429:
                 # 429 是唯一必然瞬时的错误：短退避后重试，别把限流直接砸给用户
                 last_err = RuntimeError("模型服务限流了（429），等一会儿再试")
-                time.sleep(1.5)
+                time.sleep(RETRY_DELAY_S)
                 continue
             if r.status_code == 400 and budget > 2048 and \
                     "max_tokens" in (r.text or ""):
@@ -176,7 +178,7 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
                 with _http.stream(
                     "POST", f"{cfg['provider']['base_url'].rstrip('/')}/chat/completions",
                     headers={"Authorization": f"Bearer {cfg['provider']['api_key']}"},
-                    json=payload, timeout=httpx.Timeout(600, connect=20),
+                    json=payload, timeout=LLM_TIMEOUT,
                 ) as r:
                     if with_usage and r.status_code == 400 and \
                             "stream_options" in r.read().decode("utf-8", "replace"):
@@ -186,7 +188,7 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
                             f"模型服务暂时不可用（HTTP {r.status_code}），稍后再试")
                         if not retried and not emitted:
                             retried = True
-                            time.sleep(1.5)
+                            time.sleep(RETRY_DELAY_S)
                             continue
                         raise last_err
                     r.raise_for_status()
@@ -224,7 +226,7 @@ def chat_stream(messages: list, max_tokens: int = 6000, temperature: float = 0.3
                 last_err = e
                 if not retried and not emitted:
                     retried = True
-                    time.sleep(1.5)
+                    time.sleep(RETRY_DELAY_S)
                     continue
                 raise
     if last_err is not None and not emitted:

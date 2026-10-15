@@ -70,6 +70,7 @@ def pinned_version() -> str:
 _MIRRORS = ("https://gh-proxy.com/", "https://gh-proxy.org/", "https://ghfast.top/")
 _MIN_SPEED = 64 * 1024      # 停滞判据：开下 12 秒平均不足 64KB/s 判这个源死刑
 _SPEED_WINDOW = 12          # （连续无数据的兜底交给 httpx 的 30s 读超时）
+_GH_TIMEOUT = httpx.Timeout(30, connect=15)  # 镜像站取包超时：三处下载共用
 
 _lock = threading.Lock()
 _prog = {"state": "idle", "pct": 0, "got": 0, "total": 0, "error": "", "url": "", "path": "",
@@ -500,7 +501,7 @@ def _download_one(url: str, zpath: str) -> str:
     part = zpath + ".part"
     try:
         with httpx.stream("GET", url, headers={"Range": "bytes=0-0"},
-                          follow_redirects=True, timeout=httpx.Timeout(30, connect=15)) as r:
+                          follow_redirects=True, timeout=_GH_TIMEOUT) as r:
             if r.status_code == 206 and (r.headers.get("content-range") or "").startswith("bytes"):
                 cr = r.headers["content-range"]          # bytes 0-0/总长
                 total = int(cr.split("/")[-1])
@@ -518,7 +519,7 @@ def _download_single(url: str, part: str, done: str) -> str:
         headers["Range"] = f"bytes={have}-"
     try:
         with httpx.stream("GET", url, headers=headers, follow_redirects=True,
-                          timeout=httpx.Timeout(30, connect=15)) as r:
+                          timeout=_GH_TIMEOUT) as r:
             if r.status_code == 206 and have:
                 got = have
                 append = True
@@ -607,7 +608,7 @@ def _download_parallel(url: str, zpath: str, total: int) -> str:
             return                                   # 这段早就下完了
         try:
             with httpx.stream("GET", url, headers={"Range": f"bytes={begin + have}-{end}"},
-                              follow_redirects=True, timeout=httpx.Timeout(30, connect=15)) as r:
+                              follow_redirects=True, timeout=_GH_TIMEOUT) as r:
                 if r.status_code != 206:
                     errs.append(f"段{i}：服务器不回 206")
                     return

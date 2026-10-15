@@ -25,9 +25,10 @@ async function req(method, url, body) {
    paper+paragraphs（后者可达数 MB），纯重复传输；1.2s 过后自动失效，
    不影响轮询类调用的时效。 */
 const _recent = new Map()
+const RECENT_MS = 1200   // 1.2s 内的同键请求直接复用在途 Promise，不影响轮询类调用的时效
 function onceGet(key, fn) {
   const hit = _recent.get(key)
-  if (hit && Date.now() - hit.at < 1200) return hit.p
+  if (hit && Date.now() - hit.at < RECENT_MS) return hit.p
   const p = fn()
   _recent.set(key, { p, at: Date.now() })
   p.catch(() => {}).finally(() => { const h = _recent.get(key); if (h?.p === p) _recent.delete(key) })

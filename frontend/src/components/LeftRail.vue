@@ -467,12 +467,12 @@ function onCmpGoto(c) {
                 @click.stop="openMenu(p, $event)">+</button>
         <div class="fn" v-if="pEditId !== p.id" :title="paperName(p)"
              @dblclick="startEdit(p)">{{ paperName(p) }}</div>
-        <div class="p-author" v-if="p.authors || p.year">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
+        <div class="p-author" v-if="p.authors || p.year" :title="((p.authors || '') + ((p.authors && p.year) ? ' · ' : '') + (p.year || ''))">{{ p.authors }}<template v-if="p.authors && p.year"> · </template>{{ p.year }}</div>
         <div class="p-hit" v-if="hitOf(p.id)" :title="`${t(WHERE_KEYS[hitOf(p.id).where])} · ${t('{n} 处', { n: hitOf(p.id).n })}\n${hitOf(p.id).snippet}`">
           <b>{{ t(WHERE_KEYS[hitOf(p.id).where]) }}</b>{{ hitOf(p.id).snippet }}
         </div>
                 <div class="p-state" v-if="p.analysis_status === 'queued'">{{ t('排队通读中…') }}</div>
-        <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('正在通读…') }}</div>
+        <div class="p-state busy" v-else-if="p.analysis_status === 'running'">{{ t('通读中…') }}</div>
         <div class="p-state" v-else-if="p.analysis_status === 'error'">{{ t('通读失败') }}</div>
 
       </div>
@@ -514,7 +514,7 @@ function onCmpGoto(c) {
       <div class="coll-menu sel-coll" v-if="selMenu" @click.stop>
         <div class="cm-head">{{ t('归入分类 · {n} 篇', { n: selN }) }}</div>
         <button v-for="c in colls" :key="c.id" class="cm-row cm-act" @click="selAddColl(c.id)">
-          <span class="cm-name">{{ c.name }}</span>
+          <span class="cm-name" :title="c.name">{{ c.name }}</span>
           <svg v-if="selCollAll(c.id)" viewBox="0 0 12 12" width="11" height="11"><path d="M2 6.2 4.8 9 10 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <button class="cm-row cm-act cm-uncat" @click="selToUncategorized">{{ t('未分类') }}</button>

@@ -136,7 +136,7 @@ def list_items() -> list:
                     "pdf": pdf_of.get(it.get("key"), ""),
                 })
     except (httpx.ConnectError, httpx.ConnectTimeout):
-        raise ZoteroUnavailable("连不上 Zotero——先把它打开，再回来点导入")
+        raise ZoteroUnavailable("连不上 Zotero，先打开它再试")
     except httpx.HTTPError as e:
         raise ZoteroUnavailable(f"Zotero 的本地接口出了问题：{e}")
     rows.sort(key=lambda r: (-(int(r["year"] or 0)), r["title"].lower()))

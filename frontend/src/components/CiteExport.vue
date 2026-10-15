@@ -89,7 +89,7 @@ async function doExport() {
                    :class="{ on: picked.has(f.k) }" @click.prevent="flip(f.k)">
               <input type="checkbox" :checked="picked.has(f.k)" @change="flip(f.k)" />
               <span class="c-fmt">{{ t(f.zh) }}</span>
-              <span class="c-ex">{{ f.ex }}</span>
+              <span class="c-ex" :title="f.ex">{{ f.ex }}</span>
             </label>
           </div>
         </div>

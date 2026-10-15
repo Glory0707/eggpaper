@@ -1,4 +1,4 @@
-import { reactive, watch, computed } from 'vue'
+import { nextTick, reactive, watch, computed } from 'vue'
 import { api, kindZH } from './api'
 import { t, ui } from './i18n'
 import { lsGet, lsSet } from './ls'
@@ -6,6 +6,23 @@ import { lsGet, lsSet } from './ls'
 /* 只转出组件真的会 import 的那些；页边卡的颜色/笔触统一在 styles.css，不经这里。 */
 export { api, askStream, askContinueStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindZH } from './api'
 export { lsGet, lsSet, lsRemove } from './ls'
+
+/* 译文/双语 PDF 的 pdf.js 文档缓存（键 `${pid}:orig|mono|dual`）。放在 store 而不是
+   PdfViewer 内部：译文一旦在盘上被重写（重新全文翻译、换服务/术语后再译），**任何**看过这篇
+   的窗格都可能攥着一份旧文档——文档 URL 是固定的 `/pdf?variant=mono`，pdf.js 拿到解析结果
+   就不再回盘取。2026-10-14 用户反馈"点重新翻译、完成后还是有重影"就是它：盘上成品已经是新译
+   的白底版，屏幕上还是旧的那一版（真浏览器实测：重译完成时前端连一次 PDF 请求都没再发）。
+   重译完成那一拍由 App 调 dropPaperDocs(pid) 作废；正在显示这篇译文/双语的窗格再自行重取。 */
+export const docCache = new Map()
+export function dropPaperDocs(pid) {
+  for (const kind of ['mono', 'dual']) {
+    const k = `${pid}:${kind}`
+    const e = docCache.get(k)
+    if (!e) continue
+    try { e.doc.destroy() } catch { /* 已经销毁的不碍事 */ }
+    docCache.delete(k)
+  }
+}
 
 
 const _clamp = (v, lo, hi, d) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d)
@@ -82,6 +99,13 @@ export function toast(msg, ms = 2600) {
   store.toastN++
   clearTimeout(toast._t)
   toast._t = setTimeout(() => (store.toast = ''), ms)
+}
+
+/* 下一帧聚焦（不抢滚动）：四处"切页签/关浮层后把焦点还给输入框"共用。
+   聚焦一律 preventScroll（visual §16：默认 focus 会把书桌滚到底冲掉落位）。
+   传取值函数不传值：v-if 的输入框在调用那一拍还没挂载，值必须在 tick 里再取。 */
+export function focusSoon(getEl) {
+  nextTick(() => (typeof getEl === 'function' ? getEl() : getEl)?.focus({ preventScroll: true }))
 }
 
 /* 纯英文模式不带翻译模块：变体永远停在原文。存过的偏好不改（回中文还在），

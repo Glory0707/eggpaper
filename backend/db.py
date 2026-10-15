@@ -219,6 +219,10 @@ def _safe_json(raw, fallback):
     except (ValueError, TypeError):
         return fallback
 
+def dumps_cjk(obj) -> str:
+    """写侧 JSON 唯一口径：中文直写（ensure_ascii=False），读侧 _safe_json 接。"""
+    return json.dumps(obj, ensure_ascii=False)
+
 # ---------- papers ----------
 
 def create_paper(pid: str, filename: str, title: str, path: str, n_pages: int, authors: str = "") -> str:
@@ -353,9 +357,9 @@ def search_content(kw: str, limit: int = 30):
             elif raw:
                 out[r["paper_id"]] = {"where": where, "n": 1, "snippet": _snippet(raw, kw)}
 
-    add(q("SELECT id AS paper_id, summary AS text FROM papers WHERE summary LIKE ? ESCAPE '\\'", (pat,)), "glance", True)
-    add(q("SELECT paper_id, json AS text FROM answers WHERE json LIKE ? ESCAPE '\\'", (pat,)), "seven", True)
-    add(q("SELECT paper_id, text FROM claims WHERE text LIKE ? ESCAPE '\\'", (pat,)), "claims")
+    add(q("SELECT id AS paper_id, summary AS text FROM papers WHERE summary LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "glance", True)
+    add(q("SELECT paper_id, json AS text FROM answers WHERE json LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "seven", True)
+    add(q("SELECT paper_id, text FROM claims WHERE text LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "claims")
     add(q("SELECT paper_id, content AS text FROM qa_messages WHERE content LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "qa")
     add(q("SELECT paper_id, text FROM paragraphs WHERE text LIKE ? ESCAPE '\\' LIMIT 400", (pat,)), "body")
     if not out:
@@ -503,7 +507,7 @@ def answers_clear(pid: str):
 
 def answer_put(pid: str, key: str, data):
     q("INSERT OR REPLACE INTO answers(paper_id, key, json) VALUES(?,?,?)",
-      (pid, key, json.dumps(data, ensure_ascii=False)), commit=True)
+      (pid, key, dumps_cjk(data)), commit=True)
 
 # ---------- 文库分类（Zotero 的 collection 语义：一篇可属于多类） ----------
 
@@ -785,7 +789,7 @@ def migrate_anchors(pid: str, old_rows: list, new_paras: list, replace: bool = T
             stats["pins"] += 1
         # ④ 文字里的 ¶n：回答、对话、摘要、卡片（JSON 里的字符串逐个改写）
         for key, raw in c.execute("SELECT key, json FROM answers WHERE paper_id=?", (pid,)).fetchall():
-            new = json.dumps(_remap_json_refs(_safe_json(raw, None), mapping), ensure_ascii=False)
+            new = dumps_cjk(_remap_json_refs(_safe_json(raw, None), mapping))
             if new != raw:
                 stats["refs"] += 1
                 c.execute("UPDATE answers SET json=? WHERE paper_id=? AND key=?", (new, pid, key))
@@ -810,7 +814,7 @@ def migrate_anchors(pid: str, old_rows: list, new_paras: list, replace: bool = T
                         if new != cur[k]:
                             upd[k] = new
                     else:
-                        s = json.dumps(new, ensure_ascii=False)
+                        s = dumps_cjk(new)
                         if s != cur[k]:
                             upd[k] = s
             if upd:
@@ -912,7 +916,7 @@ def fig_caps_add(pid: str, entries: dict):
             cur = {}
         cur.update(entries)
         c.execute("UPDATE papers SET fig_caps=? WHERE id=?",
-                  (json.dumps(cur, ensure_ascii=False), pid))
+                  (dumps_cjk(cur), pid))
         c.commit()
 
 def fail_analysis(pid: str, error: str):
@@ -1013,7 +1017,7 @@ def merge_abbrs(pid: str, abbrs: dict) -> int:
             if k and v and k not in cur:
                 cur[k], added = v, added + 1
         if added:
-            c.execute("UPDATE papers SET abbrs=? WHERE id=?", (json.dumps(cur, ensure_ascii=False), pid))
+            c.execute("UPDATE papers SET abbrs=? WHERE id=?", (dumps_cjk(cur), pid))
             c.commit()
     return added
 
@@ -1084,7 +1088,7 @@ def cite_ctx_all(pid: str) -> dict:
 
 def cite_ctx_put(pid: str, citing_id: str, hits):
     q("INSERT OR REPLACE INTO cite_ctx(paper_id, citing_id, hits) VALUES(?,?,?)",
-      (pid, citing_id, json.dumps(hits, ensure_ascii=False)), commit=True)
+      (pid, citing_id, dumps_cjk(hits)), commit=True)
 
 # ---------- QA ----------
 

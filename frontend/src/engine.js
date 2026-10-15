@@ -102,4 +102,4 @@ export async function startEngineInstall() {
   watchEngine()
 }
 
-export function fmtMB(n) { return ((n || 0) / 1048576).toFixed(0) }
+export function fmtMB(n, digits = 0) { return ((n || 0) / 1048576).toFixed(digits) }
