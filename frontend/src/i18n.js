@@ -543,8 +543,8 @@ const EN = {
     'This PDF has no text layer (likely a scan). Install the OCR engine, then analyze again.',
   '扫描件文字识别没成功，可能太糊':
     'Scan recognition failed — the pages may be too blurry',
-  'PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。':
-    'The PDF is gone from its original location. Drop it back in — your notes are safe.',
+  'PDF 不在原位了，拖回窗口重新导入即可，批注不会丢。':
+    'The PDF is not where it was. Drop it back in — your notes are safe.',
   // 下两条顺序不能换："等页"那条必须在前——t() 模板按顺序取首个命中的，
   // 普通形状也会被 '第 {first} 页' 误收（first="3, 5 等"），"等"就漏进英文里了。
   '这篇含扫描件页（第 {first} 等 页），旧译按普通排版做的，这就重新翻译':

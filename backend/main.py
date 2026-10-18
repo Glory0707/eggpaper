@@ -1623,7 +1623,7 @@ def library_version():
     return {"v": f"{n}:{mx}"}
 
 NO_TEXT = "这份 PDF 没有文字层（多半是扫描件），析读和提问用不了"
-PDF_GONE = "PDF 不在原来的位置了。把它拖回窗口重新导入即可，批注不会丢。"
+PDF_GONE = "PDF 不在原位了，拖回窗口重新导入即可，批注不会丢。"
 
 def _require_paras(pid: str) -> None:
     """扫描件没有文字层：让它过一个"请求模型、等半天、返回胡话"的流程是最坏的选择，
