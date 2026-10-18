@@ -14,9 +14,14 @@ GROUP_ZH = {"ref": "参考文献条目", "short": "短引用（PPT / 图注）",
 def _s(v) -> str:
     return str(v or "").strip()
 
+# 各种横线一族（页码/编号里混排的真实形态）：ASCII 连字符 + U+2010..U+2015（连字符与
+# 长短破折号）+ 减号 U+2212。_dash 按目标格式替换、ris 按它切起止页、_flat 归一成
+# ASCII——同族必须一处定义，三处各写一份迟早漂开
+_DASH = r"-\u2010-\u2015\u2212"
+
 def _dash(s: str, d: str) -> str:
     """页码里的连字符统一成该格式要的那个（APA/Nature 用 en dash，BibTeX 用 --）。"""
-    return re.sub(r"\s*[-\u2010-\u2015\u2212]+\s*", d, _s(s))
+    return re.sub(rf"\s*[{_DASH}]+\s*", d, _s(s))
 
 def _flat(s: str) -> str:
     """比对用的归一形：去空白、各种横线统一成 -、变小写。
@@ -24,7 +29,7 @@ def _flat(s: str) -> str:
     能容忍换行（"6789–" / "6795" 跨行）、全角空格、不同字号的连字符——
     这些都不该算"源文里没有"。
     """
-    s = re.sub(r"[\u2010-\u2015\u2212]", "-", _s(s))
+    s = re.sub(rf"[{_DASH}]", "-", _s(s))
     return re.sub(r"[\s\u00a0\u2009]+", "", s).lower()
 
 def _authors(meta: dict) -> list:
@@ -215,7 +220,7 @@ def ris(meta: dict) -> str:
     aus = _authors(meta)
     pg = _s(meta.get("pages"))
     pp = _preprint_id(meta)
-    m = re.split(r"\s*[-\u2010-\u2015\u2212]+\s*", pg, maxsplit=1)
+    m = re.split(rf"\s*[{_DASH}]+\s*", pg, maxsplit=1)
     rows = [("TY", "JOUR")]
     rows += [("AU", f"{a['family']}, {a['given']}".rstrip(", ")) for a in aus]
     rows += [("TI", _s(meta.get("title"))), ("JO", _venue(meta)),

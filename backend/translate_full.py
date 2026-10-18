@@ -665,8 +665,8 @@ def product_pipe_reason(out_dir: str, src_path: str, mono=(), dual=()) -> str:
     pages = ", ".join(str(p + 1) for p in scanned[:6])
     if len(scanned) > 6:
         return _PIPE_STALE_NOTE_MANY.format(first=pages)
-    # 发给用户的那句原因：模板留 {first} 槽位给前端 en 词典做模式匹配（见 i18n 的同键），
-    # 中文输出与原来逐字相同。
+    # 发给用户的那句原因：模板留 {first} 槽位给前端 en 词典做模式匹配（见 i18n 的同键，
+    # 中文键与本常量保持一致）。
     return _PIPE_STALE_NOTE.format(first=pages)
 
 # ---------------- 全文翻译：按页流水线 ----------------
@@ -689,13 +689,11 @@ PAGE_TIMEOUT = 150
 # 1 = 0.1.2 之前；2 = 扫描件走 OCR 排版（--ocr-workaround）之后。
 PIPE_VERSION = 2
 # 旧口径成品不认领时发给用户的那句原因：{first} 是扫描件页号（"3, 5"）。
-# 中文输出与旧 f-string 逐字相同；{first} 槽位供前端 en 词典做模板匹配。
-# 超过 6 页时页号后跟"等"（"第 3, 5 等 页"），与"第 3, 5 页"形状不同——各用一个模板，
-# 前端才能用两个单键分别匹配（一个模板的 ' 页' 字面量对不上 ' 等 页'）。
-_PIPE_STALE_NOTE = ("这篇原文含扫描件页（第 {first} 页），上一版译文是按普通排版译的"
-                    "（原件字影会透出来），这就重新翻译一遍")
-_PIPE_STALE_NOTE_MANY = ("这篇原文含扫描件页（第 {first} 等 页），上一版译文是按普通排版译的"
-                         "（原件字影会透出来），这就重新翻译一遍")
+# {first} 槽位供前端 en 词典做模板匹配。超过 6 页时页号后跟"等"（"第 3, 5 等 页"），
+# 与"第 3, 5 页"形状不同——各用一个模板，且"等"那条在词典里必须排在前面
+# （t() 按顺序取首个命中，顺序反了 "3, 5 等" 的"等"会漏进英文里）。
+_PIPE_STALE_NOTE = "这篇含扫描件页（第 {first} 页），旧译按普通排版做的，这就重新翻译"
+_PIPE_STALE_NOTE_MANY = "这篇含扫描件页（第 {first} 等 页），旧译按普通排版做的，这就重新翻译"
 PAGE_TRIES = 2
 BATCH_PAGES = 8          # 免费服务一次 pdf2zh 进程译几页。2.x 单进程冷启动 ~15-35s（1.9 约 3s），
                          # 批太小全是纯开销；批内坏页仍拆单页兜底，复用粒度退到"批"但产物按页认
@@ -800,37 +798,71 @@ def _page_done(pdir: str, stem: str):
 def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
     """双语版 = 原文奇页 + 译文偶页交错。盘上只留译文版（省盘：双语是它的两倍大），
     用户第一次点「双语」时才合成并缓存。失败页（译文就是原文那页）交错出来天然是两页原文，
-    与"奇原文偶译文"的页码关系一致。"""
+    与"奇原文偶译文"的页码关系一致。
+
+    合成姿势 2026-10-18 换过（合成件 240+240 页 → 480 输出页实测）：页数相等（正常件）
+    整本各插一次、再 select 一次交错，构造 0.35~0.75s；旧写法逐页 insert_pdf 构造
+    0.55~2.5s。差距大头在保存：逐页插把每页引用的对象各复制一份，garbage=4 去重全堆进
+    save（旧写法 save 1.8~15.6s，新写法 0.8~4.5s；两个数都随内容重复度与进程状态大幅
+    浮动，复测口径见手记；译文页与原页大面积逐页重复的极端件去重面更大，新写法反而不如
+    旧写法——真实件只有失败页重复，占比低）。代价：产物体积大 5% 上下。页数不齐的异常件
+    沿用旧逐页口径：select 交错表里同一页会出现两次，页树重复引用同一页对象不合规范；
+    正常件一页一引用。"""
     import pymupdf
     src = pymupdf.open(pdf_path)
     mono = pymupdf.open(mono_path)
     dual = pymupdf.open()
     try:
-        for i in range(max(len(src), len(mono))):
-            dual.insert_pdf(src, from_page=min(i, len(src) - 1), to_page=min(i, len(src) - 1))
-            if i < len(mono):
-                dual.insert_pdf(mono, from_page=i, to_page=i)
-            else:
-                dual.insert_pdf(src, from_page=min(i, len(src) - 1), to_page=min(i, len(src) - 1))
+        ns, nm = len(src), len(mono)
+        if ns == nm:
+            dual.insert_pdf(src, from_page=0, to_page=ns - 1)
+            dual.insert_pdf(mono, from_page=0, to_page=nm - 1)
+            # 交错序号：整本 doc 里 src 页 i 的索引=i、mono 页 i 的索引=len(src)+i
+            dual.select([x for i in range(ns) for x in (i, ns + i)])
+        else:
+            # 页数不齐只在异常产物上见得到：沿用旧逐页口径（mono 缺页时 src 页重复两次）
+            for i in range(max(ns, nm)):
+                page = min(i, ns - 1)
+                dual.insert_pdf(src, from_page=page, to_page=page)
+                if i < nm:
+                    dual.insert_pdf(mono, from_page=i, to_page=i)
+                else:
+                    dual.insert_pdf(src, from_page=page, to_page=page)
         # 半截产物一旦被当成品服务就固化了：先落临时名再原子换名
-        dual.save(dual_path + ".part", garbage=4, deflate=True)
-        os.replace(dual_path + ".part", dual_path)
+        # compression_effort=0：真库 4 篇（4~24 页）实测同派生 0.04~0.15s → 0.02~0.12s，
+        # 体积与页内文本都逐位一致；低配机首开双语直接省这笔 CPU（派生的机器就是
+        # 用户自己的机器）。g3/g1 体积放大 2.3~3.8 倍、use_objstms 反而慢 3~4 倍，
+        # 都实测过不要。
+        part = dual_path + ".part"
+        try:
+            dual.save(part, garbage=4, deflate=True, compression_effort=0)
+            os.replace(part, dual_path)
+        except Exception:
+            fsutil.rm_quiet(part)    # 写失败（磁盘满/被杀）别把半截 .part 留在盘上冒充缓存
+            raise
     finally:
         src.close(); mono.close(); dual.close()
     return dual_path
 
 def derive_mono(dual_path: str, mono_path: str) -> str:
-    """旧版存量只有双语版时，抽偶数页（0 基 2i+1）合成译文版。"""
+    """旧版存量只有双语版时，抽偶数页（0 基 2i+1）合成译文版。
+
+    select 一次收口（2026-10-18 实测 480 页双开件抽 240 页：0.04s vs 逐页插入
+    0.44s，产物同体积、页内文本逐页一致；逐页插入的慢在 save 的去重，同 derive_dual 注）。"""
     import pymupdf
     dual = pymupdf.open(dual_path)
-    mono = pymupdf.open()
     try:
-        for i in range(1, len(dual), 2):
-            mono.insert_pdf(dual, from_page=i, to_page=i)
-        mono.save(mono_path + ".part", garbage=4, deflate=True)
-        os.replace(mono_path + ".part", mono_path)
+        dual.select(list(range(1, len(dual), 2)))
+        # derive_mono 同口径：compression_effort=0（实测同体积同文本、更快；见 derive_dual 注）
+        part = mono_path + ".part"
+        try:
+            dual.save(part, garbage=4, deflate=True, compression_effort=0)
+            os.replace(part, mono_path)
+        except Exception:
+            fsutil.rm_quiet(part)
+            raise
     finally:
-        dual.close(); mono.close()
+        dual.close()
     return mono_path
 
 def sweep_page_dirs(papers_root: str, max_age: float = 48 * 3600):
@@ -1047,7 +1079,8 @@ def _assemble(out_dir: str, pdf_path: str, n: int, results: dict, mono_name: str
             j.update(status="none", error="")   # 组装途中删了篇/点了停止：别把成品写进已删的目录
             return "", []
         # 原子落盘：半截的成品不该被任何人读到（认领/GET 都看 %%EOF，临时名不冒充成品）
-        mono.save(mono_path + ".part", garbage=4, deflate=True)
+        # compression_effort=0 同 derive_dual 口径：实测同体积同文本、更快（见 derive_dual 注）
+        mono.save(mono_path + ".part", garbage=4, deflate=True, compression_effort=0)
         for _try in range(3):
             try:
                 os.replace(mono_path + ".part", mono_path)

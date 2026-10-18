@@ -286,7 +286,12 @@ def _migrate_paper_layout():
     if moved:
         _applog(f"数据目录迁移：{moved} 个文件归位到 papers/<论文 id>/ 每篇一个文件夹")
 
-_INNER_SUFFIX = (("path", ""), ("mono_path", "（译文）"), ("dual_path", "（双语）"))
+# 成品（译文/双语）文件名的中缀只在这一处写字面量：_INNER_SUFFIX 认名/改名、
+# _variant_names 拼名，差一个字就认不出自家刚写出的成品
+_MONO_SUFFIX = "（译文）"
+_DUAL_SUFFIX = "（双语）"
+
+_INNER_SUFFIX = (("path", ""), ("mono_path", _MONO_SUFFIX), ("dual_path", _DUAL_SUFFIX))
 
 def _variant_names(base: str) -> tuple:
     """两个成品文件名（含扩展名、不含目录）：(译文, 双语)——中缀与 _INNER_SUFFIX 同源。
@@ -296,7 +301,7 @@ def _variant_names(base: str) -> tuple:
     """
     if not base:
         return "", ""
-    return f"{base}（译文）.pdf", f"{base}（双语）.pdf"
+    return f"{base}{_MONO_SUFFIX}.pdf", f"{base}{_DUAL_SUFFIX}.pdf"
 
 def _late_align(pid: str):
     """当场没对齐成的（刚导入的 PDF 被杀软攥几秒是常态）交给后台保洁追平：
@@ -1895,7 +1900,7 @@ def paper_pdf(pid: str, variant: str = "original"):
     if variant == "dual":
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
-            return FileResponse(dual, media_type="application/pdf")
+            return _pdf_or_404(dual, "双语版尚未生成")   # 也走 _SafeFile：删除/换版本抢在发送前删掉文件时降级 404，别裸 500
         mono = p.get("mono_path") or os.path.join(paper_dir(pid), mono_name)
         src = _paper_src(pid, p)
         if (mono and os.path.exists(mono) and src and os.path.exists(src)):
@@ -1916,7 +1921,7 @@ def paper_pdf(pid: str, variant: str = "original"):
             p = _sync_translate_from_job(pid, p, translate_full.job(pid))
             mono = p.get("mono_path") or ""
         if mono and os.path.exists(mono):
-            return FileResponse(mono, media_type="application/pdf")
+            return _pdf_or_404(mono, "译文版尚未生成")   # 同上：快路径也要 _SafeFile 的竞态降级
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
             with _key_lock("variant:" + pid + ":mono"):
@@ -3155,18 +3160,25 @@ def _csv_response(body: str) -> Response:
     return Response(content=body, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=eggpaper-terms.csv"})
 
-@app.get("/api/papers/{pid}/glossary/export.csv")
-def glossary_export(pid: str):
-    _paper_or_404(pid)
+def _csv_buf(header: list, rows) -> str:
+    """CSV 导出共用管线：BOM + 表头 + 逐格公式注入防护。返回完整文本，响应壳交给
+    _csv_response。两个词表导出端点原来各自抄了一份组装代码，改口径要改两处、
+    漏一处就是两种行为——收在这里一处说话。"""
     import csv
     import io
     buf = io.StringIO()
     buf.write("\ufeff")     # UTF-8 BOM：Excel 打开中文不乱码
     w = csv.writer(buf)
-    w.writerow(["term_en", "term_zh", "source"])
-    for r in db.glossary_list(pid):
-        w.writerow([_csv_cell(r["term_en"]), _csv_cell(r["term_zh"]), _csv_cell(r["source"])])
-    return _csv_response(buf.getvalue())
+    w.writerow(header)
+    for row in rows:
+        w.writerow([_csv_cell(c) for c in row])
+    return buf.getvalue()
+
+@app.get("/api/papers/{pid}/glossary/export.csv")
+def glossary_export(pid: str):
+    _paper_or_404(pid)
+    rows = [(r["term_en"], r["term_zh"], r["source"]) for r in db.glossary_list(pid)]
+    return _csv_response(_csv_buf(["term_en", "term_zh", "source"], rows))
 
 # ---------------- 图表速览 ----------------
 
@@ -3457,6 +3469,7 @@ _fig_cache = {}
 _fig_inflight = {}
 _fig_fail: dict = {}          # (src,mtime) -> {"at": ts, "msg": 人话}：坏 PDF 的负缓存
 _FIG_FAIL_TTL = 300           # 5 分钟内不重扫：图表扫描是整本 O(n²) 邻行匹配，坏 PDF 每次都重跑纯属烧 CPU
+_fig_png_cache: dict = {}     # (src,mtime,page,裁剪框,dpi) -> 渲染好的 PNG 字节（重复取图不重光栅化）
 
 def _figures_for(pid: str, p: dict) -> list:
     """这篇论文的图表区域列表（内存缓存按"路径+mtime"记账，画一次到处用）。
@@ -3587,13 +3600,28 @@ def figure_png(pid: str, page: int, x0: float, y0: float, x1: float, y1: float, 
         if not all(math.isfinite(c) for c in coords):
             raise HTTPException(400, "截图坐标不合法")
         clip = pymupdf.Rect(x0, y0, x1, y1) & doc[page].rect
+        # 先与页面求交：不与页面相交的超大 clip 会按 dpi 放大成巨幅像素请求，直接打爆内存
         if clip.is_empty or clip.width < 4 or clip.height < 4:
             raise HTTPException(400, "截图范围太小")
-        # 不与页面求交的超大 clip 会按 dpi 放大成巨幅像素请求，直接打爆内存
+        # 同一张图的请求会重复（概览卡出图、灯箱放大、面板重排后又取一遍）：整页 get_pixmap
+        # 是几十~上百毫秒的活，按 文件+mtime+页+裁剪框+dpi 缓存住，重复请求直接回字节。
+        # mtime 进键：重新导入/重译换了盘上文件就自动是新图，不会命中旧渲染。
+        try:
+            mtime = os.path.getmtime(src)
+        except OSError:
+            mtime = 0
+        ck = (src, mtime, page, round(clip.x0, 1), round(clip.y0, 1),
+              round(clip.x1, 1), round(clip.y1, 1), dpi)
+        hit = _fig_png_cache.get(ck)
+        if hit is not None:
+            return Response(content=hit, media_type="image/png")
         pix = doc[page].get_pixmap(clip=clip, dpi=dpi)
-        return Response(content=pix.tobytes("png"), media_type="image/png")
+        png = pix.tobytes("png")
     finally:
         doc.close()
+    _fig_png_cache[ck] = png
+    fsutil.cap_oldest(_fig_png_cache, 32)   # 每张几十~数百 KB，封顶 32 张（够一屏概览 + 灯箱往复）
+    return Response(content=png, media_type="image/png")
 
 # ---------------- 问答（流式 + 多会话） ----------------
 
@@ -4493,24 +4521,12 @@ def glossary_global_delete(gid: int):
 @app.get("/api/glossary-global/export.csv")
 def glossary_global_csv():
     """学科库导出：与单篇词表同一套 CSV 口径（同样的公式注入防护）。"""
-    import csv
-    import io
-    buf = io.StringIO()
-    buf.write("\ufeff")     # UTF-8 BOM：Excel 打开中文不乱码
-    w = csv.writer(buf)
-    w.writerow(["term_en", "term_zh"])
-    for r in db.glossary_global_list():
-        w.writerow([_csv_cell(r["term_en"]), _csv_cell(r["term_zh"])])
-    return _csv_response(buf.getvalue())
+    rows = [(r["term_en"], r["term_zh"]) for r in db.glossary_global_list()]
+    return _csv_response(_csv_buf(["term_en", "term_zh"], rows))
 
 # ---------------- 库内互引（scite 式）：库里谁引了这篇、引的哪句、什么立场 ----------------
 
 _CITE_STANCE_ZH = {"support": "支持", "contrast": "质疑", "mention": "提及"}
-
-def _norm_title_same(a: str, b: str) -> bool:
-    """归一化标题相同（找同篇多版本用）：空/过短的标题不判同，免得两篇短名论文互伤。"""
-    na, nb = db._norm_title(a or ""), db._norm_title(b or "")
-    return len(na) >= 8 and na == nb
 
 def _sentence_around(text: str, at: int, span: int = 220) -> str:
     """命中位置 → 完整句子（前后扩到句界）。找不到句界就按窗口切。"""
@@ -4556,19 +4572,26 @@ def _citedby_scan(p: dict) -> list:
     rows = db.q(f"SELECT paper_id, idx, page, text FROM paragraphs "
                 f"WHERE in_refs=0 AND paper_id != ? AND ({' OR '.join(like_clauses)})",
                 (p["id"], *like_params))
-    # 同一篇的另一版本（导入时选了"两篇都保留"）标题归一化相同，会把对方当引用——排除
-    twins = {r["id"] for r in db.q("SELECT id, title FROM papers")
-             if _norm_title_same(r["title"], title)} - {p["id"]}
+    # 同一篇的另一版本（导入时选了"两篇都保留"）标题归一化相同，会把对方当引用——排除。
+    # 目标标题的归一化只算一遍（与 db.find_same_title 同款）：原来每个候选都拿它重算两遍
+    t_norm = db._norm_title(title)
+    # 阈值与 db.find_same_title 同款（归一化太短的标题不判同篇）；判据与行无关，提到查询外
+    twins = set()
+    if len(t_norm) >= 8:
+        twins = {r["id"] for r in db.q("SELECT id, title FROM papers")
+                 if db._norm_title(r["title"]) == t_norm} - {p["id"]}
     by_paper = {}
+    doi_low = doi.lower()
     for r in rows:
         text = r["text"] or ""
+        low = text.lower()             # 三个分支共用一份小写：原来一行文字要降一两遍
         at = -1
-        if tlow and tlow in text.lower():
-            at = text.lower().find(tlow)
+        if tlow and tlow in low:
+            at = low.find(tlow)
         elif tnorm_cmp and tnorm_cmp in llm.norm_text(text):
             at = -2                    # 归一化才对得上（跨行连字符/连字）：句子提不出来，用段落摘录
-        elif doi and doi.lower() in text.lower():
-            at = text.lower().find(doi.lower())
+        elif doi_low and doi_low in low:
+            at = low.find(doi_low)
         if at == -1:
             continue
         quote = _sentence_around(text, at) if at >= 0 else " ".join(text.split())[:200]

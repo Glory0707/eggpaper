@@ -687,6 +687,9 @@ const _bgTran = new Set()
 async function bgTranslateTick() {
   for (const p of store.papers.filter(x => x.translate_status === 'running')) _bgTran.add(p.id)
   for (const pid of [..._bgTran]) {
+    // 当前篇另有 pollTranslate() 每拍问一次（还负责庆祝/重取纸面）：这里别再问第二遍，
+    // 那个状态端点带认领/落库副作用，三秒两发纯属白烧。切走的篇会在下一拍按 running 重新入账。
+    if (pid === store.currentId) { _bgTran.delete(pid); continue }
     try {
       const j = await api.translateStatus(pid)
       if (j.status === 'running') continue      // 还在跑：下一拍接着问

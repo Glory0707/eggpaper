@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from functools import lru_cache
 
 from config import DATA_DIR
 
@@ -408,7 +409,10 @@ def purge_paper(pid: str):
 
 # ---------- 同论文识别与版本升级 ----------
 
+@lru_cache(maxsize=1024)
 def _norm_title(s: str) -> str:
+    """归一化标题（只留字母数字）。纯函数且同一标题会反复出现（互引扫描每次要过
+    全库一遍、导入判同也要），记忆化把逐字符归一化挡在第二次之外；键是短字符串。"""
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
 
 def find_same_title(title: str, exclude_pid: str = ""):
@@ -951,7 +955,13 @@ def glossary_list(pid: str):
 
 def glossary_add(pid: str, term_en: str, term_zh: str, source: str = "manual") -> int:
     # 手工添加也去重：同一个英文词条补一次中文译法=改这条，而不是插出两行。
-    # 判重与插入必须在同一把锁里：拆开的 TOCTOU 会让并发同词插出两行（实测踩过）
+    # 判重与插入必须在同一把锁里：拆开的 TOCTOU 会让并发同词插出两行（实测踩过）。
+    # 长度钳在入口：误粘贴进来的半篇正文（几百字）不是"术语"，进库只会污染术语表
+    # 和喂给 LLM 的术语上下文——超过 120 字的按 120 截（真术语没这么长的）。
+    term_en = (term_en or "").strip()[:120]
+    term_zh = (term_zh or "").strip()[:120]
+    if not term_en or not term_zh:
+        raise ValueError("中英文都要填")
     with _lock:
         c = _get()
         row = c.execute(
