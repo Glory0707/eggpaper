@@ -183,9 +183,22 @@ def _get_read() -> sqlite3.Connection:
         _local.conn = c
     return c
 
+def _clear_stale_txn(c: sqlite3.Connection):
+    """写入口先滚掉"半截事务"。
+
+    多语句写块（如 set_paper_collections）中途抛异常（实测：绑 10**25 参数
+    OverflowError）不会自己 rollback：DELETE 就留在未提交事务里。下一次写入口
+    要么把它静默 commit（用户的分类绑定凭空消失），要么让 _txn 的 BEGIN 撞上
+    "cannot start a transaction within a transaction" 冒 500——一次坏输入毒化
+    之后每个事务端点（删论文/段落换代全在内）。写入口持 _lock，不可能是"别人
+    正在写"，撞见未提交事务必定是这类残渣，滚掉它是无损的。"""
+    if c.in_transaction:
+        c.rollback()
+
 def q(sql: str, params=(), commit: bool = False):
     if commit:
         with _lock:
+            _clear_stale_txn(_get())
             cur = _get().execute(sql, params)
             rows = cur.fetchall()
             _get().commit()
@@ -195,6 +208,7 @@ def q(sql: str, params=(), commit: bool = False):
 def q_insert(sql: str, params=()) -> int:
     """INSERT 并取自增 id——两步必须同锁：分开写会拿到别人那行的 rowid。"""
     with _lock:
+        _clear_stale_txn(_get())
         cur = _get().execute(sql, params)
         rowid = cur.lastrowid
         _get().commit()
@@ -389,6 +403,7 @@ def _txn():
     """多语句事务：中途崩了整体回滚，不留半删状态。yield 已 BEGIN 的连接。"""
     with _lock:
         c = _get()
+        _clear_stale_txn(c)   # 上一块写崩了留下的残渣：不滚掉，下面的 BEGIN 会 500（见 _clear_stale_txn）
         c.execute("BEGIN")
         try:
             yield c
@@ -540,12 +555,16 @@ def collection_map():
     return m
 
 def set_paper_collections(pid: str, cids: list):
-    with _lock:
-        c = _get()
+    """整批替换这篇的分类归属，**一笔事务**：中途抛异常（如绑定 10**25 的
+    OverflowError）会留下"删了旧的、没插新的"的半截状态——用户看到的是一次
+    失败的操作，却把所有分类丢了。只在**存在的**分类上落行：删掉的分类号不许
+    留幽灵成员，否则将来新建分类复用了同一个自增号，这篇会神秘地"自动进组"。"""
+    with _txn() as c:
         c.execute("DELETE FROM paper_collections WHERE paper_id=?", (pid,))
-        c.executemany("INSERT OR IGNORE INTO paper_collections(paper_id, coll_id) VALUES(?,?)",
-                      [(pid, int(x)) for x in cids])
-        c.commit()
+        c.executemany(
+            "INSERT OR IGNORE INTO paper_collections(paper_id, coll_id)"
+            " SELECT ?, id FROM collections WHERE id=?",
+            [(pid, int(x)) for x in cids])
 
 # ---------- paragraphs ----------
 

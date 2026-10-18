@@ -242,6 +242,8 @@ const EN = {
   '打开目录': 'Open folder',
   '已复制 · 已保存 {n}': 'Copied · saved as {n}',
   '截图失败：{m}': 'Screenshot failed: {m}',
+  '没有图片内容': 'The screenshot is empty',
+  '图片内容不是有效的 PNG 数据': 'The screenshot is not valid PNG data',
   '同屏最多 4 篇': 'Up to 4 papers on screen',
   '关闭这篇': 'Close this paper',
   '正在打开…': 'Opening…',

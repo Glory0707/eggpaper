@@ -1188,13 +1188,25 @@ def take_screenshot(body: dict = None):
 
 @app.post("/api/screenshot/save")
 def save_screenshot(body: dict):
-    """把前端裁好的选区 PNG 落盘（统一命名 egg_时间_标题_页码）。"""
+    """把前端裁好的选区 PNG 落盘（统一命名 egg_时间_标题_页码）。
+
+    入参是前端 canvas 裁出来的 PNG base64。坏 base64（长度不对/掺了 data URL 前缀）
+    或乱传类型以前会把 AttributeError/binascii 冒成 500——前端只可能发对的，
+    但这属于"客户端输入问题"，统一收成 400 人话。PNG 签名要核：这个端点写出的
+    文件必是 .png，不能把任意字节顶着 .png 扩展名落盘。"""
     import screenshot as shot
-    raw = base64.b64decode((body or {}).get("png") or "")
-    if not raw:
-        raise HTTPException(400, "没有图片内容")
+    b = body or {}
+    raw = b.get("png")
+    raw = raw if isinstance(raw, str) else ""
     try:
-        name = shot.save(raw, (body or {}).get("title") or "", (body or {}).get("page") or 0)
+        data = base64.b64decode(raw)
+    except Exception:
+        raise HTTPException(400, "图片内容不是有效的 PNG 数据")
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(400, "图片内容不是有效的 PNG 数据" if data else "没有图片内容")
+    title = b.get("title")
+    try:
+        name = shot.save(data, title if isinstance(title, str) else "", b.get("page") or 0)
     except OSError as e:
         raise HTTPException(500, f"存不下去：{e}")
     return {"name": name}
@@ -1466,7 +1478,9 @@ def import_path(body: dict):
     和上传的区别是**不经过浏览器**——文件已经在磁盘上，直接复制进库。
     同一个文件双击两次不该得到两篇：同名同大小（或内容指纹相同）就当成同一份，直接打开它。
     """
-    src = os.path.expanduser(((body or {}).get("path") or "").strip().strip('"'))
+    src = (body or {}).get("path")
+    src = src if isinstance(src, str) else ""
+    src = os.path.expanduser(_utf8_safe(src).strip().strip('"'))
     if not src or not os.path.isfile(src):
         raise HTTPException(404, f"找不到这个文件：{src or '(空)'}")
     if not src.lower().endswith(".pdf"):
@@ -1520,7 +1534,8 @@ def _pending_open_pop():
 def supersede_paper(pid: str, body: dict):
     """版本升级：pid（刚导入的那份）顶掉旧篇 old_pid——软资产跟迁、旧篇删除。"""
     old_pid = (body or {}).get("old_pid")
-    old = _paper_or_404(old_pid if isinstance(old_pid, str) else "")
+    old_pid = _utf8_safe(old_pid) if isinstance(old_pid, str) else ""
+    old = _paper_or_404(old_pid)
     new = _paper_or_404(pid)
     if old["id"] == pid:
         raise HTTPException(400, "新旧是同一篇")
@@ -1581,7 +1596,9 @@ def paper_meta(pid: str, body: dict):
     """回填可信元数据（Zotero 导入后）：只覆盖给了值的字段。"""
     _paper_or_404(pid)
     b = body or {}
-    db.set_paper_meta(pid, str(b.get("title") or ""), str(b.get("authors") or ""), str(b.get("year") or ""))
+    db.set_paper_meta(pid, _utf8_safe(str(b.get("title") or "")),
+                      _utf8_safe(str(b.get("authors") or "")),
+                      _utf8_safe(str(b.get("year") or "")))
     try:
         _align_or_late(pid)   # 可信元数据回填完，盘上名字跟着对齐
     except Exception as e:
@@ -1595,7 +1612,7 @@ def paper_title(pid: str, body: dict):
     忙碌闸：析读/翻译握着这个目录里的路径，改到一半目录被挪，哪边都收不了场——
     一律拒绝，等跑完再改。"""
     p = _paper_or_404(pid)
-    title = str((body or {}).get("title") or "").strip()
+    title = _utf8_safe(str((body or {}).get("title") or "")).strip()
     if not title:
         raise HTTPException(400, "标题不能是空的")
     if (p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid)) \
@@ -1634,12 +1651,23 @@ def _require_paras(pid: str) -> None:
 
 _SQLITE_INT_MAX = 2 ** 63 - 1
 
+_LONE_SURR = re.compile("[\ud800-\udfff]")
+
+def _utf8_safe(s: str) -> str:
+    """剥掉孤立代理字符（\\ud800–\\udfff）：内存 str 里合法、UTF-8 编不出来，
+    存 SQLite / 当文件名 / 写日志都会 UnicodeEncodeError 冒 500。正常打字不会带，
+    粘贴别处内容或直调接口才见得到——写入口剥干净，不留到下一站炸。"""
+    if not _LONE_SURR.search(s):
+        return s
+    return s.encode("utf-8", "ignore").decode("utf-8")
+
 def _s_arg(v) -> str:
     """JSON body 里的字符串字段：非字符串一律当"没给"（回空串），别 str() 硬转。
 
     {"note": 123} 硬转会把它当批注存进去（"123"），而 {"note": {}} 直接
-    AttributeError 冒成 500。口径统一：不是字符串 = 空 = 该报"不能为空"就报 400。"""
-    return v.strip() if isinstance(v, str) else ""
+    AttributeError 冒成 500。口径统一：不是字符串 = 空 = 该报"不能为空"就报 400。
+    代理字符（见 _utf8_safe）在这里统一剥：这是绝大多数字符串字段的门。"""
+    return _utf8_safe(v).strip() if isinstance(v, str) else ""
 
 def _int_arg(v, status: int, msg: str) -> int:
     """请求参数里的裸 int：坏值回一句人话，别让 ValueError 冒成 500 被误译成模型错误。
@@ -2707,10 +2735,12 @@ KIND_ZH = {"lookup": "查译", "region": "选区问答", "note": "批注"}
 
 @app.post("/api/ask-visual")
 def ask_visual(body: dict):
-    image = body.get("image") or ""
-    if not image.startswith("data:image"):
+    b = body or {}
+    image = b.get("image")
+    # 类型先卡死：image=123/[..]/{..} 直接 .startswith 是 AttributeError→500
+    if not isinstance(image, str) or not image.startswith("data:image"):
         raise HTTPException(400, "缺少图像数据")
-    question = _s_arg(body.get("question")) or "解释这张图/公式。"
+    question = _s_arg(b.get("question")) or "解释这张图/公式。"
     if _demo_mode():
         return {"answer": "〔演示模式〕视觉问答需要配置视觉模型。"}
     ans = llm.vision_ask(image, question)
@@ -4118,14 +4148,14 @@ def collections():
 
 @app.post("/api/collections")
 def collection_new(body: dict):
-    name = str(body.get("name") or "").strip()[:60]
+    name = _utf8_safe(str(body.get("name") or "")).strip()[:60]
     if not name:
         raise HTTPException(400, "分类要有名字")
     return {"id": db.collection_add(name)}
 
 @app.patch("/api/collections/{cid}")
 def collection_patch(cid: int, body: dict):
-    name = str(body.get("name") or "").strip()[:60]
+    name = _utf8_safe(str(body.get("name") or "")).strip()[:60]
     if not name:
         raise HTTPException(400, "分类要有名字")
     db.collection_rename(cid, name)
@@ -4448,10 +4478,11 @@ def glossary_list(pid: str):
 
 def _term_clean(s):
     """术语入表的统一清洗（单篇/学科库两个端点共用）：控制字符剥掉（复制粘贴会带
-    \x00/\x1f，SQLite 存得下、界面显示不出来），非字符串收编成文本；钳长在调用处做
+    \x00/\x1f，SQLite 存得下、界面显示不出来）、代理字符剥掉（\ud800 这类存库
+    当场 UnicodeEncodeError），非字符串收编成文本；钳长在调用处做
     ——这是词表不是文本库。"""
     s = s if isinstance(s, str) else ("" if s is None else str(s))
-    return "".join(ch for ch in s if ord(ch) >= 32).strip()
+    return _utf8_safe("".join(ch for ch in s if ord(ch) >= 32)).strip()
 
 @app.post("/api/papers/{pid}/glossary")
 def glossary_add(pid: str, body: dict):
