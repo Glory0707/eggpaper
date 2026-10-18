@@ -94,6 +94,9 @@ async def _cap_upload_size(request: Request, call_next):
     return await call_next(request)
 
 READY = threading.Event()
+SERVER = None                # 由 serve() 赋值（uvicorn.Server）：真正 bind 成功才 started=True。
+                             # desktop.py 的就绪闸盯它——别再 bind 探端口，探针会和
+                             # 服务线程的 bind 撞车（10048 秒退，2026-10-19 实测）
 DEFAULT_PORT = 8430          # 与 desktop.py 的 PORTS[0] 一致：改默认端口时两处一起动
 
 def _demo_mode(cfg: dict = None) -> bool:
@@ -4784,8 +4787,12 @@ def serve(port: int = DEFAULT_PORT, log_level: str = "info"):
     `ValueError: Unable to configure formatter 'default'`，服务起不来，
     用户那头就是"双击图标没反应"。日志本来也没地方显示，索性不装。
     开发模式保持原样（终端里要看请求日志）。
+
+    用 Config/Server 起而不是 uvicorn.run：`SERVER.started` 在**真正 bind 成功**后
+    才置真，desktop.py 的就绪闸盯它认"服务确实起来了"——不再用 bind 探针去猜
+    （探针自己占端口，和服务线程的 bind 撞车就是 10048 秒退，2026-10-19 实测）。
     """
-    global RELAY_PORT
+    global RELAY_PORT, SERVER
     RELAY_PORT = port              # 翻译中转要知道自己该听哪个口（见 _pdf2zh_env）
     try:
         import window
@@ -4793,9 +4800,14 @@ def serve(port: int = DEFAULT_PORT, log_level: str = "info"):
     except Exception:
         _applog("图标守护启动失败：\n" + traceback.format_exc())
     if appinfo.is_frozen():
-        uvicorn.run(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
+        cfg = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     else:
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level=log_level)
+        cfg = uvicorn.Config(app, host="127.0.0.1", port=port, log_level=log_level)
+    SERVER = uvicorn.Server(cfg)
+    try:
+        SERVER.run()
+    except KeyboardInterrupt:
+        pass                     # 与 uvicorn.run 的收尾一致：Ctrl+C 静默退出
 
 if __name__ == "__main__":
     import argparse

@@ -379,23 +379,31 @@ def main():
             # SystemExit 也在内：uvicorn bind 失败（端口被抢）走的就是它，
             # except Exception 接不住，输家会带着"就绪"的假象往下走
             serve_state["alive"] = False
-            log("服务线程挂了：")
-            log(traceback.format_exc())
+            # 头和栈合成一次写（_install_crash_log 同款）：分两行的话，主线程发现
+            # 没就绪就 return 1，进程先退，第二行会被截掉，只剩一个没有内容的头——
+            # 2026-10-19 实测，就是它把这次启动失败的根因藏了半天
+            log("服务线程挂了：\n" + traceback.format_exc())
 
     threading.Thread(target=_serve, daemon=True).start()
 
     url = f"http://{HOST}:{port}/"
     ready = backend.READY.wait(45)
+    # READY 只是 lifespan 就绪——uvicorn 真正 bind 在它之后，所以要再等 bind 落定。
+    # 只认两个可靠信号：服务线程死了（bind 失败走 SystemExit；输家在这里退场，
+    # 不会带着"就绪"的假象去写 instance.json、挂托盘变成僵尸），或 SERVER.started
+    # 置真（uvicorn 真正 bind 成功才置）。
+    # **别再拿 _port_free 探端口**：那一下 bind 会和服务线程自己的 bind 撞车
+    # （2026-10-19 实测约 1/3 概率 10048 秒退）；"探到端口空闲"恰好是 bind 还没
+    # 落定的瞬间，会把正常启动误判成失败。
     if ready:
-        # lifespan 的就绪事件在 uvicorn 真正 bind **之前**就触发：端口竞争的输家
-        # 一样会走到这里。等一拍让 bind 成败落定（服务线程死了/端口已被别人占着
-        # 都不算就绪），输家在这里退场——往后走就会写 instance.json、挂托盘，
-        # 变成一具挡住所有后续启动的僵尸
-        for _ in range(20):
-            if not serve_state["alive"] or _port_free(port):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if (not serve_state["alive"]
+                    or (backend.SERVER is not None and backend.SERVER.started)):
                 break
-            time.sleep(0.25)
-    if not ready or not serve_state["alive"] or _port_free(port):
+            time.sleep(0.05)
+    if (not ready or not serve_state["alive"]
+            or backend.SERVER is None or not backend.SERVER.started):
         if not ready:
             log(f"服务 45 秒内没起来（端口 {port}）——如果上面没有别的错，把这份日志发给作者")
         else:
