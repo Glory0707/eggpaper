@@ -547,10 +547,10 @@ const EN = {
     'The PDF is gone from its original location. Drop it back in — your notes are safe.',
   // 下两条顺序不能换："等页"那条必须在前——t() 模板按顺序取首个命中的，
   // 普通形状也会被 '第 {first} 页' 误收（first="3, 5 等"），"等"就漏进英文里了。
-  '这篇原文含扫描件页（第 {first} 等 页），上一版译文是按普通排版译的（原件字影会透出来），这就重新翻译一遍':
-    'Scanned pages ({first} and more) — the old translation used plain layout (text may show through). Retranslating now.',
-  '这篇原文含扫描件页（第 {first} 页），上一版译文是按普通排版译的（原件字影会透出来），这就重新翻译一遍':
-    'Scanned pages ({first}) — the old translation used plain layout (text may show through). Retranslating now.',
+  '这篇含扫描件页（第 {first} 等 页），旧译按普通排版做的，这就重新翻译':
+    'Scanned pages ({first} and more) — old translation used plain layout. Retranslating now.',
+  '这篇含扫描件页（第 {first} 页），旧译按普通排版做的，这就重新翻译':
+    'Scanned pages ({first}) — old translation used plain layout. Retranslating now.',
   '读取中…': 'Loading…',
 
   // ---- 数据对比（标准维度 / 自定义列，同一入口） ----
