@@ -2309,8 +2309,12 @@ def analyze(pid: str):
     # 查互斥与占位排队必须同锁：拆开就有 TOCTOU——两边都过了检查再各自启动，照样互相清缓存
     with _key_lock("job:" + pid):
         p = db.get_paper(pid) or p     # 锁内重读：锁外那份可能是"已完成"的旧读，照它判会连环重析
-        if p["analysis_status"] in ("running", "queued") and _analysis_inflight(pid):
-            return {"status": p["analysis_status"]}
+        if _analysis_inflight(pid):
+            # 管线活着就绝不再叠一条——**哪怕库里状态是 done**：done 在骨架落库那一拍就置了，
+            # 七问/术语/一眼卡这些子任务还要在池子里跑几十秒。这时放第二条进来，它开工第一件事
+            # 就是 answers_clear，把上一条刚写好的七问整批擦掉，用户看到"析读完了七问却是空的"，
+            # 再点一次又是新一轮清空（2026-10-19 实测日志：一次重析读跑了完整两轮、12 次七问调用）。
+            return {"status": p["analysis_status"] or "queued"}
         if p["analysis_status"] in ("running", "queued"):
             _applog(f"析读 {pid}: 数据库里是 {p['analysis_status']} 但本进程没有这个任务（上次被中断），重来")
         _enqueue_analysis(pid, db.get_paragraphs(pid, with_lines=False))
