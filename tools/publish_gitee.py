@@ -92,8 +92,11 @@ def push_feed(cli: httpx.Client, tk: str, feed: dict, dry: bool) -> None:
 def create_release(cli: httpx.Client, tk: str, ver: str, notes: str, dry: bool) -> str:
     tag = f"v{ver}"
     r = cli.get(f"{API}/releases/tags/{tag}", params={"access_token": tk}, timeout=30)
-    if r.status_code == 200:
-        rid = str(r.json().get("id"))
+    # 「不存在」Gitee 回的是 200 + 字面 null（不是 404，2026-10-19 发 0.1.3 实测）——
+    # 只看状态码会把不存在的 tag 当"已存在"，再被空体炸掉 .get("id")。
+    exist = r.json() if (r.status_code == 200 and (r.text or "").strip() not in ("", "null")) else None
+    if exist:
+        rid = str(exist.get("id"))
         print(f"release：{tag} 已存在（id={rid}），补说明 + 复用")
         if not dry:
             _ok(cli.patch(f"{API}/releases/{rid}", json={
