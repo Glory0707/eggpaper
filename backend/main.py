@@ -1183,8 +1183,10 @@ def take_screenshot(body: dict = None):
         b = body or {}
         if "chrome_top" in b or "border" in b:
             png = shot.crop_viewport(png, b.get("chrome_top"), b.get("border"), b.get("dpr"))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    except (TypeError, ValueError) as e:
+        # 镶边参数传了字符串一类（crop_viewport 里 str×float 抛 TypeError）按"客户端
+        # 输入问题"收 400 人话——与 /screenshot/save 同一口径，不冒 500
+        raise HTTPException(400, str(e) or "镶边参数得是数字")
     except Exception as e:
         raise HTTPException(500, f"截图失败：{e}")
     return {"png": shot.to_base64(png)}

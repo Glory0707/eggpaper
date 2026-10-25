@@ -748,17 +748,11 @@ function canvasPlan() {
 }
 
 function _centerGi() {
+  /* 与 pageIdxAtTop 是同一道题（"最后一个 offsetTop ≤ Y 的项"），直接复用它的二分：
+     线性回退的"跳过未挂载、遇到挂载且越界即断"与本函数原先的手写循环逐字同构。 */
   const sc = scroller()
-  const items = flatItems.value
-  if (!sc || !items.length) return 0
-  const mid = sc.scrollTop + sc.clientHeight / 2
-  let c = 0
-  for (const it of items) {
-    const el = pageEls.value[it.gi]
-    if (el && el.offsetTop <= mid) c = it.gi
-    else break
-  }
-  return c
+  if (!sc || !flatItems.value.length) return 0
+  return pageIdxAtTop(sc.scrollTop + sc.clientHeight / 2)
 }
 
 function evictFar(skipKeys = null) {
