@@ -1280,9 +1280,14 @@ function gotoPage(p) {
 }
 function stepPage(d) { gotoPage(pageNum.value + d) }
 
+/* 用户主动导航（页码跳页 / 引文段落跳转 / j·k 步进 / Alt+← 回跳——一切主动写滚动
+   位置的操作都要报备）：防抖中的自动回位（applyAnchor / reflow 回调 / load 收尾）
+   一律让位——否则晚到的旧锚点会把刚跳过去的人拉回去（2026-10-26 跳页被弹回顶部
+   就是 reflow 回调晚于跳页 landing；onUserScroll 只认滚轮，认不出程序化滚动）。 */
+function markUserNav() { anchorCancel = true }
+
 function scrollToY(y, instant = false) {
-  anchorCancel = true   // 主动跳位也算"用户动了"：别只认滚轮——正在收尾的落位（applyAnchor）
-                        // 若不撒手，会把这次跳页顶回顶部（切版式后立刻跳页时序撞上就复现）
+  markUserNav()
   const sc = scroller()
   if (!sc) return
   const far = Math.abs(y - sc.scrollTop) > sc.clientHeight * 1.5
@@ -1433,7 +1438,7 @@ function jumpQuote(n) {
 function jumpBack() {
   const top = backStack.pop()
   if (top != null) {
-    anchorCancel = true   // 用户主动回跳：同 scrollToY/step，防抖回位让位
+    markUserNav()   // 用户主动回跳（见 markUserNav 注）
     scroller()?.scrollTo({ top, behavior: scrollBehavior() })   // 卸载后迟到的调用：没有滚动容器就作罢
     backChip.value = false
     return
@@ -1469,7 +1474,7 @@ function step(dir) {
   if (!target) return
   const y = paraAbsY(target.idx)
   if (y == null) return
-  anchorCancel = true   // j/k 也是用户主动导航：防抖中的回位别把人拉回去（同 scrollToY 注）
+  markUserNav()   // j/k 也是用户主动导航（见 markUserNav 注）
   backStack.push(scroller().scrollTop)
   scroller().scrollTo({ top: y - scroller().clientHeight * 0.3, behavior: scrollBehavior() })
 }

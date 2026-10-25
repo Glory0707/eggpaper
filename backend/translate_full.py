@@ -796,6 +796,20 @@ def _page_done(pdir: str, stem: str):
     mono = _product_mono(pdir, stem)
     return {"mono": mono} if mono and _pdf_complete(mono) else None
 
+def _save_atomic(doc, path: str) -> str:
+    """派生成品落盘的统一口径：临时名 + 原子换名（半截产物一旦被当成品服务就固化了），
+    写失败（盘满/被杀）别把半截 .part 留在盘上冒充缓存。compression_effort=0：
+    真库实测同体积同页内文本、更快（g3/g1 体积放大 2~4 倍、use_objstms 慢 3~4 倍，都试过不要）。"""
+    part = path + ".part"
+    try:
+        doc.save(part, garbage=4, deflate=True, compression_effort=0)
+        os.replace(part, path)
+    except Exception:
+        fsutil.rm_quiet(part)
+        raise
+    return path
+
+
 def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
     """双语版 = 每页左边原文页、右边译文页并排（版式对齐 pdf2zh 自带的 LR_dual 产物，
     用户拿去打印/单发都直观）。译文缺的页右半放原文占位，与前端直排的兜底同款；
@@ -820,14 +834,7 @@ def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
             page.show_pdf_page(pymupdf.Rect(0, 0, sr.width, page.rect.height), src, sp)
             page.show_pdf_page(pymupdf.Rect(sr.width, 0, page.rect.width, page.rect.height),
                                mono if i < nm else src, i if i < nm else sp)
-        # 半截产物一旦被当成品服务就固化了：先落临时名再原子换名
-        part = dual_path + ".part"
-        try:
-            dual.save(part, garbage=4, deflate=True, compression_effort=0)
-            os.replace(part, dual_path)
-        except Exception:
-            fsutil.rm_quiet(part)    # 写失败（磁盘满/被杀）别把半截 .part 留在盘上冒充缓存
-            raise
+        _save_atomic(dual, dual_path)
     finally:
         src.close(); mono.close(); dual.close()
     return dual_path
@@ -860,13 +867,7 @@ def derive_dual_seq(pdf_path: str, mono_path: str, dual_path: str) -> str:
                     dual.insert_pdf(mono, from_page=i, to_page=i)
                 else:
                     dual.insert_pdf(src, from_page=page, to_page=page)
-        part = dual_path + ".part"
-        try:
-            dual.save(part, garbage=4, deflate=True, compression_effort=0)
-            os.replace(part, dual_path)
-        except Exception:
-            fsutil.rm_quiet(part)
-            raise
+        _save_atomic(dual, dual_path)
     finally:
         src.close()
         mono.close()
@@ -879,19 +880,12 @@ def derive_mono(dual_path: str, mono_path: str) -> str:
     只适用于老「奇原文偶译文」交错的存量件——2026-10-25 后的（双语）.pdf 是并排版，
     但那份永远有配套译文版在盘上（管线译完即落 mono），轮不到这里。
     select 一次收口（2026-10-18 实测 480 页双开件抽 240 页：0.04s vs 逐页插入
-    0.44s，产物同体积、页内文本逐页一致；逐页插入的慢在 save 的去重，同 derive_dual 注）。"""
+    0.44s，产物同体积、页内文本逐页一致；逐页插入的慢在 save 的去重，同 _save_atomic 注）。"""
     import pymupdf
     dual = pymupdf.open(dual_path)
     try:
         dual.select(list(range(1, len(dual), 2)))
-        # derive_mono 同口径：compression_effort=0（实测同体积同文本、更快；见 derive_dual 注）
-        part = mono_path + ".part"
-        try:
-            dual.save(part, garbage=4, deflate=True, compression_effort=0)
-            os.replace(part, mono_path)
-        except Exception:
-            fsutil.rm_quiet(part)
-            raise
+        _save_atomic(dual, mono_path)
     finally:
         dual.close()
     return mono_path
