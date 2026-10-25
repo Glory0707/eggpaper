@@ -581,7 +581,7 @@ def adopt_existing(out_dir: str, mono=(), dual=()):
     为什么要有：pdf2zh 是独立进程，eggpaper 关掉/装新版本时它还在跑，写完之后没人认领——
     启动时那次扫描早过了。用户看到界面上还是「全文翻译」，点一次就重译一遍（还覆盖成品）。
     判定"完整"看 %%EOF 收尾，免得把写到一半就被杀掉的半截文件当成成品。
-    盘上**只落译文版（mono）**省盘，双语版按需派生。
+    译文版（mono）必有；双语版看设置译完顺手生成、缺了也可再派生（见 derive_dual）。
     成品名两代并存：可读名（`<显示名>（译文）.pdf`，调用方从 DB 显示名派生传入）优先，
     老名 mono/dual.pdf 兜底——夹名对齐迁移过的库只有前者，没跑到的两样都认。"""
     mono_path = next((os.path.join(out_dir, n) for n in (*mono, "mono.pdf")
@@ -791,7 +791,7 @@ def _product_mono(dirpath: str, stem: str) -> str:
 
 def _page_done(pdir: str, stem: str):
     """这一页的目录里有没有一份完整的译文版产物（%%EOF 收尾）。
-    页级双语产物用完即删（省盘：组装成品由 原文+译文 派生，双语成品按需派生）。
+    页级双语产物用完即删（引擎那份与译文页重复；双语成品由 原文+译文 派生）。
     有 → 返回 {"mono": 路径}；没有 → None。重跑时靠它跳过已译好的页。"""
     mono = _product_mono(pdir, stem)
     return {"mono": mono} if mono and _pdf_complete(mono) else None
