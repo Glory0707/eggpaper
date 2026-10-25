@@ -60,6 +60,7 @@
 - **改 SQL 查询的列清单，必须同步检查所有取列处**：find_same_title 把 `SELECT id, title` 精简成 `SELECT id`，循环里 `r["title"]` 炸 IndexError——上传库里已有标题的第二篇必 500（测试员轮实测抓住）。
 - audit 脚本别把截图放在连点压测之后：竞态恢复期纸面瞬态空白，会被误判成渲染回归（完整重跑零复现才定性）。压测归压测，截图归稳定态。
 - **删"废件"前先 grep 测试引用**：`_qa/new_paper.pdf` 看着像产物，实际是三个测试共用的事实夹具（生成方一次没跑，消费方全炸）。压测 100 发里偶发 1 发客户端 WinError 10053、单跑零复现＝负载下的连接 flake，别当产品 bug 查。
+- **清理轮的收与留按"谁还在引用"划线**（2026-10-26）：_qa 206→146。删：46 个 _tmp_* 沙箱、根目录 __pycache__/.git-msg.txt、build/ 中间产物、release 里被取代的旧安装包、14 个无引用一次性工具（_verify_polish/scan_ui/i18n_leftover…）——判定法是 runner 清单、测试 import、lesson/README 提及三张引用表全查一遍再动手（上条的通例）。留的都有名有姓：dup 系/dead 系/_check_copy/_stale_comments 是现役分析工具（前一天刚用过）、_find_fold_check.mjs 是点名保留的冻结参照、_probe_dualbench/_probe_dual_firstopen 是低配测量方法学、update/latest.json 是 publish_gitee 的暂存工作件（内容旧了随下次发版覆盖，不是垃圾）。
 - **PDF 夹具正文一段 ≥14 词、按词折行**：解析的成段门槛是 14 词（中文 40 字），短段/单行页整组被吞（论文看着正常、compare 却报"扫描件"）；70 字硬切会把单词拦腰截断，正文子串匹配（互引/划线）全废——用 textwrap 按 70 折。
 - **同内容文件上传会被去重返回已有篇**——对抗测试里三次"建新篇"实际都拿到了主测篇（duplicate 返回旧 id），后续"删新篇"删的全是主测篇，一路 404 查了半天。测试里每篇 fixture 必须内容不同；产品侧这个去重本身是对的（"库里已有这篇，直接打开"）。
 - **测试客户端会先规范化 URL 再发**：`/api/papers/../papers` 这类原始路径穿越在 httpx/requests 里根本到不了服务器，测穿越必须用 `%2F` 编码形态；反过来 Starlette 的 {pid} 参数会把 %2F 解码回斜杠，服务端要靠"pid 必须先过 DB"这道闸兜住（本项目兜住了）。
