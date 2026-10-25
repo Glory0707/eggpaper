@@ -1227,6 +1227,22 @@ def open_screenshot_folder():
     os.startfile(d)     # noqa: S606 - 本机服务代开资源管理器
     return {"ok": True}
 
+@app.post("/api/reveal-data")
+def reveal_data():
+    """打开数据目录（直达 data/ 内部，不是定位到它的上级再让用户点一下）。"""
+    os.startfile(appinfo.data_dir())     # noqa: S606 - 本机服务代开资源管理器
+    return {"ok": True}
+
+@app.post("/api/papers/{pid}/reveal")
+def paper_reveal(pid: str):
+    """打开这篇文献的文件夹（papers/<显示名>/——原件、译文/双语成品都在这）。"""
+    _paper_or_404(pid)
+    d = paper_dir(pid)
+    if not os.path.isdir(d):
+        raise HTTPException(404, "文献文件夹不在")
+    os.startfile(d)     # noqa: S606 - 本机服务代开资源管理器
+    return {"ok": True}
+
 _QUITTING = {"user": False}
 
 @app.post("/api/quit")

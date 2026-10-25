@@ -223,13 +223,17 @@ def is_packaged() -> bool:
     return appinfo.is_frozen()
 
 def open_folder(path: str) -> None:
-    """下好了但用户不想现在装：把文件所在的文件夹打开，别让安装包无声无息躺在 temp 里。"""
+    """路径是目录就开进目录本身（数据目录这类，别停在上级里让用户再点一下）；
+    是文件就在资源管理器里定位选中它（下好的安装包别让用户翻找）。"""
     try:
         if os.name == "nt":
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            if os.path.isdir(path):
+                subprocess.Popen(["explorer", os.path.normpath(path)])
+            else:
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
         elif sys.platform == "darwin":
             subprocess.Popen(["open", "-R", path])
         else:
-            subprocess.Popen(["xdg-open", os.path.dirname(path)])
+            subprocess.Popen(["xdg-open", path if os.path.isdir(path) else os.path.dirname(path)])
     except Exception:
         pass

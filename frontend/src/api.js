@@ -118,6 +118,8 @@ export const api = {
   screenshot: (body) => req('POST', '/api/screenshot', body),
   screenshotSave: (title, page, png) => req('POST', '/api/screenshot/save', { title, page, png }),
   screenshotFolder: () => req('POST', '/api/screenshot/folder'),
+  revealData: () => req('POST', '/api/reveal-data'),
+  revealPaper: (pid) => req('POST', `/api/papers/${pid}/reveal`),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
   pdf2zhEngine: (path = '') =>

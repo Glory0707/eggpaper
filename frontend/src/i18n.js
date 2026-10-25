@@ -390,6 +390,7 @@ const EN = {
   '有新版（{v}）': 'New version available ({v})',
   '检测': 'Check',
   '数据目录': 'Data folder',
+  '文献文件夹': 'Paper folder',
   '打开': 'Open',
   '迁移中…': 'Moving…',
   '迁移': 'Move',

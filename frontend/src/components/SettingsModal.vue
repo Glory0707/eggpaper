@@ -347,7 +347,7 @@ function save() {
       </div>
       <div class="f-row">
         <label class="mono-label">{{ t('数据目录') }}
-          <button class="eng-check" style="margin-left:8px" @click="api.revealUpdate(f.data_dir)">{{ t('打开') }}</button>
+          <button class="eng-check" style="margin-left:8px" @click="api.revealData()">{{ t('打开') }}</button>
           <button class="eng-check" style="margin-left:4px" @click="moveData" :disabled="picking || savingData">
             {{ savingData ? t('迁移中…') : t('迁移') }}</button>
         </label>

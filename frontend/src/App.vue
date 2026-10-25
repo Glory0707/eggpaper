@@ -941,6 +941,11 @@ function onKey(e) {
     if (e.key === 'c') { openDrawer('cal'); e.preventDefault() }
     if (e.key === 'o') { openDrawer('toc'); e.preventDefault() }
     if (e.key === 'h') { goHome(); e.preventDefault() }
+    if (e.key === 'd') { e.preventDefault(); api.revealData().catch(err => toast(err.message)) }
+    if (e.key === 'p') {
+      e.preventDefault()
+      if (store.currentId) api.revealPaper(store.currentId).catch(err => toast(err.message))
+    }
     return
   }
   /* g 弦必须在「没开论文」的守卫之前注册：书桌正是最需要 g l/g c/g o 的地方，
@@ -1164,6 +1169,8 @@ function onKey(e) {
       <div class="k-row" v-if="!isEn()"><span>{{ t('析读') }}</span><kbd>a</kbd></div>
       <div class="k-row"><span>{{ t('文库 / 日历 / 目录') }}</span><kbd>g l / g c / g o</kbd></div>
       <div class="k-row"><span>{{ t('回书桌') }}</span><kbd>g h</kbd></div>
+      <div class="k-row"><span>{{ t('数据目录') }}</span><kbd>g d</kbd></div>
+      <div class="k-row"><span>{{ t('文献文件夹') }}</span><kbd>g p</kbd></div>
       <div class="k-row"><span>{{ t('返回原位') }}</span><kbd>Alt + ←</kbd></div>
       <div class="k-row"><span>{{ t('收起浮层 / 退出框选') }}</span><kbd>Esc</kbd></div>
       <div class="k-row"><span>{{ t('这张卡') }}</span><kbd>?</kbd></div>
