@@ -7,21 +7,20 @@ import { lsGet, lsSet } from './ls'
 export { api, askStream, askContinueStream, ROLE_ZH, ROLE_COLOR, ROLE_TEXT_COLOR, kindZH } from './api'
 export { lsGet, lsSet, lsRemove } from './ls'
 
-/* 译文/双语 PDF 的 pdf.js 文档缓存（键 `${pid}:orig|mono|dual`）。放在 store 而不是
+/* 原文/译文 PDF 的 pdf.js 文档缓存（键 `${pid}:orig|mono`）。放在 store 而不是
    PdfViewer 内部：译文一旦在盘上被重写（重新全文翻译、换服务/术语后再译），**任何**看过这篇
    的窗格都可能攥着一份旧文档——文档 URL 是固定的 `/pdf?variant=mono`，pdf.js 拿到解析结果
    就不再回盘取。2026-10-14 用户反馈"点重新翻译、完成后还是有重影"就是它：盘上成品已经是新译
    的白底版，屏幕上还是旧的那一版（真浏览器实测：重译完成时前端连一次 PDF 请求都没再发）。
-   重译完成那一拍由 App 调 dropPaperDocs(pid) 作废；正在显示这篇译文/双语的窗格再自行重取。 */
+   重译完成那一拍由 App 调 dropPaperDocs(pid) 作废；正在显示这篇译文/双语的窗格再自行重取。
+   双语视图用的也是 orig+mono 两份文档（不另取整本交错的 dual.pdf），作废 mono 即全覆盖；
+   orig 不作废——源文件不会被重写。 */
 export const docCache = new Map()
 export function dropPaperDocs(pid) {
-  for (const kind of ['mono', 'dual']) {
-    const k = `${pid}:${kind}`
-    const e = docCache.get(k)
-    if (!e) continue
-    try { e.doc.destroy() } catch { /* 已经销毁的不碍事 */ }
-    docCache.delete(k)
-  }
+  const e = docCache.get(`${pid}:mono`)
+  if (!e) return
+  try { e.doc.destroy() } catch { /* 已经销毁的不碍事 */ }
+  docCache.delete(`${pid}:mono`)
 }
 
 

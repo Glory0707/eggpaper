@@ -202,18 +202,35 @@ async function buildSheets() {
     for (let i = 0; i < m.count; i++)
       push([{ key: `m${i}`, doc: 'mono', page: i, origPage: -1, w: m.w, h: m.h, margin: false, text: true }])
   } else if (v === 'dual') {
-    const td = await getDoc('dual'), tm = await meta(td)
+    /* 双语直接用 原文+译文 两份文档排，不再取后端那份"整本交错"的 dual.pdf：
+       老链路首开要在请求线程里现场合成它（真库 4~24 页小件实测 0.02~0.12s，
+       240 页大部头构造+保存合计 1~5s，见 lesson §三），且要整本下载——体积 ≈
+       原文+译文之和，对开姿势只用到它的译文偶数页，一半是白下的（实测 20 页件
+       对开 22.9MB → 8.0MB）。orig 多半已在 docCache（原文是默认变体），首开只补
+       一份 mono：零合成 CPU、字节近乎减半。
+       译文页数与原文不齐的异常件按 derive_dual 同款兜底：译文缺的页用原文页
+       占位（奇数行 doc=orig），"偶=原文、奇=译文"的页码关系不变。 */
+    const [od, md] = await Promise.all([getDoc('orig'), getDoc('mono')])
+    const [om, mm] = await Promise.all([meta(od), meta(md)])
+    const n = Math.max(om.count, mm.count)
     if (store.viewer.spread === 'spread') {
-      const od = await getDoc('orig'), om = await meta(od)
-      for (let i = 0; i < om.count && 2 * i + 1 < tm.count; i++)
+      for (let i = 0; i < n; i++) {
+        const hasTr = i < mm.count
+        const op = Math.min(i, om.count - 1)
         push([
-          { key: `sl${i}`, doc: 'orig', page: i, origPage: i, w: om.w, h: om.h, margin: false, text: true },
-          { key: `sr${i}`, doc: 'dual', page: 2 * i + 1, origPage: -1, w: tm.w, h: tm.h, margin: false, text: true },
+          { key: `sl${i}`, doc: 'orig', page: op, origPage: op, w: om.w, h: om.h, margin: false, text: true },
+          { key: `sr${i}`, doc: hasTr ? 'mono' : 'orig', page: hasTr ? i : op, origPage: -1,
+            w: hasTr ? mm.w : om.w, h: hasTr ? mm.h : om.h, margin: false, text: true },
         ])
+      }
     } else {
-      for (let j = 0; j < tm.count; j++) {
-        const isOrig = j % 2 === 0
-        push([{ key: `di${j}`, doc: 'dual', page: j, origPage: isOrig ? j / 2 : -1, w: tm.w, h: tm.h, margin: isOrig, text: true }])
+      for (let j = 0; j < 2 * n; j++) {
+        const i = j >> 1, isOrig = !(j & 1)
+        const op = Math.min(i, om.count - 1)
+        const tr = !isOrig && i < mm.count
+        push([{ key: `di${j}`, doc: tr ? 'mono' : 'orig', page: tr ? i : op,
+          origPage: isOrig ? op : -1, w: tr ? mm.w : om.w, h: tr ? mm.h : om.h,
+          margin: isOrig, text: true }])
       }
     }
   }
@@ -331,25 +348,22 @@ async function load({ keepPlace = false } = {}) {
 }
 
 /* 页码定位。三种模式的页号不是一回事：
-   原文页 i / 译文第 i 页（1:1）/ 双语文档里 2i=原文、2i+1=译文。
+   原文页 i / 译文第 i 页（1:1）/ 双语行 2i=原文、2i+1=译文（译文行 origPage=-1，
+   mono 的页序与原文一一对应，it.page 即原文页；异常件的原文占位行同理）。
    统一换算成"原文第几页"，跳转和位置记忆才不会跨模式错位。 */
 function origPageOf(it) {
   if (!it) return 0
   if (it.origPage >= 0) return it.origPage
-  if (it.doc === 'dual') return Math.floor(it.page / 2)
   return it.page
 }
-/* "原文页码 → 项"的索引：三趟优先级与原来的三连 find 逐字同构（第一趟认 origPage、
-   第二趟退到 mono、第三趟对开奇数页；每趟 first-wins，先命中的不被后面覆盖）。
-   pageItem 会被引文落位、批注锚点、段落跳转按条调用，每条最多三趟全量 find。 */
+/* "原文页码 → 项"的索引：两趟优先级（第一趟认 origPage、第二趟退到 mono；
+   每趟 first-wins，先命中的不被后面覆盖）。pageItem 会被引文落位、批注锚点、
+   段落跳转按条调用，每条最多两趟全量 find。 */
 const pageItemIndex = computed(() => {
   const m = new Map()
   const items = flatItems.value
   for (const it of items) if (it.origPage >= 0 && !m.has(it.origPage)) m.set(it.origPage, it)
   for (const it of items) if (it.doc === 'mono' && !m.has(it.page)) m.set(it.page, it)
-  for (const it of items) {
-    if (it.doc === 'dual' && it.page % 2 === 1 && !m.has((it.page - 1) / 2)) m.set((it.page - 1) / 2, it)
-  }
   return m
 })
 function pageItem(pno) {
@@ -702,7 +716,12 @@ function scheduleRender(near = false) {
    滚回来时 ensureNear 补画。小文档（整本在预算内）完全不进这条路，行为与从前一致。 */
 const KEEP_NEAR = 6
 const KEEP_CANVASES = 36        // 常驻页数上限（预算算出来比它多时也照它砍）
-const PIX_BUDGET = 192 * 1024 * 1024     // 位图常驻预算：一屏页数 × 单页字节，超了少留几页
+// 位图常驻预算按机器内存分档：deviceMemory 是 Chromium 系暴露的近似 GB（Safari/
+// Firefox 没有它，取不到按高档走——预算大顶多多占点，按低档走会让大屏多页常驻
+// 被误砍）。≤4GB 的低配机上 pdf.js worker 里还压着整本解析树与字体，同留 192MB
+// 位图就容易把系统挤进页交换，表现是"滚得越多越卡"；减半后只是带外少留几页、
+// 滚回来现画，纸面永远只画视口那一带，行为不劣化。
+const PIX_BUDGET = ((navigator.deviceMemory || 8) <= 4 ? 96 : 192) * 1024 * 1024
 const MAX_CANVAS_PX = 8e6                // 单张画布像素上限：4K + 200% 缩放 + 放大到 300% 时
                                          // 一张就是上亿像素（几百 MB），比整个预算还大
 const doneKeyOf = it => it.key + ':' + scale.value.toFixed(3)
@@ -812,12 +831,11 @@ function ensureNear() {
 /* ---------------- 段落矩形落位：原文页直取，译文页按页内比例 ---------------- */
 
 /* 这一项（窗格里的一张页）画的是原文第几页的段区：原文页与译文版（mono）都是页号
-   本身（babeldoc 的 mono 输出页序与原文一一对应），双语版的奇数页是译文半、
-   对应它前一张的原文页。译文页也要画段区——不然译文版面里点 ¶n 跳过来什么也看不见。 */
+   本身（babeldoc 的 mono 输出页序与原文一一对应），双语里的译文行也是 mono 页号
+   即原文页。译文页也要画段区——不然译文版面里点 ¶n 跳过来什么也看不见。 */
 function paraPageOf(it) {
   if (it.origPage >= 0) return it.origPage
   if (it.doc === 'mono') return it.page
-  if (it.doc === 'dual' && it.page % 2 === 1) return (it.page - 1) / 2
   return -1
 }
 
@@ -1614,7 +1632,7 @@ function pageIdxLinear(top) {
   return cur
 }
 /* "原文页码 → 页元素"索引：与 pageItem 同一套优先级（先认 origPage，再退到
-   mono / 对开的奇数页），一次建表、整趟段落 spy 复用。存的是**项**而不是元素：
+   mono），一次建表、整趟段落 spy 复用。存的是**项**而不是元素：
    段落 y 要按这一项的页高做页内比例换算（paraBoxOn） */
 function pageItemIndexOf() {
   const m = new Map()
@@ -1625,7 +1643,6 @@ function pageItemIndexOf() {
   for (const it of flatItems.value) {
     if (!pageEls.value[it.gi] || it.origPage >= 0) continue
     if (it.doc === 'mono') fallback(it.page, it)
-    else if (it.doc === 'dual' && it.page % 2 === 1) fallback((it.page - 1) / 2, it)
   }
   return m
 }
