@@ -120,6 +120,7 @@ export const api = {
   screenshotFolder: () => req('POST', '/api/screenshot/folder'),
   revealData: () => req('POST', '/api/reveal-data'),
   revealPaper: (pid) => req('POST', `/api/papers/${pid}/reveal`),
+  forward: (pids, kind) => req('POST', '/api/papers/forward', { pids, kind }),
   saveSettings: (body) => req('PUT', '/api/settings', body),
   testSettings: () => req('POST', '/api/settings/test'),
   pdf2zhEngine: (path = '') =>

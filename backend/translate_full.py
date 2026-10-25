@@ -832,6 +832,47 @@ def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
         src.close(); mono.close(); dual.close()
     return dual_path
 
+def derive_dual_seq(pdf_path: str, mono_path: str, dual_path: str) -> str:
+    """顺排双语版 = 原文奇页 + 译文偶页逐页相间——「转发」四种版式之一，收件人上下翻着对照。
+    2026-10-26 前它就是 derive_dual 本尊（当时的「双语版」），前端改直排后只剩转发这一处用它。
+    页数不齐的异常件：mono 缺页时原文页重复两次，"奇原文偶译文"的页码关系不破。
+
+    合成姿势（2026-10-18 实测，240+240 页 → 480 输出页）：页数相等（正常件）整本各插
+    一次、再 select 一次交错，构造 0.35~0.75s；逐页 insert_pdf 构造 0.55~2.5s，差距
+    大头在 save 的去重（0.8~4.5s vs 1.8~15.6s）。页数不齐沿用旧逐页口径：select 交错
+    表里同一页会出现两次，页树重复引用不合规范，正常件一页一引用。"""
+    import pymupdf
+    src = pymupdf.open(pdf_path)
+    mono = pymupdf.open(mono_path)
+    dual = pymupdf.open()
+    try:
+        ns, nm = len(src), len(mono)
+        if ns == nm:
+            dual.insert_pdf(src, from_page=0, to_page=ns - 1)
+            dual.insert_pdf(mono, from_page=0, to_page=nm - 1)
+            # 交错序号：整本 doc 里 src 页 i 的索引=i、mono 页 i 的索引=len(src)+i
+            dual.select([x for i in range(ns) for x in (i, ns + i)])
+        else:
+            for i in range(max(ns, nm)):
+                page = min(i, ns - 1)
+                dual.insert_pdf(src, from_page=page, to_page=page)
+                if i < nm:
+                    dual.insert_pdf(mono, from_page=i, to_page=i)
+                else:
+                    dual.insert_pdf(src, from_page=page, to_page=page)
+        part = dual_path + ".part"
+        try:
+            dual.save(part, garbage=4, deflate=True, compression_effort=0)
+            os.replace(part, dual_path)
+        except Exception:
+            fsutil.rm_quiet(part)
+            raise
+    finally:
+        src.close()
+        mono.close()
+        dual.close()
+    return dual_path
+
 def derive_mono(dual_path: str, mono_path: str) -> str:
     """旧版存量只有双语版时，抽偶数页（0 基 2i+1）合成译文版。
 

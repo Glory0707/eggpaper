@@ -269,6 +269,7 @@ async function load({ keepPlace = false } = {}) {
   loading = true
   const veryFirst = !sheets.value.length
   if (veryFirst) { ready.value = false; loadPct.value = 0.08; startCreep() }
+  anchorCancel = false          // 新一轮装载从零记"用户动没动过"：别吃上一轮的旧旗
   const anchor = keepPlace || !veryFirst ? currentAnchor() : null
   sheets.value = []
   doneKeys.clear()
@@ -302,7 +303,8 @@ async function load({ keepPlace = false } = {}) {
     // 同屏切换（单篇→多窗格）会卸载本实例：进行中的 load 尾巴还在跑，
     // scroller() 已经是 null——落位作罢，别把卸载当渲染失败惊扰用户
     if (!scroller()) return
-    if (anchor) applyAnchor(anchor)
+    if (anchorCancel) { /* 装载期间用户已自行跳位：旧锚点/旧滚动位都不许顶掉它 */ }
+    else if (anchor) applyAnchor(anchor)
     else if (savedScroll != null) { scroller().scrollTop = savedScroll }
     updateProg()
   }
@@ -482,14 +484,20 @@ function updateMid() {
 let reflowT = null, reflowAnchor = null, loading = false
 function reflow() {
   if (loading) return                       // 换模式那次由 load() 负责落位，别抢
-  if (reflowT == null) reflowAnchor = currentAnchor()
+  if (reflowT == null) {
+    reflowAnchor = currentAnchor()
+    anchorCancel = false    // 开一扇新的"捕获后用户动没动"窗：别吃更早交互留下的旧旗
+  }
   clearTimeout(reflowT)
   reflowT = setTimeout(async () => {
     reflowT = null
     measure()
     await renderAll()
     await measureNotes()
-    if (reflowAnchor) applyAnchor(reflowAnchor)
+    /* 这 200ms 里用户自己跳了页/滚了轮：捕获时刻的旧锚点作废，但位置仍要按新
+       尺寸翻译——用"此刻"的锚点回位，人在哪一页就还落在哪一页。 */
+    const a = reflowAnchor && !anchorCancel ? reflowAnchor : currentAnchor()
+    if (a) applyAnchor(a)
     reflowAnchor = null
   }, 200)
 }
@@ -1273,6 +1281,8 @@ function gotoPage(p) {
 function stepPage(d) { gotoPage(pageNum.value + d) }
 
 function scrollToY(y, instant = false) {
+  anchorCancel = true   // 主动跳位也算"用户动了"：别只认滚轮——正在收尾的落位（applyAnchor）
+                        // 若不撒手，会把这次跳页顶回顶部（切版式后立刻跳页时序撞上就复现）
   const sc = scroller()
   if (!sc) return
   const far = Math.abs(y - sc.scrollTop) > sc.clientHeight * 1.5

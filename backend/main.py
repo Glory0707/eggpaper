@@ -293,6 +293,7 @@ def _migrate_paper_layout():
 # _variant_names 拼名，差一个字就认不出自家刚写出的成品
 _MONO_SUFFIX = "（译文）"
 _DUAL_SUFFIX = "（双语）"
+_SEQ_SUFFIX = "（顺排）"    # 转发专用的派生件（原文/译文逐页相间），无 DB 字段、按需生成
 
 _INNER_SUFFIX = (("path", ""), ("mono_path", _MONO_SUFFIX), ("dual_path", _DUAL_SUFFIX))
 
@@ -1242,6 +1243,86 @@ def paper_reveal(pid: str):
         raise HTTPException(404, "文献文件夹不在")
     os.startfile(d)     # noqa: S606 - 本机服务代开资源管理器
     return {"ok": True}
+
+@app.post("/api/papers/forward")
+def papers_forward(body: dict):
+    """文库多选「转发」：按所选版式把这几篇的文件凑齐，复制上 Windows 剪贴板
+    （CF_HDROP 文件列表）——本机应用够不着"替用户选哪个聊天"，文件上剪贴板是离
+    微信/QQ 聊天输入框最近的一步，到聊天框 Ctrl+V 即发。
+
+    版式：orig 原件；mono 译文；lr 并排（复用 （双语）.pdf，缺了当场派生并登记）；
+    seq 顺排（当场派生 （顺排）.pdf，留在论文夹里当缓存，改标题后的旧名件随手清）。
+    没译文/缺原件的篇跳过并点名，绝不拿另一种文件冒充。"""
+    pids = list(dict.fromkeys(str(x) for x in ((body or {}).get("pids") or [])))
+    kind = (body or {}).get("kind") or "orig"
+    if not pids:
+        raise HTTPException(400, "没选文献")
+    if len(pids) > 50:
+        raise HTTPException(400, "一次最多转发 50 篇")
+    if kind not in ("orig", "mono", "seq", "lr"):
+        raise HTTPException(400, "版式不对")
+    copied, skipped, why = [], [], ""
+    for pid in pids:
+        p = db.get_paper(pid) or {}
+        name = _display_name(p) or (p.get("filename") or pid)
+        src = _paper_src(pid, p)
+        if kind == "orig":
+            if src and os.path.exists(src):
+                copied.append(src)
+            else:
+                skipped.append(name)
+                why = "原件不在"
+            continue
+        mono = p.get("mono_path") or ""
+        if not (mono and os.path.exists(mono)):
+            skipped.append(name)
+            why = "还没翻译"
+            continue
+        if kind == "mono":
+            copied.append(mono)
+            continue
+        d = paper_dir(pid)
+        if kind == "lr":
+            dual = p.get("dual_path") or ""
+            try:
+                if not (dual and os.path.exists(dual)):
+                    if not (src and os.path.exists(src)):
+                        skipped.append(name)
+                        why = "原件不在"
+                        continue
+                    with _key_lock("variant:" + pid + ":dual"):
+                        dual = os.path.join(d, f"{name}{_DUAL_SUFFIX}.pdf")
+                        if not os.path.exists(dual):
+                            translate_full.derive_dual(src, mono, dual)
+                        db.update_paper(pid, dual_path=dual)
+                copied.append(dual)
+            except Exception:
+                skipped.append(name)
+                why = "并排版没生成成"
+            continue
+        try:
+            with _key_lock("variant:" + pid + ":seq"):
+                seq = os.path.join(d, f"{name}{_SEQ_SUFFIX}.pdf")
+                if not os.path.exists(seq):
+                    if not (src and os.path.exists(src)):
+                        skipped.append(name)
+                        why = "原件不在"
+                        continue
+                    for stale in os.listdir(d):     # 改标题后留下的旧名顺排件：清掉别当孤儿
+                        if stale.endswith(f"{_SEQ_SUFFIX}.pdf") and stale != os.path.basename(seq):
+                            fsutil.rm_quiet(os.path.join(d, stale))
+                    translate_full.derive_dual_seq(src, mono, seq)
+                copied.append(seq)
+        except Exception:
+            skipped.append(name)
+            why = "顺排版没生成成"
+    if not copied:
+        raise HTTPException(400, f"没有可转发的文件（这几篇{why}）" if why else "没有可转发的文件")
+    import clipfiles
+    ok, err = clipfiles.copy_files(copied)
+    if not ok:
+        raise HTTPException(400, err)
+    return {"copied": [os.path.basename(x) for x in copied], "skipped": skipped}
 
 _QUITTING = {"user": False}
 

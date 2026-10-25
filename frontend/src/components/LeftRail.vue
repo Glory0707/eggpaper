@@ -7,6 +7,7 @@ import { useEdgeResize } from '../edgeResize'
 import ZoteroDialog from './ZoteroDialog.vue'
 import CompareOverlay from './CompareOverlay.vue'
 import CiteExport from './CiteExport.vue'
+import ForwardDialog from './ForwardDialog.vue'
 
 const emit = defineEmits(['import', 'close', 'splitMany'])
 const fileInput = ref(null)
@@ -341,6 +342,14 @@ function doCite() {
   citeIds.value = [...selSet.value]
   citeOpen.value = true
 }
+/* 批量转发：选版式 → 文件上剪贴板 → 聊天框粘贴（勾选保留，可换版式再转一遍） */
+const fwdOpen = ref(false)
+const fwdIds = ref([])
+function doForward() {
+  if (!selN.value) return
+  fwdIds.value = [...selSet.value]
+  fwdOpen.value = true
+}
 async function doDelete() {
   if (!selN.value) return
   const yes = await confirmBox({
@@ -508,6 +517,7 @@ function onCmpGoto(c) {
         <button :disabled="!canSplit" :title="canSplit ? '' : t('同屏要选 2~4 篇')" @click="doSplit">{{ t('同屏阅读') }}</button>
         <button :disabled="!canCompare" :title="canCompare ? '' : t('对比要选 2~12 篇')" @click="doCompare">{{ t('数据对比') }}</button>
         <button :disabled="!selN" @click="doCite">{{ t('引用') }}</button>
+        <button :disabled="!selN" @click="doForward">{{ t('转发') }}</button>
         <button :disabled="!selN" @click="selMenu = !selMenu">{{ t('分类') }}</button>
         <button :disabled="!selN" class="s-danger" @click="doDelete">{{ t('删除') }}</button>
       </span>
@@ -535,5 +545,6 @@ function onCmpGoto(c) {
     <ZoteroDialog v-model:open="zotOpen" @imported="onZotImported" />
     <CompareOverlay :open="cmpOpen" :ids="cmpIds" @close="cmpOpen = false" @goto="onCmpGoto" />
     <CiteExport v-model:open="citeOpen" :ids="citeIds" />
+    <ForwardDialog v-model:open="fwdOpen" :ids="fwdIds" />
   </div>
 </template>
