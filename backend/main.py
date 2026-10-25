@@ -1273,7 +1273,12 @@ def _ingest(pid: str, filename: str, path: str, pdf_hash: str = "") -> dict:
             os.remove(path)
         except OSError:
             pass
-        raise HTTPException(400, f"PDF 读不了：{_human_msg(e)}")
+        # 解析失败的人话**不走 _human_msg**：那张表是模型服务异常的翻译，解析链抛的
+        # ValueError（加密件实测是 "document closed or encrypted"）会被它归进"模型没按
+        # 约定格式回"——加密 PDF 跟模型毫无关系（2026-10-26 对抗探针实锤）。就地分诊。
+        if "encrypt" in str(e).lower():
+            raise HTTPException(400, "PDF 加密了，解密后再导入")
+        raise HTTPException(400, f"PDF 读不了（{type(e).__name__}: {str(e)[:100]}）")
     db.create_paper(pid, filename, title, path, n_pages, authors)
     # 建行之后的每一步都可能抛（写段落/判类型/起析读线程）。调用方在异常里只删了
     # papers/<pid>/ 目录，行还在库里——书架上因此会留下一篇"点开只有 PDF_GONE"的
@@ -1657,14 +1662,17 @@ def _require_paras(pid: str) -> None:
 _SQLITE_INT_MAX = 2 ** 63 - 1
 
 _LONE_SURR = re.compile("[\ud800-\udfff]")
+_CTRL_CH = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")   # 控制字符（保留 \t\n\r）
 
 def _utf8_safe(s: str) -> str:
-    """剥掉孤立代理字符（\\ud800–\\udfff）：内存 str 里合法、UTF-8 编不出来，
-    存 SQLite / 当文件名 / 写日志都会 UnicodeEncodeError 冒 500。正常打字不会带，
+    """剥掉孤立代理字符（\\ud800–\\udfff）与控制字符（\\x00–\\x1f、\\x7f，保留
+    \\t\\n\\r）：代理字符内存 str 里合法、UTF-8 编不出来，存 SQLite / 当文件名 /
+    写日志都会 UnicodeEncodeError 冒 500；控制字符则会在界面上显示成看不见的
+    占位符（2026-10-26 探针：meta 带 \\x00\\x01 的标题原样入库）。正常打字不会带，
     粘贴别处内容或直调接口才见得到——写入口剥干净，不留到下一站炸。"""
-    if not _LONE_SURR.search(s):
+    if not _LONE_SURR.search(s) and not _CTRL_CH.search(s):
         return s
-    return s.encode("utf-8", "ignore").decode("utf-8")
+    return _CTRL_CH.sub("", s.encode("utf-8", "ignore").decode("utf-8"))
 
 def _s_arg(v) -> str:
     """JSON body 里的字符串字段：非字符串一律当"没给"（回空串），别 str() 硬转。
@@ -2151,7 +2159,18 @@ def _submit_subtasks(ex, pid: str, paras: list, kind: str, demo: bool,
     use = [p for p in paras if not p.get("in_refs")]
     futs = {}
     if not demo:
-        futs[ex.submit(llm.extract_terms, title, use)] = "terms"
+        def _terms_locked():
+            # 与 /glossary/generate 端点**共锁**（同一把 "terms:pid"，2026-10-26 补）：
+            # 生成**与落库**都在锁内——只锁生成的话，锁一放、表还没写，端点正好在缝里
+            # 查到空表又生成一份（回归 ⑦ 第一版实锤）。端点在锁上排队、等这一发写完
+            # 再查空表，非空直接回，不并行生成第二份（同一张表两遍钱；与七问/一眼卡/
+            # 推荐问题的共锁同一个道理，术语是最后一个没共的）。drain 里再存一遍是
+            # 幂等的（put_ai 整批替换、abbrs 只补缺），留给它记账。
+            with _key_lock("terms:" + pid):
+                got = llm.extract_terms(title, use)
+                _save_terms(pid, got)
+                return got
+        futs[ex.submit(_terms_locked)] = "terms"
         futs[ex.submit(_summary_compute, pid)] = "summary"
         time.sleep(4)
     # ②③的生成按篇型分流：研究型 principle+method，综述型 principle+how（组织方式）
