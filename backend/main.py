@@ -812,6 +812,8 @@ def put_settings(body: dict):
         for k, v in body["pdf2zh"].items():
             if k in ("path", "service", "options", "deepl_key"):
                 cfg["pdf2zh"][k] = v.strip() if isinstance(v, str) else ""
+        if "dual_pdf" in body["pdf2zh"]:
+            cfg["pdf2zh"]["dual_pdf"] = bool(body["pdf2zh"]["dual_pdf"])
     if "update" in body:
         u = body["update"]
         if not isinstance(u, dict):
@@ -1918,17 +1920,19 @@ def _sync_translate_from_job(pid: str, p: dict, j: dict) -> dict:
 
     状态端点本来就在做这件事，但那是**惰性同步**——没人来问状态就没人落库；直接在
     done 后取件的客户端（端到端实测在负载下撞过：做完立刻取 mono 得到 404）要先问
-    一次 job。同步时顺带清掉上一轮的两个残件：dual 是按旧 mono 派生的缓存（已过期）、
-    旧名 mono 是没人指的孤儿。返回重读后的 paper（调用方后续判断用）。"""
+    一次 job。同步时顺带清掉上一轮的残件：旧 dual 是按旧 mono 派生的缓存（已过期，
+    本轮重新生成的那份除外）、旧名 mono 是没人指的孤儿。返回重读后的 paper（调用方
+    后续判断用）。"""
     if j.get("status") != "done":
         return p
     if (j.get("mono") or "") == (p.get("mono_path") or "") and p.get("translate_status") == "done":
         return p
     old_dual = p.get("dual_path") or ""
     old_mono = p.get("mono_path") or ""
-    db.update_paper(pid, mono_path=j["mono"] or "", dual_path="",
+    new_dual = j.get("dual") or ""     # 管线译完顺手生成的并排双语版（设置没开就是空）
+    db.update_paper(pid, mono_path=j["mono"] or "", dual_path=new_dual,
                     translate_status="done", translate_error="")
-    if old_dual:
+    if old_dual and old_dual != new_dual:
         fsutil.rm_quiet(old_dual)
     if old_mono and old_mono != (j.get("mono") or ""):
         fsutil.rm_quiet(old_mono)
@@ -1944,7 +1948,9 @@ def paper_pdf(pid: str, variant: str = "original"):
             return _pdf_or_404(dual, "双语版尚未生成")   # 也走 _SafeFile：删除/换版本抢在发送前删掉文件时降级 404，别裸 500
         mono = p.get("mono_path") or os.path.join(paper_dir(pid), mono_name)
         src = _paper_src(pid, p)
-        if (mono and os.path.exists(mono) and src and os.path.exists(src)):
+        # 设置关了就不往盘上派生新文件（已在盘上的旧件照样服务）；开着才按需补一份
+        if (config.load()["pdf2zh"].get("dual_pdf", True)
+                and mono and os.path.exists(mono) and src and os.path.exists(src)):
             try:
                 with _key_lock("variant:" + pid + ":dual"):
                     dual = os.path.join(paper_dir(pid), dual_name)
@@ -4373,6 +4379,33 @@ def _claim_existing_translation(pid: str) -> dict:
                         translate_status="done", translate_error="")
     return got or {}
 
+def _gen_dual_if_enabled(pid: str) -> None:
+    """设置开着而盘上还没有并排双语版：当场用 原文+译文 派生一份并登记。
+
+    只在用户点「全文翻译」认领成品的那一下做——老库的存量译文是设置出现之前译的，
+    没有这份文件；启动认领不做（开机不该为整库补文件）。派生失败只损失副产品：
+    /pdf?variant=dual 直接访问时还会再试，不影响翻译本身。
+    盘上已有 dual（含老交错版存量）就不动——重译时 _assemble 会清掉重生成。"""
+    p = db.get_paper(pid) or {}
+    if not config.load()["pdf2zh"].get("dual_pdf", True):
+        return
+    _, dual_name = _variant_names(_display_name(p) or "")
+    mono = p.get("mono_path") or ""
+    src = _paper_src(pid, p)
+    dual = p.get("dual_path") or ""
+    if not (dual_name and mono and os.path.exists(mono) and src and os.path.exists(src)):
+        return
+    if dual and os.path.exists(dual):
+        return
+    try:
+        with _key_lock("variant:" + pid + ":dual"):
+            dual = os.path.join(paper_dir(pid), dual_name)
+            if not os.path.exists(dual):
+                translate_full.derive_dual(src, mono, dual)
+            db.update_paper(pid, dual_path=dual)
+    except Exception as e:
+        _applog(f"并排双语版没生成成 {pid}：{type(e).__name__}")
+
 def _pipe_stale_reason(pid: str, p: dict) -> str:
     """盘上那份成品还算不算"当前口径"的译文：'' = 算（或压根没成品），非空 = 该重译的原因。
 
@@ -4403,6 +4436,7 @@ def translate_full_start(pid: str, force: bool = False):
         stale_why = _pipe_stale_reason(pid, p)
         if not stale_why and _claim_existing_translation(pid):
             _applog(f"全文翻译 {pid}: 发现上次已经译好的成品，直接认领")
+            _gen_dual_if_enabled(pid)   # 设置开了而这份存量没有并排双语版：顺手补上
             return {"status": "done", "service": "", "note": "上次已经译好了"}
     used, note = translate_full.choose_service(svc, host)
     if used is None:
@@ -4476,7 +4510,8 @@ def translate_full_start(pid: str, force: bool = False):
                              note=note, engine=engine,
                              flavor=_translate_flavor(used, cfg),
                              glossary_rows=glossary_rows, fresh=force,
-                             mono_name=mono_n, dual_name=dual_n)
+                             mono_name=mono_n, dual_name=dual_n,
+                             make_dual=bool(cfg["pdf2zh"].get("dual_pdf", True)))
         db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 

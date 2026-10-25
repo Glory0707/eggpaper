@@ -327,7 +327,8 @@ def _cmd(pdf_path, out_dir, service, extra, glossary_csv="", engine: str = "", p
     --pages N-M                只译这一段（1 基闭区间）；
     --only-include-translated-page  产物只含所选页（不带的产物是"整本但只有这段被译了"，
                                两种形态组装逻辑都认，带上省得猜）；
-    --no-dual                  盘上只落译文版，双语版要的时候由 原文+译文 派生（省一半盘）；
+    --no-dual                  引擎不落它自己的 dual 产物（内容与译文页重复、白占一份盘）；
+                               （双语）.pdf 由我们译完用 原文+译文 派生（见 derive_dual）；
     --watermark-output-mode no_watermark  显式关水印，别吃默认值。
 
     scan=扫描件页号列表（非空即这一批里有扫描件页，见 _batch_scan）再加：
@@ -796,45 +797,30 @@ def _page_done(pdir: str, stem: str):
     return {"mono": mono} if mono and _pdf_complete(mono) else None
 
 def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
-    """双语版 = 原文奇页 + 译文偶页交错。盘上只留译文版（省盘：双语是它的两倍大），
-    用户第一次点「双语」时才合成并缓存。失败页（译文就是原文那页）交错出来天然是两页原文，
-    与"奇原文偶译文"的页码关系一致。
-    （2026-10-25 起前端不再取这份文件：双语视图直接用 原文+译文 两份文档现场排，
-    首开零合成 CPU、下载减半。本函数仍服务 /pdf?variant=dual 的直接访问与老书签。）
-
-    合成姿势 2026-10-18 换过（合成件 240+240 页 → 480 输出页实测）：页数相等（正常件）
-    整本各插一次、再 select 一次交错，构造 0.35~0.75s；旧写法逐页 insert_pdf 构造
-    0.55~2.5s。差距大头在保存：逐页插把每页引用的对象各复制一份，garbage=4 去重全堆进
-    save（旧写法 save 1.8~15.6s，新写法 0.8~4.5s；两个数都随内容重复度与进程状态大幅
-    浮动，复测口径见手记；译文页与原页大面积逐页重复的极端件去重面更大，新写法反而不如
-    旧写法——真实件只有失败页重复，占比低）。代价：产物体积大 5% 上下。页数不齐的异常件
-    沿用旧逐页口径：select 交错表里同一页会出现两次，页树重复引用同一页对象不合规范；
-    正常件一页一引用。"""
+    """双语版 = 每页左边原文页、右边译文页并排（版式对齐 pdf2zh 自带的 LR_dual 产物，
+    用户拿去打印/单发都直观）。译文缺的页右半放原文占位，与前端直排的兜底同款；
+    译文比原文多出的页左半重复原文末页（与老交错版同款）。
+    前端双语视图不取这份文件（原文+译文 两份文档现场排，见 PdfViewer.buildSheets），
+    它是给"盘上直接拿文件"的人的：设置开了就译完顺手生成，设置没开也可由
+    /pdf?variant=dual 按需派生。
+    show_pdf_page 逐页嵌的是矢量引用不是截图；落盘原子换名 + compression_effort=0
+    （同 derive_mono 口径）。真库三篇（4/10/20 页）实测：0.10~0.17s，体积 ≈ 大的那
+    份 ×1.1——左右两半共享字体，garbage=4 去重后不是两份相加。"""
     import pymupdf
     src = pymupdf.open(pdf_path)
     mono = pymupdf.open(mono_path)
     dual = pymupdf.open()
     try:
         ns, nm = len(src), len(mono)
-        if ns == nm:
-            dual.insert_pdf(src, from_page=0, to_page=ns - 1)
-            dual.insert_pdf(mono, from_page=0, to_page=nm - 1)
-            # 交错序号：整本 doc 里 src 页 i 的索引=i、mono 页 i 的索引=len(src)+i
-            dual.select([x for i in range(ns) for x in (i, ns + i)])
-        else:
-            # 页数不齐只在异常产物上见得到：沿用旧逐页口径（mono 缺页时 src 页重复两次）
-            for i in range(max(ns, nm)):
-                page = min(i, ns - 1)
-                dual.insert_pdf(src, from_page=page, to_page=page)
-                if i < nm:
-                    dual.insert_pdf(mono, from_page=i, to_page=i)
-                else:
-                    dual.insert_pdf(src, from_page=page, to_page=page)
+        for i in range(max(ns, nm)):
+            sp = min(i, ns - 1)
+            sr = src[sp].rect
+            mr = mono[i].rect if i < nm else sr
+            page = dual.new_page(width=sr.width + mr.width, height=max(sr.height, mr.height))
+            page.show_pdf_page(pymupdf.Rect(0, 0, sr.width, page.rect.height), src, sp)
+            page.show_pdf_page(pymupdf.Rect(sr.width, 0, page.rect.width, page.rect.height),
+                               mono if i < nm else src, i if i < nm else sp)
         # 半截产物一旦被当成品服务就固化了：先落临时名再原子换名
-        # compression_effort=0：真库 4 篇（4~24 页）实测同派生 0.04~0.15s → 0.02~0.12s，
-        # 体积与页内文本都逐位一致；低配机首开双语直接省这笔 CPU（派生的机器就是
-        # 用户自己的机器）。g3/g1 体积放大 2.3~3.8 倍、use_objstms 反而慢 3~4 倍，
-        # 都实测过不要。
         part = dual_path + ".part"
         try:
             dual.save(part, garbage=4, deflate=True, compression_effort=0)
@@ -849,6 +835,8 @@ def derive_dual(pdf_path: str, mono_path: str, dual_path: str) -> str:
 def derive_mono(dual_path: str, mono_path: str) -> str:
     """旧版存量只有双语版时，抽偶数页（0 基 2i+1）合成译文版。
 
+    只适用于老「奇原文偶译文」交错的存量件——2026-10-25 后的（双语）.pdf 是并排版，
+    但那份永远有配套译文版在盘上（管线译完即落 mono），轮不到这里。
     select 一次收口（2026-10-18 实测 480 页双开件抽 240 页：0.04s vs 逐页插入
     0.44s，产物同体积、页内文本逐页一致；逐页插入的慢在 save 的去重，同 derive_dual 注）。"""
     import pymupdf
@@ -1037,7 +1025,8 @@ def _prescan_reuse(out_dir: str, n: int, stem: str) -> dict:
 
 def _assemble(out_dir: str, pdf_path: str, n: int, results: dict, mono_name: str,
               dual_name: str, j: dict, say, pid: str, service: str) -> tuple:
-    """组装成品：盘上只落译文版（省盘：双语是它的两倍大，首次点开时由 原文+译文 派生）。
+    """组装成品：译文版必落盘；并排双语版不在这层做（设置开着时由 start 的收尾
+    derive_dual 派生）。本函数只负责清掉上一轮的旧双语件——它按旧译文派生，已过期。
 
     返回 (成品路径, 失败页号列表)；中途放弃（全部页都没成/被取消）返回 ("", [])——
     放弃的原因已经写进 j（status=error/none），调用方看到空路径直接 return 即可。
@@ -1106,7 +1095,8 @@ def _assemble(out_dir: str, pdf_path: str, n: int, results: dict, mono_name: str
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "",
           glossary_rows: list = None, fresh: bool = False,
-          mono_name: str = "", dual_name: str = "", flavor: str = "") -> dict:
+          mono_name: str = "", dual_name: str = "", flavor: str = "",
+          make_dual: bool = False) -> dict:
     """按页流水线翻译全文：进度=完成页数，坏页回退原文，一页卡不住整份文档。
 
     glossary_rows：本篇术语表（[{term_en, term_zh}, …]）。非空且服务是 LLM 家族时
@@ -1116,6 +1106,8 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
     的话预扫描会把上次译好的页全复用，按钮等于没按（实测踩过）。
     mono_name/dual_name：成品文件名（`<显示名>（译文）.pdf`），调用方从 DB 显示名
     派生；空串退回老名 mono/dual.pdf。落名走调用方，这层不认名字只认路径。
+    make_dual：译完顺手生成并排双语版（dual_name）——设置「译完生成并排双语 PDF」
+    开着时为 True；这层不读配置，开关留在调用方。
     """
     j = job(pid)
     th = _WORKERS.get(pid)
@@ -1328,7 +1320,7 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                 j.update(status="none", error="")      # 用户主动取消，不算一次失败
                 return
 
-            # ---- 组装（见 _assemble）：盘上只落译文版（省盘：双语是它的两倍大）
+            # ---- 组装（见 _assemble）：译文版必落盘；并排双语版在下面按设置派生
             mono_path, failed = _assemble(out_dir, pdf_path, n, results, mono_name,
                                           dual_name, j, say, pid, service)
             if not mono_path:
@@ -1339,9 +1331,19 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
             # 页号并进来：这次没碰那些页，它们的记档在上一次的章里。
             stamp_pipe(out_dir, sorted(scanned_pages), keep_prev=(old == sig))
 
+            # 并排双语版：译文成品刚落盘、原文在手，设置开着就顺手合成（省一次
+            # "用户要文件时才发现没有"）。失败只损失这份副产品——译文不受影响，
+            # /pdf?variant=dual 直接访问时还会再试，不把它记成翻译失败。
+            dual_done = ""
+            if make_dual and dual_name:
+                try:
+                    dual_done = derive_dual(pdf_path, mono_path, os.path.join(out_dir, dual_name))
+                except Exception as e:
+                    say(f"全文翻译 {pid}: 并排双语版没生成成（{type(e).__name__}），取文件时会再试")
+
             done_note = (note or "") + (f"（第 {', '.join(map(str, failed))} 页没译成，保留原文）"
                                         if failed else "")
-            j.update(status="done", dual="", mono=mono_path,
+            j.update(status="done", dual=dual_done, mono=mono_path,
                      error="", pages=[n, n], note=done_note)
             say(f"全文翻译完成 {pid}：{int(time.time() - j['started'])}s · {service}"
                  f" · {len(results)}/{n} 页" + (f" · 失败页 {failed}" if failed else ""))

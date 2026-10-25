@@ -380,6 +380,7 @@ const EN = {
   '暗色': 'Dark theme',
   '全文翻译服务': 'Full-PDF translation service',
   'bing（免费）': 'bing (free)',
+  '译完生成并排双语 PDF': 'Generate side-by-side dual PDF after translation',
   '翻译引擎': 'Translation engine',
   '解压中…': 'Unpacking…',
   '可用（{v}）': 'Available ({v})',

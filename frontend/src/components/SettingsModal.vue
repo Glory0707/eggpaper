@@ -26,6 +26,7 @@ const f = reactive({
   service: (S.pdf2zh || {}).service || 'bing',
   engine_path: (S.pdf2zh || {}).path || '',
   deepl_key: (S.pdf2zh || {}).deepl_key || '',
+  dual_pdf: (S.pdf2zh || {}).dual_pdf !== false,
   auto_check: (S.update || {}).auto_check !== false,
   shot_save: S.shot_save !== false,
   auto_analysis: (S.analysis || {}).auto !== false,
@@ -218,7 +219,7 @@ function save() {
   emit('save', { provider: { base_url: f.base_url, model: f.model, api_key: f.api_key,
                              vision_model: f.vision ? f.model : '' },
                  mock: f.mock, pdf2zh: { service: f.service, path: f.engine_path.trim(),
-                                         deepl_key: f.deepl_key.trim() },
+                                         deepl_key: f.deepl_key.trim(), dual_pdf: f.dual_pdf },
                  update: { auto_check: f.auto_check },
                  shot_save: f.shot_save,
                  analysis: { auto: f.auto_analysis } })
@@ -305,6 +306,10 @@ function save() {
       <div class="f-row" v-if="!isEn() && f.service === 'deepl'">
         <label class="mono-label">{{ t('DeepL Key') }}</label>
         <input type="text" v-model="f.deepl_key" placeholder="DeepL AUTH_KEY" />
+      </div>
+      <div class="f-line" v-if="!isEn()">
+        <span class="mono-label" style="margin:0">{{ t('双语') }}</span>
+        <label class="ck" style="margin-left:14px"><input type="checkbox" v-model="f.dual_pdf" />{{ t('译完生成并排双语 PDF') }}</label>
       </div>
       <div class="f-line" v-if="!isEn() && (!(eng.checked && eng.ok) || eng.upgrade)">
         <span class="mono-label" style="margin:0">{{ t('翻译引擎') }}</span>
