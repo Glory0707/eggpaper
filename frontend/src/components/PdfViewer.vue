@@ -1433,6 +1433,7 @@ function jumpQuote(n) {
 function jumpBack() {
   const top = backStack.pop()
   if (top != null) {
+    anchorCancel = true   // 用户主动回跳：同 scrollToY/step，防抖回位让位
     scroller()?.scrollTo({ top, behavior: scrollBehavior() })   // 卸载后迟到的调用：没有滚动容器就作罢
     backChip.value = false
     return
@@ -1468,6 +1469,7 @@ function step(dir) {
   if (!target) return
   const y = paraAbsY(target.idx)
   if (y == null) return
+  anchorCancel = true   // j/k 也是用户主动导航：防抖中的回位别把人拉回去（同 scrollToY 注）
   backStack.push(scroller().scrollTop)
   scroller().scrollTo({ top: y - scroller().clientHeight * 0.3, behavior: scrollBehavior() })
 }

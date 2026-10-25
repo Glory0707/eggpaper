@@ -1250,13 +1250,15 @@ def papers_forward(body: dict):
     （CF_HDROP 文件列表）——本机应用够不着"替用户选哪个聊天"，文件上剪贴板是离
     微信/QQ 聊天输入框最近的一步，到聊天框 Ctrl+V 即发。
 
-    版式：orig 原件；mono 译文；lr 并排（复用 （双语）.pdf，缺了当场派生并登记）；
-    seq 顺排（当场派生 （顺排）.pdf，留在论文夹里当缓存，改标题后的旧名件随手清）。
+    版式：orig 原件；mono 译文；lr 并排（复用 （双语）.pdf，缺了当场派生并登记
+    ——老版本留下的交错存量也照发，它就是那篇的双语成品）；seq 顺排（当场派生
+    （顺排）.pdf，留在论文夹里当缓存，改标题后的旧名件随手清）。
     没译文/缺原件的篇跳过并点名，绝不拿另一种文件冒充。"""
-    pids = list(dict.fromkeys(str(x) for x in ((body or {}).get("pids") or [])))
-    kind = (body or {}).get("kind") or "orig"
-    if not pids:
+    raw = (body or {}).get("pids")
+    if not isinstance(raw, list) or not raw:
         raise HTTPException(400, "没选文献")
+    pids = list(dict.fromkeys(str(x) for x in raw))
+    kind = (body or {}).get("kind") or "orig"
     if len(pids) > 50:
         raise HTTPException(400, "一次最多转发 50 篇")
     if kind not in ("orig", "mono", "seq", "lr"):
@@ -1303,14 +1305,14 @@ def papers_forward(body: dict):
         try:
             with _key_lock("variant:" + pid + ":seq"):
                 seq = os.path.join(d, f"{name}{_SEQ_SUFFIX}.pdf")
+                for stale in os.listdir(d):     # 改标题后留下的旧名顺排件：每次都扫——缓存命中也要清
+                    if stale.endswith(f"{_SEQ_SUFFIX}.pdf") and stale != os.path.basename(seq):
+                        fsutil.rm_quiet(os.path.join(d, stale))
                 if not os.path.exists(seq):
                     if not (src and os.path.exists(src)):
                         skipped.append(name)
                         why = "原件不在"
                         continue
-                    for stale in os.listdir(d):     # 改标题后留下的旧名顺排件：清掉别当孤儿
-                        if stale.endswith(f"{_SEQ_SUFFIX}.pdf") and stale != os.path.basename(seq):
-                            fsutil.rm_quiet(os.path.join(d, stale))
                     translate_full.derive_dual_seq(src, mono, seq)
                 copied.append(seq)
         except Exception:
