@@ -294,19 +294,20 @@ def _migrate_paper_layout():
 # _variant_names 拼名，差一个字就认不出自家刚写出的成品
 _MONO_SUFFIX = "（译文）"
 _DUAL_SUFFIX = "（双语）"
-_SEQ_SUFFIX = "（顺排）"    # 转发专用的派生件（原文/译文逐页相间），无 DB 字段、按需生成
+_SEQ_SUFFIX = "（顺排）"    # 原文/译文逐页相间，无 DB 字段；转发按需生成、译完按设置自动生成
 
 _INNER_SUFFIX = (("path", ""), ("mono_path", _MONO_SUFFIX), ("dual_path", _DUAL_SUFFIX))
 
 def _variant_names(base: str) -> tuple:
-    """两个成品文件名（含扩展名、不含目录）：(译文, 双语)——中缀与 _INNER_SUFFIX 同源。
+    """三个成品文件名（含扩展名、不含目录）：(译文, 双语, 顺排)——中缀与 _INNER_SUFFIX 同源。
 
     base 由调用方从显示名算好（空名的兜底各按各的口径：serve 路径退回 "paper"、
     认领旧成品时退回空 = 没有可认的名字）。空 base 给空名，别造一个假名。
     """
     if not base:
-        return "", ""
-    return f"{base}{_MONO_SUFFIX}.pdf", f"{base}{_DUAL_SUFFIX}.pdf"
+        return "", "", ""
+    return (f"{base}{_MONO_SUFFIX}.pdf", f"{base}{_DUAL_SUFFIX}.pdf",
+            f"{base}{_SEQ_SUFFIX}.pdf")
 
 def _late_align(pid: str):
     """当场没对齐成的（刚导入的 PDF 被杀软攥几秒是常态）交给后台保洁追平：
@@ -816,6 +817,8 @@ def put_settings(body: dict):
                 cfg["pdf2zh"][k] = v.strip() if isinstance(v, str) else ""
         if "dual_pdf" in body["pdf2zh"]:
             cfg["pdf2zh"]["dual_pdf"] = bool(body["pdf2zh"]["dual_pdf"])
+        if "seq_pdf" in body["pdf2zh"]:
+            cfg["pdf2zh"]["seq_pdf"] = bool(body["pdf2zh"]["seq_pdf"])
     if "update" in body:
         u = body["update"]
         if not isinstance(u, dict):
@@ -1284,7 +1287,6 @@ def papers_forward(body: dict):
         if kind == "mono":
             copied.append(mono)
             continue
-        d = paper_dir(pid)
         if kind == "lr":
             dual = _ensure_dual_file(pid, p, src, mono, name)
             if dual:
@@ -1293,23 +1295,12 @@ def papers_forward(body: dict):
                 skipped.append(name)
                 why = "并排版没生成成"
             continue
-        try:
-            with _key_lock("variant:" + pid + ":seq"):
-                seq = os.path.join(d, f"{name}{_SEQ_SUFFIX}.pdf")
-                for stale in os.listdir(d):     # 改标题后留下的旧名顺排件：每次都扫——缓存命中也要清
-                    if stale.endswith(f"{_SEQ_SUFFIX}.pdf") and stale != os.path.basename(seq):
-                        fsutil.rm_quiet(os.path.join(d, stale))
-                if not os.path.exists(seq):
-                    if not (src and os.path.exists(src)):
-                        skipped.append(name)
-                        why = "原件不在"
-                        continue
-                    translate_full.derive_dual_seq(src, mono, seq)
-                copied.append(seq)
-        except Exception as e:
+        seq = _ensure_seq_file(pid, p, src, mono, name)
+        if seq:
+            copied.append(seq)
+        else:
             skipped.append(name)
-            why = "顺排版没生成成"
-            _applog(f"顺排双语版没生成成 {pid}：{type(e).__name__}")
+            why = "原件不在" if not (src and os.path.exists(src)) else "顺排版没生成成"
     if not copied:
         raise HTTPException(400, f"没有可转发的文件（这几篇{why}）" if why else "没有可转发的文件")
     ok, err = clipfiles.copy_files(copied)
@@ -2031,7 +2022,7 @@ def _sync_translate_from_job(pid: str, p: dict, j: dict) -> dict:
 @app.get("/api/papers/{pid}/pdf")
 def paper_pdf(pid: str, variant: str = "original"):
     p = _paper_or_404(pid)
-    mono_name, _ = _variant_names(_display_name(p) or "paper")   # dual 名由 _ensure_dual_file 拼
+    mono_name, _, _ = _variant_names(_display_name(p) or "paper")   # 另两个由 _ensure_*_file 拼
     if variant == "dual":
         dual = p.get("dual_path") or ""
         if dual and os.path.exists(dual):
@@ -4452,7 +4443,7 @@ def _claim_existing_translation(pid: str) -> dict:
     状态打成 done，返回成品 dict；没有返回空。两次 stat + 尾部读，够便宜。
     成品名两代并存：可读名 `<显示名>（译文|双语）.pdf` 与老名 mono/dual.pdf 都认。"""
     base = _display_name(db.get_paper(pid) or {})
-    mono_n, dual_n = _variant_names(base)
+    mono_n, dual_n, _ = _variant_names(base)
     got = translate_full.adopt_existing(
         paper_dir(pid),
         mono=[mono_n] if mono_n else [],
@@ -4483,20 +4474,56 @@ def _ensure_dual_file(pid: str, p: dict, src: str, mono: str, name: str) -> str:
         _applog(f"并排双语版没生成成 {pid}：{type(e).__name__}")
         return ""
 
-def _gen_dual_if_enabled(pid: str) -> None:
-    """设置开着而盘上还没有并排双语版：当场用 原文+译文 派生一份并登记。
+def _sweep_seq(d: str, name: str) -> str:
+    """顺排件的预期路径，顺手清掉改标题留下的旧名件（只清这个文献夹里的同类件）。
+    清旧件是纯保洁：读不到目录也不影响取件，直接当没有。"""
+    seq = os.path.join(d, f"{name}{_SEQ_SUFFIX}.pdf")
+    try:
+        for stale in os.listdir(d):
+            if stale.endswith(f"{_SEQ_SUFFIX}.pdf") and stale != os.path.basename(seq):
+                fsutil.rm_quiet(os.path.join(d, stale))
+    except OSError:
+        pass
+    return seq
+
+def _ensure_seq_file(pid: str, p: dict, src: str, mono: str, name: str) -> str:
+    """顺排双语版（原文/译文逐页相间）：盘上有就直接用；没有就按 pid 加锁当场派生。
+    改标题留下的旧名顺排件每次顺手清掉——缓存命中也要清。派生不成返回空串，失败
+    已记 app.log。两个入口共用：认领后的补生成、转发 seq——名字、锁与旧件清理
+    只有这一份口径。"""
+    if not name:
+        return ""
+    d = paper_dir(pid)
+    seq = os.path.join(d, f"{name}{_SEQ_SUFFIX}.pdf")
+    if not os.path.exists(seq) and not (src and os.path.exists(src) and mono and os.path.exists(mono)):
+        return ""
+    try:
+        with _key_lock("variant:" + pid + ":seq"):
+            _sweep_seq(d, name)
+            if not os.path.exists(seq):
+                translate_full.derive_dual_seq(src, mono, seq)
+            return seq
+    except Exception as e:
+        _applog(f"顺排双语版没生成成 {pid}：{type(e).__name__}")
+        return ""
+
+def _gen_variants_if_enabled(pid: str) -> None:
+    """设置开着而盘上还没有对应成品：当场派生（并排登记 dual_path，顺排只落文件）。
 
     只在用户点「全文翻译」认领成品的那一下做——老库的存量译文是设置出现之前译的，
-    没有这份文件；启动认领不做（开机不该为整库补文件）。派生失败只损失副产品：
-    /pdf?variant=dual 直接访问时还会再试，不影响翻译本身。"""
+    没有这些文件；启动认领不做（开机不该为整库补文件）。派生失败只损失副产品：
+    并排直取、转发顺排时还会再试，不影响翻译本身。"""
     p = db.get_paper(pid) or {}
-    if not config.load()["pdf2zh"].get("dual_pdf", True):
-        return
+    cfg = config.load()["pdf2zh"]
     disp = _display_name(p) or ""
-    _, dual_name = _variant_names(disp)
     mono = p.get("mono_path") or ""
-    if dual_name and mono and os.path.exists(mono):
-        _ensure_dual_file(pid, p, _paper_src(pid, p), mono, disp)
+    if not (disp and mono and os.path.exists(mono)):
+        return
+    src = _paper_src(pid, p)
+    if cfg.get("dual_pdf", True):
+        _ensure_dual_file(pid, p, src, mono, disp)
+    if cfg.get("seq_pdf", False):
+        _ensure_seq_file(pid, p, src, mono, disp)
 
 def _pipe_stale_reason(pid: str, p: dict) -> str:
     """盘上那份成品还算不算"当前口径"的译文：'' = 算（或压根没成品），非空 = 该重译的原因。
@@ -4505,7 +4532,7 @@ def _pipe_stale_reason(pid: str, p: dict) -> str:
     "把成品名与原件路径凑齐"的那一层——成品名随显示名走，别在别处再拼一遍。
     """
     nb = _display_name(p) or "paper"
-    mono_n, dual_n = _variant_names(nb)
+    mono_n, dual_n, _ = _variant_names(nb)
     return translate_full.product_pipe_reason(
         paper_dir(pid), _paper_src(pid, p),
         mono=[mono_n] if mono_n else [], dual=[dual_n] if dual_n else [])
@@ -4528,7 +4555,7 @@ def translate_full_start(pid: str, force: bool = False):
         stale_why = _pipe_stale_reason(pid, p)
         if not stale_why and _claim_existing_translation(pid):
             _applog(f"全文翻译 {pid}: 发现上次已经译好的成品，直接认领")
-            _gen_dual_if_enabled(pid)   # 设置开了而这份存量没有并排双语版：顺手补上
+            _gen_variants_if_enabled(pid)   # 设置开着而这份存量缺的成品：顺手补上
             return {"status": "done", "service": "", "note": "上次已经译好了"}
     used, note = translate_full.choose_service(svc, host)
     if used is None:
@@ -4596,14 +4623,18 @@ def translate_full_start(pid: str, force: bool = False):
         add_terms(db.glossary_list(pid))
         add_terms(db.glossary_global_list(), 200)
         nb = _display_name(db.get_paper(pid) or {}) or "paper"
-        mono_n, dual_n = _variant_names(nb)
+        mono_n, dual_n, seq_n = _variant_names(nb)
+        seq_on = bool(cfg["pdf2zh"].get("seq_pdf", False))
+        if seq_on:
+            _sweep_seq(paper_dir(pid), nb)   # 改标题后的旧名顺排件先清，译完落新名
         translate_full.start(pid, src, paper_dir(pid), used,
                              cfg["pdf2zh"].get("options", ""), envs=envs, log=_applog,
                              note=note, engine=engine,
                              flavor=_translate_flavor(used, cfg),
                              glossary_rows=glossary_rows, fresh=force,
-                             mono_name=mono_n, dual_name=dual_n,
-                             make_dual=bool(cfg["pdf2zh"].get("dual_pdf", True)))
+                             mono_name=mono_n, dual_name=dual_n, seq_name=seq_n,
+                             make_dual=bool(cfg["pdf2zh"].get("dual_pdf", True)),
+                             make_seq=seq_on)
         db.update_paper(pid, translate_status="running", translate_error="")
     return {"status": "running", "service": used, "note": note}
 

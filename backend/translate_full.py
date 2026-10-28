@@ -1130,8 +1130,8 @@ def _assemble(out_dir: str, pdf_path: str, n: int, results: dict, mono_name: str
 def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
           envs: dict = None, log=None, note: str = "", engine: str = "",
           glossary_rows: list = None, fresh: bool = False,
-          mono_name: str = "", dual_name: str = "", flavor: str = "",
-          make_dual: bool = False) -> dict:
+          mono_name: str = "", dual_name: str = "", seq_name: str = "",
+          flavor: str = "", make_dual: bool = False, make_seq: bool = False) -> dict:
     """按页流水线翻译全文：进度=完成页数，坏页回退原文，一页卡不住整份文档。
 
     glossary_rows：本篇术语表（[{term_en, term_zh}, …]）。非空且服务是 LLM 家族时
@@ -1139,10 +1139,10 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
     术语锁定就靠它（bing/google 这类非 LLM 服务吃不了，跳过不报错）。
     fresh=True：清掉全部页级缓存与成品再译——「重新全文翻译」按的是这个，不 fresh
     的话预扫描会把上次译好的页全复用，按钮等于没按（实测踩过）。
-    mono_name/dual_name：成品文件名（`<显示名>（译文）.pdf`），调用方从 DB 显示名
-    派生；空串退回老名 mono/dual.pdf。落名走调用方，这层不认名字只认路径。
-    make_dual：译完顺手生成并排双语版（dual_name）——设置「译完生成并排双语 PDF」
-    开着时为 True；这层不读配置，开关留在调用方。
+    mono_name/dual_name/seq_name：成品文件名（`<显示名>（译文）.pdf`），调用方从
+    DB 显示名派生；空串退回老名 mono/dual.pdf。落名走调用方，这层不认名字只认路径。
+    make_dual/make_seq：译完顺手生成并排 / 顺排双语版（dual_name/seq_name）——对应
+    设置项开着时为 True；这层不读配置，开关留在调用方。
     """
     j = job(pid)
     th = _WORKERS.get(pid)
@@ -1375,6 +1375,14 @@ def start(pid: str, pdf_path: str, out_dir: str, service: str, extra: str = "",
                     dual_done = derive_dual(pdf_path, mono_path, os.path.join(out_dir, dual_name))
                 except Exception as e:
                     say(f"全文翻译 {pid}: 并排双语版没生成成（{type(e).__name__}），取文件时会再试")
+
+            # 顺排双语版：同一时机、同一失败口径。默认关（比并排再多占一份体积），
+            # 设置开了才落；旧名件的清理归调用方（它持有中缀口径，见 main._sweep_seq）。
+            if make_seq and seq_name:
+                try:
+                    derive_dual_seq(pdf_path, mono_path, os.path.join(out_dir, seq_name))
+                except Exception as e:
+                    say(f"全文翻译 {pid}: 顺排双语版没生成成（{type(e).__name__}），转发时会再试")
 
             done_note = (note or "") + (f"（第 {', '.join(map(str, failed))} 页没译成，保留原文）"
                                         if failed else "")

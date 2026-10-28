@@ -42,6 +42,7 @@ DEFAULTS = {
         "path": "",
         "deepl_key": "",
         "dual_pdf": True,   # 译完顺手生成 原文/译文并排 的双语 PDF（<显示名>（双语）.pdf）
+        "seq_pdf": False,   # 译完顺手生成 原文/译文逐页相间 的顺排双语 PDF（<显示名>（顺排）.pdf）
     },
     "update": {
         "feed_url": "https://gitee.com/zhouao1207/eggpaper/raw/master/update",

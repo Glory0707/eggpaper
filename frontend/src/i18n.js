@@ -381,6 +381,7 @@ const EN = {
   '全文翻译服务': 'Full-PDF translation service',
   'bing（免费）': 'bing (free)',
   '译完生成并排双语 PDF': 'Generate side-by-side dual PDF after translation',
+  '译完生成顺排双语 PDF': 'Generate alternating dual PDF after translation',
   '转发': 'Forward',
   '转发 PDF': 'Forward PDFs',
   '版式': 'Layout',
